@@ -16,6 +16,8 @@
 # <data>/backup (zonder gezichten en beeld); lukt die niet, dan stopt het vóór er iets verandert.
 # Gezichten (fase 6, de container analyse) staan tot 0.8.1 uit: zonder ANALYSE in .env doet het
 # script niets met de analyse (ANALYSE_STANDAARD hieronder). Aan: curl … | ANALYSE=aan bash.
+# Met de analyse aan haalt het ook het model voor zoeken op beeld op (SigLIP 2, ±1,55 GB) en zet
+# het één keer om. Zonder: curl … | BEELD=uit bash.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -177,10 +179,12 @@ merge_media_env() {
 
 # Na het maken of lezen van .env, als de versie de analyse heeft. Is hij aan (gevraagd, al aan in
 # .env, of ANALYSE_STANDAARD), dan komen ANALYSE=aan, de sleutel van de worker en de twee mappen
-# erbij. ANALYSE_WORKER_KEY (compose.analyse.yaml) komt er één keer bij, zoals MEDIA_WORKER_KEY,
-# en wordt nooit vervangen; ook niet als de analyse daarna uit en weer aan gaat. Anders verandert
-# er niets, behalve een gevraagde uit op een regel die er al is: een ontbrekende ANALYSE blijft
-# ontbreken (tot 0.8.1).
+# erbij, en als de versie zoeken op beeld heeft BEELD=aan (Keuze 84). ANALYSE_WORKER_KEY
+# (compose.analyse.yaml) komt er één keer bij, zoals MEDIA_WORKER_KEY, en wordt nooit vervangen;
+# ook niet als de analyse daarna uit en weer aan gaat. Anders verandert er niets, behalve een
+# gevraagde uit op een regel die er al is: een ontbrekende ANALYSE blijft ontbreken (tot 0.8.1).
+# $2 is een gevraagde BEELD: die vervangt een regel BEELD die er is, en komt er nooit bij zonder
+# de analyse aan.
 merge_analyse_env() {
   local now
   now=$(sed -n 's/^ANALYSE=//p' "$ENV_FILE" | tail -n 1)
@@ -190,9 +194,11 @@ merge_analyse_env() {
     add_key ANALYSE_WORKER_KEY "$(hex)"
     add_key MODELLEN_ROOT "$PLATFORM_ROOT/modellen"
     add_key SLEUTELS_ROOT "$PLATFORM_ROOT/sleutels/gezichten"
+    if beeld_supported; then add_key BEELD aan; fi
   elif [ -n "$1" ] && grep -q '^ANALYSE=' "$ENV_FILE"; then
     set_key ANALYSE "$1"
   fi
+  if [ -n "${2-}" ] && grep -q '^BEELD=' "$ENV_FILE"; then set_key BEELD "$2"; fi
   chmod 600 "$ENV_FILE"
 }
 
@@ -663,6 +669,210 @@ decide_analyse() {
   [ -z "$MODELS_FAILED" ] || ANALYSE_REASON="niet alle modellen zijn er ($MODELS_FAILED); gezichten wachten tot de volgende installatie"
 }
 
+# --- zoeken op beeld (fase 6, X3b; Keuze 73 en 84; K1-05, K1-06, K2-19) ------------------------
+# Het model staat in MODELLEN_ROOT/BEELD_MAP. Alleen met de analyse aan, en alleen als de versie
+# het heeft: compose.analyse.yaml (de dienst analyse-omzetten) en regels van BEELD_MAP in
+# models.lock (de vijf bronnen en de uitkomst van de omzetter). Zonder ANALYSE, met ANALYSE=uit
+# of met BEELD=uit doet het niets: geen download, geen omzetting, geen map.
+beeld_supported() {
+  analyse_supported && [ -f "$SRC/api/app/analyse/models.lock" ] &&
+    grep -Eq "^[0123456789abcdef]{64}[[:space:]]+[0123456789]+[[:space:]]+$BEELD_MAP/" "$SRC/api/app/analyse/models.lock"
+}
+
+# BEELD uit de omgeving wint van .env, zoals ANALYSE. Alleen aan of uit.
+want_beeld() {
+  case "${BEELD-}" in
+    "" | aan | uit) printf '%s' "${BEELD-}" ;;
+    *)
+      echo "BEELD moet aan of uit zijn (nu: $BEELD)." >&2
+      return 1
+      ;;
+  esac
+}
+
+# De ruimte die DATA_ROOT vrij moet hebben voor de vectoren en de cache van zoeken op beeld
+# (±205 + ±154 MB per 100.000 foto's, Keuze 84), met marge; en de marge op MODELLEN_ROOT
+BEELD_DATA=1000000000
+BEELD_MARGE=100000000
+BEELD_MISLUKT="Zoeken op beeld: het model is niet geladen. De volgende run probeert het opnieuw."
+
+# De regels van BEELD_MAP uit models.lock: BEELD_BRON (sha256 bytes naam url, de bronnen in
+# BEELD_MAP/bron/) en BEELD_UIT (sha256 bytes naam, de uitkomst in BEELD_MAP/, url -), en
+# BEELD_NODIG: de bronnen plus twee keer de uitkomst (de uitvoermap en de nieuwe map van root).
+# Een regel die niet klopt, of geen bron of geen uitkomst: uitleg en return 1.
+beeld_regels() {
+  local lock=$SRC/api/app/analyse/models.lock sha size name url rest base
+  BEELD_BRON=() BEELD_UIT=() BEELD_NODIG=0
+  while read -r sha size name url rest; do
+    case "$sha" in "" | "#"*) continue ;; esac
+    case $name in "$BEELD_MAP"/*) ;; *) continue ;; esac
+    base=${name##*/}
+    if ! [[ $sha =~ ^[0123456789abcdef]{64}$ && $size =~ ^[123456789][0123456789]{0,11}$ ]] ||
+      ! model_name_ok "$name" || [ -z "$url" ] || { [ -n "$rest" ] && [ "${rest#\#}" = "$rest" ]; }; then
+      echo "Let op: een regel van models.lock klopt niet ($name)."
+      return 1
+    fi
+    if [ "$name" = "$BEELD_MAP/bron/$base" ] && [ "$url" != - ]; then
+      BEELD_BRON+=("$sha $size $base $url")
+      BEELD_NODIG=$((BEELD_NODIG + size))
+    elif [ "$name" = "$BEELD_MAP/$base" ] && [ "$url" = - ]; then
+      BEELD_UIT+=("$sha $size $base")
+      BEELD_NODIG=$((BEELD_NODIG + 2 * size))
+    else
+      echo "Let op: een regel van models.lock klopt niet ($name)."
+      return 1
+    fi
+  done <"$lock"
+  if [ "${#BEELD_BRON[@]}" = 0 ] || [ "${#BEELD_UIT[@]}" = 0 ]; then
+    echo "Let op: models.lock heeft niet alle regels van $BEELD_MAP (bronnen en uitkomst)."
+    return 1
+  fi
+}
+
+# Is er genoeg ruimte (K2-19)? Op MODELLEN_ROOT voor de bronnen en de uitkomst plus de marge, op
+# DATA_ROOT voor de vectoren en de cache. free_gb kijkt naar de map van Docker; die is er voor
+# het image. Te weinig: uitleg en return 1.
+beeld_ruimte() {
+  local avail
+  avail=$(df --output=avail -B1 -- "$MODELLEN_ROOT" | tail -n 1 | tr -d ' ')
+  if ! [[ $avail =~ ^[0-9]+$ ]] || [ "$avail" -lt $((BEELD_NODIG + BEELD_MARGE)) ]; then
+    echo "Let op: te weinig ruimte in $MODELLEN_ROOT voor het model van zoeken op beeld ($(((BEELD_NODIG + BEELD_MARGE) / 1000000)) MB nodig, met de bron)."
+    return 1
+  fi
+  avail=$(df --output=avail -B1 -- "$DATA_ROOT" | tail -n 1 | tr -d ' ')
+  if ! [[ $avail =~ ^[0-9]+$ ]] || [ "$avail" -lt "$BEELD_DATA" ]; then
+    echo "Let op: te weinig ruimte in $DATA_ROOT voor de vectoren en de cache van zoeken op beeld ($((BEELD_DATA / 1000000)) MB nodig; ±360 MB per 100.000 foto's)."
+    return 1
+  fi
+}
+
+# Stap 4 tot 6 van Keuze 84 in <tmp>, een map van root onder MODELLEN_ROOT (mktemp -d, 0700):
+# - de bronnen naar <tmp>/bron (0755, de bestanden 0644, van root: de omzetter leest ze), elk via
+#   een tijdelijk bestand met grootte en sha256 (ophalen: curl --retry 3 --max-filesize), dan mv;
+# - een lege uitvoermap <tmp>/uit van uid 10004 (0700), en de dienst analyse-omzetten (profiel
+#   omzetten): zonder netwerk, sleutel, analyse-run en /models (K1-05), de bron alleen-lezen;
+# - als root, per bestand van de uitkomst: geen symlink en een gewoon bestand, dan een kopie met
+#   dd (nofollow, nonblock, hooguit één byte meer dan models.lock zegt) in <tmp>/nieuw (0755,
+#   van root), en pas die kopie wordt nagekeken op grootte en sha256. Root doet nooit chmod of mv
+#   op een bestand van 10004, en volgt er geen symlink.
+# Lukt iets niet: uitleg en return 1 (beeld_model ruimt <tmp> op).
+beeld_omzetten() {
+  local tmp=$1 line sha size base url f
+  mkdir -m 0755 -- "$tmp/bron" "$tmp/nieuw" || return 1
+  for line in "${BEELD_BRON[@]}"; do
+    read -r sha size base url <<<"$line"
+    if ophalen "$url" "$size" "$sha" "$tmp/bron/.deel" && chmod 0644 -- "$tmp/bron/.deel" &&
+      mv -fT -- "$tmp/bron/.deel" "$tmp/bron/$base"; then
+      echo "Bron opgehaald: $BEELD_MAP/bron/$base"
+    else
+      echo "Let op: kon $BEELD_MAP/bron/$base niet ophalen, of de grootte of de sha256 klopt niet ($url)."
+      return 1
+    fi
+  done
+  mkdir -m 0700 -- "$tmp/uit" && chown 10004:10003 -- "$tmp/uit" || return 1
+  echo "Het model omzetten (een paar minuten, zonder netwerk)…"
+  if ! OMZET_BRON=$tmp/bron OMZET_UIT=$tmp/uit "${compose[@]}" --profile omzetten run --rm --no-deps -T analyse-omzetten </dev/null; then
+    echo "Let op: de omzetting lukte niet (de melding staat hierboven)."
+    return 1
+  fi
+  for line in "${BEELD_UIT[@]}"; do
+    read -r sha size base <<<"$line"
+    f=$tmp/uit/$base
+    if [ -L "$f" ] || [ ! -f "$f" ]; then
+      echo "Let op: $base van de omzetter is geen gewoon bestand; niet overgenomen."
+      return 1
+    fi
+    if ! (umask 022 && dd if="$f" of="$tmp/nieuw/$base" iflag=nofollow,nonblock,count_bytes count=$((size + 1)) bs=64K status=none 2>/dev/null) ||
+      ! geo_ok "$tmp/nieuw/$base" "$size" "$sha"; then
+      echo "Let op: $base van de omzetter klopt niet met models.lock (grootte of sha256); niet overgenomen."
+      return 1
+    fi
+  done
+}
+
+# De stap BEELD (Keuze 84), na de start van de app (de omzetter draait in het image van deze
+# versie) en vóór analyse_start. Zet BEELD_STATE: uit (BEELD=uit), ongeldig (een andere waarde
+# in .env, met de hand bewerkt: dan ook niets), klaar (het model stond er al), nieuw (net omgezet; dan MODELS_CHANGED=1, en start analyse_start
+# de container opnieuw) of mislukt. Stappen:
+# 1. BEELD: standaard aan; uit doet niets.
+# 2. Staat elk bestand van de uitkomst er al met de juiste grootte en sha256: niets doen.
+# 3-6. De ruimte (beeld_ruimte), dan beeld_omzetten in een eigen map onder MODELLEN_ROOT.
+#    Daarna gaat <tmp>/nieuw in één rename op de plek van BEELD_MAP (een oude map gaat eerst
+#    opzij, in <tmp>): de worker ziet nooit een half model. caps telt de uitkomst pas als die
+#    map er is (app/analyse/worker/caps.py), dus gezichten merken niets van een model dat nog
+#    niet omgezet is.
+# 7. <tmp> weg: de bron (1,55 GB), de uitvoermap en een oude map.
+# 8. De licentie: siglip2-Apache-2.0.txt is een bestand van de uitkomst (met zijn sha256 in
+#    models.lock), en modellen_ophalen zet licenties/*.txt naast de modellen.
+# Een symlink of iets anders dan een map op de plek van BEELD_MAP, of iets anders dan een gewoon
+# bestand op de plek van een bestand erin, raakt het niet aan (K1-06). Nooit fataal: bij een
+# fout "Zoeken op beeld: het model is niet geladen. …", en de rest werkt gewoon.
+beeld_model() {
+  local target=$MODELLEN_ROOT/$BEELD_MAP line sha size base f tmp alles=1
+  BEELD_STATE=""
+  case "${BEELD:-aan}" in
+    aan) ;;
+    uit)
+      BEELD_STATE=uit
+      return 0
+      ;;
+    *)
+      BEELD_STATE=ongeldig
+      echo "Let op: BEELD in $ENV_FILE moet aan of uit zijn (nu: $BEELD); er wordt niets opgehaald."
+      return 0
+      ;;
+  esac
+  BEELD_STATE=mislukt
+  if ! beeld_regels; then
+    echo "$BEELD_MISLUKT"
+    return 0
+  fi
+  if [ -L "$target" ] || { [ -e "$target" ] && [ ! -d "$target" ]; }; then
+    echo "$target is een symlink of geen map; dit script raakt het niet aan."
+    echo "$BEELD_MISLUKT"
+    return 0
+  fi
+  for line in "${BEELD_UIT[@]}"; do
+    read -r sha size base <<<"$line"
+    f=$target/$base
+    if [ -L "$f" ] || { [ -e "$f" ] && [ ! -f "$f" ]; }; then
+      echo "$f is een symlink of geen gewoon bestand; dit script raakt het niet aan."
+      echo "$BEELD_MISLUKT"
+      return 0
+    fi
+    geo_ok "$f" "$size" "$sha" || alles=0
+  done
+  if [ "$alles" = 1 ]; then
+    BEELD_STATE=klaar
+    echo "Zoeken op beeld: het model staat er al ($target)."
+    return 0
+  fi
+  rm -rf -- "$MODELLEN_ROOT"/.beeld.* || true
+  if ! beeld_ruimte; then
+    echo "$BEELD_MISLUKT"
+    return 0
+  fi
+  if ! tmp=$(mktemp -d -- "$MODELLEN_ROOT/.beeld.XXXXXX"); then
+    echo "Let op: geen tijdelijke map in $MODELLEN_ROOT."
+    echo "$BEELD_MISLUKT"
+    return 0
+  fi
+  if beeld_omzetten "$tmp" && { [ ! -e "$target" ] || mv -T -- "$target" "$tmp/oud"; }; then
+    if mv -T -- "$tmp/nieuw" "$target"; then
+      BEELD_STATE=nieuw
+      MODELS_CHANGED=1
+    elif [ -e "$tmp/oud" ]; then
+      mv -T -- "$tmp/oud" "$target" || true
+    fi
+  fi
+  rm -rf -- "$tmp" || true
+  if [ "$BEELD_STATE" = nieuw ]; then
+    echo "Zoeken op beeld: het model staat klaar ($target)."
+  else
+    echo "$BEELD_MISLUKT"
+  fi
+}
+
 # De container van de app (draaiend), of niets
 platform_container() {
   docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=platform | head -n 1
@@ -997,7 +1207,7 @@ broncode() {
 }
 
 instellingen() {
-  local want=$1 want_m=$2 want_p=${3-} want_a=${4-}
+  local want=$1 want_m=$2 want_p=${3-} want_a=${4-} want_b=${5-}
   mkdir -p "$PLATFORM_ROOT"
   if [ -f "$ENV_FILE" ] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
     # Instellingen van de eerste versie (met Traefik, PostgreSQL en SeaweedFS)
@@ -1043,7 +1253,7 @@ ENV
     set_key PLAATSEN "$want_p"
   fi
   if analyse_supported; then
-    merge_analyse_env "$want_a"
+    merge_analyse_env "$want_a" "$want_b"
   elif [ "$want_a" = aan ] || { [ -n "$want_a" ] && grep -q '^ANALYSE=' "$ENV_FILE"; }; then
     # Een versie zonder analyse (terugrollen naar 0.8.0): de wens bewaren, verder niets
     add_key ANALYSE "$want_a"
@@ -1079,14 +1289,15 @@ wait_health() {
 }
 
 main() {
-  local want want_m want_p want_a old_app new_app previous="" pin="" container app_before app_after
-  # Eerst: OFFICE, MEDIA_SANDBOX, PLAATSEN en ANALYSE uit de omgeving, vóór er een .env gelezen
-  # wordt (M13)
+  local want want_m want_p want_a want_b old_app new_app previous="" pin="" container app_before app_after
+  # Eerst: OFFICE, MEDIA_SANDBOX, PLAATSEN, ANALYSE en BEELD uit de omgeving, vóór er een .env
+  # gelezen wordt (M13)
   want=$(want_office) || exit 1
   want_m=$(want_media) || exit 1
   want_p=$(want_places) || exit 1
   want_a=$(want_analyse) || exit 1
-  GEO_STATE="" BACKUP_FILE=""
+  want_b=$(want_beeld) || exit 1
+  GEO_STATE="" BACKUP_FILE="" BEELD_STATE=""
   check_host
 
   stap "Pakketten"
@@ -1099,7 +1310,7 @@ main() {
   broncode
 
   stap "Instellingen"
-  instellingen "$want" "$want_m" "$want_p" "$want_a"
+  instellingen "$want" "$want_m" "$want_p" "$want_a" "$want_b"
   check_places || exit 1
 
   if places_supported; then
@@ -1170,6 +1381,13 @@ main() {
     media_start
   fi
 
+  # Zoeken op beeld (Keuze 84): na de app, want de omzetter draait in het image van deze versie;
+  # vóór analyse_start, die de container met --force-recreate start als het model nieuw is
+  if [ "$ANALYSE_ON" = 1 ] && beeld_supported; then
+    if [ "${BEELD:-aan}" != uit ]; then stap "Zoeken op beeld (het model)"; fi
+    beeld_model
+  fi
+
   if [ "$ANALYSE_ON" = 1 ]; then
     stap "Analyse starten"
     analyse_start
@@ -1235,6 +1453,7 @@ KLAAR
   fi
   slot_media "$script" "$pre"
   slot_analyse "$script" "$pre"
+  slot_beeld "$script" "$pre"
   slot_search "$script" "$pre"
   cat <<KLAAR
 
@@ -1293,6 +1512,30 @@ slot_analyse() {
   else
     echo "Gezichten (de container analyse): uit, want $ANALYSE_REASON."
   fi
+}
+
+# De regels over zoeken op beeld in de eindtekst: alleen als de stap BEELD liep (de analyse aan,
+# en de versie heeft het model)
+slot_beeld() {
+  local script=$1 pre=$2
+  case "${BEELD_STATE-}" in
+    klaar | nieuw)
+      echo "Zoeken op beeld: het model staat klaar; elke gebruiker zet het zelf aan."
+      echo "  Uit (geen download meer; het model blijft staan): $script | ${pre}BEELD=uit bash"
+      ;;
+    mislukt)
+      echo "$BEELD_MISLUKT"
+      echo "  Opnieuw proberen: $script | ${pre}bash"
+      ;;
+    uit)
+      echo "Zoeken op beeld: uit (BEELD=uit); er wordt niets opgehaald of omgezet."
+      echo "  Aan: $script | ${pre}BEELD=aan bash"
+      ;;
+    ongeldig)
+      echo "Zoeken op beeld: uit, want BEELD in $ENV_FILE moet aan of uit zijn (nu: $BEELD)."
+      echo "  Aan: $script | ${pre}BEELD=aan bash"
+      ;;
+  esac
 }
 
 # De regels over media in de eindtekst: aan (afgeschermd), of waarom niet, en hoe het verder kan

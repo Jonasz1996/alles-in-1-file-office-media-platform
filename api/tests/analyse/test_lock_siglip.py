@@ -18,9 +18,11 @@ ook in, en een naam mag er maar één keer in staan):
   is de stand ok, met caps.beeld leeg;
 - Models.entry van het kind vindt een bestand van SigLIP op zijn naam.
 
-De commit, de bytes en dus de sha256 hieronder zijn een voorbeeld: de echte zet de job in zijn
-voorstel. Zolang X3b de omzetter niet in install.sh zet, maakt niemand de vijf uitkomsten: met
-deze regels in models.lock zegt de stand dan models_missing (x3a.md, De samenvoeging).
+De commit, de bytes en dus de sha256 van het voorstel hieronder zijn een voorbeeld. Sinds X3b
+staan de echte tien regels in models.lock (de pins van de job beeld-model, samen met de stap
+BEELD van install.sh): test_de_pins_in_models_lock legt ze vast, en
+test_caps_met_de_echte_lock laat zien dat gezichten er niets van merken zolang de map
+siglip2-b32-256/ er niet is.
 """
 
 from __future__ import annotations
@@ -256,3 +258,119 @@ def test_het_kind_vindt_een_bestand_van_siglip(voorstel, tmp_path):
         _sha(UIT[omzetten.BEELD]), len(UIT[omzetten.BEELD]), naam, None
     )
     assert modellen.entry(YUNET).name == YUNET
+
+
+# --- de echte pins (X3b) -------------------------------------------------------------------------
+
+PIN_COMMIT = "94dffa8cb1179de3e03f091dbc3917e5d5a9ae84"
+PINS = [
+    (
+        "7d241bb3becad218f211f480487f491df4f8c0a472ecf7afdec5615815a301f1",
+        1507473288,
+        "bron/model.safetensors",
+    ),
+    ("52deee7a2d6fb2e73c45720d9c4056f0e4dc582ef84524aac229c6d5aa348dee", 298, "bron/config.json"),
+    (
+        "d14ba2ee3fd816f3de8abaddc31953565128eaf37c73ad4bed32101a98465aff",
+        394,
+        "bron/preprocessor_config.json",
+    ),
+    (
+        "cb9140fae3ac5122c972d37adf83e1248471a38147ad76f8215c8872c6fd8322",
+        34363039,
+        "bron/tokenizer.json",
+    ),
+    (
+        "14afe629fe4959b9e0d51e1852b8d9f7ad074f90a1a7125a4fcdd17f06e78fc8",
+        47164,
+        "bron/tokenizer_config.json",
+    ),
+    (
+        "e2a9f0f3adfa915f8ff3e91f1e885feabc1b0024218ead7c0807b5009d046b11",
+        102672680,
+        "beeld.int8.onnx",
+    ),
+    (
+        "c8d75acac5b3f947073ec106077fca63d1c8b0e49d8d23be941d7ced5d5fe08f",
+        284307578,
+        "tekst.int8.onnx",
+    ),
+    ("1516dde1739c181c24fcaef51d49e49ae26bea112490ff57799f945e7666b8ec", 12414446, "tokenizer.bin"),
+    ("0e99ac4a9cda73e6ba1701ac9fc4afa7e5b86fda223e2264fce7fb3814e73268", 2135, "meta.json"),
+    (
+        "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+        10174,
+        "siglip2-Apache-2.0.txt",
+    ),
+]
+
+
+def test_de_pins_in_models_lock():
+    """De tien regels van SigLIP 2, precies: na YuNet en SFace, de vijf bronnen op één commit van
+    huggingface.co (zoals beeld_model.bron_url ze maakt) en de vijf uitkomsten (url -), in de
+    volgorde van omzetten.BRONNEN en UITVOER. De licentie in de uitkomst is byte voor byte die
+    van licenties/ (dezelfde sha256)."""
+    regels = lock.load()
+    assert [r.name for r in regels[:2]] == [YUNET, SFACE]
+    assert [(r.sha256, r.size, r.name) for r in regels[2:]] == [
+        (sha, size, f"{omzetten.MAP}/{naam}") for sha, size, naam in PINS
+    ]
+    assert [r.name for r in regels[2:]] == SIGLIP_BRON + SIGLIP_UIT
+    assert [r.url for r in regels[2:7]] == [bm.bron_url(PIN_COMMIT, n) for n in omzetten.BRONNEN]
+    assert [r.url for r in regels[7:]] == [None] * 5
+    bronnen, uitkomsten = bm.siglip_regels(regels)
+    assert [r.name for r in bronnen] == SIGLIP_BRON and [r.name for r in uitkomsten] == SIGLIP_UIT
+    licentie = (lock.LICENSES / omzetten.LICENTIE).read_bytes()
+    assert (_sha(licentie), len(licentie)) == (regels[-1].sha256, regels[-1].size)
+    # de vingerafdruk van gezichten blijft die van de twee regels (X2)
+    assert lock.digest(regels[:2]) == GEZICHTEN
+
+
+@pytest.mark.anyio
+async def test_caps_met_de_echte_lock(tmp_path, monkeypatch):
+    """De echte models.lock: zonder siglip2-b32-256/ (BEELD=uit, of nog niet omgezet) telt caps
+    alleen YuNet en SFace en is de stand ok; met een map waar een uitkomst ontbreekt zegt de
+    stand models_missing met precies die namen, en kunnen gezichten door. De bronnen telt caps
+    nooit (install.sh wist ze na het omzetten)."""
+    root = tmp_path / "modellen"
+    root.mkdir()
+    for naam in (YUNET, SFACE):
+        (root / naam).write_bytes(b"nep")
+    staat = caps.ModelStates(root)
+    data = caps.gather(staat, frozenset({Op.FACES}), tmp_path / "geen")
+    assert [m.name for m in data.models] == [YUNET, SFACE]  # anders: de bytes zijn nep
+    assert data.beeld is None
+
+    async def nep_caps(settings):
+        return data
+
+    monkeypatch.setattr(client, "caps", nep_caps)
+    settings = Settings(
+        data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, analyse_enabled=True
+    )
+    # met nepbytes zijn ze "anders"; zet ze op ok zoals een echte installatie
+    data = data.model_copy(
+        update={"models": [wire.ModelCaps(name=m.name, state="ok") for m in data.models]}
+    )
+    found = await monitor.check(settings)
+    assert found.state == "ok" and found.missing == ()
+    (root / omzetten.MAP).mkdir()
+    (root / omzetten.MAP / omzetten.META).write_bytes(b"{}")
+    data = caps.gather(staat, frozenset({Op.FACES}), tmp_path / "geen")
+    assert [m.name for m in data.models] == [YUNET, SFACE, *SIGLIP_UIT]
+    assert {m.name: m.state for m in data.models if m.name in SIGLIP_UIT} == {
+        **{n: "ontbreekt" for n in SIGLIP_UIT},
+        f"{omzetten.MAP}/{omzetten.META}": "anders",  # 2 bytes, geen 2135
+    }
+    data = data.model_copy(
+        update={
+            "models": [
+                m if m.name in SIGLIP_UIT else wire.ModelCaps(name=m.name, state="ok")
+                for m in data.models
+            ]
+        }
+    )
+    found = await monitor.check(settings)
+    assert found.state == "models_missing" and found.missing == tuple(SIGLIP_UIT)
+    assert found.ready([YUNET, SFACE])
+    assert not found.ready([f"{omzetten.MAP}/{omzetten.BEELD}"])

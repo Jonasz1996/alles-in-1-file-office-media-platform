@@ -259,7 +259,7 @@ Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/p
 | Analyse (gezichten; tot 0.8.1 uit) | alleen met `ANALYSE=aan`: de container `platform-analyse-1`, zonder netwerk en zonder je bestanden; hij krijgt per opdracht alleen een preview van de app, over de socket in het Docker-volume `platform_analyse-run` |
 | Modellen van de analyse | `/opt/platform/modellen` (`MODELLEN_ROOT`, van root, alleen-lezen in de container), met hun licenties ernaast |
 | Sleutels van gezichten | `/opt/platform/sleutels/gezichten` (`SLEUTELS_ROOT`, rechten 700, van de app), bewust niet in `/tank` |
-| Instellingen van de analyse | `/opt/platform/.env`: `ANALYSE`, `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT` en `SLEUTELS_ROOT` (alleen als de analyse ooit aan stond) |
+| Instellingen van de analyse | `/opt/platform/.env`: `ANALYSE`, `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT`, `SLEUTELS_ROOT` en `BEELD` (alleen als de analyse ooit aan stond) |
 
 Bijwerken: draai het installatiescript opnieuw (met de branch: zie hierboven). Het laat eerst de
 open documenten opslaan, maakt een reservekopie van de database (vanaf 0.8.0), vervangt dan het
@@ -491,6 +491,14 @@ maakt `/opt/platform/sleutels/gezichten`, zet één keer een eigen sleutel `ANAL
 `Let op: …` en werkt het platform gewoon verder; het volgende script probeert het opnieuw. De
 stand: `dc exec -T platform python -m app.cli analyse-status` (de eerste regel is
 `Analyse: ok`, of `down` met de reden).
+
+**Zoeken op beeld.** Met de analyse aan haalt het script ook het model voor zoeken op beeld op
+(SigLIP 2 van Google, Apache-2.0; ±1,55 GB, met hun sha256 nagekeken), zet het één keer om in een
+container zonder netwerk en gooit de bron daarna weg; het model zelf is ±400 MB, in
+`/opt/platform/modellen/siglip2-b32-256`. Er moet ±2,5 GB vrij zijn in `/opt/platform` en 1 GB in
+`/tank/platform`; anders zegt het script `Let op: …` en werkt de rest gewoon. Niet willen:
+`curl … | BEELD=uit bash` (een model dat er al staat, blijft staan). Meer:
+`docs/runbooks/analyse.md`, "Zoeken op beeld".
 
 **Uit:** hetzelfde commando met `ANALYSE=uit`. Dan geen download en geen container meer; de
 modellen blijven in `/opt/platform/modellen` tot je die map zelf weggooit. Terug naar 0.8.0

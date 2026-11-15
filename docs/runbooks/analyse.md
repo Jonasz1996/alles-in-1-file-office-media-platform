@@ -167,10 +167,40 @@ modellen kloppen nog, dus het haalt niets opnieuw, en de container start weer.
 
 ## Zoeken op beeld (X3)
 
-Golf 5 (X3a) bouwt de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Op de LXC
-verandert er nog niets: `install.sh` haalt SigLIP 2 niet op en zet niets om; dat komt in golf 6
-(X3b, de functies voor `BEELD` in `install.sh`). Wat er gebouwd is en wat nog open staat:
-[docs/fase-6/x3a.md](../fase-6/x3a.md).
+Golf 5 (X3a) bouwt de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Wat er
+gebouwd is en wat nog open staat: [docs/fase-6/x3a.md](../fase-6/x3a.md).
+
+### Het model op de LXC (`BEELD`, X3b)
+
+Alleen met de analyse aan (`ANALYSE=aan`): dan zet `install.sh` één keer `BEELD=aan` in `.env`,
+en haalt het na de start van de app het model op en zet het om (Keuze 84). Zonder `ANALYSE`, met
+`ANALYSE=uit` of met `BEELD=uit` doet het niets: geen download, geen omzetting, geen map, geen
+regel.
+
+1. Eerst de ruimte (`df`): in `MODELLEN_ROOT` de bron en twee keer de uitkomst plus 100 MB
+   (±2,44 GB), in `DATA_ROOT` 1 GB voor de vectoren en de cache. Te weinig: `Let op: te weinig
+   ruimte in …`.
+2. De vijf bronbestanden (±1,55 GB, `huggingface.co` op een vaste commit) naar een eigen map
+   `MODELLEN_ROOT/.beeld.XXXXXX/bron` van root, elk met `--max-filesize` en dan de grootte en
+   sha256 van `models.lock`.
+3. De dienst `analyse-omzetten` (`docker compose --profile omzetten run --rm --no-deps -T
+   analyse-omzetten`): uid 10004, zonder netwerk, zonder sleutel, zonder `analyse-run` en zonder
+   `/models`; de bron alleen-lezen, de uitvoer in een lege map van 10004. Een paar minuten.
+4. Root kopieert de vijf bestanden van de uitkomst (nooit een symlink of iets anders dan een
+   gewoon bestand) en kijkt elke kopie na op grootte en sha256. Pas dan gaat de nieuwe map in één
+   keer op de plek van `MODELLEN_ROOT/siglip2-b32-256` (0755, de bestanden 0644, van root), en
+   start de container analyse opnieuw (`--force-recreate`).
+5. De bron en de tijdelijke map gaan weg, ook als iets mislukte.
+
+Een mislukking is nooit fataal: `Zoeken op beeld: het model is niet geladen. De volgende run
+probeert het opnieuw.`, en de rest (ook gezichten) werkt gewoon; de eindtekst zegt hoe je het
+opnieuw probeert. Staat het model er al goed, dan zegt het script `Zoeken op beeld: het model
+staat er al (…)` en haalt het niets. Een symlink of iets anders dan een map op de plek van
+`siglip2-b32-256`, of een symlink op de plek van een bestand erin, raakt het niet aan.
+
+Uit: `curl … | BEELD=uit bash`. Dan haalt het niets meer op; een model dat er al staat, blijft
+staan (gooi `MODELLEN_ROOT/siglip2-b32-256` zelf weg als je de ruimte terug wilt). Aan:
+`curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op beeld daarna zelf aan bij Instellingen.
 
 ### De job `beeld-model`
 

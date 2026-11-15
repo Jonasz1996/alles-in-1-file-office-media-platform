@@ -49,7 +49,7 @@ class FakeDriver:
         self.fake = fake
         self.socket = fake.socket
         self.key = fake.key
-        self.models = tuple(m.name for m in lock.load())
+        self.models = tuple(fake.models)  # wat caps telt (fake_worker.py)
         self._data_dir = data_dir
         self._gates: list = []
         if alles:
@@ -265,7 +265,8 @@ async def test_scripts_busy_fail_en_internal(fake, settings_fake):
 async def test_caps_volgt_de_nep(fake, settings_fake):
     caps = await client.caps(settings_fake)
     assert caps.built == ["cancel", "caps"]
-    assert [m.name for m in caps.models] == [m.name for m in lock.load()]
+    # de modellen van gezichten; die van beeld (in een map) telt caps zonder die map niet
+    assert [m.name for m in caps.models] == [m.name for m in lock.load() if "/" not in m.name]
     assert caps.missing() == [] and caps.beeld is None and caps.limits is None
     fake.models["face_recognition_sface_2021dec.onnx"] = "anders"
     fake.beeld = wire.BeeldCaps(model="siglip2", dim=768, scale=4.7, bias=-16.5)

@@ -297,7 +297,9 @@ def test_een_deel_van_de_regels_is_een_fout(nep):
     met_url[-1] = app_lock.ModelFile(regels[-1].sha256, 1, regels[-1].name, "https://x/y")
     with pytest.raises(bm.Fout, match="maakt de host zelf"):
         bm.siglip_regels(met_url)
-    assert bm.siglip_regels(app_lock.load()) == ([], [])  # nu: alleen X2
+    # sinds X3b de tien regels van SigLIP 2 (test_lock_siglip.py legt ze vast)
+    bronnen, uitkomsten = bm.siglip_regels(app_lock.load())
+    assert (len(bronnen), len(uitkomsten)) == (5, 5)
 
 
 # --- haal --------------------------------------------------------------------------------------
