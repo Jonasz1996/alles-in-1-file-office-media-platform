@@ -267,8 +267,8 @@ async def file_faces(
     if user.role == "guest" or not await state.owner_on(session, user.id):
         return []
     async with P.lock(user.id):
-        await scan.to_front(session, user.id, node_id)
-        await session.commit()
+        if await scan.to_front(session, user.id, node_id):
+            await session.commit()
     return await read.file_faces(session, user.id, node_id)
 
 

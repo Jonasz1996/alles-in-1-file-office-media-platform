@@ -119,7 +119,9 @@ def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
     faces = list(
         conn.execute(
             select(Face.id, Face.x, Face.y, Face.w, Face.h).where(
-                Face.node_id == node, Face.owner_id == owner, Face.hidden == 0
+                Face.node_id == node,
+                face_rows.no_index(Face.owner_id) == owner,
+                Face.hidden == 0,
             )
         )
     )
@@ -167,10 +169,11 @@ def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
                 face_id=best, person_id=person, owner_id=owner, verdict="ja", created_at=state.now()
             )
         )
+        # Een ja heeft geen voorstel en geen groep (people/faces/read.py telt open uit de indexen)
         conn.execute(
             update(Face)
             .where(Face.id == best)
-            .values(suggest_id=None, suggest_score=None, suggest_why=None)
+            .values(suggest_id=None, suggest_score=None, suggest_why=None, cluster=None)
         )
 
 
@@ -189,7 +192,11 @@ def _tag(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
     )
     faces = list(
         conn.execute(
-            select(Face.id).where(Face.node_id == node, Face.owner_id == owner, Face.hidden == 0)
+            select(Face.id).where(
+                Face.node_id == node,
+                face_rows.no_index(Face.owner_id) == owner,
+                Face.hidden == 0,
+            )
         ).scalars()
     )
     if len(loose) != 1 or len(faces) != 1:

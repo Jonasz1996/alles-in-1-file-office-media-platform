@@ -334,18 +334,23 @@ async def _pick(settings: Settings) -> list[Item]:
     async with _maker(settings)() as db:
         if not await state.allowed(db):
             return []
+        # Wie iets heeft dat wacht: alleen uit ix_face_scan_todo (de rijen zelf lezen kost bij
+        # 30.000 wachtende foto's 40 ms per batch); een eigenaar met alleen wachtende foto's met
+        # een code (model_missing, no_preview) levert hieronder niets op
         owners = list(
-            await db.execute(
-                select(FaceScan.owner_id, FaceOwner.served_at)
-                .outerjoin(FaceOwner, FaceOwner.owner_id == FaceScan.owner_id)
-                .where(FaceScan.state == "wait", FaceScan.code.is_(None))
-                .group_by(FaceScan.owner_id, FaceOwner.served_at)
-            )
+            await db.scalars(select(FaceScan.owner_id).where(FaceScan.state == "wait").distinct())
         )
-        owners.sort(key=lambda r: (r.served_at is not None, r.served_at or state.now()))
+        served = {
+            r.owner_id: r.served_at
+            for r in await db.execute(
+                select(FaceOwner.owner_id, FaceOwner.served_at).where(
+                    FaceOwner.owner_id.in_(owners)
+                )
+            )
+        }
+        owners.sort(key=lambda o: (served.get(o) is not None, served.get(o) or state.now()))
         picked: list[Item] = []
-        for row in owners:
-            owner = row.owner_id
+        for owner in owners:
             if not await state.owner_on(db, owner) or await state.wiping(db, owner):
                 continue
             rows = await db.execute(
@@ -375,7 +380,10 @@ async def _pick(settings: Settings) -> list[Item]:
             at = state.now()
             await db.execute(
                 update(FaceScan)
-                .where(FaceScan.node_id.in_([i.node for i in picked]), FaceScan.state == "wait")
+                .where(
+                    FaceScan.node_id.in_([i.node for i in picked]),
+                    face_rows.no_index(FaceScan.state) == "wait",
+                )
                 .values(state="busy", updated_at=at)
             )
             for owner in owners_in:
@@ -673,18 +681,28 @@ async def _again(settings: Settings) -> None:
             await db.commit()
 
 
-async def to_front(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> None:
-    """De viewer opent een foto die nog wacht: die gaat vooraan (prio FRONT + nu)."""
-    await db.execute(
-        update(FaceScan)
+async def to_front(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> bool:
+    """De viewer opent een foto die nog wacht: die gaat vooraan (prio FRONT + nu). Eerst lezen (een
+    zoekslag op de sleutel), en alleen schrijven als hij echt wacht: de viewer vraagt dit bij elke
+    foto, en een lege schrijfslag kost evenveel als een volle. True als hij vooraan ging."""
+    waiting = await db.scalar(
+        select(FaceScan.node_id)
+        .join(Node, Node.id == FaceScan.node_id)
         .where(
             FaceScan.node_id == node,
             FaceScan.owner_id == owner,
             FaceScan.state == "wait",
-            FaceScan.node_id.in_(select(Node.id).where(own_live(Node, owner))),
+            own_live(Node, owner),
         )
+    )
+    if waiting is None:
+        return False
+    await db.execute(
+        update(FaceScan)
+        .where(FaceScan.node_id == node, FaceScan.owner_id == owner, FaceScan.state == "wait")
         .values(prio=FRONT + state.now().isoformat())
     )
+    return True
 
 
 async def rescan(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> bool:

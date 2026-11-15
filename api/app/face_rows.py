@@ -18,13 +18,25 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, bindparam, delete, func, insert, or_, select, update
+from sqlalchemy import and_, bindparam, delete, exists, func, insert, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import operators
+from sqlalchemy.sql.expression import UnaryExpression
 
 from app.models import Face, FaceOwner, FacePerson, FaceScan, PhotoPerson, PhotoPref
 
 CHUNK = 2000  # rijen per transactie bij wissen (zoals Keuze 11)
+
+
+def no_index(col: Any) -> Any:
+    """De kolom met een unaire + ervoor: SQLite gebruikt voor die term geen index. Voor een vraag
+    per foto (node_id) of per id, met ook de eigenaar erin: dan loopt ix_face_node of de sleutel.
+    Met een gewone face.owner_id = :me kiest SQLite (ook 3.46.1, zonder sqlite_stat1) ix_face_new,
+    de gedeeltelijke index op owner_id met hidden = 0, en leest dan alle gezichten van de eigenaar:
+    bij 60.000 gezichten 50 ms per vraag, en in een batch per foto, met het schrijfslot. Net zo
+    face_scan.state naast node_id IN (...) (anders ix_face_scan_todo: alles wat wacht)."""
+    return UnaryExpression(col, operator=operators.custom_op("+"), type_=col.type)
 
 
 async def has_rows(db: AsyncSession, owner: uuid.UUID) -> bool:
@@ -297,13 +309,17 @@ async def write_group(
     # Core op de tabel (executemany met bindparams): een ORM-update met een lijst van rijen is
     # "bulk UPDATE by primary key" en wil de id als kolomnaam
     t = Face.__table__
+    fp = FacePerson.__table__
     where = [t.c.id == bindparam("b_id"), t.c.owner_id == owner, t.c.hidden == 0]
+    # Een gezicht met een ja krijgt geen voorstel en geen groep, ook niet als de ja kwam nadat
+    # group las: ja is nooit open (people/faces/read.py telt open uit de indexen)
+    no_ja = ~exists().where(fp.c.face_id == t.c.id, fp.c.verdict == "ja")
     sim = [r for r in rows if r["suggest_id"] is not None]
     none = [{"b_id": r["b_id"]} for r in rows if r["suggest_id"] is None]
     if sim:
         await db.execute(
             update(t)
-            .where(*where)
+            .where(*where, no_ja)
             .values(
                 suggest_id=bindparam("b_suggest"),
                 suggest_score=bindparam("b_score"),
@@ -323,7 +339,7 @@ async def write_group(
         )
     if full:
         await db.execute(
-            update(t).where(*where).values(cluster=bindparam("b_cluster")),
+            update(t).where(*where, no_ja).values(cluster=bindparam("b_cluster")),
             [{"b_id": r["b_id"], "b_cluster": r["cluster"]} for r in rows],
         )
 

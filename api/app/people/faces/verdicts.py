@@ -41,7 +41,7 @@ async def _faces(
     q = (
         select(Face.id, Face.node_id)
         .join(Node, Node.id == Face.node_id)
-        .where(Face.id.in_(ids), Face.owner_id == owner, live(Node, owner))
+        .where(Face.id.in_(ids), face_rows.no_index(Face.owner_id) == owner, live(Node, owner))
     )
     if not hidden:
         q = q.where(Face.hidden == 0)

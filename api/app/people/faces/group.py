@@ -95,12 +95,14 @@ async def _read(
             )
         )
         ja = select(FacePerson.face_id).where(FacePerson.verdict == "ja")
+        # Met only (de nieuwe gezichten na een batch): per id, dus zonder index op de eigenaar
+        mine = face_rows.no_index(Face.owner_id) if only is not None else Face.owner_id
         q = (
             select(Face.id, Face.vec)
             .join(Node, Node.id == Face.node_id)
             .where(
                 own_live(Node, owner),
-                Face.owner_id == owner,
+                mine == owner,
                 Face.hidden == 0,
                 Face.vec.is_not(None),
                 Face.id.not_in(ja),
