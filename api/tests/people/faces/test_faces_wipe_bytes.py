@@ -10,7 +10,6 @@ zegt "wissen wacht op een lezer", en na het sluiten van de lezer is alles weg.
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -22,7 +21,7 @@ from app import jobs
 from app.models import Face, Job
 from app.people.faces import wipe
 from tests.factories import create_user, maker
-from tests.people.faces.conftest import aan, draai, foto
+from tests.people.faces.conftest import aan, draai, foto, lezer
 from tests.test_photos import login
 
 pytestmark = pytest.mark.anyio
@@ -137,11 +136,8 @@ async def test_uit_met_een_open_lezer(client, settings, eva, monkeypatch):
     h = eva["h"]
     wanted = await before(settings, await faces(settings, eva["id"]))
     monkeypatch.setattr(wipe, "CHECKPOINT_BUDGET", 0.3)
-    path = app_db.sqlite_path(settings.db_url)
-    reader = sqlite3.connect(path, isolation_level=None)
+    reader = lezer(settings)
     try:
-        reader.execute("BEGIN")
-        reader.execute("SELECT count(*) FROM face").fetchone()
         r = await client.patch("/api/v1/me/photo-settings", json={"faces": "uit"}, headers=h)
         assert r.status_code == 200
         await draai(settings)

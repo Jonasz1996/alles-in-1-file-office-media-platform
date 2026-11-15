@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -165,3 +166,27 @@ async def later(settings, seconds: float = 120) -> int:
 async def node_ids(settings, owner: uuid.UUID) -> list[uuid.UUID]:
     async with maker(settings)() as session:
         return list(await session.scalars(select(Node.id).where(Node.owner_id == owner)))
+
+
+def lezer(settings) -> sqlite3.Connection:
+    """Een open lezer die de WAL echt vasthoudt: BEGIN en een SELECT op een eigen verbinding.
+
+    Staat de WAL bij zijn BEGIN al helemaal in de database (de checkpointer van app/dbgate.py
+    loopt op de achtergrond), dan leest SQLite voor hem alleen het bestand, en houdt hij geen
+    checkpoint op. Dan eerst één frame erbij (user_version op zijn eigen waarde; de app gebruikt
+    user_version niet) en opnieuw. Nagegaan met db.wal_truncate: busy, met een echte uitkomst
+    (niet het slot van een ander checkpoint). De test sluit hem met COMMIT en close()."""
+    path = db.sqlite_path(settings.db_url)
+    assert path is not None
+    reader = sqlite3.connect(path, isolation_level=None)
+    for _ in range(5):
+        version = int(reader.execute("PRAGMA user_version").fetchone()[0])
+        reader.execute(f"PRAGMA user_version = {version}")
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM face").fetchone()
+        found = db.wal_truncate(path)
+        if found.busy and found.log >= 0:
+            return reader
+        reader.execute("COMMIT")
+    reader.close()
+    raise AssertionError("geen lezer die de WAL vasthoudt")
