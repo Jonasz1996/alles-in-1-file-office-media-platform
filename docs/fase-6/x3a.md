@@ -299,6 +299,8 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    uitkomsten van X3 horen pas mee te tellen als beeld aan staat. Dat is X3b, met de functies voor
    beeld in `install.sh`. Tot dan: de pins (punt 2) niet op een tak zetten waar `ANALYSE=aan`
    gebruikt wordt, of samen met die wijziging. Op de LXC van Jonas staat `ANALYSE` tot 0.8.1 uit.
+   [Golf 5: zo nagekeken met `test_lock_siglip.py`; het blijft open voor X3b, zie De
+   samenvoeging.]
 2. **De pins**: na de eerste run zet een mens de regels uit `voorstel-models.lock` in
    `app/analyse/models.lock` en `voorstel-beeld.tsv` als `api/tests/analyse/sets/beeld.tsv` (zie
    de runbook). In dezelfde commit krijgt `test_models_lock.py::test_de_twee_modellen_van_gezichten`
@@ -312,13 +314,16 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
 5. **`padding_side`** (zie Afwijkingen): bewezen door BZ4, niet door een test hier.
 6. **BZ1 kan zeggen dat de runner niet bij huggingface.co of Commons komt.** Dan gaat BZ2–BZ6 naar
    de LXC (`beeld-kwaliteit`, `beeld-bench`, trust-on-first-use; R41). Die commando's zijn van X3b.
-7. **De job `api-analyse`** is van X2a; de tests in `tests_analyse` van X3a (ook
-   `test_beeld_omzetten.py`, de go/no-go deel 1) draaien in CI pas als die job er is.
+7. ~~**De job `api-analyse`** is van X2a; de tests in `tests_analyse` van X3a (ook
+   `test_beeld_omzetten.py`, de go/no-go deel 1) draaien in CI pas als die job er is.~~ [Golf 5:
+   de job is er en telt de 81 van X3a mee (188 en 11, `ac6950c`); in CI na de push.]
 8. **BZ2 op twee runners** (Afwijkingen): of een andere x86-CPU dezelfde bytes geeft, bewijst pas
    een tweede run op een andere runner, of de LXC (de sha256 in `models.lock` vangt het).
 9. **De dienst `analyse-omzetten`** (compose van X2a) draait als `omzetten` (10004) met groep
    `analyse`, `read_only` en een `/tmp` van 64 MB. De omzetter schrijft alleen in `/uit` en gebruikt
    geen `/tmp`; met de echte bron in de container is hij nog niet gestart (X3b, `install.sh`).
+   [Golf 5: met de kleine vorm wel, via de dienst zelf (`test_analyse_container.sh`, zie De
+   samenvoeging); met de echte bron blijft het van X3b.]
 
 ## Klaar als
 
@@ -382,3 +387,75 @@ test was rood met die last erbij en groen zonder. Dezelfde suite alleen, achter 
 Niet hier gedraaid: de job `beeld-model` zelf (huggingface.co en Commons zijn vanuit de sandbox
 dicht; zie de go/no-go), de e2e-set van CI (golf 5 raakt de web en de routes niet; slim.sh draait
 de e2e van zoeken), en de shell-tests van `infra/single` (X3a raakt `install.sh` en compose niet).
+
+## De samenvoeging (golf 5)
+
+Samengevoegd op 15 november 2026 op `claude/stappenplan-uitwerken-lu4uv3` (vanaf `6040cd2`):
+eerst deze tak (`a4ec847`, zonder conflicten), dan X2a (`ca66d3b`, twee conflicten: `ci.yml` en
+het runbook). Hoe, en wat X2a raakt, staat in "De samenvoeging (golf 5)" in [x2a.md](x2a.md);
+hier wat X3a raakt, langs "Voor de samenvoeging met X2a". Niets gepusht, geen tag.
+
+- `.gitignore`, `.dockerignore` en `api/.dockerignore`: identiek, geen conflict.
+- **De telling** (Open 7, `ac6950c`): `api-analyse` draait nu ook de tests van X3a in
+  `tests_analyse`; `ANALYSE_TESTS` 188 (107 + 81) en `ANALYSE_DESELECTED` 11, zoals hierboven
+  voorspeld. `test_beeld_ci.py::test_beeld_echt_draait_nergens_anders` eiste dat geen job behalve
+  `beeld-model` `beeld_echt` noemt, en werd rood op de `-m "not beeld_echt"` van `api-analyse`. Nu
+  eist hij voor `api-analyse` precies die ene uitsluiting en voor elke andere job niets.
+- **De opdrachtregel** (Afwijkingen, `BOOT`): `runtime.py` staat er nu, dus
+  `test_de_omzetter_start_zoals_de_dienst_analyse_omzetten` vergelijkt `BOOT` altijd met
+  `runtime.OMZET_BOOT` (het "als het bestand er is" is weg, `ac6950c`).
+  `test_beeld_omzetten.py` start de omzetter met `OMZET_BOOT` uit `app.analyse.runtime` in plaats
+  van met een eigen kopie van de regel (`44c8140`).
+- **De omzetter in de dienst `analyse-omzetten`** (Open 9, `44c8140`): `test_analyse_container.sh`
+  van X2a zet de kleine vorm (`siglip_klein.py`) twee keer om met de dienst zelf, in de container
+  (uid 10004, groep 10003, `/bron` alleen lezen, geen netwerk): twee keer dezelfde vijf regels,
+  10004:10003 als eigenaar, de licentie met de juiste sha256; 0,2 s en maxrss 39 MiB. De
+  uitkomst van de kleine vorm in de stand-in:
+
+  | sha256 (begin) | bytes | naam |
+  |---|---|---|
+  | `774d08df` | 981742 | `siglip2-b32-256/beeld.int8.onnx` |
+  | `afc6f447` | 161642 | `siglip2-b32-256/tekst.int8.onnx` |
+  | `b70f6c67` | 4423 | `siglip2-b32-256/tokenizer.bin` |
+  | `0d542e0c` | 10174 | `siglip2-b32-256/siglip2-Apache-2.0.txt` |
+  | `0cb26113` | 2099 | `siglip2-b32-256/meta.json` |
+
+  Met de echte bron in de container blijft het van X3b.
+- **De regels van `beeld-model` in `models.lock`** (Open 1): `tests/analyse/test_lock_siglip.py`
+  (`44c8140`, `b8a103c`) maakt het voorstel met `beeld_model.vergelijk` en zet het achter de regels
+  van de gezichten: de parser en `line()`, de vingerafdruk van de gezichten (gelijk), de lus van
+  `install.sh` in bash, `caps` (`ontbreekt` voor de vijf uitkomsten), de monitor
+  (`models_missing` met precies die vijf; gezichten kunnen door) en `Models.entry`. Zo staat vast
+  wat Open 1 zegt: met de pins en zonder X3b is de stand `models_missing` en haalt `install.sh` de
+  bron. De commit en de bytes in de test zijn een voorbeeld; geen sha256 is verzonnen voor
+  `models.lock`.
+- **De licenties**: drie naast de modellen; `test_install_analyse.sh` eist nu precies de drie namen
+  in plaats van het getal 2 (`ac6950c`). `test_models_lock.py::test_de_licenties` (de tekst van
+  SigLIP 2 op zijn sha256, SFace begint met dezelfde bytes) is groen tegen het bestand van X2a.
+- **Het runbook**: het bestand van X2a, met de titel "de analyse (gezichten en zoeken op beeld)";
+  het deel "Zoeken op beeld (X3)" met zijn drie subkoppen staat vóór "Wat er nog niet is". Het
+  anker `#zoeken-op-beeld-x3` werkt nog.
+- **onnxruntime en `$HOME`**: het kind van X2a krijgt `HOME=/tmp` (een tmpfs in de container), en
+  de container heeft geen netwerk; a0.md, Open 2 is doorgestreept. De omzetter laadt onnxruntime
+  niet.
+
+### Klaar als, na de samenvoeging
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| **Bouwt:** de dienst `analyse-omzetten` (de vergelijking met `OMZET_BOOT`) | `test_beeld_ci.py::test_de_omzetter_start_zoals_de_dienst_analyse_omzetten` (altijd), `test_compose_analyse.py`, `test_beeld_omzetten.py`; `test_analyse_container.sh` met de kleine vorm | groen; de dienst 26 regels goed tegen de stand-in; `analyse-image` in CI na de push |
+| Open 7: `test_beeld_omzetten.py` (go/no-go deel 1) in `api-analyse` | `ci.yml` (188 en 11); `tests_analyse` op de samengevoegde kop | 188 groen, 11 niet gekozen (root 49,9 s, nobody 48,3 s) |
+| De regels van `beeld-model` gelezen door de code van X2a | `test_lock_siglip.py` (5) | groen |
+| **Klaar als:** `e2e/slim.sh` is groen, en alle bestaande jobs blijven groen | zie Gedraaid op de samengevoegde kop in [x2a.md](x2a.md) | groen: alles wat hier kan draaien (de API-suite, `tests_analyse`, `e2e/slim.sh`, de set van `e2e`, `office`, de installatie, de container); `api-analyse`, `analyse-image` en `beeld-model` in CI na de push |
+
+### Open na de samenvoeging
+
+- Open 1–6 en 8 blijven staan; Open 7 is gedaan, Open 9 voor de kleine vorm.
+- **De pins en X3b horen samen** (Open 1 en 2): wat er gebeurt als de tien regels zonder X3b in
+  `models.lock` komen, staat in x2a.md onder "Open na de samenvoeging".
+- Alleen in CI, na de push: `beeld-model` (BZ1–BZ4, BZ6, BZ7), en de tests van X3a in
+  `api-analyse`.
+
+### Gedraaid op de samengevoegde kop
+
+Zie "Gedraaid op de samengevoegde kop" in [x2a.md](x2a.md): één run voor beide delen.

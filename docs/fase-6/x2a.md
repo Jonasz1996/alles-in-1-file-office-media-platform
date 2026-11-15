@@ -261,12 +261,14 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
 1. **CI na de push**: `api-analyse` en `analyse-image` hebben nog niet gedraaid. Het echte image
    bouwt alleen in CI; lokaal draaide `test_analyse_container.sh` tegen een stand-in (de echte
    Dockerfile zonder de web-stap en zonder apt).
-2. **De telling na het samenvoegen met X3a** (`ANALYSE_TESTS`, `ANALYSE_DESELECTED` in `ci.yml`).
+2. ~~**De telling na het samenvoegen met X3a** (`ANALYSE_TESTS`, `ANALYSE_DESELECTED` in `ci.yml`).~~
+   [Golf 5: 188 en 11 (`ac6950c`); zie De samenvoeging (golf 5).]
 3. **X2b**: de keten in de app, `group` (ops en `test_worker_group.py`, `test_group_perf.py`),
    privacy en versleuteling, de API, de web, `/beheer`, `analyse-bench` (nu een stub) en
    `analyse-kwaliteit`, `e2e/test_zoek_gezichten_echt.py` in `analyse-image`, `df` op `DATA_ROOT`
    (K2-19), het runbook `gezichten.md` en de README over wat er bewaard wordt.
-4. **X3**: `BEELD` in `.env`, de handlers van `zoeken`, `caps.beeld`, de omzetter.
+4. **X3**: `BEELD` in `.env`, de handlers van `zoeken`, `caps.beeld`, de omzetter. [Golf 5: de
+   omzetter is er (X3a) en draait via de dienst `analyse-omzetten`; de rest blijft van X3b.]
 5. **De kleurvolgorde** (BGR naar YuNet, RGB naar SFace) ligt vast in laag 2; welke de juiste is,
    beslist laag 4 (Vraag 8: standaard op de LXC).
 6. De standaarden van de vragen blijven staan (Vraag 8 nee, 10 (a), 11 uit, 12b nee, 13 twee
@@ -343,3 +345,116 @@ andere commit noemt; na `63e7b56` kwam alleen deze doc erbij.
 | infra, statisch | `shellcheck` met de regel van CI, `bash -n`, `yamllint -s .`, `docker compose config -q` zoals de job `infra` (zonder analyse, met analyse, met het profiel `omzetten`) | schoon; drie keer goed |
 | infra, de installatie | `test_install_analyse.sh`, `test_install_env.sh`, `test_install_media.sh`, `test_install_search.sh`; de scripts in `infra/` zijn sinds `48ec2fc` gelijk | 120, alle, 127 en 209 controles geslaagd |
 | de container | `test_analyse_container.sh` tegen een stand-in van `63e7b56` (de echte Dockerfile zonder de web-stap en zonder apt), met de echte modellen en `ANALYSE_TEST_COMPOSE` (alleen `nofile` van `platform` lager: de sandbox staat 65536 niet toe) | 25 regels goed in 67 s (onder meer uid 10003, alleen `lo`, de zelftest, `faces` op zes previews, als root op de host pid 1 en `werk` niet-dumpbaar, SIGKILL van `werk`, na 8 opdrachten een nieuw kind, `docker logs` zonder sleutel, merkteken of `geheimwoord7`); 0 modellen gehaald; de stand-in is daarna weg |
+
+## De samenvoeging (golf 5)
+
+Samengevoegd op 15 november 2026 op `claude/stappenplan-uitwerken-lu4uv3` (vanaf `6040cd2`, na
+`a284b47`): eerst `wip/golf5-x3a` (`a4ec847`, zonder conflicten), dan `wip/golf5-x2a` (`ca66d3b`),
+beide met `--no-ff`. Twee conflicten, allebei met beide kanten:
+
+- `ci.yml`: de jobs `analyse-image` (X2a) en `beeld-model` (X3a) kwamen allebei aan het eind; nu
+  staan ze na elkaar, elk met zijn eigen samenvatting;
+- `docs/runbooks/analyse.md` (add/add): het runbook van X2a, met de titel "de analyse (gezichten
+  en zoeken op beeld)" en het deel "Zoeken op beeld (X3)" van X3a vóór "Wat er nog niet is"; het
+  anker `#zoeken-op-beeld-x3` bleef.
+
+Niets gepusht, geen tag. De versie blijft 0.8.0, en zonder `ANALYSE` doet `install.sh` wat 0.8.0
+deed. Wat X3a raakt, staat in "De samenvoeging (golf 5)" in [x3a.md](x3a.md); hier wat X2a raakt,
+langs "Wat X3a nodig heeft":
+
+- **De telling van `api-analyse`** (Open 2, `ac6950c`): `ANALYSE_TESTS` 188 (107 van X2a, 81 van
+  X3a: `test_beeld_omzetten.py` 71 en `test_beeld_echt_hulp.py` 10) en `ANALYSE_DESELECTED` 11 (de
+  tests met `beeld_echt`), nagekeken met `pytest --collect-only -q tests_analyse -m "not
+  beeld_echt"` op de samengevoegde boom. De regel `-m "not beeld_echt"` bleef; `test_beeld_ci.py`
+  (van X3a) eist nu dat `api-analyse` precies die ene uitsluiting heeft en dat geen andere job
+  `beeld_echt` noemt (hij eiste eerst dat geen enkele job hem noemde, en werd zo rood).
+- **De dienst `analyse-omzetten` draait de omzetter van X3a** (`44c8140`). `test_analyse_container.sh`
+  zet nu met die dienst (profiel `omzetten`, uid 10004 en groep 10003, `/bron` alleen lezen, geen
+  netwerk) de kleine vorm van X3a (`tests_analyse/siglip_klein.py`) twee keer om. Hij eist twee keer
+  dezelfde vijf regels `sha256 bytes siglip2-b32-256/<naam> -`, in de volgorde van
+  `omzetten.UITVOER`, de licentie met de sha256 van `licenties/siglip2-Apache-2.0.txt`, en
+  10004:10003 als eigenaar van de uitkomst. Tegen de stand-in: 26 regels goed (was 25); de
+  omzetting 0,2 s, maxrss 39 MiB. Daarnaast: `x-omzet-boot` in compose is `runtime.OMZET_BOOT`
+  (`test_compose_analyse.py`), en die is de `BOOT` van de job `beeld-model`
+  (`test_beeld_ci.py`, nu altijd, `ac6950c`); `test_beeld_omzetten.py` start de omzetter met
+  `OMZET_BOOT` zelf in plaats van met een kopie.
+- **Regels met url `-` en namen met een map** (`44c8140`, `b8a103c`). `tests/analyse/test_lock_siglip.py`
+  laat `tools/beeld/beeld_model.py vergelijk` het voorstel maken zoals de job `beeld-model` dat
+  doet (vijf bronnen op een commit van huggingface.co, vijf uitkomsten met `-`; de commit en de
+  bytes zijn een voorbeeld), en zet dat achter de twee regels van de gezichten uit de echte
+  `models.lock`. Dan: `lock.parse` leest de twaalf regels en `line()` geeft ze terug zoals ze
+  waren; de vingerafdruk van de gezichten (`lock.digest` over YuNet en SFace) blijft
+  `c34829c2…`, ook als de regels van SigLIP ervóór staan; de lus van `modellen_ophalen` in bash,
+  met `model_name_ok` uit `install.sh` zelf, leest alle twaalf; `caps` zegt `ok` voor de bronnen
+  die er zijn en `ontbreekt` voor de vijf uitkomsten, en past over de draad (`wire.CapsData`);
+  de monitor zegt `models_missing` met precies die vijf, terwijl `ready([YuNet, SFace])` waar is
+  en `wait` voor gezichten niets uitstelt; `Models.entry` van het kind vindt een bestand van
+  SigLIP op zijn naam. De test neemt alleen de regels van de gezichten uit de echte lock, zodat
+  hij ook na de pins goed blijft (`b8a103c`; met een gepinde kopie was de eerste versie rood:
+  "staat er twee keer in").
+- **Drie licenties** (`ac6950c`). `modellen_ophalen` zet elk bestand uit `licenties/` naast de
+  modellen, en sinds X3a zijn dat er drie. `test_install_analyse.sh` eiste het getal 2; nu precies
+  de drie namen (`sface-Apache-2.0.txt`, `siglip2-Apache-2.0.txt`, `yunet-MIT.txt`), zoals het
+  ontwerp het zegt (K1-13: `install.sh` schrijft ze naast de modellen). `install.sh` zelf is niet
+  veranderd; het runbook noemt de derde. De stap in `api-analyse` die met opencv_zoo vergelijkt,
+  noemt alleen YuNet en SFace en blijft zo.
+- **De apparaat-id van onnxruntime** (a0.md, Open 2; x3a.md, "Voor de samenvoeging"):
+  onnxruntime 1.31.1 schrijft hem al bij `import onnxruntime`, vóór `disable_telemetry_events()`.
+  Het kind krijgt `HOME=/tmp`, en `/tmp` is in de container een tmpfs; de container heeft geen
+  netwerk. Open 2 in a0.md is doorgestreept, en Open 6 (de licenties met opencv_zoo) ook.
+
+`caps.beeld`, de handlers van `zoeken` en `BEELD` in `.env` blijven van X3b (Open 4).
+
+### Klaar als, na de samenvoeging
+
+| Regel | Bewijs | Uitkomst |
+|---|---|---|
+| Open 2: de telling van `api-analyse` met de tests van X3a | `ci.yml` (188 en 11); `tests_analyse` op de samengevoegde kop, als root en als nobody | 188 groen, 11 niet gekozen (root 49,9 s, nobody 48,3 s) |
+| De dienst `analyse-omzetten` start `runtime.OMZET_BOOT` en die draait `omzetten.siglip` (Wat X3a nodig heeft) | `test_analyse_container.sh` ("de omzetter met de kleine vorm"), `test_compose_analyse.py`, `test_beeld_ci.py::test_de_omzetter_start_zoals_de_dienst_analyse_omzetten` | 26 regels goed tegen de stand-in; `analyse-image` in CI na de push |
+| `models.lock` mag regels met url `-` en namen met een map hebben; `caps` zegt `ontbreekt` tot het bestand er is | `test_lock_siglip.py` (5) | groen |
+| De licenties naast de modellen, ook die van SigLIP 2 | `test_install_analyse.sh` ("de drie licenties ernaast") | groen (120 controles) |
+| `test_analyse_container.sh`, `install.sh` en `/beheer` (het deel van X2a) blijven goed | zie Gedraaid op de samengevoegde kop | groen: alles wat hier kan draaien (de API-suite, `tests_analyse`, `e2e/slim.sh`, de set van `e2e`, `office`, de installatie, de container); `api-analyse`, `analyse-image` en `beeld-model` in CI na de push |
+
+### Open na de samenvoeging
+
+- Open 1 en 3–8 hierboven blijven staan; Open 2 is gedaan, Open 4 deels (de omzetter).
+- **De pins van SigLIP in `models.lock` horen bij X3b** (x3a.md, Open 1 en 2). Komen de tien
+  regels erin zonder de functies voor beeld in `install.sh`, dan: haalt `install.sh` met
+  `ANALYSE=aan` ook de 1,51 GB van de bron, en houdt die; zegt `caps` `ontbreekt` voor de vijf
+  uitkomsten (niemand maakt ze), dus de stand `models_missing` (gezichten kunnen door, `/beheer`
+  zegt het wel); wordt `analyse-image` rood (`test_analyse_container.sh` haalt elke regel met een
+  url, en eist `Analyse: ok` met precies twee modellen die kloppen, en in `caps` precies twee
+  keer `ok`); en zegt een bron die niet te halen is `Let op: … kon niet geladen worden; gezichten
+  wachten tot de volgende installatie.`, terwijl gezichten dan niet wachten. `test_lock_siglip.py`
+  toont de stand die je dan krijgt.
+- Alleen in CI, na de push: `api-analyse` (188 en 11, de licenties met opencv_zoo), `analyse-image`
+  (het echte image, met de omzetter via de dienst) en `beeld-model`.
+
+### Gedraaid op de samengevoegde kop
+
+Lokaal in de sandbox, als root en als nobody (zoals CI). Elke zware run alleen, achter het
+gedeelde slot, onder `taskset -c 0-2`. De code op `dd6cbc6`, tenzij de rij een andere commit
+noemt; daarna kwam alleen deze documentatie erbij.
+
+| Wat | Hoe | Uitkomst |
+|---|---|---|
+| ruff | `ruff check` en `ruff format --check` in `api/` | schoon, 717 bestanden |
+| de API-suite | `pytest -q -rs` met de standaardselectie, op `44c8140` | 6423 groen, 1 rood, 2 overgeslagen, 240 niet gekozen, in 2675 s. Rood was `test_beeld_ci.py::test_beeld_echt_draait_nergens_anders`: de uitleg die `ac6950c` boven `ANALYSE_TESTS` zette, noemde de marker `beeld_echt` twee keer, en de test eist in `api-analyse` precies één keer (de `-m`). Hersteld in `dd6cbc6` (de uitleg zonder dat woord); de zes bestanden die `ci.yml` lezen daarna 35 groen |
+| de API-suite opnieuw | idem, op `dd6cbc6` | 6424 groen, 2 overgeslagen (Pebble, `provider-shapes.json`, allebei al zo vóór golf 5), 240 niet gekozen, in 2737 s |
+| `tests_analyse` als root | `.venv-analyse`, `-m "not beeld_echt"`, de echte YuNet en SFace | 188 groen, 11 niet gekozen, in 49,9 s |
+| `tests_analyse` als nobody | `setpriv` naar 65534, een venv en de modellen in `/tmp/ci-nobody` | 188 groen, 11 niet gekozen, in 48,3 s |
+| API als gewone gebruiker | `/tmp/ci-nobody/run.sh` met `tests/analyse`, `tests/beeld`, `tests/test_compose_analyse.py` en `tests/test_cli_db.py` | 442 groen in 139 s |
+| `test_lock_siglip.py` met de pins | een kopie van `models.lock` met tien gepinde regels erachter (als `LOCK_PATH` en standaard van `load()`) | op `b8a103c` 5 groen; de versie van `44c8140` 3 rood ("staat er twee keer in") |
+| `e2e/slim.sh` | `SLIM_CPUS=0-2`, alleen | groen in 1024 s: zoek en triggers in `python:3.12-slim` (SQLite 3.46.1) 1306 groen, 5360 niet gekozen, in 812 s; e2e `zoek` 101 groen, 272 niet gekozen, in 201 s |
+| e2e, de set van CI | de regel `-m` van de job `e2e` | 238 groen, 135 niet gekozen, in 883 s. Golf 5 raakt `web/` en `e2e/` niet (`git diff 6040cd2` leeg) |
+| e2e `office` | `-m office` | 30 groen, 343 niet gekozen, in 134 s; ook `test_samen_bewerken_geeft_een_versie_met_beide_teksten` (Open 7) |
+| web | `npm run build` | goed |
+| infra, statisch | `shellcheck` met de regel van CI, `bash -n`, `yamllint -s .`, `docker compose config -q` zoals de job `infra` (zonder office, met office en de grenzen, met analyse, met het profiel `omzetten`), op `44c8140`; `yamllint` op `ci.yml` ook op `dd6cbc6` | schoon |
+| infra, de installatie | `test_install_analyse.sh`, `test_install_env.sh`, `test_install_media.sh`, `test_install_search.sh` | groen: 120, 137, 127 en 209 controles geslaagd |
+| de container | `test_analyse_container.sh` tegen een stand-in van de samengevoegde boom (de echte Dockerfile zonder de web-stap en zonder apt), met de echte modellen en `ANALYSE_TEST_COMPOSE` (alleen `nofile` van `platform` lager, zoals bij X2a) | 26 regels goed in 62 s, 0 modellen gehaald; nieuw is de omzetter met de kleine vorm (0,2 s, maxrss 39 MiB). De stand-in is daarna weg |
+| de links | het script van de workflow over alle `.md` | goed |
+
+Niet gedraaid: `test_install_update.sh` (Open 8: hij weigert zolang `python:3.12-slim` er is, en
+dat image blijft) en `test_install_search.sh --stappen` (de update en terug, alleen in de job
+`infra`: lokaal te weinig schijfruimte, [integratie.md](integratie.md)). Zonder `ANALYSE` doet
+`install.sh` wat 0.8.0 deed; `test_install_analyse.sh` toetst terug naar 0.8.0 en weer vooruit.
