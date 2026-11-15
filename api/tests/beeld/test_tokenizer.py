@@ -492,6 +492,16 @@ def test_json_te_groot(tmp_path, monkeypatch):
         Tokenizer.from_json(pad)
 
 
+def test_het_vangnet_als_een_grens_mist(monkeypatch):
+    """Het vangnet in from_json (de review van golf 5, veilig F4): mist ooit de grens op een plek
+    die nest (hier MAX_NESTING weggezet), dan is diep genest nog steeds TokenizerFout en geen
+    RecursionError. 1200 diep in test_json_die_niet_kan vangt MAX_NESTING al, dus zonder deze
+    test bleef een from_json zonder vangnet groen (de nacontrole van golf 5)."""
+    monkeypatch.setattr(tok, "MAX_NESTING", 10**9)
+    with pytest.raises(TokenizerFout, match=r"^tokenizer\.json: te diep genest$"):
+        Tokenizer.from_json(_met(normalizer=_genest(1200)))
+
+
 def _teken(inhoud: bytes) -> bytes:
     """Een tokenizer.bin met een geldige sha256: de fout zit in de inhoud, niet in de som."""
     return inhoud + hashlib.sha256(inhoud).digest()
