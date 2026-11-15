@@ -2,8 +2,9 @@
 
 Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 
-- de job draait alleen als git diff een wijziging ziet in de omzetter, tokenizer.py, onnxw.py of
-  models.lock, of als de PR een regel "beeld-model: ja" heeft; geen workflow_dispatch, geen cache;
+- de job draait alleen als git diff een wijziging ziet in de omzetter, tokenizer.py, onnxw.py,
+  models.lock of wat de job zelf meet (tools/beeld, de tests beeld_echt en hun lijsten), of als de
+  PR een regel "beeld-model: ja" heeft; geen workflow_dispatch, geen cache;
 - de tekst van de PR komt via env binnen, nooit als expressie in een script;
 - de omzetter start zoals de dienst analyse-omzetten (compose van X2a);
 - BZ1, BZ2, BZ3, BZ4, BZ6 en BZ7 hebben elk een stap; de tests met marker beeld_echt draaien
@@ -14,6 +15,7 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import yaml
 
@@ -26,11 +28,21 @@ BOOT = (
     "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
     "runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
 )
+API = Path(__file__).resolve().parents[2]
 PADEN = [
     "app/analyse/worker/omzetten",
     "app/analyse/tokenizer.py",
     "app/analyse/onnxw.py",
     "app/analyse/models.lock",
+    # wat de job zelf meet: een andere lijst of meting draait de job ook (CI-run op 26c49ca)
+    "../tools/beeld",
+    "tests_analyse/beeld_echt.py",
+    "tests_analyse/test_beeld_tokenizer_echt.py",
+    "tests_analyse/test_beeld_kwaliteit.py",
+    "tests_analyse/test_beeld_echt_perf.py",
+    "tests/analyse/sets/beeld_tokens.tsv",
+    "tests/analyse/sets/beeld_vragen.tsv",
+    "tests/analyse/sets/beeld.tsv",
 ]
 
 
@@ -59,8 +71,12 @@ def test_de_poort_kijkt_naar_git_diff_en_de_tekst_van_de_pr():
     assert poort["env"]["PR_TEKST"] == "${{ github.event.pull_request.body }}"
     script = poort["run"]
     assert "${{" not in script  # alles via env: geen expressie in het script
-    m = re.search(r"^paden=\((.*)\)$", script, re.M)
-    assert m and m.group(1).split() == PADEN
+    m = re.findall(r"^paden\+?=\((.*)\)$", script, re.M)
+    assert re.search(r"^paden=\(", script, re.M) and [p for g in m for p in g.split()] == PADEN
+    # elk pad bestaat (een tikfout zou de job stil overslaan), behalve beeld.tsv: die komt pas
+    # met de vaste set van X3b
+    for pad in PADEN:
+        assert pad.endswith("/beeld.tsv") or (API / pad).exists(), pad
     assert 'git diff --name-only "$reeks" -- "${paden[@]}"' in script
     assert "beeld-model:[[:space:]]*ja" in script
     assert 'echo "draaien=$draaien" >> "$GITHUB_OUTPUT"' in script

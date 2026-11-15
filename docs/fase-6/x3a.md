@@ -584,7 +584,7 @@ en of BZ1 bij de bron kan. Wat er nu van elk deel bewezen is:
 | Deel | Waar | Stand na de nacontrole |
 |---|---|---|
 | 1. De kleine vorm rekent als een eigen numpy-versie | `test_beeld_omzetten.py` (86) in `api-analyse`; opnieuw gemeten op `e609341` met een eigen script dat de rekensom van die tests gebruikt, drie omzettingen met `--fp32` zoals `_start_meet` | **gehaald hier**: fp32 grootste verschil 2,47·10⁻⁷ (beeld) en 1,1·10⁻⁷ (tekst), grens 1·10⁻⁵; int8 kleinste cosinus 0,99969 en 0,99985, grens 0,99; de drie omzettingen byte voor byte gelijk (zeven bestanden); 0,20, 0,14 en 0,17 s, maxrss 72,8 MiB; `beeld.int8.onnx` 981.742 en `tekst.int8.onnx` 161.642 bytes (fp32 1.412.840 en 517.284). Dezelfde getallen als bij X3a. In CI (`api-analyse`) na de push |
-| 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | de stap `vergelijk` in `beeld-model` | **met het echte model nergens gedaan**: huggingface.co is vanuit de sandbox dicht. Wel: de review deed BZ2 op ware grootte met willekeurige gewichten (hierboven, `uit1`, `uit2` en `uitfp32` gelijk, 293 MiB). In CI na de push |
+| 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | de stap `vergelijk` in `beeld-model` | [CI op `26c49ca`: **gehaald**, zie onderaan] **met het echte model nergens gedaan**: huggingface.co is vanuit de sandbox dicht. Wel: de review deed BZ2 op ware grootte met willekeurige gewichten (hierboven, `uit1`, `uit2` en `uitfp32` gelijk, 293 MiB). In CI na de push |
 | 3. De kwaliteitspoort is groen (BZ4) | `test_beeld_kwaliteit.py` in `beeld-model` | **nergens gedaan**. De eerste run van `beeld-model` rekent BZ4 op de voorgestelde set en is rood (geen pins, geen `beeld.tsv`); die getallen zijn een eerste beeld, geen uitslag. Streng wordt BZ4 pas in de run na de commit met de pins en `beeld.tsv`, en het runbook en `beeld_model.py uitslag` zeggen de pins pas samen met X3b te zetten (uitrol F3). Een strenge, groene BZ4 komt dus op zijn vroegst met X3b |
 
 De beslissing is niet hier genomen en niet als genomen gemarkeerd. Of de go/no-go valt op deel 1
@@ -612,3 +612,36 @@ is aan een mens; zie Open na de nacontrole.
   streng te laten draaien. Niet beslist; dat is aan Jonas.
 - Alleen in CI, na de push: `beeld-model` (BZ1–BZ4, BZ6, BZ7) met het echte model, en de tests
   van X3a in `api-analyse` (211 en 11).
+
+## CI op 26c49ca
+
+De eerste run van `beeld-model` met het echte model (run 43755501967; het blok `=== kort ===`):
+
+| Stap | Uitkomst |
+|---|---|
+| BZ1 | huggingface.co, commons.wikimedia.org en upload.wikimedia.org bereikbaar (HTTP 200); images-assets.nasa.gov 403 (de set komt alleen van Commons, Vraag 12a) |
+| BZ2 | de bron `google/siglip2-base-patch32-256` op commit `94dffa8cb1179de3e03f091dbc3917e5d5a9ae84`. Twee omzettingen in 8,0 en 7,6 s, maxrss 354 MiB (grens 1536), dezelfde sha256 voor alle vijf bestanden; met `--fp32` 18,9 s en 1607 MiB (geen grens), ook gelijk. Het voorstel voor `models.lock` (tien regels) staat in het log; de pins gaan pas mee met X3b (uitrol F3) — **goed** |
+| BZ3 | de eigen BPE: 2.000 zinnen (25.383 tokens), 0 verschillen, 0 na afkappen; `tokenizer.bin` gelijk aan `from_json(...).to_bin()`. De lijst: 27 rijen, 0 verschillen, maar 8 voorwaarden niet gehaald: U+E000 en U+E001 staan in stukken van de woordenlijst van SigLIP 2 (icoonlettertypen gebruiken ze). Een fout in de lijst, niet in de tokenizer, en de test zei dat zo — **rood** |
+| BZ7 | `tokenizer.bin` (12,4 MB) laden in 0,135 s (poort ≤ 0,5 s), 0,0 MB erbij (≤ 100 MB) — **goed** |
+| BZ6 | beeld int8 op één core 39,8 ms per foto, 1.508 per minuut (poort ≥ 500); een vraag (tokenizer en tekst int8) p50 35,3 ms, p95 35,5 ms (≤ 250 ms), met laden 533 ms; maxrss 843 MiB — **goed** |
+| BZ4 | niet gerekend: het voorstel van de set stopte op HTTP 429 van commons.wikimedia.org, na ±10 s vragen en drie snelle pogingen (2, 4 en 8 s) — **rood** |
+| Uitslag | rood zoals bedoeld: `models.lock` heeft de regels van SigLIP nog niet |
+
+Hersteld na de run:
+
+- **De lijst van BZ3** (`beeld_tokens.tsv`): de rijen met U+E000 en U+E001 gebruiken nu U+F0000 en
+  U+10FFFD, die in deze run de voorwaarde haalden. De twee rijen met drie bytes gebruiken de
+  niet-tekens U+FDD0 en U+FDD1 (nooit toegewezen); alleen die zijn nieuw tegen het echte bestand.
+  Staan ze toch in een stuk, dan zegt de test het weer, per rij.
+- **Commons** (`tools/beeld/beeld_model.py`): één vraag per seconde aan de API en aan upload,
+  Retry-After volgen bij 429 en 503 (seconden of een HTTP-datum, hooguit 120 s per keer), zes
+  pogingen met 2 tot 32 s ertussen. Tests: `test_na_een_429_wacht_hij_zo_lang_als_retry_after_zegt`
+  en `test_tussen_twee_vragen_aan_commons_zit_een_pauze`.
+- **Wanneer de job draait**: ook als `tools/beeld`, de tests met marker `beeld_echt` of hun lijsten
+  veranderen. Zonder dat had deze reparatie de job niet opnieuw laten draaien; `test_beeld_ci.py`
+  eist nu ook dat elk pad bestaat (behalve `beeld.tsv`, die met X3b komt).
+
+**De go/no-go na CI.** Deel 1 gehaald (hierboven), deel 2 (BZ2) nu ook met het echte model, en
+BZ1 bij de bron kan. Daarmee is de voorwaarde van §5 (deel 1 en BZ1) gehaald; deel 3 (BZ4) nog
+niet. Standaard, tot Jonas iets anders zegt: X3b gaat door, met BZ4 streng als poort van X3b
+(de eerste weg onder Open na de nacontrole). Een rode BZ4 met de pins houdt X3b tegen.

@@ -1392,8 +1392,9 @@ jobs:
           sed 's/^/  /' "$RUNNER_TEMP/analyse-image/analyse.txt" 2> /dev/null || echo "  liep niet"
 
   # Fase 6, X3a (Keuze 73, 74, 83; BZ1–BZ4, BZ6 ruw en BZ7): het echte beeldmodel, SigLIP 2
-  # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert (git diff
-  # over de push of de PR), of als de PR een regel "beeld-model: ja" heeft (K2-03). Geen
+  # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert, of wat de job
+  # zelf meet (tools/beeld, de tests beeld_echt en hun lijsten) (git diff over de push of de PR),
+  # of als de PR een regel "beeld-model: ja" heeft (K2-03). Geen
   # workflow_dispatch en geen cache: de bron komt elke keer van huggingface.co, met de sha256 uit
   # models.lock. tools/beeld/beeld_model.py (alleen de standaardbibliotheek) haalt en vergelijkt;
   # zolang models.lock geen regels van SigLIP heeft of beeld.tsv ontbreekt, schrijft hij een
@@ -1432,6 +1433,9 @@ jobs:
           mkdir -p "$WERK"
           echo "WERK=$WERK" >> "$GITHUB_ENV"
           paden=(app/analyse/worker/omzetten app/analyse/tokenizer.py app/analyse/onnxw.py app/analyse/models.lock)
+          paden+=(../tools/beeld tests_analyse/beeld_echt.py tests_analyse/test_beeld_tokenizer_echt.py)
+          paden+=(tests_analyse/test_beeld_kwaliteit.py tests_analyse/test_beeld_echt_perf.py)
+          paden+=(tests/analyse/sets/beeld_tokens.tsv tests/analyse/sets/beeld_vragen.tsv tests/analyse/sets/beeld.tsv)
           if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
             van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
           elif [ "$SOORT" = pull_request ]; then
@@ -1446,7 +1450,7 @@ jobs:
           elif gewijzigd=$(git diff --name-only "$reeks" -- "${paden[@]}") && [ -n "$gewijzigd" ]; then
             draaien=ja; reden="gewijzigd: $(echo "$gewijzigd" | head -n 5 | tr '\n' ' ')"
           else
-            draaien=nee; reden="geen wijziging in de omzetter, tokenizer.py, onnxw.py of models.lock"
+            draaien=nee; reden="geen wijziging in de omzetter, tokenizer.py, onnxw.py, models.lock of wat de job meet"
           fi
           echo "draaien=$draaien" >> "$GITHUB_OUTPUT"
           echo "beeld-model: draaien $draaien ($reden)" | tee "$WERK/kort.txt"
