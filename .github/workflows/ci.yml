@@ -128,9 +128,10 @@ jobs:
       # bron die liegt), 1 (met en zonder --fp32), 1 (laag 3 alleen de gezichten), 2 (de punten
       # decoderen en uitlijnen), 2 (de schalen van int8) en 1 (BUILT en de handlers gelijk);
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
-      # invoer van SFace in NCHW); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun
+      # invoer van SFace in NCHW); van X2b (golf 6): 15 (test_worker_group.py 14 en
+      # test_group_perf.py 1); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun
       # marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "211"
+      ANALYSE_TESTS: "226"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4
@@ -374,6 +375,12 @@ jobs:
           set -o pipefail
           ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
             tests/photos/test_dupes_perf.py | tee "$RUNNER_TEMP/zoek-perf/duplicaten_log.txt"
+      - name: §4.4 gezichten bij 60.000 gezichten (X2b; voorstellen, groepen en een foto ≤ 100 ms, de stand ≤ 50 ms; de poorten zijn hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/people/faces/test_faces_perf.py | tee "$RUNNER_TEMP/zoek-perf/gezichten_log.txt"
       - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
         if: ${{ !cancelled() }}
         run: |
@@ -417,6 +424,7 @@ jobs:
           if [ -f "$d/fotokaart.txt" ]; then cat "$d/fotokaart.txt"; else echo "§4.4 kaart: liep niet of brak af"; fi
           if [ -f "$d/fotokaart_filters.txt" ]; then cat "$d/fotokaart_filters.txt"; else echo "§4.4 kaart met een filter: liep niet of brak af"; fi
           if [ -f "$d/duplicaten.txt" ]; then cat "$d/duplicaten.txt"; else echo "§4.4 duplicaten: liep niet of brak af"; fi
+          if [ -f "$d/gezichten.txt" ]; then cat "$d/gezichten.txt"; else echo "§4.4 gezichten: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
           echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
 
