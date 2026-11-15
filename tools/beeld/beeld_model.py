@@ -743,6 +743,11 @@ def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
     lees_set(tekst, combis)  # het voorstel moet zelf door de controle komen
     werk.voorstel_set.write_text(tekst, encoding="utf-8")
     werk.meld(f"BZ4 set: beeld.tsv ontbreekt; voorstel met {len(fotos)} foto's in het verslag")
+    # Ook in het log (het blok aan het eind): het verslag van upload-artifact is niet overal te
+    # halen, en een mens zet de set er pas na het lezen in (zoals de regels van models.lock)
+    werk.meld("BZ4 voorstel voor beeld.tsv:")
+    for r in tekst.splitlines():
+        werk.meld(f"  {r}")
     return VOORSTEL
 
 

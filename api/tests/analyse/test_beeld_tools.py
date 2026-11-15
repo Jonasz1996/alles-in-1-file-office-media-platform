@@ -659,7 +659,12 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path)
     assert "strand-5" in sleutels
     assert sum(1 for f in fotos if "zonsondergang" in f.categorieen) == 7  # 5 + 1 + boot
     assert len({f.url for f in fotos}) == 120
-    assert _kort(werk) == ["BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag"]
+    # het voorstel staat ook in het log, regel voor regel, zodat een mens het kan overnemen
+    assert _kort(werk) == [
+        "BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag",
+        "BZ4 voorstel voor beeld.tsv:",
+        *(f"  {r}" for r in werk.voorstel_set.read_text().splitlines()),
+    ]
     _ua_algemeen(nep)
 
 
