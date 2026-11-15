@@ -123,6 +123,7 @@ async def foto(
             data=f"{owner}-{name}-{next(_kleur)}".encode(),
             mime="image/jpeg",
             taken_at=taken or BASE,
+            blobs=BlobStore(settings.blob_dir),
         )
         sha, node_id = node.blob_id, node.id
         await session.commit()
