@@ -40,7 +40,8 @@
 #   opdracht werkt met een nieuw kind; na 8 opdrachten is werk weg, en de negende start een
 #   nieuw (ANALYSE_CHILD_BATCHES);
 # - analyse stoppen → de app zegt down; weer starten → ok;
-# - de omzetter (profiel omzetten) start niet zonder OMZET_BRON en OMZET_UIT;
+# - de omzetter (profiel omzetten) start niet zonder OMZET_BRON en OMZET_UIT; met de kleine
+#   vorm van X3a (siglip_klein.py) zet hij twee keer om, met dezelfde vijf regels (golf 5);
 # - docker logs van alle containers: geen sleutel, geen merkteken, geen "geheimwoord7" (K1-16).
 #
 # De uitvoer noemt de sleutel nooit (mask). Het project, de volumes en de map gaan weg aan het
@@ -741,6 +742,35 @@ if compose --profile omzetten run --rm --no-deps analyse-omzetten < /dev/null > 
 else
   goed "de omzetter start niet zonder OMZET_BRON en OMZET_UIT: $(mask < "$WORK/omzet.txt" | tail -n 1)"
 fi
+
+# --- de omzetter met de kleine vorm van X3a (golf 5) ------------------------------------------
+# siglip_klein.py (alleen de standaardbibliotheek) schrijft vijf bronbestanden met de namen van
+# het echte model; de dienst zet ze twee keer om (uid 10004, /bron alleen lezen, geen netwerk):
+# vijf regels `sha256 bytes siglip2-b32-256/naam -`, twee keer dezelfde, de licentie byte voor byte
+mkdir -p "$WORK/omzet"
+python3 -I -c 'import sys, pathlib; sys.path.insert(0, sys.argv[1]); from tests_analyse import siglip_klein; siglip_klein.schrijf_bron(pathlib.Path(sys.argv[2]))' \
+  "$ROOT/api" "$WORK/omzet/bron"
+chmod 755 "$WORK/omzet/bron" && chmod 644 "$WORK/omzet/bron"/*
+klein_ok=1
+for n in 1 2; do
+  mkdir "$WORK/omzet/uit$n" && als_root chown 10004:10003 "$WORK/omzet/uit$n"
+  if ! OMZET_BRON="$WORK/omzet/bron" OMZET_UIT="$WORK/omzet/uit$n" compose --profile omzetten run --rm --no-deps \
+    analyse-omzetten < /dev/null > "$WORK/omzet/out$n" 2> "$WORK/omzet/err$n"; then
+    klein_ok=0
+    fout "de omzetter met de kleine vorm (keer $n): $(mask < "$WORK/omzet/err$n" | tail -n 1)"
+  fi
+done
+licentie="$(sha256sum < "$ROOT/api/app/analyse/licenties/siglip2-Apache-2.0.txt" | cut -d' ' -f1)"
+namen="$(sed -E 's/^[0-9a-f]{64} [1-9][0-9]* (siglip2-b32-256\/[A-Za-z0-9._-]+) -$/\1/' "$WORK/omzet/out1" | tr '\n' ' ')"
+eigenaar="$(als_root stat -c '%u:%g' "$WORK/omzet/uit1/beeld.int8.onnx" 2> /dev/null || echo weg)"
+if [ "$klein_ok" = 1 ] && cmp -s "$WORK/omzet/out1" "$WORK/omzet/out2" &&
+  [ "$namen" = "siglip2-b32-256/beeld.int8.onnx siglip2-b32-256/tekst.int8.onnx siglip2-b32-256/tokenizer.bin siglip2-b32-256/siglip2-Apache-2.0.txt siglip2-b32-256/meta.json " ] &&
+  grep -qx "$licentie [0-9]* siglip2-b32-256/siglip2-Apache-2.0.txt -" "$WORK/omzet/out1" && [ "$eigenaar" = 10004:10003 ]; then
+  goed "de omzetter met de kleine vorm: twee keer dezelfde vijf regels, van 10004:10003; $(tail -n 1 "$WORK/omzet/err1")"
+elif [ "$klein_ok" = 1 ]; then
+  fout "de omzetter met de kleine vorm: $(tr '\n' ' ' < "$WORK/omzet/out1") (eigenaar $eigenaar)"
+fi
+als_root rm -rf "$WORK/omzet"
 
 # --- de logs ----------------------------------------------------------------------------------
 

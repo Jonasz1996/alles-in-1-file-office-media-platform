@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from app.analyse import lock
+from app.analyse.runtime import OMZET_BOOT
 from app.analyse.tokenizer import Tokenizer
 from app.analyse.worker.omzetten import (
     BEELD,
@@ -50,12 +51,8 @@ from app.analyse.worker.omzetten.safetensors import Safetensors
 from tests_analyse import siglip_klein as klein
 
 API = Path(__file__).resolve().parents[1]
-# De opdracht van de dienst analyse-omzetten (compose.analyse.yaml van X2a; daar ook als
-# app.analyse.runtime.OMZET_BOOT): letterlijk zo, met /srv als eerste argument
-OMZET_BOOT = (
-    "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
-    "runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
-)
+# De opdracht van de dienst analyse-omzetten: x-omzet-boot in compose.analyse.yaml is
+# runtime.OMZET_BOOT (test_compose_analyse.py), met /srv als eerste argument
 TOL = 1e-5
 COS = 0.99
 MAXRSS_MIB = 400  # het kleine model; het echte begrenst BZ2 (≤ 1,5 GB)
