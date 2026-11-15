@@ -368,5 +368,5 @@ def run(job: Job) -> dict:
         del rgb
         for vec in vectors:
             offset = _write_all(out, vec.tobytes(), offset)
-        photos.append({"code": "ok", "w": w, "h": h, "faces": rows, "n": len(rows)})
+        photos.append({"code": Code.OK.value, "w": w, "h": h, "faces": rows, "n": len(rows)})
     return wire.FacesData.model_validate({"photos": photos}).model_dump(mode="json")
