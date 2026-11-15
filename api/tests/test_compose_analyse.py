@@ -3,7 +3,8 @@
 De container zelf draait alleen in CI (de job analyse-image, test_analyse_container.sh). Deze test
 houdt de bestanden hier gelijk met de code en met het ontwerp:
 - x-analyse-boot is runtime.BOOT en x-omzet-boot is runtime.OMZET_BOOT; de worker en de
-  healthcheck starten daarmee (via `env -i`), en __main__ leest die argumenten;
+  healthcheck starten daarmee (via `env -i`), en __main__ leest die argumenten; pid 1 start uit
+  python-tekst (0711 van root: vanaf de exec niet dumpbaar);
 - de sleutel gaat alleen via de omgeving naar platform en analyse, nooit in command of
   healthcheck, en nooit naar analyse-omzetten (K1-05);
 - de afscherming: user analyse, network_mode none, read_only, cap_drop ALL,
@@ -24,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.analyse import runtime
+from app.analyse.worker import child as kids
 
 yaml = pytest.importorskip("yaml")
 
@@ -33,6 +35,7 @@ SINGLE = ROOT / "infra" / "single"
 SOCK = "/run/analyse/worker.sock"
 KEY_REF = "${ANALYSE_WORKER_KEY:-}"
 CLEAN_PATH = "PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"
+PYTHON_TEKST = "/opt/venv/bin/python-tekst"  # 0711 van root (Dockerfile)
 
 
 def load(name: str) -> dict:
@@ -67,11 +70,16 @@ def test_de_boot_is_die_van_runtime(analyse):
 
 
 def test_de_worker_start_met_boot(analyse):
+    """pid 1 uit python-tekst: 0711 van root (de regel in de Dockerfile), dus vanaf de exec niet
+    dumpbaar, en de sleutel staat dan nooit open in /proc/1/environ (review golf 5, veilig F6)."""
     command = analyse["services"]["analyse"]["command"]
     assert command == [
-        "python", "-I", "-c", runtime.BOOT, "/srv", "--socket", SOCK, "--models", "/models",
+        PYTHON_TEKST, "-I", "-c", runtime.BOOT, "/srv", "--socket", SOCK, "--models", "/models",
     ]  # fmt: skip
-    assert command == runtime.serve_argv(SOCK, "/models", python="python", root="/srv")
+    assert command == runtime.serve_argv(SOCK, "/models", python=PYTHON_TEKST, root="/srv")
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert f'-m 0711 "$(readlink -f /opt/venv/bin/python)" {PYTHON_TEKST}' in dockerfile
+    assert Path(PYTHON_TEKST).name == kids.COPY_NAME
     args = _parse(command[5:])
     assert (args["socket"], args["models"], args["local"]) == (SOCK, "/models", False)
     platform = analyse["services"]["platform"]["environment"]

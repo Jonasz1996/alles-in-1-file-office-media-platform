@@ -33,9 +33,11 @@
 #   verloop en een landschap: ok en 0 gezichten; 6 MP: too_big; een JPEG: unreadable; een kapotte
 #   WebP met een merkteken: image_bad) en een lege uit; een verkeerde sleutel geeft handshake;
 #   embed_text met de vraag "geheimwoord7" geeft not_built;
+# - een proces uit python-tekst is vanaf de exec niet dumpbaar, een uit python wel;
 # - als root op de host: pid 1 en elk kind zijn niet-dumpbaar, CapEff 0, NoNewPrivs 1, de sleutel
-#   niet in de cmdline en niet in de omgeving van een kind; pid 1 zonder onnxruntime en numpy in
-#   zijn geheugen; het kind werk start uit python-tekst, met nice 19 en RLIMIT_DATA 1 GiB;
+#   niet in de cmdline en niet in de omgeving van een kind; pid 1 start uit python-tekst (dan
+#   vanaf de exec niet dumpbaar: review golf 5, veilig F6), zonder onnxruntime en numpy in zijn
+#   geheugen; het kind werk start uit python-tekst, met nice 19 en RLIMIT_DATA 1 GiB;
 # - de kinderen in de echte container: werk SIGKILL (bij zijn PID) → pid 1 blijft, de volgende
 #   opdracht werkt met een nieuw kind; na 8 opdrachten is werk weg, en de negende start een
 #   nieuw (ANALYSE_CHILD_BATCHES);
@@ -430,6 +432,17 @@ if kort="$(python3 -I "$WORK/zelftest_kort.py" "$WORK/zelftest.json" 2>&1)"; the
 else
   fout "de zelftest in de container: $kort $(mask < "$WORK/zelftest.json" | tail -n 5 | tr '\n' ' ')"
 fi
+# pid 1 start uit python-tekst (review golf 5, veilig F6). Een proces uit die kopie (0711 van
+# root) is vanaf de exec niet dumpbaar, nog vóór een eigen prctl; uit python (leesbaar) wel.
+# PR_GET_DUMPABLE is 3. Of pid 1 er echt uit start, ziet procs_kort.py hieronder (argv[0])
+DUMP='import ctypes;print(ctypes.CDLL(None).prctl(3,0,0,0,0))'
+uit_tekst="$(in_analyse /opt/venv/bin/python-tekst -I -c "$DUMP" 2>&1 | tr -d '\r' || true)"
+uit_python="$(in_analyse python -I -c "$DUMP" 2>&1 | tr -d '\r' || true)"
+if [ "$uit_tekst" = 0 ] && [ "$uit_python" = 1 ]; then
+  goed "een proces uit python-tekst is vanaf de exec niet dumpbaar (0), uit python wel (1)"
+else
+  fout "dumpbaar vanaf de exec: python-tekst \"$uit_tekst\", python \"$uit_python\""
+fi
 
 # --- vanuit de app ----------------------------------------------------------------------------
 
@@ -644,6 +657,8 @@ for p in [p1, *kids]:
         fout.append(f"{n}: de sleutel in de cmdline")
 if p1["onnxruntime of numpy"]:
     fout.append("pid 1 heeft onnxruntime of numpy geladen")
+if not p1["python-tekst"]:
+    fout.append("pid 1 start niet uit python-tekst (dan dumpbaar tot zijn prctl)")
 for k in werk:
     if k["sleutel in environ"]:
         fout.append("werk: de sleutel in de omgeving")
@@ -653,8 +668,8 @@ for k in werk:
         fout.append("werk heeft onnxruntime niet geladen")
 print("; ".join(fout) if fout else (
     f"pid 1 en werk (pid {werk[0]['nspid']} in de container) niet-dumpbaar, CapEff 0, NoNewPrivs 1, "
-    "de sleutel niet in de cmdline en niet in de omgeving van werk; pid 1 zonder onnxruntime en "
-    "numpy; werk uit python-tekst, nice 19, RLIMIT_DATA 1 GiB"))
+    "de sleutel niet in de cmdline en niet in de omgeving van werk; pid 1 uit python-tekst, zonder "
+    "onnxruntime en numpy; werk uit python-tekst, nice 19, RLIMIT_DATA 1 GiB"))
 sys.exit(1 if fout else 0)
 PY
 if kort="$(python3 -I "$WORK/procs_kort.py" "$WORK/procs.json" 2>&1)"; then

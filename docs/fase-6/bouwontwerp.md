@@ -4848,8 +4848,9 @@ services:
     pull_policy: never
     restart: unless-stopped
     user: analyse  # uid 10003: kan de bestanden van 10001 niet openen, en /opt/analyse wel
-    # Geen `init: true`: docker-init is dumpbaar en heeft de sleutel in zijn omgeving (m1.md)
-    command: [python, -I, -c, *boot, /srv, --socket, /run/analyse/worker.sock, --models, /models]
+    # Geen `init: true`: docker-init is dumpbaar en heeft de sleutel in zijn omgeving (m1.md).
+    # pid 1 uit python-tekst (0711 van root): vanaf de exec niet dumpbaar (review golf 5, veilig F6)
+    command: [/opt/venv/bin/python-tekst, -I, -c, *boot, /srv, --socket, /run/analyse/worker.sock, --models, /models]
     environment:
       PLATFORM_ANALYSE_WORKER_KEY: ${ANALYSE_WORKER_KEY:-}
       OPENBLAS_NUM_THREADS: "1"

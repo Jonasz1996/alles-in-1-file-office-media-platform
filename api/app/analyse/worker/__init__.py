@@ -1,6 +1,7 @@
 """De worker van de container analyse (fase 6, §3.11, Keuze 56–59; X2a).
 
-    python -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock --models /models
+    /opt/venv/bin/python-tekst -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock \
+        --models /models
 
 - __main__.py: de start (de sleutel uit de omgeving, PR_SET_DUMPABLE 0, de zelftest);
 - server.py: pid 1 (de socket, de handdruk, de rij van één per kind, de deadline, cancel);

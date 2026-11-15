@@ -22,8 +22,10 @@ Gebouwd op de tak `wip/golf5-x2a`, vanaf `b1a128e` (A0 met stap 0 van X3a: `onnx
 
 ### De worker (`api/app/analyse/worker/`)
 
-Start: `python -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock --models /models`
-(compose). BOOT zet `/srv` vooraan in `sys.path` en draait het pakket als `__main__`.
+Start: `/opt/venv/bin/python-tekst -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock
+--models /models` (compose). BOOT zet `/srv` vooraan in `sys.path` en draait het pakket als
+`__main__`. pid 1 start uit python-tekst (0711 van root), zodat hij vanaf de exec niet dumpbaar is
+en niet pas na zijn eigen prctl (review golf 5, veilig F6; zie De review).
 
 - **`__main__.py`**: als eerste `PR_SET_DUMPABLE` 0 (vóór de import van de app), dan de sleutel
   uit `os.environ` halen (`pop`; nooit uit argv). Korter dan 32 tekens: melding op stderr en exit

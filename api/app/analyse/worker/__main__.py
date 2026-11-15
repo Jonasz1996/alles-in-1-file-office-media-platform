@@ -1,6 +1,7 @@
 """De worker van de analyse (fase 6, §3.11; X2a). compose.analyse.yaml start hem zo:
 
-    python -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock --models /models
+    /opt/venv/bin/python-tekst -I -c runtime.BOOT /srv --socket /run/analyse/worker.sock \
+        --models /models
 
     --socket PAD     waar de worker luistert (0660)
     --models MAP     de modellen (alleen lezen, van root; MODELLEN_ROOT op de host)
@@ -12,8 +13,10 @@
 
 De sleutel van de handdruk komt alleen uit de omgeving (PLATFORM_ANALYSE_WORKER_KEY, minstens
 32 tekens) en nooit uit argv. Het eerste wat de worker doet, is PR_SET_DUMPABLE op 0 zetten:
-dan kan geen ander proces van uid 10003 /proc/1/environ of /proc/1/mem lezen. Daarna haalt hij
-de sleutel uit os.environ; de kinderen krijgen hem nooit (child.env). Zonder sleutel stopt de
+dan kan geen ander proces van uid 10003 /proc/1/environ of /proc/1/mem lezen. In het image start
+pid 1 uit python-tekst (0711 van root): dan is hij dat al vanaf de exec, nog voor deze prctl
+(review golf 5, veilig F6). Daarna haalt hij de sleutel uit os.environ; de kinderen krijgen hem
+nooit (child.env). Zonder sleutel stopt de
 worker met code 2: de app zegt dan down (key_missing, of handshake).
 
 Zonder --local draait eerst de zelftest (selftest.startup). Faalt die, dan luistert de worker
