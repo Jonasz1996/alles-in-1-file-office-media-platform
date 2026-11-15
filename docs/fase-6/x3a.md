@@ -645,3 +645,30 @@ Hersteld na de run:
 BZ1 bij de bron kan. Daarmee is de voorwaarde van §5 (deel 1 en BZ1) gehaald; deel 3 (BZ4) nog
 niet. Standaard, tot Jonas iets anders zegt: X3b gaat door, met BZ4 streng als poort van X3b
 (de eerste weg onder Open na de nacontrole). Een rode BZ4 met de pins houdt X3b tegen.
+
+## CI op 625e946
+
+`beeld-model` op `625e946` (run 43756857465), na de reparaties hierboven:
+
+| Stap | Uitkomst |
+|---|---|
+| BZ1 | zoals op `26c49ca` |
+| BZ2 | dezelfde commit, en dezelfde sha256 voor alle tien regels als op `26c49ca`: twee runs op andere runners, dezelfde omzetting. 7,4 en 7,3 s, maxrss 352 MiB; met `--fp32` 13,6 s en 1606 MiB — **goed** |
+| BZ3 | de lijst: 27 rijen, 0 voorwaarden niet gehaald, 0 verschillen (U+FDD0 en U+FDD1 staan in geen stuk); de eigen BPE weer 0 verschillen op 2.000 zinnen — **goed** |
+| BZ7 | laden 0,169 s, 0,0 MB erbij — **goed** |
+| BZ6 | 76,5 ms per foto, 785 per minuut (poort ≥ 500); een vraag p95 71,3 ms. Deze runner was ongeveer half zo snel als die van `26c49ca` (39,8 ms): de poort houdt op beide — **goed** |
+| BZ4 | Commons gaf geen 429 meer, maar de keuze stopte op de vierde combinatie: "geen bruikbare foto voor fiets+stad" (CC0 of publiek domein, zonder mens, JPEG van ≥ 640 px, met P180 fiets én stad) — **rood** |
+| Uitslag | rood zoals bedoeld (`models.lock` zonder de regels van SigLIP) |
+
+Hersteld na de run:
+
+- **Een tekort stopt de keuze niet meer** (`stel_voor` in `tools/beeld/beeld_model.py`): elke
+  combinatie, categorie en elk ander onderwerp zonder genoeg foto's komt met het aantal bekeken
+  kandidaten in `=== kort ===`, en pas daarna volgt de fout. Ontbreekt een combinatie, dan telt de
+  job ook de paren van `RESERVE_COMBIS` (alleen de eerste pagina per licentie, niets gedownload).
+  Zo zegt één run alles wat Commons niet heeft. Test:
+  `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (rood op de oude tool).
+- **"fiets in de stad" wordt "berg met sneeuw"** in `beeld_vragen.tsv`. Keuze 83 noemt alleen "auto
+  in de sneeuw" en "hond op het strand"; de andere vier koos X3a. Commons had in de pagina's die
+  de job bekijkt geen bruikbare foto met fiets én stad. Of "berg met sneeuw" en "stad" alleen
+  genoeg foto's hebben, zegt de volgende run (met de reserves als het niet zo is).

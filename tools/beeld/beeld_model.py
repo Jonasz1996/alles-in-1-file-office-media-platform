@@ -108,6 +108,17 @@ ANDERE = {
     "insect": "Q1390",
 }
 MENS = "Q5"
+# Heeft Commons voor een combinatie van beeld_vragen.tsv geen bruikbare foto, dan telt de job deze
+# paren ook (alleen de eerste pagina per licentie, niets gedownload), zodat één run laat zien welke
+# combinatie er wel is. Een paar dat al in de vragen staat, slaat hij over.
+RESERVE_COMBIS = (
+    ("berg", "sneeuw"),
+    ("bos", "sneeuw"),
+    ("zonsondergang", "strand"),
+    ("boot", "strand"),
+    ("hond", "sneeuw"),
+    ("hond", "bos"),
+)
 LICENTIES = {"CC0": "P275=Q6938433", "publiek domein": "P6216=Q19652"}
 PER_CATEGORIE = 5
 PER_ANDER = 5
@@ -669,11 +680,16 @@ def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
 
 
 def stel_voor(werk: Werk, *, combis=None) -> list[Foto]:
-    """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download)."""
+    """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download).
+
+    Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten in het
+    blok, en pas daarna volgt de fout. Zo laat één run alles zien wat Commons niet heeft."""
     combis = combis if combis is not None else combinaties()
     werk.set.mkdir(exist_ok=True)
     gekozen: list[Foto] = []
     gebruikt: set[int] = set()
+    tekort: list[str] = []
+    combi_tekort = False
 
     def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...]) -> None:
         doel = werk.set / f"{sleutel}.jpg"
@@ -687,36 +703,59 @@ def stel_voor(werk: Werk, *, combis=None) -> list[Foto]:
 
     hoofd_telt = dict.fromkeys(CATEGORIEEN, 0)
     for a, b in combis:
+        gezien = 0
         for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b])):
+            gezien += 1
             if pageid not in gebruikt and _bruikbaar(d):
                 neem(pageid, d, f"{a}+{b}", cats_van(d, (a, b)))
                 hoofd_telt[a] += 1
                 break
         else:
-            raise Fout(f"Commons: geen bruikbare foto voor {a}+{b}")
+            combi_tekort = True
+            tekort.append(f"geen bruikbare foto voor {a}+{b} ({gezien} kandidaten bekeken)")
     for naam, qid in CATEGORIEEN.items():
-        nr = 0
+        nr = gezien = 0
         for pageid, d in _kandidaten((qid,)):
             if hoofd_telt[naam] >= PER_CATEGORIE:
                 break
+            gezien += 1
             if pageid not in gebruikt and _bruikbaar(d):
                 nr += 1
                 neem(pageid, d, f"{naam}-{nr}", cats_van(d, (naam,)))
                 hoofd_telt[naam] += 1
         if hoofd_telt[naam] < PER_CATEGORIE:
-            raise Fout(f"Commons: maar {hoofd_telt[naam]} bruikbare foto's voor {naam}")
+            n = hoofd_telt[naam]
+            tekort.append(f"maar {n} bruikbare foto's voor {naam} ({gezien} kandidaten bekeken)")
     alle_qids = set(CATEGORIEEN.values())
     for naam, qid in ANDERE.items():
-        nr = 0
+        nr = gezien = 0
         for pageid, d in _kandidaten((qid,)):
             if nr >= PER_ANDER:
                 break
+            gezien += 1
             if pageid not in gebruikt and _bruikbaar(d) and not d["P180"] & alle_qids:
                 nr += 1
                 neem(pageid, d, f"anders-{naam}-{nr}", ())
         if nr < PER_ANDER:
-            raise Fout(f"Commons: maar {nr} bruikbare foto's voor {naam} (anders)")
-    return gekozen
+            tekort.append(f"maar {nr} bruikbare foto's voor {naam} (anders; {gezien} bekeken)")
+    if not tekort:
+        return gekozen
+    for t in tekort:
+        werk.meld(f"BZ4 set: Commons: {t}")
+    if combi_tekort:
+        al = {tuple(c) for c in combis}
+        for a, b in RESERVE_COMBIS:
+            if (a, b) in al:
+                continue
+            n = len(
+                {
+                    pageid
+                    for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b]), max_pagina=1)
+                    if _bruikbaar(d)
+                }
+            )
+            werk.meld(f"BZ4 reserve {a}+{b}: {n} bruikbare foto's (eerste pagina per licentie)")
+    raise Fout(f"Commons: {len(tekort)} tekort(en) voor de set; zie de regels BZ4 set hierboven")
 
 
 def set_tsv(fotos: list[Foto]) -> str:

@@ -674,5 +674,5 @@ en is de regel FOUT, net als een `python-tekst` die 1 geeft. Lokaal: `bash -n` e
 de regel van CI; de container zelf ziet het pas in `analyse-image` na de push (de image bouwt
 alleen in CI).
 
-De andere jobs van X2a op `26c49ca`: `api-analyse` groen (211 en 11, en de licenties).
+De andere jobs van X2a op `26c49ca`: `api-analyse` groen (211 en 11, en de licenties). [CI op `625e946`: `analyse-image` groen met de nieuwe controle, en `api-analyse` weer groen.]
 `beeld-model` staat in [x3a.md](x3a.md#ci-op-26c49ca).

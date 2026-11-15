@@ -168,10 +168,13 @@ def test_de_categorieen_zijn_die_van_de_vragen():
         ("auto", "sneeuw"),
         ("hond", "strand"),
         ("boot", "zonsondergang"),
-        ("fiets", "stad"),
+        ("berg", "sneeuw"),
         ("kat", "sneeuw"),
         ("bos", "berg"),
     ]
+    # de reserveparen: bestaande categorieën, twee verschillende, en geen paar twee keer
+    assert all({a, b} <= set(bm.CATEGORIEEN) and a != b for a, b in bm.RESERVE_COMBIS)
+    assert len({frozenset(c) for c in bm.RESERVE_COMBIS}) == len(bm.RESERVE_COMBIS)
     alle = list(bm.CATEGORIEEN.values()) + list(bm.ANDERE.values()) + [bm.MENS]
     assert len(set(alle)) == len(alle) == 25
 
@@ -684,6 +687,48 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path):
     set_pad.write_text("\n".join(regels) + "\n")
     with pytest.raises(bm.Fout, match="kat-2.jpg: sha256"):
         bm.set_(bm.Werk(tmp_path / "werk3"), set_pad)
+
+
+def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, commons, werk, tmp_path):
+    """CI op 625e946 stopte op de eerste combinatie zonder foto; nu staat elk tekort in het blok,
+    met wat er bekeken is, en de reserveparen met hun aantal, en pas dan de fout."""
+    cat = bm.CATEGORIEEN
+
+    def goed(d, q, lic):
+        return (
+            d["P180"] == q
+            and d["mime"] == "image/jpeg"
+            and d["breedte"] == 1600
+            and d["bytes"] <= bm.MAX_FOTO
+            and (d["P275"] if lic == "CC0" else d["P6216"])
+            == {"Q6938433" if lic == "CC0" else "Q19652"}
+        )
+
+    weg = [i for i, d in commons.bestanden.items() if goed(d, {cat["kat"], cat["sneeuw"]}, "PD")]
+    weg += [i for i, d in commons.bestanden.items() if goed(d, {cat["eten"]}, "CC0")][:4]
+    weg += [i for i, d in commons.bestanden.items() if goed(d, {bm.ANDERE["gitaar"]}, "PD")][:2]
+    assert len(weg) == 7
+    for i in weg:
+        del commons.bestanden[i]
+    with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    assert not werk.voorstel_set.exists()
+    regels = _kort(werk)
+    assert [r.split(" (")[0] for r in regels[:3]] == [
+        "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw",
+        "BZ4 set: Commons: maar 2 bruikbare foto's voor eten",
+        "BZ4 set: Commons: maar 4 bruikbare foto's voor gitaar",
+    ]
+    assert all("bekeken)" in r for r in regels[:3])
+    # berg+sneeuw staat al in de vragen; van de rest heeft de nep alleen zonsondergang+strand
+    # (één bestand, ook al geeft de nep het voor beide licenties)
+    assert regels[3:] == [
+        "BZ4 reserve bos+sneeuw: 0 bruikbare foto's (eerste pagina per licentie)",
+        "BZ4 reserve zonsondergang+strand: 1 bruikbare foto's (eerste pagina per licentie)",
+        "BZ4 reserve boot+strand: 0 bruikbare foto's (eerste pagina per licentie)",
+        "BZ4 reserve hond+sneeuw: 0 bruikbare foto's (eerste pagina per licentie)",
+        "BZ4 reserve hond+bos: 0 bruikbare foto's (eerste pagina per licentie)",
+    ]
 
 
 def _geldige_set() -> list[str]:
