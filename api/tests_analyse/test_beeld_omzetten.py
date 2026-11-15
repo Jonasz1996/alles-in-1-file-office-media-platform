@@ -328,6 +328,184 @@ def test_int8_echt_int8(omgezet):
         assert (uit / i8).stat().st_size < (uit / f32).stat().st_size
 
 
+# --- int8: een schaal per kolom en per rij (review golf 5, G5-C3) -------------------------------
+#
+# De cosinus van ≥ 0,99 merkt een schaal per tensor in een klein model niet altijd op, en
+# test_int8_echt_int8 kijkt alleen of de op er is. Hier de grafen zelf: een eigen lezer van het
+# protobuf (veldnummers van onnx.proto), zonder onnxw en zonder het pakket onnx.
+
+_DTYPE = {1: "<f4", 3: "i1", 7: "<i8"}  # FLOAT, INT8, INT64
+
+
+def _varint(b: memoryview, i: int) -> tuple[int, int]:
+    n = shift = 0
+    while True:
+        c = b[i]
+        i += 1
+        n |= (c & 0x7F) << shift
+        shift += 7
+        if c < 0x80:
+            return n, i
+
+
+def _velden(b: memoryview) -> list[tuple[int, int | memoryview]]:
+    """Een protobuf-bericht als (veld, waarde): een getal (varint) of de bytes (lengte, 32, 64)."""
+    i, uit = 0, []
+    while i < len(b):
+        sleutel, i = _varint(b, i)
+        veld, soort = sleutel >> 3, sleutel & 7
+        if soort == 0:
+            w, i = _varint(b, i)
+        elif soort == 2:
+            n, i = _varint(b, i)
+            w, i = b[i : i + n], i + n
+        else:
+            n = {1: 8, 5: 4}[soort]
+            w, i = b[i : i + n], i + n
+        uit.append((veld, w))
+    return uit
+
+
+def _tekst(velden, nummer: int, standaard: str | None = None) -> str:
+    gevonden = [bytes(w).decode() for v, w in velden if v == nummer]
+    return gevonden[0] if gevonden else standaard
+
+
+def lees_onnx(pad: Path) -> tuple[list[tuple[str, str, list[str]]], dict[str, np.ndarray]]:
+    """ModelProto.graph (7); GraphProto: node 1, initializer 5; NodeProto: input 1, op_type 4,
+    domain 7; TensorProto: dims 1, data_type 2, name 8, raw_data 9. Geeft de nodes (op, domein,
+    invoer) en de initializers als numpy, met hun type en vorm."""
+    (graaf,) = [w for v, w in _velden(memoryview(pad.read_bytes())) if v == 7]
+    nodes, inits = [], {}
+    for v, w in _velden(graaf):
+        f = _velden(w) if v in (1, 5) else []
+        if v == 1:
+            nodes.append(
+                (_tekst(f, 4), _tekst(f, 7, ""), [bytes(x).decode() for k, x in f if k == 1])
+            )
+        elif v == 5:
+            (dtype,) = [x for k, x in f if k == 2]
+            dims = tuple(x for k, x in f if k == 1)
+            (raw,) = [x for k, x in f if k == 9]
+            inits[_tekst(f, 8)] = np.frombuffer(raw, dtype=_DTYPE[dtype]).reshape(dims)
+    return nodes, inits
+
+
+def _linears(toren: str) -> list[str]:
+    """Elke Linear van een toren, zoals de omzetter ze noemt (q, k en v van een laag samen)."""
+    uit = []
+    for i in range(klein.LAGEN):
+        p = f"{toren}.encoder.layers.{i}"
+        uit += [f"{p}.self_attn.qkv", f"{p}.self_attn.out_proj", f"{p}.mlp.fc1", f"{p}.mlp.fc2"]
+    if toren == "text_model":
+        return uit + ["text_model.head"]
+    kop = "vision_model.head"
+    namen = ("attention.q", "attention.kv", "attention.out_proj", "mlp.fc1", "mlp.fc2")
+    return uit + [f"{kop}.{n}" for n in namen]
+
+
+def _wt(w: dict, label: str) -> np.ndarray:
+    """Het gewicht van een Linear als [in, uit] (Wᵀ), uit de bron, zonder de omzetter."""
+    e = klein.BREEDTE
+    if label.endswith(".self_attn.qkv"):
+        p = label.removesuffix(".qkv")
+        rijen = np.concatenate([_w(w, f"{p}.{n}_proj.weight") for n in ("q", "k", "v")])
+    elif label.startswith("vision_model.head.attention.") and label.endswith((".q", ".kv")):
+        win = _w(w, "vision_model.head.attention.in_proj_weight")
+        rijen = win[:e] if label.endswith(".q") else win[e:]
+    else:
+        rijen = _w(w, f"{label}.weight")
+    return rijen.T
+
+
+def _q8_per_kolom(wt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Keuze 73: s = max |kolom| / 127 (in float32), q = rint(w / s), nulpunt 0."""
+    s = (np.abs(wt).max(axis=0) / 127.0).astype(np.float32)
+    return np.clip(np.rint(wt / s.astype(np.float64)), -127, 127).astype(np.int8), s
+
+
+def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
+    """Elke Linear is DynamicQuantizeMatMul met B int8 [in, uit], B_scale [uit] en een nulpunt
+    [uit] van nullen; de schalen per kolom tegen de gewichten van de bron, en elke kolom haalt
+    127. Geen MatMul of Gemm meer met een gewicht. De embedding van de tekst: een schaal per rij,
+    [woorden, 1], en elke rij haalt 127."""
+    w, runs = omgezet
+    uit = runs[0][0]
+    for model, toren in ((BEELD, "vision_model"), (TEKST, "text_model")):
+        nodes, inits = lees_onnx(uit / model)
+        dqmm = [n for n in nodes if n[0] == "DynamicQuantizeMatMul"]
+        labels = [n[2][1].removesuffix(".w8") for n in dqmm]
+        assert labels == _linears(toren), model
+        for (_op, domein, invoer), label in zip(dqmm, labels, strict=True):
+            assert domein == "com.microsoft"
+            assert invoer[1:] == [f"{label}.w8", f"{label}.s", f"{label}.z", f"{label}.b"]
+            q, s, z = inits[f"{label}.w8"], inits[f"{label}.s"], inits[f"{label}.z"]
+            wt = _wt(w, label)
+            assert q.dtype == np.int8 and q.shape == wt.shape, label
+            assert s.dtype == np.float32 and s.shape == (wt.shape[1],), label
+            assert z.dtype == np.int8 and z.shape == (wt.shape[1],) and not z.any(), label
+            assert inits[f"{label}.b"].shape == (wt.shape[1],), label
+            q_ref, s_ref = _q8_per_kolom(wt)
+            assert np.array_equal(s, s_ref), label
+            assert np.array_equal(q, q_ref), label
+            assert (np.abs(q.astype(np.int16)).max(axis=0) == 127).all(), label
+        for op, _domein, invoer in nodes:
+            if op in ("MatMul", "Gemm"):
+                assert not any(i in inits for i in invoer), (model, op, invoer)
+    _, inits = lees_onnx(uit / TEKST)
+    naam = "text_model.embeddings.token_embedding.weight"
+    tabel, schaal, emb = inits[f"{naam}.w8"], inits[f"{naam}.s"], _w(w, naam)
+    assert tabel.dtype == np.int8 and tabel.shape == emb.shape
+    assert schaal.dtype == np.float32 and schaal.shape == (emb.shape[0], 1)
+    q_ref, s_ref = _q8_per_kolom(emb.T)
+    assert np.array_equal(schaal[:, 0], s_ref) and np.array_equal(tabel, q_ref.T)
+    assert (np.abs(tabel.astype(np.int16)).max(axis=1) == 127).all()
+
+
+def test_int8_een_uitschieter_raakt_alleen_zijn_eigen_kolom(bron, tmp_path):
+    """Een uitvoer van een Linear (een rij van het gewicht in de bron) en een rij van de embedding
+    100 × zo groot: alleen hun eigen schaal wordt 100 × zo groot, alle andere schalen en int8-
+    waarden blijven byte voor byte gelijk. Met een schaal per tensor zou elke andere kolom 100 ×
+    grover worden (en bijna alles 0)."""
+    anders = tmp_path / "anders"
+    shutil.copytree(bron, anders)
+    st = Safetensors(anders / "model.safetensors")
+    t = _alle(st)
+    e = klein.BREEDTE
+    # naam in de bron, rij → (label of de embedding, kolom in Wᵀ of rij van de tabel)
+    tl, vl = "text_model.encoder.layers.0", "vision_model.encoder.layers.1"
+    gevallen = {
+        (f"{tl}.mlp.fc1.weight", 3): (f"{tl}.mlp.fc1", 3),
+        (f"{vl}.self_attn.k_proj.weight", 5): (f"{vl}.self_attn.qkv", e + 5),  # k na q
+        ("text_model.embeddings.token_embedding.weight", 7): (None, 7),
+    }
+    for naam, rij in gevallen:
+        a = st.lees(naam).astype("<f4").copy()
+        a[rij] *= 100
+        t[naam] = ("F32", a.shape, a.tobytes())
+    (anders / "model.safetensors").write_bytes(klein.safetensors(t))
+    for map_ in ("uit", "uit-anders"):
+        (tmp_path / map_).mkdir(exist_ok=True)
+    bouw.omzet(bron, tmp_path / "uit")
+    bouw.omzet(anders, tmp_path / "uit-anders")
+    for (naam, _rij), (label, k) in gevallen.items():
+        model = TEKST if naam.startswith("text_model") else BEELD
+        _, voor = lees_onnx(tmp_path / "uit" / model)
+        _, na = lees_onnx(tmp_path / "uit-anders" / model)
+        if label is None:  # de embedding: een schaal per rij
+            q0, s0 = voor[f"{naam}.w8"], voor[f"{naam}.s"][:, 0]
+            q1, s1 = na[f"{naam}.w8"], na[f"{naam}.s"][:, 0]
+            andere = np.arange(len(s0)) != k
+            assert np.array_equal(q0[andere], q1[andere])
+        else:
+            q0, s0 = voor[f"{label}.w8"], voor[f"{label}.s"]
+            q1, s1 = na[f"{label}.w8"], na[f"{label}.s"]
+            andere = np.arange(len(s0)) != k
+            assert np.array_equal(q0[:, andere], q1[:, andere])
+        assert np.array_equal(s0[andere], s1[andere]), naam
+        assert float(s1[k] / s0[k]) == pytest.approx(100, rel=1e-5), naam
+
+
 def test_zonder_fp32_alleen_de_uitvoer(tmp_path):
     klein.schrijf_bron(tmp_path / "bron")
     (tmp_path / "uit").mkdir()
