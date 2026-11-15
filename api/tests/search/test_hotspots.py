@@ -283,14 +283,14 @@ def test_alleen_gezichten_meldt_zich_aan_na_de_grote_preview():
     assert done.stdout.strip() == "1"
 
 
-def test_alleen_gezichten_als_schakelaar_en_faces_en_ocr_als_deel_van_beheer():
+def test_alleen_gezichten_als_schakelaar_en_ocr_als_deel_van_beheer():
     """De haken van de review van Z0b (contract F4), als de hele app geladen is: in app.prefs
-    alleen de schakelaar faces (X2b), en van de delen van /admin/search in search.hooks faces
-    (X2b) en ocr (X1, sinds de samenvoeging van golf 4: /beheer zegt "OCR: niet geïnstalleerd"
-    uit dat deel, Keuze 24). Beeld nog niet: daar weigert check_switch "aan" en geven
-    admin_switch en admin_rebuild 501, tot X3 er is. Draaien gezichten niet (ANALYSE uit), dan
-    zegt de schakelaar faces niet beschikbaar en geeft /beheer 501 zoals in 0.8.0
-    (tests/people/faces/test_faces_off.py)."""
+    alleen de schakelaar faces (X2b), en van de delen van /admin/search in search.hooks alleen
+    ocr (X1, sinds de samenvoeging van golf 4: /beheer zegt "OCR: niet geïnstalleerd" uit dat
+    deel, Keuze 24). Gezichten meldt zijn deel pas bij de start aan, en alleen als gezichten
+    draaien (register.register_admin; tests/people/faces/test_faces_off.py): met ANALYSE uit is
+    /beheer zo precies dat van 0.8.0. Beeld nog niet: daar weigert check_switch "aan" en geven
+    admin_switch en admin_rebuild 501, tot X3 er is."""
     code = (
         "import app.main; from app import prefs; from app.search import hooks; "
         "print(len(prefs._switches), sorted(hooks._admin))"
@@ -298,7 +298,7 @@ def test_alleen_gezichten_als_schakelaar_en_faces_en_ocr_als_deel_van_beheer():
     done = subprocess.run(
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
-    assert done.stdout.strip() == "1 ['faces', 'ocr']"
+    assert done.stdout.strip() == "1 ['ocr']"
 
 
 def _render(request: dict) -> dict:

@@ -24,6 +24,7 @@ from app.analyse import monitor
 from app.migrate import upgrade
 from app.models import Blob, Node, PhotoPref
 from app.people.faces import register, state
+from app.search import hooks as search_hooks
 from app.storage import BlobStore
 from tests.analyse import faces_nep
 from tests.analyse.fake_worker import FakeAnalyseWorker
@@ -64,11 +65,13 @@ async def settings(tmp_path, fake, nep):
     await upgrade(s)
     state.reset()
     state.configure(s)
+    register.register_admin(s)
     monitor._status = await monitor.check(s)
     assert monitor._status.state == "ok", monitor._status
     yield s
     monitor._status = monitor.OFF
     monitor._task = None
+    search_hooks._admin.pop("faces", None)  # weer als na de import (uit)
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
 

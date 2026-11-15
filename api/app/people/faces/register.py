@@ -4,15 +4,16 @@ register() opnieuw aan.
 
 - de jobs faces.plan en faces.wipe (rij default), faces.scan en faces.group (rij analyse);
 - de schakelaar faces van PATCH /me/photo-settings (prefs.register_switch);
-- het blok "Gezichten" van /beheer (search.hooks.register_admin("faces"));
+- het blok "Gezichten" van /beheer (search.hooks.register_admin("faces")), pas bij de start en
+  alleen als gezichten draaien (register_admin);
 - de haken van previews (register_large, register_ready), van een kopie (register_photo_copy),
   van de start (register_backfill) en van Z6 (people.hooks);
 - de ronde van elk uur (jobs.housekeeping).
 
 **Uit is onzichtbaar.** Zonder PLATFORM_ANALYSE_ENABLED (of zonder PLATFORM_FACES_KEYS) is
 gezichten "niet draaiend" (state.running): de schakelaar zegt niet beschikbaar en niet verboden
-(zoals 0.8.0), het blok op /beheer is None, de schakelaar en "opnieuw" van /beheer geven 501
-not_built("X2") zoals 0.8.0, en geen haak zet een job klaar of schrijft iets onder DATA_ROOT.
+(zoals 0.8.0), /beheer heeft geen blok gezichten (de schakelaar en "opnieuw" geven 501
+not_built("X2") zoals 0.8.0), en geen haak zet een job klaar of schrijft iets onder DATA_ROOT.
 "Uit" zetten mag altijd: dat wist (rij default), maar alleen als er iets te wissen is.
 """
 
@@ -61,9 +62,12 @@ async def switch_changed(db: AsyncSession, user: User, value: str) -> None:
         return
     if settings is not None and settings.faces_keys.strip():
         crypto.delete_key(settings, user.id)
-    if await face_rows.has_rows(db, user.id):
+    rows = await face_rows.has_rows(db, user.id)
+    if rows:
         await wipe.queue_wipe(db, user.id, "all")
-    state.changed(user.id)
+    if rows or state.running(settings):
+        # zonder gezichten en zonder rijen geen event: precies als 0.8.0
+        state.changed(user.id)
 
 
 # --- /beheer ------------------------------------------------------------------------------------
@@ -256,10 +260,25 @@ async def _copy_one(
     await db.flush()
 
 
+ADMIN = search_hooks.AdminPart(block=admin_block, switch=admin_switch, rebuild=admin_rebuild)
+
+
+def register_admin(settings: Settings | None) -> bool:
+    """Het blok "Gezichten" van /beheer, alleen als gezichten draaien (bij de start, on_start).
+    Zonder blijft /admin/search precies dat van 0.8.0: geen blok, en faces_allowed of "opnieuw"
+    geven 501 not_built vóór er iets verandert (ook niet de pauze uit dezelfde PATCH)."""
+    if not state.running(settings):
+        return False
+    search_hooks.register_admin("faces", ADMIN)
+    return True
+
+
 async def on_start(settings: Settings) -> None:
-    """search.hooks.register_backfill: bij de start. busy terug naar wait (een crash), een
-    halve wisronde verder, en een nieuwe versie nalopen."""
+    """search.hooks.register_backfill: bij de start. Het blok van /beheer aanmelden (als
+    gezichten draaien), busy terug naar wait (een crash), een halve wisronde verder, en een
+    nieuwe versie nalopen."""
     state.configure(settings)
+    register_admin(settings)
     async with scan._maker(settings)() as db:
         await face_rows.reset_busy(db)
         if state.running(settings):
@@ -293,10 +312,6 @@ def register() -> None:
     jobs.register(wipe.WIPE, wipe.wipe_job, lane="default", timeout=900.0)
     jobs.housekeeping(HOURLY, hourly, jobs.HOUSEKEEPING)
     prefs.register_switch("faces", prefs.Switch(state=switch_state, changed=switch_changed))
-    search_hooks.register_admin(
-        "faces",
-        search_hooks.AdminPart(block=admin_block, switch=admin_switch, rebuild=admin_rebuild),
-    )
     search_hooks.register_photo_copy(on_photo_copy)
     search_hooks.register_backfill(on_start)
     previews.register_large(after_large)
