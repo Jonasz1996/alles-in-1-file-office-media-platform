@@ -442,6 +442,22 @@ LIEGT = {
         lambda k, d: _met_kop({**k, "__metadata__": {"a": 1}}, d),
         "__metadata__",
     ),
+    # De review van golf 5 (veilig F2): een dtype dat geen tekst is (eerst TypeError), en een vorm
+    # met reuzen van getallen (het product had meer dan 4300 cijfers: ValueError in de f-string)
+    "dtype lijst": (lambda k, d: _met_kop(_zet(k, _eerste(k), "dtype", ["F32"]), d), "dtype"),
+    "dtype object": (lambda k, d: _met_kop(_zet(k, _eerste(k), "dtype", {"F32": 1}), d), "dtype"),
+    "vorm met reuzen": (
+        lambda k, d: _met_kop(_zet(k, _eerste(k), "shape", [10**4000] * 8), d),
+        "shape",
+    ),
+    "vorm van 1000 assen": (
+        lambda k, d: _met_kop(_zet(k, _eerste(k), "shape", [10**9] * 1000), d),
+        "shape",
+    ),
+    "vorm groter dan het bestand": (
+        lambda k, d: _met_kop(_zet(k, _eerste(k), "shape", [2**40, 2**40]), d),
+        "groter dan het bestand",
+    ),
 }
 
 
@@ -527,12 +543,29 @@ def _nan(bron: Path) -> None:
     pad.write_bytes(klein.safetensors(t))
 
 
+def _genest(diep: int) -> dict:
+    n: dict = {"type": "Lowercase"}
+    for _ in range(diep):
+        n = {"type": "Sequence", "normalizers": [n]}
+    return n
+
+
 BRON_FOUT = {
     "model_type clip": (lambda b: _config(b, model_type="clip"), "model_type 'clip'"),
     "architectures": (lambda b: _config(b, architectures=["CLIPModel"]), "architectures"),
     "hidden_act quick_gelu": (
         lambda b: _config(b, text_config__hidden_act="quick_gelu"),
         "hidden_act = 'quick_gelu'",
+    ),
+    # De review van golf 5 (veilig F3, F4): eerst TypeError en RecursionError, nu een fout
+    "hidden_act lijst": (
+        lambda b: _config(b, text_config__hidden_act=["gelu"]),
+        "hidden_act = list",
+    ),
+    "hidden_act object": (lambda b: _config(b, vision_config__hidden_act={}), "hidden_act = dict"),
+    "tokenizer.json diep genest": (
+        lambda b: _json(b, "tokenizer.json", normalizer=_genest(1200)),
+        "diep genest",
     ),
     "hidden_size past niet": (
         lambda b: _config(b, vision_config__hidden_size=128),
@@ -613,6 +646,27 @@ BRON_FOUT = {
         "tokenizer_config.json: groter dan 16000000 bytes",
     ),
 }
+
+
+@pytest.mark.parametrize(
+    "wijzig",
+    [
+        lambda b: _liegt(b, LIEGT["dtype lijst"][0]),
+        lambda b: _liegt(b, LIEGT["vorm met reuzen"][0]),
+        BRON_FOUT["hidden_act lijst"][0],
+        BRON_FOUT["tokenizer.json diep genest"][0],
+    ],
+    ids=["dtype lijst", "vorm met reuzen", "hidden_act lijst", "tokenizer.json diep genest"],
+)
+def test_wat_eerst_een_traceback_gaf_is_nu_code_2(bron, wijzig):
+    """De review van golf 5 (veilig F2-F4): zoals compose, code 2 met één regel, geen traceback
+    (code 1), niets in de uitvoermap."""
+    wijzig(bron)
+    res, _ = _start_meet(bron, bron.parent / "uit")
+    assert res.returncode == 2, res.stderr[-300:]
+    assert "Traceback" not in res.stderr and res.stdout == ""
+    assert res.stderr.splitlines()[-1].startswith("omzetten: ")
+    assert list((bron.parent / "uit").iterdir()) == []
 
 
 def test_tokenizer_config_mag_groter_zijn_dan_config(bron):

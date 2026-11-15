@@ -124,10 +124,10 @@ jobs:
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
       # 107 van X2a (met de 42 van test_onnxw_ort.py), 81 van X3a (test_beeld_omzetten.py 71,
-      # de hulp van de echte tests 10) en 2 van de review van golf 5 (de StopFlag);
-      # gedeselecteerd: de 11 tests van de job beeld-model. Noem hun marker hier niet:
-      # test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "190"
+      # de hulp van de echte tests 10) en van de review van golf 5: 2 (de StopFlag) en 12 (een
+      # bron die liegt); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun marker
+      # hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
+      ANALYSE_TESTS: "202"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4

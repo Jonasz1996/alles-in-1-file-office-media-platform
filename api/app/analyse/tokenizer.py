@@ -57,6 +57,7 @@ _LAAG = 0xFFFFFFFF  # de onderste 32 bits van een sleutel of waarde
 MAX_STUKKEN = 1 << 24  # hooguit zoveel stukken: ids passen in 32 bits, een paar in 64
 MAX_BIN = 512 * 1024 * 1024  # een tokenizer.bin is ±12 MB; dit is de harde grens bij het laden
 MAX_JSON = 256 * 1024 * 1024  # tokenizer.json van SigLIP 2 is 34,4 MB
+MAX_NESTING = 4  # een Sequence van normalizers in een Sequence; SigLIP 2 heeft er één
 
 # Vlaggen in de kop van tokenizer.bin
 KLEINE_LETTERS = 1
@@ -439,7 +440,10 @@ class Tokenizer:
         except (UnicodeDecodeError, ValueError, RecursionError) as e:
             soort = type(e).__name__
             raise TokenizerFout(f"tokenizer.json is geen geldige JSON ({soort})") from None
-        return cls._uit_doc(doc, kleine_letters=kleine_letters, lengte=lengte)
+        try:
+            return cls._uit_doc(doc, kleine_letters=kleine_letters, lengte=lengte)
+        except RecursionError:  # een vangnet: elke plek die nest, heeft al een grens
+            raise TokenizerFout("tokenizer.json: te diep genest") from None
 
     @classmethod
     def _uit_doc(cls, doc: object, *, kleine_letters: bool, lengte: int) -> Tokenizer:
@@ -521,7 +525,10 @@ class Tokenizer:
         bytes_ids = array("I", (vocab.get(_byte_stuk(b), GEEN) for b in range(256)))
 
         toegevoegd = []
-        for t in doc.get("added_tokens") or []:
+        alle = doc.get("added_tokens")
+        if alle is not None and not isinstance(alle, list):
+            raise TokenizerFout("tokenizer.json: added_tokens is geen lijst")
+        for t in alle or []:
             if not isinstance(t, dict):
                 raise TokenizerFout("tokenizer.json: een added_token is geen object")
             i, inhoud = t.get("id"), t.get("content")
@@ -569,20 +576,24 @@ def _geen_dubbele(paren: list[tuple[str, object]]) -> dict[str, object]:
     return uit
 
 
-def _normalizer(n: object) -> int:
-    """De normalizers die SigLIP 2 (Gemma) gebruikt; de rest kan niet."""
+def _normalizer(n: object, diepte: int = 0) -> int:
+    """De normalizers die SigLIP 2 (Gemma) gebruikt; de rest kan niet. Een Sequence in een
+    Sequence mag, tot MAX_NESTING diep (SigLIP 2 heeft er één): dieper is TokenizerFout, geen
+    RecursionError (de review van golf 5, veilig F4)."""
     if n is None:
         return 0
     if not isinstance(n, dict):
         raise TokenizerFout("tokenizer.json: normalizer is geen object")
     soort = n.get("type")
     if soort == "Sequence":
+        if diepte >= MAX_NESTING:
+            raise TokenizerFout(f"tokenizer.json: normalizer meer dan {MAX_NESTING} diep genest")
         lijst = n.get("normalizers")
         if not isinstance(lijst, list):
             raise TokenizerFout("tokenizer.json: normalizer Sequence zonder lijst")
         vlaggen = 0
         for deel in lijst:
-            vlaggen |= _normalizer(deel)
+            vlaggen |= _normalizer(deel, diepte + 1)
         return vlaggen
     if soort == "Lowercase":
         return KLEINE_LETTERS

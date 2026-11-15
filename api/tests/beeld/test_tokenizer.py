@@ -379,6 +379,22 @@ def test_geen_tekst_in_een_fout_en_niets_op_stderr(t_json, capsys):
 # --- weigeren ------------------------------------------------------------------------------------
 
 
+def _genest(diep: int, binnen: dict | None = None) -> dict:
+    """binnen (standaard Lowercase) in diep Sequences (geldige JSON; json.loads neemt 1200 nog
+    aan)."""
+    n: dict = binnen or {"type": "Lowercase"}
+    for _ in range(diep):
+        n = {"type": "Sequence", "normalizers": [n]}
+    return n
+
+
+def test_een_sequence_in_een_sequence_tot_de_grens_kan(t_json):
+    """De normalizer van SigLIP 2 (zelf een Sequence) in nog MAX_NESTING - 1 Sequences."""
+    diep = _genest(tok.MAX_NESTING - 1, _doc()["normalizer"])
+    t = Tokenizer.from_json(_met(normalizer=diep))
+    assert t.encode("Hond op het strand") == t_json.encode("Hond op het strand")
+
+
 def _met(**veld):
     return _json(_doc(**veld))
 
@@ -447,7 +463,14 @@ def _model(**veld):
         (_met(added_tokens=[_toegevoegd(1, "<eos>") | {"single_word": True}]), "single_word"),
         (_met(added_tokens=[_toegevoegd(1, "<eos>"), _toegevoegd(1, "<eos>")]), "twee keer"),
         (_met(added_tokens=["<eos>"]), "geen object"),
+        # De review van golf 5 (veilig F4): diep genest gaf RecursionError, een getal als
+        # added_tokens TypeError; beide horen TokenizerFout
+        (_met(normalizer=_genest(tok.MAX_NESTING + 1)), "diep genest"),
+        (_met(normalizer=_genest(1200)), "diep genest"),
+        (_met(added_tokens=5), "added_tokens is geen lijst"),
+        (_met(added_tokens=True), "added_tokens is geen lijst"),
     ],
+    ids=lambda x: x[:40].decode(errors="replace") if isinstance(x, bytes) else None,
 )
 def test_json_die_niet_kan(bron, fout):
     with pytest.raises(TokenizerFout, match=fout):

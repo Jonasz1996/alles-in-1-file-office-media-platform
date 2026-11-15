@@ -155,9 +155,10 @@ def _geheel(d: dict, sleutel: str, standaard: int, waar: str) -> int:
 
 def _toren(d: dict, naam: str, waar: str) -> Toren:
     act = d.get("hidden_act", "gelu_pytorch_tanh")
-    if act not in GELU:
+    if not isinstance(act, str) or act not in GELU:  # een lijst is unhashable (veilig F3)
+        soort = repr(act[:40]) if isinstance(act, str) else type(act).__name__
         raise OmzetFout(
-            f"config.json: {waar}.hidden_act = {act!r} kan niet (wel {', '.join(sorted(GELU))})"
+            f"config.json: {waar}.hidden_act = {soort} kan niet (wel {', '.join(sorted(GELU))})"
         )
     eps = d.get("layer_norm_eps", 1e-6)
     if type(eps) not in (int, float) or not 0 < eps < 1:

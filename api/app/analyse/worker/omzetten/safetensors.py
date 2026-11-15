@@ -5,10 +5,10 @@ gegevens. De kop geeft per tensor `dtype`, `shape` en `data_offsets` [begin, ein
 het begin van de gegevens; `__metadata__` is een optioneel object van tekst naar tekst.
 
 De kop wordt met de standaardbibliotheek gelezen en streng nagekeken, vóór er één gewicht gelezen
-wordt: n ≤ 100 MB en binnen het bestand; geldige JSON zonder dubbele sleutels; bekende dtypes; een
-lengte die past bij de vorm; de stukken op volgorde, zonder gat of overlap, en samen precies tot
-het eind van het bestand. Een kop die liegt, geeft OmzetFout, geen crash en geen leesactie buiten
-het bestand.
+wordt: n ≤ 100 MB en binnen het bestand; geldige JSON zonder dubbele sleutels; bekende dtypes (als
+tekst); een vorm van hooguit 8 assen van 0 tot 2^40, niet groter dan het bestand; een lengte die
+past bij de vorm; de stukken op volgorde, zonder gat of overlap, en samen precies tot het eind van
+het bestand. Een kop die liegt, geeft OmzetFout, geen crash en geen leesactie buiten het bestand.
 
 Een tensor komt via numpy.memmap en wordt meteen gekopieerd naar float32 (F32, F16 of BF16) of
 int64 (I64, alleen voor position_ids); de map gaat daarna dicht. Zo staat nooit het hele bestand
@@ -30,6 +30,7 @@ from app.analyse.worker.omzetten import OmzetFout
 MAX_KOP = 100_000_000
 MAX_TENSORS = 100_000
 MAX_DIMS = 8
+MAX_AS = 2**40  # één as; de grootste van SigLIP 2 is de embedding van 256.000 rijen
 MAX_NAAM = 512
 
 # dtype van safetensors: (numpy-type op schijf, bytes per element)
@@ -98,6 +99,7 @@ class Safetensors:
         if len(doc) > MAX_TENSORS:
             raise _fout(f"{len(doc)} tensors; hooguit {MAX_TENSORS}")
         self.begin_gegevens = 8 + n
+        self.grootte = grootte
         lengte_gegevens = grootte - self.begin_gegevens
         infos: list[tuple[int, int, Info]] = []
         for naam, t in doc.items():
@@ -122,14 +124,18 @@ class Safetensors:
         if not isinstance(t, dict) or set(t) != {"dtype", "shape", "data_offsets"}:
             raise _fout(f"tensor {naam!r}: verwacht precies dtype, shape en data_offsets")
         dtype, vorm, offsets = t["dtype"], t["shape"], t["data_offsets"]
-        if dtype not in DTYPES:
-            raise _fout(f"tensor {naam!r}: dtype {dtype!r} kan niet (wel {', '.join(DTYPES)})")
+        if not isinstance(dtype, str) or dtype not in DTYPES:
+            soort = repr(dtype[:20]) if isinstance(dtype, str) else type(dtype).__name__
+            raise _fout(f"tensor {naam!r}: dtype {soort} kan niet (wel {', '.join(DTYPES)})")
         if (
             not isinstance(vorm, list)
             or len(vorm) > MAX_DIMS
-            or not all(_geheel(d) and d >= 0 for d in vorm)
+            or not all(_geheel(d) and 0 <= d <= MAX_AS for d in vorm)
         ):
-            raise _fout(f"tensor {naam!r}: shape is geen lijst van gehele getallen ≥ 0")
+            raise _fout(
+                f"tensor {naam!r}: shape is geen lijst van hooguit {MAX_DIMS} gehele getallen "
+                f"van 0 tot 2^40"
+            )
         if (
             not isinstance(offsets, list)
             or len(offsets) != 2
@@ -139,6 +145,8 @@ class Safetensors:
             raise _fout(f"tensor {naam!r}: data_offsets is geen paar 0 ≤ begin ≤ eind")
         a, b = offsets
         nodig = math.prod(vorm) * DTYPES[dtype][1]
+        if nodig > self.grootte:  # nooit een getal in de tekst dat groter is dan het bestand
+            raise _fout(f"tensor {naam!r}: de vorm als {dtype} is groter dan het bestand")
         if b - a != nodig:
             raise _fout(f"tensor {naam!r}: {b - a} bytes; de vorm {vorm} als {dtype} is {nodig}")
         info = Info(naam, dtype, tuple(vorm), self.begin_gegevens + a, b - a)
