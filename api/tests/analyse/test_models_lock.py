@@ -4,6 +4,7 @@ lock.parse."""
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from app.analyse import lock
 ROOT = Path(__file__).resolve().parents[3]
 COMMIT = "48b10fa505aeb51fbd127fc60a5c660040e823b7"
 SHA = "a" * 64
+# de Apache-tekst van A0 (sface-Apache-2.0.txt op a284b47)
+SIGLIP_LICENTIE = "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
 
 
 def test_de_twee_modellen_van_gezichten():
@@ -122,7 +125,7 @@ done < "$1"
 
 def test_de_licenties():
     names = sorted(p.name for p in lock.LICENSES.iterdir())
-    assert names == ["sface-Apache-2.0.txt", "yunet-MIT.txt"]
+    assert names == ["sface-Apache-2.0.txt", "siglip2-Apache-2.0.txt", "yunet-MIT.txt"]
     mit = (lock.LICENSES / "yunet-MIT.txt").read_text()
     assert mit.startswith("MIT License\n")
     assert "Copyright (c) 2020 Shiqi Yu" in mit
@@ -130,6 +133,13 @@ def test_de_licenties():
     apache = (lock.LICENSES / "sface-Apache-2.0.txt").read_text()
     assert "Apache License" in apache and "Version 2.0, January 2004" in apache
     assert "END OF TERMS AND CONDITIONS" in apache
+    # SigLIP 2 (X3a, Keuze 73): de Apache-tekst die A0 voor SFace gebruikte, byte voor byte (vast
+    # op de sha256: de omzetter zet hem in /uit, dus hij staat met die sha256 in models.lock). De
+    # voorwaarden zijn die van SFace; X2a zet bij SFace de APPENDIX van opencv_zoo erachter
+    siglip = (lock.LICENSES / "siglip2-Apache-2.0.txt").read_bytes()
+    assert hashlib.sha256(siglip).hexdigest() == SIGLIP_LICENTIE
+    assert siglip.endswith(b"   END OF TERMS AND CONDITIONS\n")
+    assert apache.encode().startswith(siglip)
     text = lock.LOCK_PATH.read_text()
     assert "MIT, Copyright (c) 2020 Shiqi Yu" in text and "Apache-2.0" in text
 

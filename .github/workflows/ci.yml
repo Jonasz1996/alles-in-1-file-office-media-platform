@@ -1246,3 +1246,170 @@ jobs:
           fi
           echo "X1 OCR in de worker-container (test_ocr_container.sh):"
           sed 's/^/  /' "$d/ocr.txt" 2> /dev/null || echo "  liep niet"
+
+  # Fase 6, X3a (Keuze 73, 74, 83; BZ1–BZ4, BZ6 ruw en BZ7): het echte beeldmodel, SigLIP 2
+  # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert (git diff
+  # over de push of de PR), of als de PR een regel "beeld-model: ja" heeft (K2-03). Geen
+  # workflow_dispatch en geen cache: de bron komt elke keer van huggingface.co, met de sha256 uit
+  # models.lock. tools/beeld/beeld_model.py (alleen de standaardbibliotheek) haalt en vergelijkt;
+  # zolang models.lock geen regels van SigLIP heeft of beeld.tsv ontbreekt, schrijft hij een
+  # voorstel (verslag via upload-artifact) en maakt de laatste stap de job rood. Een mens zet de
+  # regels erin, nooit de job. De tests met marker beeld_echt draaien alleen hier. Aan het eind van
+  # het log het blok "=== kort ===".
+  beeld-model:
+    name: Beeld-model (SigLIP 2 omzetten, tokenizer en de kwaliteitspoort)
+    runs-on: ubuntu-24.04
+    # de bron ±1,5 GB, twee omzettingen, 120 foto's van Commons, BZ4 in int8 en fp32
+    timeout-minutes: 60
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv-analyse
+    defaults:
+      run:
+        shell: bash
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git diff over de push of de PR
+      # De tekst van de PR gaat via env (nooit in het script zelf) en komt niet in het log
+      - name: 'Moet beeld-model draaien? (git diff, of de regel "beeld-model: ja" in de PR)'
+        id: poort
+        env:
+          SOORT: ${{ github.event_name }}
+          ACTIE: ${{ github.event.action }}
+          VOOR: ${{ github.event.before }}
+          NA: ${{ github.event.after }}
+          SHA: ${{ github.sha }}
+          BASIS: ${{ github.event.pull_request.base.sha }}
+          KOP: ${{ github.event.pull_request.head.sha }}
+          PR_TEKST: ${{ github.event.pull_request.body }}
+        run: |
+          WERK="$RUNNER_TEMP/beeld"
+          mkdir -p "$WERK"
+          echo "WERK=$WERK" >> "$GITHUB_ENV"
+          paden=(app/analyse/worker/omzetten app/analyse/tokenizer.py app/analyse/onnxw.py app/analyse/models.lock)
+          if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
+            van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
+          elif [ "$SOORT" = pull_request ]; then
+            van="$BASIS"; tot="$KOP"; reeks="$BASIS...$KOP"
+          else
+            van="$VOOR"; tot="$SHA"; reeks="$VOOR..$SHA"
+          fi
+          if printf '%s\n' "$PR_TEKST" | tr -d '\r' | grep -Eq '^[[:space:]]*beeld-model:[[:space:]]*ja[[:space:]]*$'; then
+            draaien=ja; reden='de PR zegt "beeld-model: ja"'
+          elif ! git cat-file -e "${van:-x}^{commit}" 2> /dev/null || ! git cat-file -e "${tot:-x}^{commit}" 2> /dev/null; then
+            draaien=ja; reden="geen vorige commit om mee te vergelijken"
+          elif gewijzigd=$(git diff --name-only "$reeks" -- "${paden[@]}") && [ -n "$gewijzigd" ]; then
+            draaien=ja; reden="gewijzigd: $(echo "$gewijzigd" | head -n 5 | tr '\n' ' ')"
+          else
+            draaien=nee; reden="geen wijziging in de omzetter, tokenizer.py, onnxw.py of models.lock"
+          fi
+          echo "draaien=$draaien" >> "$GITHUB_OUTPUT"
+          echo "beeld-model: draaien $draaien ($reden)" | tee "$WERK/kort.txt"
+      - uses: astral-sh/setup-uv@v6
+        if: steps.poort.outputs.draaien == 'ja'
+        with:
+          python-version: "3.12"
+      - name: De extra analyse, precies uv.lock (numpy, onnxruntime, protobuf, flatbuffers, packaging)
+        if: steps.poort.outputs.draaien == 'ja'
+        run: |
+          uv sync --frozen --extra analyse
+          echo "cores: $(nproc)"
+      - name: BZ1 bereik per host
+        if: steps.poort.outputs.draaien == 'ja'
+        run: python3 -I ../tools/beeld/beeld_model.py bereik --werk "$WERK"
+      # Code 3: een voorstel (nog geen regels in models.lock); de job gaat door, de uitslag is rood
+      - name: BZ2 de vijf bronbestanden van SigLIP 2
+        id: bron
+        if: steps.poort.outputs.draaien == 'ja'
+        run: python3 -I ../tools/beeld/beeld_model.py bron --werk "$WERK" || [ $? -eq 3 ]
+      # Zoals de dienst analyse-omzetten start (compose van X2a): python -I -c <boot> /srv --bron
+      # /bron --uit /uit; hier is /srv de map api. Twee keer op deze runner (niet op twee
+      # runners); de eerste met --fp32 voor BZ4. stderr gaat naar omzetten<n>.log (maxrss)
+      - name: BZ2 twee keer omzetten
+        id: omzetten
+        if: steps.bron.outcome == 'success'
+        env:
+          BOOT: "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
+        run: |
+          for n in 1 2; do
+            extra=()
+            if [ "$n" = 1 ]; then extra=(--fp32); fi
+            mkdir -p "$WERK/uit$n"
+            if ! uv run --no-sync python -I -c "$BOOT" "$PWD" --bron "$WERK/bron" --uit "$WERK/uit$n" "${extra[@]}" \
+              2> "$WERK/omzetten$n.log"; then
+              cat "$WERK/omzetten$n.log"
+              exit 1
+            fi
+            cat "$WERK/omzetten$n.log"
+          done
+      - name: BZ2 twee keer dezelfde sha256, maxrss ≤ 1,5 GB, en models.lock
+        if: ${{ !cancelled() && steps.omzetten.outcome == 'success' }}
+        run: |
+          python3 -I ../tools/beeld/beeld_model.py vergelijk --werk "$WERK" \
+            --uit "$WERK/uit1" --uit "$WERK/uit2" --log "$WERK/omzetten1.log" --log "$WERK/omzetten2.log" \
+            || [ $? -eq 3 ]
+      - name: BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)
+        id: set
+        if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}
+        run: python3 -I ../tools/beeld/beeld_model.py set --werk "$WERK" || [ $? -eq 3 ]
+      - name: BZ3 en BZ7 de tokenizer met het tokenizer.json van SigLIP 2 (pytest -m beeld_echt)
+        if: ${{ !cancelled() && steps.omzetten.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          BEELD_BRON="$WERK/bron" BEELD_MODEL="$WERK/uit1" BEELD_RAPPORT="$WERK" \
+            uv run --no-sync pytest -q -m beeld_echt -rs tests_analyse/test_beeld_tokenizer_echt.py | tee "$WERK/bz3.txt"
+          if grep -q "^SKIPPED" "$WERK/bz3.txt"; then
+            echo "BZ3 overgeslagen" && exit 1
+          fi
+      - name: BZ4 de kwaliteitspoort van Keuze 83 (pytest -m beeld_echt)
+        if: ${{ !cancelled() && steps.omzetten.outcome == 'success' && steps.set.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          tsv="$PWD/tests/analyse/sets/beeld.tsv"
+          if [ ! -f "$tsv" ]; then tsv="$WERK/voorstel-beeld.tsv"; fi
+          BEELD_MODEL="$WERK/uit1" BEELD_SET="$WERK/set" BEELD_SET_TSV="$tsv" BEELD_RAPPORT="$WERK" \
+            uv run --no-sync pytest -q -m beeld_echt -rs tests_analyse/test_beeld_kwaliteit.py | tee "$WERK/bz4.txt"
+          if grep -q "^SKIPPED" "$WERK/bz4.txt"; then
+            echo "BZ4 overgeslagen" && exit 1
+          fi
+      - name: BZ6 het model op één core (taskset -c 0)
+        if: ${{ !cancelled() && steps.omzetten.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          BEELD_MODEL="$WERK/uit1" BEELD_RAPPORT="$WERK" \
+            taskset -c 0 uv run --no-sync pytest -q -m beeld_echt -rs tests_analyse/test_beeld_echt_perf.py | tee "$WERK/bz6.txt"
+          if grep -q "^SKIPPED" "$WERK/bz6.txt"; then
+            echo "BZ6 overgeslagen" && exit 1
+          fi
+      - name: Uitslag (rood zolang models.lock of beeld.tsv een voorstel is)
+        if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}
+        run: python3 -I ../tools/beeld/beeld_model.py uitslag --werk "$WERK"
+      # Het verslag: de voorstellen, de logs en de JSON van BZ3–BZ7; nooit de bron, het model of
+      # de foto's
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.poort.outputs.draaien == 'ja' }}
+        with:
+          name: beeld-model
+          path: |
+            ${{ runner.temp }}/beeld/*.txt
+            ${{ runner.temp }}/beeld/*.json
+            ${{ runner.temp }}/beeld/*.lock
+            ${{ runner.temp }}/beeld/*.tsv
+            ${{ runner.temp }}/beeld/*.log
+            ${{ runner.temp }}/beeld/uit1/meta.json
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          echo "=== kort ==="
+          if [ -f "$WERK/kort.txt" ]; then
+            cat "$WERK/kort.txt"
+          else
+            echo "beeld-model: liep niet"
+          fi
+          for stap in bz3 bz4 bz6; do
+            if [ -f "$WERK/$stap.txt" ]; then
+              echo "pytest $stap: $(tail -n 1 "$WERK/$stap.txt")"
+            fi
+          done
