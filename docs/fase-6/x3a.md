@@ -249,16 +249,39 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
 - `.gitignore`, `.dockerignore` en `api/.dockerignore`: X2a heeft dezelfde regels (van stap 0);
   identiek, geen conflict.
 - `api/tests_analyse/`: X3a voegt `beeld_echt.py`, `siglip_klein.py` en vijf testbestanden toe;
-  `conftest.py` is van stap 0. De telling van `api-analyse` (K2-10) moet X3a's tests meetellen:
-  hier 123 tests zonder `beeld_echt` (11 gedeselecteerd). De job `api-analyse` moet `beeld_echt`
-  uitsluiten; geeft hij zelf een `-m`, dan daar `and not beeld_echt` bij.
+  `conftest.py` is van stap 0, en X2a verandert hem niet. De telling van `api-analyse` (K2-10)
+  moet X3a's tests meetellen. Hier: 123 tests zonder `beeld_echt` (42 van stap 0, 71
+  `test_beeld_omzetten.py`, 10 `test_beeld_echt_hulp.py`) en 11 gedeselecteerd. X2a zet op
+  `b0245cc` in `ci.yml` `ANALYSE_TESTS: "107"` (met de 42 van stap 0) en `ANALYSE_DESELECTED: "0"`;
+  na de samenvoeging wordt dat **188** (107 + 81) en **11**. Nakijken met
+  `pytest --collect-only -q tests_analyse -m "not beeld_echt"` op de samengevoegde boom. X2a geeft
+  al `-m "not beeld_echt"`; dat blijft zo.
+- De licenties: X2a zet bij SFace en YuNet de bestanden van opencv_zoo neer (`002b079`, met de
+  APPENDIX van Apache bij SFace). `test_de_licenties` hield eerst vast dat de licentie van SigLIP 2
+  gelijk is aan die van SFace; dat was na de samenvoeging rood geweest. Nu (`f197621`) staat de
+  tekst van SigLIP 2 vast op zijn sha256 (de tekst van A0) en begint die van SFace met dezelfde
+  bytes, met of zonder APPENDIX; nagekeken tegen het bestand van X2a. Twee dingen van X2a tellen de
+  licenties: `test_install_analyse.sh` eist `ls "$MODELLEN_ROOT"/*.txt | wc -l` = 2, en
+  `modellen_ophalen` zet elk bestand uit `licenties/` naast de modellen. Na de samenvoeging zijn
+  het er 3: de test krijgt 3, of `install.sh` zet alleen de licenties neer van modellen die in de
+  lock staan (dan blijft het 2 tot X3b). De stap in `api-analyse` die de licenties met opencv_zoo
+  vergelijkt, noemt alleen YuNet en SFace; die blijft goed.
 - `.github/workflows/ci.yml`: X3a voegt de job `beeld-model` aan het eind toe; X2a voegt
   `api-analyse` en `analyse-image` toe. Twee nieuwe blokken; een conflict alleen op de plek.
-- `docs/runbooks/analyse.md`: X2a had hem nog niet gemaakt; X3a maakt hem met alleen het deel
-  beeld. Maakt X2a hem ook, dan is het een add/add-conflict: neem het bestand van X2a en zet het
-  deel "Zoeken op beeld (X3)" eronder.
+- `docs/runbooks/analyse.md`: X2a maakt hem ook (`b0245cc`, "Runbook: de container analyse"),
+  X3a met alleen het deel beeld. Dat is een add/add-conflict: neem het bestand van X2a, zet het
+  deel "Zoeken op beeld (X3)" van X3a eronder (met zijn drie subkoppen) en maak van de titel
+  "de analyse (gezichten en zoeken op beeld)". De link in dit bestand wijst naar het anker
+  `#zoeken-op-beeld-x3`; dat blijft zo als de kop blijft.
+- onnxruntime 1.31.1 schrijft bij `import onnxruntime`, dus vóór
+  `disable_telemetry_events()` (a0.md, Open 2), een apparaat-id in `$HOME`:
+  `.cache/Microsoft/DeveloperTools/.onnxruntime/deviceid` (36 bytes) en `onnxruntime.db` (24 KB).
+  Zonder schrijfbare `HOME` (zo draaide hier `nobody`) zegt hij op stderr "Failed to persist
+  telemetry device ID; using an in-memory identifier". Een `strace` van de import en 3 s daarna
+  zag geen socket buiten `AF_UNIX`. Voor de worker van X2a (container `read_only`) betekent dat
+  één regel op stderr per kind; voor X3a niets: de omzetter laadt onnxruntime niet.
 - `app/analyse/runtime.py` (X2a) heeft `OMZET_BOOT` gelijk aan de `BOOT` van `test_beeld_ci.py` en
-  `ci.yml` (nagekeken op `25ac3e7`).
+  `ci.yml`, en `x-omzet-boot` in `compose.analyse.yaml` is dezelfde regel (nagekeken op `b0245cc`).
 
 ## Open
 
@@ -329,11 +352,33 @@ Vraag 8, 10, 11, 12a, 12b, 13 en 14 staan op hun standaard; geen ervan is hier b
 
 ## Gedraaid
 
-Op de kop van X3a (zie het resultaat van de workflow voor de precieze getallen):
+Op de kop van X3a, in de sandbox (root; CI draait als gewone gebruiker, zie `ci-nobody`). Elke
+zware run alleen, achter het gedeelde slot van de workflow (`flock`), onder `taskset -c 0-2`.
 
-- `ruff check .` en `ruff format --check .` in `api/`;
-- de hele API-suite onder `taskset -c 0-2`;
-- `tests_analyse` in `.venv-analyse` (zonder `beeld_echt`);
-- `/tmp/ci-nobody/run.sh` op de testbestanden van X3a in `tests/`;
-- `e2e/slim.sh` alleen;
-- yamllint op `ci.yml`.
+| Wat | Waar | Uitkomst |
+|---|---|---|
+| `ruff check .` en `ruff format --check .` in `api/` | `aac2434`, `f197621` | groen (692 bestanden) |
+| De hele API-suite, `uv run pytest -q -rs` | `aac2434`, alleen | 6351 passed, 2 skipped (Pebble draait niet; geen `provider-shapes.json`, allebei al zo vóór golf 5), 240 deselected, in 2635 s |
+| `test_models_lock.py` na `f197621` | `f197621` | 23 passed |
+| `tests_analyse` in `.venv-analyse`, `-m "not beeld_echt"` | `f197621` | 123 passed, 11 deselected, 10,6 s |
+| Hetzelfde als `nobody` (een venv op `/opt/ci-py` met een `.pth` naar `.venv-analyse`, zodat ook de omzetter met `python -I` numpy vindt) | `f197621` | 123 passed, 11 deselected, 11,1 s |
+| `/tmp/ci-nobody/run.sh` op `tests/beeld`, `test_onnxw.py`, `test_beeld_ci.py`, `test_beeld_sets.py`, `test_beeld_tools.py`, `test_models_lock.py`, `test_no_numpy_in_app.py` | `f197621` | 233 passed, 20,6 s |
+| `-m beeld_echt` zonder model of set | `f197621` | 1 failed en 10 errors, elk met "BEELD_MODEL ontbreekt" of dergelijke: niets slaat over |
+| `e2e/slim.sh` alleen (`SLIM_CPUS=0-2`) | `f197621` | groen in 1085 s: stap 1 (zoek en triggers in python:3.12-slim, SQLite 3.46.1) 1306 passed in 867 s; stap 3 (e2e, marker zoek) 101 passed in 206 s |
+| yamllint op `ci.yml` (`.yamllint.yml` van de repo) | `f197621` | geen fouten |
+
+**Een rode run, en waarom het niet aan golf 5 ligt.** De eerste volle suite (op `aac2434`, op
+2026-11-12) had één rode test:
+`tests/search/test_search_rebuild.py::test_een_upload_wacht_hooguit_1_s_en_de_index_klopt`, met
+een langste upload van 1066 ms (grens 1000 ms; 7 stukken van de herbouw, de langste 43 ms; 45
+uploads). Op dat moment draaiden de e2e en de volle suite van X2a op dezelfde drie cores. De test
+meet de wachttijd van een upload tijdens een herbouw in stukken; die wachttijd hangt aan fsync
+(z7.md, het doorgestreepte punt over deze test, en `app/dbgate.py` van I1). Een meting van
+`fdatasync` op 4 KiB, alleen: 1190 keer, mediaan 1,1 ms, p99 6,9 ms, de langste 120,9 ms (één keer
+boven 100 ms). Onder de last van twee suites en een e2e tegelijk is fsync niet apart gemeten: de
+test was rood met die last erbij en groen zonder. Dezelfde suite alleen, achter het slot (op 2026-11-15), was groen, deze test ook. Golf 5 raakt
+`app/search`, de uploads en `dbgate.py` niet. Niets losser gemaakt.
+
+Niet hier gedraaid: de job `beeld-model` zelf (huggingface.co en Commons zijn vanuit de sandbox
+dicht; zie de go/no-go), de e2e-set van CI (golf 5 raakt de web en de routes niet; slim.sh draait
+de e2e van zoeken), en de shell-tests van `infra/single` (X3a raakt `install.sh` en compose niet).
