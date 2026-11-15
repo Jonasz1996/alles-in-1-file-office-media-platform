@@ -17,11 +17,13 @@ eigenaar leeg is, en na een nieuwe versie.
 
 from __future__ import annotations
 
+import logging
 import struct
 import uuid
 from datetime import timedelta
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -33,6 +35,8 @@ from app.models import Face, FaceOwner, FacePerson, Node, Person
 from app.people import people as P
 from app.people.faces import crypto, drempels, state
 from app.search.live import own_live
+
+log = logging.getLogger("platform.faces")
 
 GROUP = "faces.group"
 VERDICT_WAIT = timedelta(seconds=30)
@@ -187,9 +191,12 @@ async def run_group(
             min_group=drempels.MIN_GROUP,
         )
         answer = await client.call(settings, wire.Op.GROUP, args, fds=[src, out])
-        if wire.GroupData.model_validate(answer).n != n:
-            raise BadOutput
-        raw = wire.read_all(out, n * wire.GROUP_OUT.size + 1)
+        try:
+            if wire.GroupData.model_validate(answer).n != n:
+                raise BadOutput
+            raw = wire.read_all(out, n * wire.GROUP_OUT.size + 1)
+        except (ValidationError, ValueError):
+            raise BadOutput from None
     finally:
         wire.close_all([src, out])
     result = parse_output(raw, n, len(persons))[len(known) :]
@@ -276,8 +283,13 @@ async def group_job(settings: Settings, payload: dict[str, Any]) -> None:
         raise wait
     try:
         await run_group(settings, owner, mode)
+    except BadOutput:
+        # De uitkomst klopt niet: niets geschreven, en geen nieuwe poging (zoals bad_output bij
+        # een foto); de volgende keuze of batch zet een nieuwe ronde klaar
+        log.warning("faces.group: bad_output (%s)", mode)
     except (client.AnalyseDown, client.AnalyseBusy, client.AnalyseFailed) as exc:
         deferral = monitor.deferral(exc)
         if deferral is not None:
             raise deferral from None
-        raise
+        # Alleen de code naar de taak (en /beheer), nooit het detail van het kind (K1-16)
+        raise jobs.JobError(f"faces.group: {getattr(exc, 'code', 'down')}") from None

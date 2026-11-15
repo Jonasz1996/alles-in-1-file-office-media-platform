@@ -262,8 +262,11 @@ async def on_start(settings: Settings) -> None:
     state.configure(settings)
     async with scan._maker(settings)() as db:
         await face_rows.reset_busy(db)
-        if state.running(settings) and await face_rows.old_version(db, FACES_VERSION):
-            await scan.queue_plan(db, "version")
+        if state.running(settings):
+            if await face_rows.old_version(db, FACES_VERSION):
+                await scan.queue_plan(db, "version")
+            if await face_rows.has_waiting(db):
+                await scan.queue_scan(db)
         await db.commit()
     await wipe.resume(settings)
 

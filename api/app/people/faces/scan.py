@@ -429,9 +429,11 @@ def _vectors_ok(raw: bytes) -> bool:
     return abs(math.sqrt(sum(v * v for v in values)) - 1.0) <= 0.001
 
 
-def _check(settings: Settings, sent: list[Item], answer: dict, raw: bytes) -> str | None:
+def _check(settings: Settings, sent: list[Item], answer: dict, raw: bytes | None) -> str | None:
     """De uitvoer van de worker controleren; per foto photo en vectors invullen. Geeft
     bad_output als het geheel niet klopt (dan is elke foto bad_output)."""
+    if raw is None:
+        return "bad_output"
     try:
         data = wire.FacesData.model_validate(answer)
     except ValidationError:
@@ -458,7 +460,7 @@ def _check(settings: Settings, sent: list[Item], answer: dict, raw: bytes) -> st
     return None
 
 
-async def _worker(settings: Settings, sent: list[Item]) -> tuple[dict, bytes]:
+async def _worker(settings: Settings, sent: list[Item]) -> tuple[dict, bytes | None]:
     """De opdracht faces voor de foto's met een fd, met wijken tijdens het wachten."""
     out = wire.out_memfd("uit")
     try:
@@ -484,7 +486,12 @@ async def _worker(settings: Settings, sent: list[Item]) -> tuple[dict, bytes]:
                 with contextlib.suppress(BaseException):
                     await task
             job.close()
-        raw = wire.read_all(out, len(sent) * wire.FACES_MAX * wire.FACE_VEC_BYTES + 1)
+        try:
+            raw: bytes | None = wire.read_all(
+                out, len(sent) * wire.FACES_MAX * wire.FACE_VEC_BYTES + 1
+            )
+        except ValueError:
+            raw = None  # groter dan ooit kan: bad_output in _check
         return answer, raw
     finally:
         wire.close_all([out])
@@ -509,8 +516,6 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
                 for o in owners
             }
             for item in items:
-                if not ok_owner[item.owner]:
-                    continue
                 current = (
                     await db.execute(
                         select(Node.blob_id, FaceScan.state, FaceScan.version)
@@ -518,12 +523,14 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
                         .where(Node.id == item.node, own_live(Node, item.owner))
                     )
                 ).first()
-                if (
-                    current is None
-                    or current.blob_id != item.sha
-                    or current.state != "busy"
-                    or current.version != FACES_VERSION
-                ):
+                if current is None or current.state != "busy" or current.version != FACES_VERSION:
+                    continue
+                if not ok_owner[item.owner] or current.blob_id != item.sha:
+                    # Uit, verboden, een wisronde, of een andere inhoud: niets schrijven; de foto
+                    # weer op wait (een wisronde ruimt hem op, een nieuwe inhoud komt opnieuw)
+                    await face_rows.set_scan(
+                        db, item.node, {"state": "wait", "updated_at": at}, only_busy=True
+                    )
                     continue
                 if item.photo is None:
                     await _set_code(db, item, at)
@@ -635,7 +642,9 @@ async def scan_job(settings: Settings, payload: dict[str, Any]) -> None:
                 if deferral is not None:
                     await _restore(settings, items)
                     raise deferral from None
-                log.warning("faces.scan: opdracht mislukt (%s), %d foto's", exc, len(sent))
+                # alleen de code, nooit het detail van het kind (K1-16)
+                code = getattr(exc, "code", "down")
+                log.warning("faces.scan: opdracht mislukt (%s), %d foto's", code, len(sent))
                 await _restore(settings, sent, tries=True)
                 await _write(settings, [i for i in items if i.fd is None])
                 await _again(settings)

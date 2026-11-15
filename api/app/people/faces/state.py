@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from datetime import UTC, datetime
@@ -64,9 +65,13 @@ def settings_for(db: Any) -> Settings | None:
 
 
 def running(settings: Settings | None) -> bool:
-    """Gezichten draaien op dit platform: de analyse staat aan (op SQLite) en er is een map met
-    sleutels."""
-    return settings is not None and settings.analyse_on and bool(settings.faces_keys.strip())
+    """Gezichten draaien op dit platform: de analyse staat aan (op SQLite) en de map met sleutels
+    (PLATFORM_FACES_KEYS) is er. Zonder die map kan geen vector versleuteld worden: dan is het
+    "niet geïnstalleerd", niet een job die elke keer faalt."""
+    if settings is None or not settings.analyse_on:
+        return False
+    keys = settings.faces_keys.strip()
+    return bool(keys) and os.path.isdir(keys)
 
 
 def reset() -> None:
