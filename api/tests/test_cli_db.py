@@ -390,20 +390,32 @@ async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
 
 @pytest.mark.anyio
 async def test_de_stubs_van_gezichten_en_beeld(settings):
-    """De commando's van X2 en X3 staan er als stub (A0, §3.5): ze noemen hun pakket, exitcode
-    1. Wie er een bouwt, haalt hem uit ANALYSE_STUBS en uit deze lijst."""
+    """De commando's van X3 staan er als stub (A0, §3.5): ze noemen hun pakket, exitcode 1. Wie
+    er een bouwt, haalt hem uit ANALYSE_STUBS en uit deze lijst. analyse-bench en
+    analyse-kwaliteit zijn gebouwd (X2b): met de analyse uit (zoals 0.8.0) meten ze niets,
+    exitcode 1, niets op stdout, en ze maken niets in de datamap (tests/people/faces/
+    test_faces_meten.py: met gezichten aan)."""
     assert {name: package for name, (package, _) in cli.ANALYSE_STUBS.items()} == {
-        "analyse-bench": "X2",
-        "analyse-kwaliteit": "X2b",
         "beeld-bench": "X3",
         "beeld-kwaliteit": "X3",
         "beeld-status": "X3",
     }
-    for name, package in (("analyse-kwaliteit", "X2b"), ("beeld-status", "X3")):
+    for name, package in (("beeld-status", "X3"),):
         result = await run_cli(settings, name)
         assert result.returncode == 1, result.stderr.decode()
         assert f"is nog niet gebouwd ({package})" in result.stderr.decode()
         assert result.stdout == b""
+    before = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    for name in ("analyse-bench", "analyse-kwaliteit"):
+        result = await run_cli(settings, name)
+        assert result.returncode == 1, result.stderr.decode()
+        assert result.stderr.decode() == (
+            f"{name}: niets gemeten: gezichten staan uit (ANALYSE=uit of geen"
+            " PLATFORM_FACES_KEYS)\n"
+        )
+        assert result.stdout == b""
+    after = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    assert after == before
 
 
 @pytest.mark.anyio

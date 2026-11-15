@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,12 +33,19 @@ from app.analyse import monitor
 from app.config import Settings
 from app.models import Face, FacePerson, FaceScan, Node, PhotoPref, Setting, User
 from app.people import hooks as people_hooks
-from app.people.faces import crypto, group, scan, state, verdicts, wipe
+from app.people.faces import crypto, group, meten, scan, state, verdicts, wipe
 from app.people.faces.version import FACES_VERSION
 from app.routers.stubs import not_built
 from app.search import hooks as search_hooks
 from app.search.live import own_live
-from app.search.types import AdminFaces, AnalyseModel, AnalyseQueue, CodeCount
+from app.search.types import (
+    AdminFaces,
+    AnalyseModel,
+    AnalyseQuality,
+    AnalyseQueue,
+    CodeCount,
+    FacesBench,
+)
 
 HOURLY = "faces.hourly"
 BYTES_PER_FACE = 800  # ±0,8 kB per gezicht in de database (Keuze 67)
@@ -82,6 +90,7 @@ async def admin_block(db: AsyncSession) -> AdminFaces | None:
     counts = await face_rows.server_counts(db)
     done_hour = await face_rows.done_since(db, state.now() - timedelta(hours=1))
     caps = found.caps
+    found_bench = await meten.stored(db, meten.BENCH)
     models = [
         AnalyseModel(name=m.name, version=getattr(m, "version", ""), sha_ok=m.state == "ok")
         for m in (caps.models if caps is not None else [])
@@ -104,11 +113,28 @@ async def admin_block(db: AsyncSession) -> AdminFaces | None:
         faces=counts["faces"],
         named=counts["named"],
         db_bytes=counts["faces"] * BYTES_PER_FACE,
-        bench=None,
-        eta_s=None,
+        bench=_bench(found_bench),
+        eta_s=meten.eta_s(found_bench, counts["waiting"]),
         wipe_waiting=bool(wipe.WAITING),
-        quality=None,
+        quality=_quality(await meten.stored(db, meten.QUALITY)),
     )
+
+
+def _bench(found: dict[str, Any] | None) -> FacesBench | None:
+    """De laatste uitkomst van app.cli analyse-bench (meten.py), of None ("niet gemeten")."""
+    try:
+        return FacesBench.model_validate(found) if found else None
+    except ValidationError:
+        return None
+
+
+def _quality(found: dict[str, Any] | None) -> AnalyseQuality | None:
+    """De laatste uitkomst van app.cli analyse-kwaliteit, of None: "niet gemeten" (laag 4 draait
+    niet in CI; Vraag 8)."""
+    try:
+        return AnalyseQuality.model_validate(found) if found else None
+    except ValidationError:
+        return None
 
 
 async def admin_switch(db: AsyncSession, value: bool) -> None:

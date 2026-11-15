@@ -179,7 +179,22 @@ async def run_group(
     known, opened, persons, rejects = await _read(settings, owner, only)
     if not opened:
         return 0
-    data = build_input(known, opened, len(persons), rejects)
+    result = await call(settings, mode, known, opened, len(persons), rejects)
+    await _store(settings, owner, mode, opened, persons, result)
+    return len(opened)
+
+
+async def call(
+    settings: Settings,
+    mode: str,
+    known: list[tuple[uuid.UUID, bytes, int]],
+    opened: list[tuple[uuid.UUID, bytes]],
+    persons: int,
+    rejects: list[tuple[int, int]],
+) -> list[tuple[int, float, int]]:
+    """De opdracht group met de drempels van drempels.py; geeft (persoon-index of -1, score,
+    groep of -1) per open gezicht. Ook voor app.cli analyse-kwaliteit (meten.py)."""
+    data = build_input(known, opened, persons, rejects)
     n = len(known) + len(opened)
     src, out = wire.sealed_memfd("in", data), wire.out_memfd("uit")
     del data
@@ -201,9 +216,7 @@ async def run_group(
             raise BadOutput from None
     finally:
         wire.close_all([src, out])
-    result = parse_output(raw, n, len(persons))[len(known) :]
-    await _store(settings, owner, mode, opened, persons, result)
-    return len(opened)
+    return parse_output(raw, n, persons)[len(known) :]
 
 
 async def _store(
