@@ -731,6 +731,9 @@ def test_uitslag_is_rood_zolang_er_een_voorstel_ligt(werk):
     assert bm.main(["uitslag", "--werk", str(werk.map)]) == 1
     assert _kort(werk)[1:] == [
         "UITSLAG models.lock mist de regels van SigLIP (voorstel: voorstel-models.lock)",
+        "UITSLAG zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van "
+        "install.sh maakt niemand de omzetting, en meldt de container ze als ontbrekend "
+        "(models_missing)",
         "UITSLAG beeld.tsv ontbreekt (voorstel: voorstel-beeld.tsv)",
     ]
 

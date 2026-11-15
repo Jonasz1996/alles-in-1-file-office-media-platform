@@ -29,7 +29,8 @@ Twee standen, zoals fotos.lock (het patroon van het ontwerp):
 Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor uit de
 gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op.
 `uitslag` faalt met "models.lock mist de regels van SigLIP" en "beeld.tsv ontbreekt" zolang er
-een voorstel ligt; een mens zet de regels erin, nooit de job zelf.
+een voorstel ligt; een mens zet de regels erin, nooit de job zelf, en die van SigLIP pas samen met
+X3b (de stap BEELD van install.sh; anders meldt de container ze als ontbrekend).
 
 Codes: 0 goed, 1 fout, 3 voorstel geschreven (de job gaat door, `uitslag` maakt hem rood).
 """
@@ -713,6 +714,12 @@ def uitslag(werk: Werk) -> int:
     rood = []
     if werk.voorstel_lock.is_file():
         rood.append("models.lock mist de regels van SigLIP (voorstel: voorstel-models.lock)")
+        # Review golf 5, uitrol F3: caps meldt elke regel van models.lock; zonder de stap BEELD
+        # (X3b) staat er geen omzetting en geen bron, dus models_missing
+        rood.append(
+            "zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van install.sh "
+            "maakt niemand de omzetting, en meldt de container ze als ontbrekend (models_missing)"
+        )
     if werk.voorstel_set.is_file():
         rood.append("beeld.tsv ontbreekt (voorstel: voorstel-beeld.tsv)")
     for r in rood:

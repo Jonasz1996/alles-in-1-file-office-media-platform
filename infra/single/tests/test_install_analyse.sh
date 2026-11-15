@@ -23,8 +23,9 @@
 #   MODELLEN_ROOT die daarna weg is; curl met --retry 3 en --max-filesize; een verkeerde sha256,
 #   een te groot bestand, geen server of te weinig ruimte is niet fataal en laat niets achter; een
 #   tweede run haalt niets; een gewijzigd model wordt opnieuw gehaald (en --force-recreate); een
-#   *.onnx die niet meer in de lock staat gaat weg; url "-" wordt niet gehaald; de licenties
-#   staan ernaast; een symlink die "de app" (10001) of iemand anders op de plek van een model of
+#   *.onnx die niet meer in de lock staat gaat weg; url "-" wordt niet gehaald; de regels van
+#   zoeken op beeld (siglip2-b32-256/…) haalt het niet, die zijn van de stap BEELD van X3b, en een
+#   omzetting die er al staat, blijft; de licenties staan ernaast; een symlink die "de app" (10001) of iemand anders op de plek van een model of
 #   een map zet, raakt het script niet aan;
 # - main met aan: de stap, compose.analyse.yaml (en de grenzen) bij elke compose-aanroep, de
 #   container met --no-deps, daarna analyse-status --wait 20, en de eindtekst; een start die
@@ -470,6 +471,29 @@ check "een nieuw model in de lock: opnieuw gehaald, MODELS_CHANGED=1" eval 'cmp 
 printf '0000 1 ../weg.onnx %s/a.onnx\n' "$base" >>"$LOCK"
 modellen_ophalen >"$work/m.out" 2>&1
 check "een regel die niet klopt (..): overgeslagen, niets buiten MODELLEN_ROOT" eval 'grep -qF "Let op: een regel van models.lock klopt niet" "$work/m.out" && [ ! -e "$PLATFORM_ROOT/weg.onnx" ]'
+write_lock
+
+echo "== de regels van zoeken op beeld (siglip2-b32-256/…): niet hier, maar in de stap BEELD"
+# Review golf 5, uitrol F3: met de regels van SigLIP in models.lock haalt modellen_ophalen (de
+# gezichten) de bronnen niet (1,5 GB); die zijn van de stap BEELD van X3b (Keuze 84). Een
+# omzetting die er al staat, blijft staan.
+mkdir -p "$net/siglip2-b32-256/bron"
+head -c 4000 /dev/urandom >"$net/siglip2-b32-256/bron/model.safetensors"
+printf 'beeld' >"$work/beeld.int8.onnx"
+{
+  printf '%s %s siglip2-b32-256/bron/model.safetensors %s/siglip2-b32-256/bron/model.safetensors\n' \
+    "$(sha "$net/siglip2-b32-256/bron/model.safetensors")" "$(size "$net/siglip2-b32-256/bron/model.safetensors")" "$base"
+  printf '%s 5 siglip2-b32-256/beeld.int8.onnx -\n' "$(sha "$work/beeld.int8.onnx")"
+} >>"$LOCK"
+mkdir -m 0755 "$MODELLEN_ROOT/siglip2-b32-256"
+install -m 0644 "$work/beeld.int8.onnx" "$MODELLEN_ROOT/siglip2-b32-256/beeld.int8.onnx"
+: >"$work/curl.log"
+: >"$work/http.log"
+modellen_ophalen >"$work/m.out" 2>&1
+check "de bron van SigLIP: geen curl, geen map bron, niets mislukt of veranderd, geen uitvoer" eval '[ ! -s "$work/curl.log" ] && [ ! -s "$work/http.log" ] && [ ! -e "$MODELLEN_ROOT/siglip2-b32-256/bron" ] &&
+  [ -z "$MODELS_FAILED" ] && [ "$MODELS_CHANGED" = 0 ] && [ ! -s "$work/m.out" ]'
+check "de omzetting die er al staat, blijft staan" cmp -s "$MODELLEN_ROOT/siglip2-b32-256/beeld.int8.onnx" "$work/beeld.int8.onnx"
+rm -rf "$MODELLEN_ROOT/siglip2-b32-256" "$net/siglip2-b32-256" "$work/beeld.int8.onnx"
 write_lock
 
 # ============================================================================================

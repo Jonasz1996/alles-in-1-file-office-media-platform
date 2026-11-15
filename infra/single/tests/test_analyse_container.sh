@@ -135,8 +135,10 @@ als_root true || {
   exit 1
 }
 
-# De modellen van models.lock (alleen de regels met een url; "-" maakt de host zelf, X3). Een
-# download is onvertrouwd: eerst naar een .part, dan de grootte en de sha256, en pas dan mv
+# De modellen van gezichten in models.lock (alleen de regels met een url; "-" maakt de host zelf,
+# X3). De regels van zoeken op beeld (siglip2-b32-256/…) haalt de stap BEELD van X3b, niet deze
+# test: 1,5 GB aan bronnen (review golf 5, uitrol F3). Een download is onvertrouwd: eerst naar een
+# .part, dan de grootte en de sha256, en pas dan mv
 if [ -z "$MODELLEN" ]; then MODELLEN="$WORK/modellen"; fi
 mkdir -p "$MODELLEN"
 chmod 0755 "$MODELLEN"
@@ -144,6 +146,7 @@ sha_van() { sha256sum "$1" | cut -d' ' -f1; }
 gehaald=0
 while read -r sha bytes naam url _; do
   case "$sha" in '' | '#'*) continue ;; esac
+  case "$naam" in siglip2-b32-256/*) continue ;; esac
   [ "$url" != "-" ] || continue
   doel="$MODELLEN/$naam"
   if [ -f "$doel" ] && [ ! -L "$doel" ] && [ "$(stat -c %s "$doel")" = "$bytes" ] && [ "$(sha_van "$doel")" = "$sha" ]; then

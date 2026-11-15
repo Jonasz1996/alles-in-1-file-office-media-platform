@@ -516,10 +516,14 @@ zet_neer() {
 # De modellen van models.lock in MODELLEN_ROOT (Keuze 58, K1-06). Per regel: staat het bestand er
 # al goed (geen symlink, gewoon bestand, grootte en sha256), dan niets. Anders ophalen naar een map
 # van mktemp -d onder MODELLEN_ROOT (0700, van root) en pas dan op zijn plek. Een symlink of iets
-# anders op die plek raakt het niet aan. Een url "-" maakt de host zelf (X3). Een model dat niet
-# lukt, is niet fataal: de container start, en zegt models_missing. Daarna: *.onnx die niet meer
-# in de lock staan weg, en de licenties ernaast. Zet MODELS_CHANGED (1: --force-recreate) en
-# MODELS_FAILED (de namen die niet lukten).
+# anders op die plek raakt het niet aan. Een url "-" maakt de host zelf (X3). De regels in de map
+# van zoeken op beeld (BEELD_MAP/…: de vijf bronnen van SigLIP 2 en de omzetting) haalt deze
+# functie niet: die zijn van de stap BEELD (Keuze 84, X3b), met BEELD=aan en een eigen controle
+# op de ruimte; ze blijven wel staan (review golf 5, uitrol F3). Een model dat niet lukt, is niet
+# fataal: de container start, en zegt models_missing. Daarna: *.onnx die niet meer in de lock
+# staan weg, en de licenties ernaast. Zet MODELS_CHANGED (1: --force-recreate) en MODELS_FAILED
+# (de namen die niet lukten).
+BEELD_MAP=siglip2-b32-256
 modellen_ophalen() {
   local root=$MODELLEN_ROOT lock=$SRC/api/app/analyse/models.lock lic=$SRC/api/app/analyse/licenties
   local sha size name url rest target tmp need=0 avail keep="" f rel line todo=()
@@ -536,6 +540,7 @@ modellen_ophalen() {
       continue
     fi
     keep=$keep$name$'\n'
+    case $name in "$BEELD_MAP"/*) continue ;; esac
     geo_ok "$root/$name" "$size" "$sha" && continue
     [ "$url" != - ] || continue
     todo+=("$sha $size $name $url")

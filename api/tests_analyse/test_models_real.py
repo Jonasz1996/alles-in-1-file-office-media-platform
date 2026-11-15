@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw
 
 from app.analyse import lock, wire
 from app.analyse.worker import models as worker_models
+from app.analyse.worker.omzetten import MAP as BEELD_MAP
 from app.analyse.worker.ops import faces as F
 from app.media.worker import guard
 from tests_analyse import echt, fake_models
@@ -48,6 +49,13 @@ def _sha(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def gezichten(path: Path = lock.LOCK_PATH) -> list[lock.ModelFile]:
+    """De modellen van gezichten in models.lock: niet de regels van zoeken op beeld
+    (siglip2-b32-256/…). Die bronnen haalt de stap BEELD van X3b, de omzetting maakt de host zelf
+    (url "-"); laag 3 haalt ze niet (review golf 5, uitrol F3)."""
+    return [m for m in lock.load(path) if not m.name.startswith(f"{BEELD_MAP}/")]
 
 
 def haal(item: lock.ModelFile, root: Path, *, url: str | None = None) -> Path:
@@ -82,7 +90,7 @@ def haal(item: lock.ModelFile, root: Path, *, url: str | None = None) -> Path:
 @pytest.fixture(scope="module")
 def echte_modellen() -> fake_models.Installed:
     root = map_modellen()
-    for item in lock.load():
+    for item in gezichten():
         haal(item, root)
     return fake_models.Installed(root, lock.LOCK_PATH)
 
@@ -167,8 +175,19 @@ def test_een_download_met_een_verkeerde_sha256_komt_er_niet_in(tmp_path):
     assert sorted(p.name for p in root.iterdir()) == []
 
 
+def test_alleen_de_modellen_van_gezichten(tmp_path):
+    """Ook met de regels van SigLIP in models.lock (de vijf bronnen met een url op
+    huggingface.co, de omzetting met "-") haalt laag 3 alleen YuNet en SFace."""
+    regels = [f"{'a' * 64} 5 {BEELD_MAP}/bron/{n} https://huggingface.co/x/{n}\n" for n in "ab"]
+    regels.append(f"{'b' * 64} 5 {BEELD_MAP}/nep.int8.onnx -\n")
+    pad = tmp_path / "models.lock"
+    pad.write_text(lock.LOCK_PATH.read_text() + "".join(regels))
+    assert len(lock.load(pad)) == len(lock.load()) + 3
+    assert [m.name for m in gezichten(pad)] == [fake_models.YUNET, fake_models.SFACE]
+
+
 def test_de_modellen_kloppen_met_models_lock(echte_modellen):
-    items = lock.load()
+    items = gezichten()
     assert [m.name for m in items] == [fake_models.YUNET, fake_models.SFACE]
     for item in items:
         path = echte_modellen.root / item.name
