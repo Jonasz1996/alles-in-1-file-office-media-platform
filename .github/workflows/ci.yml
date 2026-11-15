@@ -103,6 +103,78 @@ jobs:
             echo "Het contract van ocr overgeslagen: tesseract ontbreekt" && exit 1
           fi
 
+  # Fase 6, X2a (§4.6, K2-10): api/tests_analyse/ met de extra analyse (numpy en onnxruntime), in
+  # een eigen venv (.venv-analyse): de gewone venv blijft zonder, zodat test_no_numpy_in_app.py in
+  # de job api blijft gelden. Laag 2: de echte worker met nepmodellen (fake_models.py; onnxw.py
+  # bouwt ze in de test). Laag 3: de echte modellen van models.lock (gehaald met hun grootte en
+  # sha256, met een cache op de sha256 van models.lock), op gemaakte beelden, met de tijd per foto
+  # en de poort van ≥ 250 foto's per minuut per core. Een vaste telling (K2-10): precies
+  # ANALYSE_TESTS tests en ANALYSE_DESELECTED gedeselecteerd (beeld_echt is van de job
+  # beeld-model, X3), niets overgeslagen, xfailed of met een fout. Komt er een test bij, dan gaat
+  # het getal hier mee omhoog. Alles onder taskset -c 0-2, zoals op de LXC. Geen artefact met
+  # beelden of vectoren: alleen laag3.json (tijden en maxrss). Daarna de licenties naast
+  # models.lock tegen die van opencv_zoo op dezelfde commit, byte voor byte (a0.md, Open 6).
+  api-analyse:
+    name: API analyse (tests_analyse met de extra, laag 2 en 3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv-analyse
+      ANALYSE_TESTS: "107"
+      ANALYSE_DESELECTED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --extra analyse
+      - name: Cores
+        run: |
+          n="$(nproc)"
+          echo "cores: $n"
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - name: De modellen van models.lock (cache op de sha256 van de lock)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/analyse-modellen
+          key: analyse-modellen-${{ hashFiles('api/app/analyse/models.lock') }}
+      - name: pytest tests_analyse (laag 2 en 3, een vaste telling)
+        env:
+          ANALYSE_MODELLEN: ${{ runner.temp }}/analyse-modellen
+          ANALYSE_RAPPORT: ${{ runner.temp }}/analyse/laag3.json
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/analyse"
+          taskset -c "$CORES" uv run pytest -q -p no:cacheprovider tests_analyse -m "not beeld_echt" -rs \
+            | tee "$RUNNER_TEMP/analyse/pytest.txt"
+          laatste="$(tail -n 1 "$RUNNER_TEMP/analyse/pytest.txt")"
+          weg=""
+          if [ "$ANALYSE_DESELECTED" != 0 ]; then weg=", $ANALYSE_DESELECTED deselected"; fi
+          if ! grep -Eq "^$ANALYSE_TESTS passed$weg(, [0-9]+ warnings?)? in [0-9.]+s" <<< "$laatste"; then
+            echo "::error::tests_analyse: \"$laatste\"; verwacht precies $ANALYSE_TESTS passed$weg, niets overgeslagen, xfailed of met een fout"
+            exit 1
+          fi
+      - name: De licenties gelijk aan die van opencv_zoo (a0.md, Open 6)
+        run: |
+          commit="$(sed -n 's#.*/opencv/opencv_zoo/\([0-9a-f]\{40\}\)/.*#\1#p' app/analyse/models.lock | sort -u)"
+          test -n "$commit" && test "$(wc -l <<< "$commit")" = 1
+          for paar in face_detection_yunet:yunet-MIT.txt face_recognition_sface:sface-Apache-2.0.txt; do
+            curl -fsSL --retry 3 --max-filesize 100000 -o "$RUNNER_TEMP/LICENSE" \
+              "https://raw.githubusercontent.com/opencv/opencv_zoo/$commit/models/${paar%%:*}/LICENSE" < /dev/null
+            cmp "$RUNNER_TEMP/LICENSE" "app/analyse/licenties/${paar#*:}"
+            echo "${paar#*:}: byte voor byte models/${paar%%:*}/LICENSE van opencv_zoo op $commit"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-analyse
+          path: ${{ runner.temp }}/analyse/laag3.json
+          if-no-files-found: warn
+
   # Fase 6, X1 (§4.6): OCR met de echte tesseract van Ubuntu en DejaVu Sans, met marker ocr:
   # tests/ocr/test_ocr_real.py (een worker in het proces met de echte opdracht ocr: recall, de
   # vakjes in het beeld zoals de viewer het toont, de OSD alleen waar nodig, en ≥ 8 pagina's per
@@ -747,6 +819,13 @@ jobs:
           "${single[@]}" config -q
           "${single[@]}" -f infra/single/compose.office.yaml config -q
           "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml config -q
+          # Analyse (X2a): de sleutel staat niet in .env.example (install.sh maakt hem); met en zonder
+          # het profiel omzetten, zonder OMZET_BRON en OMZET_UIT (zoals een gewone run van
+          # install.sh: de standaard wijst naar een pad dat niet bestaat)
+          echo "ANALYSE_WORKER_KEY=$(openssl rand -hex 32)" >> "$env_file"
+          analyse=(-f infra/single/compose.analyse.yaml -f infra/single/compose.analyse-limits.yaml)
+          "${single[@]}" "${analyse[@]}" config -q
+          "${single[@]}" "${analyse[@]}" --profile omzetten config -q
           # De afscherming van DS zoals ontworpen: geen poort naar buiten, een intern netwerk,
           # cap_drop ALL met alleen deze capabilities, no-new-privileges en pids_limit
           "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml \
@@ -798,6 +877,11 @@ jobs:
       # met het image dat draait, de eindtekst en de commando's van de weg terug in de docs
       - name: Zoeken in install.sh controleren (test_install_search.sh)
         run: bash infra/single/tests/test_install_search.sh
+      # De analyse in install.sh (X2a): zonder ANALYSE byte voor byte zoals 0.8.0, de modellen van
+      # een lokale server met een eigen lock (sha256, --max-filesize, symlinks), de sleutel één
+      # keer, ANALYSE=uit, en terug naar 0.8.0 en weer vooruit. Als root (sudo -n)
+      - name: Analyse in install.sh controleren (test_install_analyse.sh)
+        run: bash infra/single/tests/test_install_analyse.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")
@@ -1246,6 +1330,59 @@ jobs:
           fi
           echo "X1 OCR in de worker-container (test_ocr_container.sh):"
           sed 's/^/  /' "$d/ocr.txt" 2> /dev/null || echo "  liep niet"
+
+  # Fase 6, X2a (§3.11, §4.6): de container analyse met het echte image en de echte modellen
+  # (test_analyse_container.sh, met compose.yaml, compose.analyse.yaml en de grenzen): zonder
+  # sleutel code 2; healthy; analyse-status; de afscherming volgens docker inspect en in de
+  # container (uid 10003, alleen lo, alleen lezen, /models, de zelftest, /proc dicht); faces vanuit
+  # de app met previews als memfd; pid 1 en de kinderen als root op de host (niet-dumpbaar, CapEff
+  # 0, nice 19 en RLIMIT_DATA van werk, geen sleutel); werk na SIGKILL en na 8 opdrachten; stoppen
+  # en starten; de omzetter zonder OMZET_BRON; en de logs zonder sleutel, merkteken of
+  # "geheimwoord7". De regels goed en FOUT gaan naar analyse.txt, voor "=== kort ===". Het image
+  # is alleen hier te bouwen: wat dit script toetst, blijkt pas na de push.
+  analyse-image:
+    name: Analyse-image (de container analyse met de echte modellen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Platform-image bouwen (de cache van images)
+        id: bouw
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: platform:ci
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform,ignore-error=true
+      - name: De modellen van models.lock (cache op de sha256 van de lock)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/analyse-modellen
+          key: analyse-modellen-${{ hashFiles('api/app/analyse/models.lock') }}
+      # De sleutel van hello maakt het script zelf (64 hex, in een .env van 0600); hij komt niet in
+      # het log. Wat in de cache ontbreekt, haalt het script volgens models.lock (sha256)
+      - name: De container analyse (test_analyse_container.sh, X2a)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        env:
+          ANALYSE_TEST_IMAGE: platform:ci
+          ANALYSE_TEST_MODELLEN: ${{ runner.temp }}/analyse-modellen
+          ANALYSE_TEST_OUT: ${{ runner.temp }}/analyse-image
+        run: bash infra/single/tests/test_analyse_container.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analyse-image
+          path: ${{ runner.temp }}/analyse-image
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          echo "=== kort ==="
+          echo "X2a de container analyse (test_analyse_container.sh):"
+          sed 's/^/  /' "$RUNNER_TEMP/analyse-image/analyse.txt" 2> /dev/null || echo "  liep niet"
 
   # Fase 6, X3a (Keuze 73, 74, 83; BZ1–BZ4, BZ6 ruw en BZ7): het echte beeldmodel, SigLIP 2
   # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert (git diff

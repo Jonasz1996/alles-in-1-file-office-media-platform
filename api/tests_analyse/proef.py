@@ -1,0 +1,115 @@
+"""De proef van laag 2: een kind met extra gedrag, alleen in de tests (fase 6, X2a).
+
+server.Config.child_code = BOOT start een kind dat eerst child.HANDLERS aanvult en dan
+child.main draait, precies zoals een echt kind (dumpable 0 vóór de import van de app, dezelfde
+grenzen, dezelfde fd's). Wat de proef doet, kiest de test met de eerste bytes van de preview
+(faces, in werk) of met de tekst (embed_text, in zoeken):
+
+- WACHT: blijft lopen tot pid 1 de opdracht stopt (cancel, deadline), dan Stopped;
+- NEGEER: blijft lopen en luistert niet naar stop (dan SIGKILL na KILL_GRACE_S);
+- VREET-SHM <MB>: gedeeld geheugen (mmap, MAP_SHARED) dat RLIMIT_DATA niet telt: de wachter moet
+  het kind stoppen (K1-07);
+- VREET-MALLOC <MB>: gewoon geheugen boven RLIMIT_DATA: MemoryError, too_big, en het kind leeft;
+- FOUT: een uitzondering met de merkvector en GEHEIM in de tekst (K1-16);
+- STDERR: dezelfde tekst rechtstreeks op stderr, en dan een crash;
+- anders: de echte faces.
+
+embed_text (zoeken): de tekst GEHEIM geeft een uitzondering met die tekst; anders de omgeving,
+sys.path en of PIL geladen is (zoeken decodeert nooit een beeld, Keuze 75).
+"""
+
+from __future__ import annotations
+
+import mmap
+import os
+import sys
+import time
+
+from app.analyse.worker import child
+
+GEHEIM = "geheimwoord7"
+# De merkvector: 128 waarden die nergens anders voorkomen (K1-16, test_faces_no_vector.py van X2b
+# doet hetzelfde in de app)
+MERK = [round(0.0123457 + i * 0.0007351, 7) for i in range(128)]
+
+BOOT = (
+    "import ctypes,sys\n"
+    "if ctypes.CDLL(None).prctl(4,0,0,0,0):sys.exit(3)\n"
+    "sys.path.insert(0,sys.argv.pop(1))\n"
+    "from tests_analyse import proef\n"
+    "sys.exit(proef.main())"
+)
+
+
+def _merk_bytes() -> bytes:
+    import struct
+
+    return struct.pack(f"<{len(MERK)}f", *MERK)
+
+
+def _wacht(job: child.Job, *, luister: bool = True) -> dict:
+    end = time.monotonic() + job.deadline_ms / 1000 + 60
+    while time.monotonic() < end:
+        if luister:
+            job.stop.check()
+        time.sleep(0.01)
+    return {"photos": []}
+
+
+def _vreet_shm(mb: int) -> dict:
+    # Anoniem en gedeeld: RssShmem, buiten RLIMIT_DATA (en zonder ftruncate, dus ook buiten
+    # RLIMIT_FSIZE)
+    area = mmap.mmap(-1, mb << 20, flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    for i in range(0, mb << 20, 4096):
+        area[i] = 1
+    time.sleep(30)  # de wachter meet elke interval s
+    return {"photos": []}
+
+
+def _vreet_malloc(mb: int) -> dict:
+    blocks = []
+    for _ in range(mb):
+        blocks.append(bytearray(1 << 20))
+    return {"photos": [], "n": len(blocks)}
+
+
+def faces(job: child.Job) -> dict:
+    from app.analyse.worker.ops import faces as echte
+
+    head = os.pread(job.fds[0], 64, 0)
+    word, _, rest = head.partition(b" ")
+    if word == b"WACHT":
+        return _wacht(job)
+    if word == b"NEGEER":
+        return _wacht(job, luister=False)
+    if word == b"VREET-SHM":
+        return _vreet_shm(int(rest.split()[0]))
+    if word == b"VREET-MALLOC":
+        return _vreet_malloc(int(rest.split()[0]))
+    if word == b"FOUT":
+        raise ValueError(f"{GEHEIM} {_merk_bytes().hex()} {MERK}")
+    if word == b"STDERR":
+        os.write(2, f"{GEHEIM} {MERK}\n".encode())
+        os.write(2, _merk_bytes() + b"\n")
+        os._exit(7)
+    return echte.run(job)
+
+
+def embed_text(job: child.Job) -> dict:
+    text = str(job.args.get("text"))
+    if text == GEHEIM:
+        raise RuntimeError(f"de zoekvraag was {text}")
+    if text == "WACHT":
+        return _wacht(job)
+    return {
+        "env": dict(os.environ),
+        "path": list(sys.path),
+        "pil": "PIL" in sys.modules,
+        "dumpable": child.dumpable(),
+        "pid": os.getpid(),
+    }
+
+
+def main() -> int:
+    child.HANDLERS.update({"faces": faces, "embed_text": embed_text})
+    return child.main()
