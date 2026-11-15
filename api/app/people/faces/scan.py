@@ -689,7 +689,8 @@ async def to_front(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> None:
 
 async def rescan(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> bool:
     """Opnieuw zoeken (POST /files/{id}/faces/rescan): de gezichten met hidden 0 weg (met hun
-    oordelen; photo_person blijft, en geeft bij de nieuwe scan de ja terug), dan wait vooraan."""
+    oordelen), dan wait vooraan. photo_person volgt sync_links: een rij 'auto' gaat mee weg; een
+    rij met de hand blijft, en met een kader geeft die bij de nieuwe scan de ja terug (IoU)."""
     live = await db.scalar(
         select(Node.id).where(Node.id == node, own_live(Node, owner), Node.ftype == "image")
     )
