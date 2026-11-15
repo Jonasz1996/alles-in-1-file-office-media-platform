@@ -44,6 +44,7 @@ from app.analyse.worker.omzetten import (
     TEKST,
     TEKST_FP32,
     TOKENIZER_BIN,
+    UITVOER,
     OmzetFout,
     bouw,
 )
@@ -333,6 +334,23 @@ def test_zonder_fp32_alleen_de_uitvoer(tmp_path):
     uit = bouw.omzet(tmp_path / "bron", tmp_path / "uit")
     assert [u.naam for u in uit] == [BEELD, TEKST, TOKENIZER_BIN, LICENTIE, META]
     assert sorted(p.name for p in (tmp_path / "uit").iterdir()) == sorted(u.naam for u in uit)
+
+
+def test_met_en_zonder_fp32_dezelfde_vijf_bestanden(omgezet, tmp_path):
+    """BZ2 zet twee keer om zoals de dienst (zonder --fp32) en een keer met --fp32 voor BZ4. Die
+    laatste geeft dezelfde vijf bestanden van UITVOER, byte voor byte, meta.json ook: meta.json
+    noemt alleen de andere vier, nooit de fp32-grafen (review golf 5, uitrol F1)."""
+    _, runs = omgezet
+    met = runs[0][0]
+    zonder = tmp_path / "zonder"
+    zonder.mkdir()
+    res, _ = _start_meet(met.parent / "bron", zonder)
+    assert res.returncode == 0, res.stderr
+    assert sorted(p.name for p in zonder.iterdir()) == sorted(UITVOER)
+    for naam in UITVOER:
+        assert _sha(zonder / naam) == _sha(met / naam), naam
+    meta = json.loads((zonder / META).read_text())
+    assert sorted(meta["uitvoer"]) == sorted([BEELD, TEKST, TOKENIZER_BIN, LICENTIE])
 
 
 @pytest.mark.parametrize("dtype", ["F16", "BF16"])

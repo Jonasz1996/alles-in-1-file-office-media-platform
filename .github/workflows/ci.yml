@@ -124,10 +124,11 @@ jobs:
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
       # 107 van X2a (met de 42 van test_onnxw_ort.py), 81 van X3a (test_beeld_omzetten.py 71,
-      # de hulp van de echte tests 10) en van de review van golf 5: 2 (de StopFlag) en 12 (een
-      # bron die liegt); gedeselecteerd: de 11 tests van de job beeld-model. Noem hun marker
-      # hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "202"
+      # de hulp van de echte tests 10) en van de review van golf 5: 2 (de StopFlag), 12 (een
+      # bron die liegt) en 1 (met en zonder --fp32); gedeselecteerd: de 11 tests van de job
+      # beeld-model. Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
+      # één keer noemt (-m)
+      ANALYSE_TESTS: "203"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4
@@ -1400,7 +1401,7 @@ jobs:
   beeld-model:
     name: Beeld-model (SigLIP 2 omzetten, tokenizer en de kwaliteitspoort)
     runs-on: ubuntu-24.04
-    # de bron ±1,5 GB, twee omzettingen, 120 foto's van Commons, BZ4 in int8 en fp32
+    # de bron ±1,5 GB, drie omzettingen, 120 foto's van Commons, BZ4 in int8 en fp32
     timeout-minutes: 60
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
@@ -1466,16 +1467,17 @@ jobs:
         run: python3 -I ../tools/beeld/beeld_model.py bron --werk "$WERK" || [ $? -eq 3 ]
       # Zoals de dienst analyse-omzetten start (compose van X2a): python -I -c <boot> /srv --bron
       # /bron --uit /uit; hier is /srv de map api. Twee keer op deze runner (niet op twee
-      # runners); de eerste met --fp32 voor BZ4. stderr gaat naar omzetten<n>.log (maxrss)
-      - name: BZ2 twee keer omzetten
+      # runners), precies als de dienst; dan een derde keer met --fp32, alleen voor BZ4 (de
+      # fp32-grafen; die maxrss heeft geen grens). stderr gaat naar omzetten<n>.log (maxrss)
+      - name: BZ2 twee keer omzetten, en een keer met --fp32 voor BZ4
         id: omzetten
         if: steps.bron.outcome == 'success'
         env:
           BOOT: "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
         run: |
-          for n in 1 2; do
+          for n in 1 2 fp32; do
             extra=()
-            if [ "$n" = 1 ]; then extra=(--fp32); fi
+            if [ "$n" = fp32 ]; then extra=(--fp32); fi
             mkdir -p "$WERK/uit$n"
             if ! uv run --no-sync python -I -c "$BOOT" "$PWD" --bron "$WERK/bron" --uit "$WERK/uit$n" "${extra[@]}" \
               2> "$WERK/omzetten$n.log"; then
@@ -1489,6 +1491,7 @@ jobs:
         run: |
           python3 -I ../tools/beeld/beeld_model.py vergelijk --werk "$WERK" \
             --uit "$WERK/uit1" --uit "$WERK/uit2" --log "$WERK/omzetten1.log" --log "$WERK/omzetten2.log" \
+            --uit-fp32 "$WERK/uitfp32" --log-fp32 "$WERK/omzettenfp32.log" \
             || [ $? -eq 3 ]
       - name: BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)
         id: set
@@ -1509,7 +1512,7 @@ jobs:
           set -o pipefail
           tsv="$PWD/tests/analyse/sets/beeld.tsv"
           if [ ! -f "$tsv" ]; then tsv="$WERK/voorstel-beeld.tsv"; fi
-          BEELD_MODEL="$WERK/uit1" BEELD_SET="$WERK/set" BEELD_SET_TSV="$tsv" BEELD_RAPPORT="$WERK" \
+          BEELD_MODEL="$WERK/uitfp32" BEELD_SET="$WERK/set" BEELD_SET_TSV="$tsv" BEELD_RAPPORT="$WERK" \
             uv run --no-sync pytest -q -m beeld_echt -rs tests_analyse/test_beeld_kwaliteit.py | tee "$WERK/bz4.txt"
           if grep -q "^SKIPPED" "$WERK/bz4.txt"; then
             echo "BZ4 overgeslagen" && exit 1

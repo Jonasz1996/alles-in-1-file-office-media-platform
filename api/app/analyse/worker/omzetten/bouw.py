@@ -26,7 +26,9 @@ laag zijn één MatMul (de kolommen naast elkaar); de schaal per kolom verandert
 
 **Altijd dezelfde bytes.** Alleen bewerkingen per element (abs, max, delen in float64, rint) en
 herschikken; geen BLAS, geen draden, geen tijd of pad in de uitvoer. meta.json met gesorteerde
-sleutels. Twee keer omzetten geeft dezelfde sha256 (BZ2 doet het op twee runners).
+sleutels. Twee keer omzetten geeft dezelfde sha256 (BZ2 doet het twee keer op een runner), en
+`--fp32` voegt alleen de twee fp32-grafen toe: de vijf bestanden van UITVOER, meta.json ook, blijven
+byte voor byte gelijk.
 
 **Geheugen.** Elke initializer is een callable die onnxw pas bij het schrijven aanroept: er staat
 één gewicht tegelijk in het geheugen. De embedding (256.000 × 768) wordt in blokken van rijen
@@ -67,6 +69,7 @@ from app.analyse.worker.omzetten import (
     TOKENIZER_JSON,
     UIT_BEELD,
     UIT_TEKST,
+    UITVOER,
     VOORBEWERKING,
     OmzetFout,
 )
@@ -780,7 +783,13 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
             **tok_meta,
         },
         "bronnen": bronnen,
-        "uitvoer": {u.naam: {"sha256": u.sha256, "bytes": u.grootte} for u in uitkomsten},
+        # Alleen de vaste uitvoer: met of zonder --fp32 is meta.json hetzelfde bestand (BZ2
+        # vergelijkt een omzetting met --fp32 met een zonder)
+        "uitvoer": {
+            u.naam: {"sha256": u.sha256, "bytes": u.grootte}
+            for u in uitkomsten
+            if u.naam in UITVOER
+        },
     }
     tekst = json.dumps(meta, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
     gemaakt.append(uit / META)

@@ -74,11 +74,38 @@ def test_de_poort_kijkt_naar_git_diff_en_de_tekst_van_de_pr():
 def test_de_omzetter_start_zoals_de_dienst_analyse_omzetten():
     omzetten = next(s for s in _stappen() if s.get("id") == "omzetten")
     assert omzetten["env"]["BOOT"] == BOOT
-    assert 'python -I -c "$BOOT" "$PWD" --bron "$WERK/bron" --uit "$WERK/uit$n"' in omzetten["run"]
-    assert "extra=(--fp32)" in omzetten["run"]
+    run = omzetten["run"]
+    assert 'python -I -c "$BOOT" "$PWD" --bron "$WERK/bron" --uit "$WERK/uit$n"' in run
+    # Twee keer precies zoals de dienst (zonder --fp32), dan een keer met --fp32 voor BZ4 (review
+    # golf 5, uitrol F1 en F2)
+    assert re.search(r"^for n in 1 2 fp32; do$", run, re.M)
+    assert 'if [ "$n" = fp32 ]; then extra=(--fp32); fi' in run
+    assert run.count("--fp32") == 1
     # Sinds de samenvoeging met X2a: dezelfde regel als app/analyse/runtime.py (de dienst
     # analyse-omzetten in compose.analyse.yaml start OMZET_BOOT, test_compose_analyse.py)
     assert runtime.OMZET_BOOT == BOOT
+
+
+def test_bz2_begrenst_alleen_de_omzettingen_zoals_de_dienst():
+    """vergelijk krijgt uit1 en uit2 (zonder --fp32: dezelfde sha256, maxrss ≤ 1,5 GB) en de
+    omzetting met --fp32 apart (dezelfde vijf bestanden, maxrss zonder grens). BZ4 rekent met de
+    fp32-grafen uit uitfp32, BZ3 en BZ6 met uit1 (review golf 5, uitrol F1 en F2)."""
+    blokken = _blokken()
+    regel = next(b for b in blokken if "beeld_model.py vergelijk " in b)
+    assert (
+        '--uit "$WERK/uit1" --uit "$WERK/uit2" '
+        '--log "$WERK/omzetten1.log" --log "$WERK/omzetten2.log" '
+        '--uit-fp32 "$WERK/uitfp32" --log-fp32 "$WERK/omzettenfp32.log" || [ $? -eq 3 ]'
+    ) in regel
+    model = {}
+    for b in blokken:
+        if m := re.search(r'BEELD_MODEL="([^"]+)".*tests_analyse/(\S+)', b, re.S):
+            model[m.group(2)] = m.group(1)
+    assert model == {
+        "test_beeld_tokenizer_echt.py": "$WERK/uit1",
+        "test_beeld_kwaliteit.py": "$WERK/uitfp32",
+        "test_beeld_echt_perf.py": "$WERK/uit1",
+    }
 
 
 def test_elke_bz_heeft_een_stap():

@@ -8,7 +8,8 @@ alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
   voorstel en code 3; met regels: streng (een andere sha256 of grootte is rood, en er blijft
   niets half staan);
 - vergelijk: twee omzettingen met dezelfde sha256, maxrss ≤ 1,5 GB, het voorstel voor
-  models.lock (dat lock.py zelf weer leest), of streng tegen de regels;
+  models.lock (dat lock.py zelf weer leest), of streng tegen de regels; de omzetting met --fp32
+  (voor BZ4) zonder grens op maxrss, maar met dezelfde vijf bestanden;
 - set: 120 foto's volgens Keuze 83 uit de gestructureerde gegevens, zonder mens, alleen CC0 of
   publiek domein, alleen JPEG; beeld.tsv streng nagekeken;
 - elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository.
@@ -418,6 +419,64 @@ def test_vergelijk_met_regels_is_streng(nep, werk, tmp_path, monkeypatch):
         "BZ2 FOUT siglip2-b32-256/beeld.int8.onnx",
         "BZ2 FOUT siglip2-b32-256/meta.json",
     ]
+
+
+def _met_fp32(tmp_path: Path, uit1: Path, *, anders=None, rss=1582) -> tuple[Path, Path]:
+    """De derde omzetting, met --fp32 (alleen voor BZ4): de vijf bestanden van uit1, en de twee
+    fp32-grafen erbij. 1582 MiB is wat de omzetting met --fp32 op ware grootte mat."""
+    u = tmp_path / "uitfp32"
+    u.mkdir()
+    for n in omzetten.UITVOER:
+        (u / n).write_bytes((uit1 / n).read_bytes() + (b"!" if n == anders else b""))
+    for n in (omzetten.BEELD_FP32, omzetten.TEKST_FP32):
+        (u / n).write_bytes(b"fp32")
+    log = tmp_path / "omzettenfp32.log"
+    log.write_text(f"omzetten: klaar in 18.7 s, maxrss {rss} MiB\n")
+    return u, log
+
+
+def test_vergelijk_met_fp32_heeft_geen_grens_op_maxrss(werk, tmp_path):
+    """Review golf 5, uitrol F2: de grens van 1,5 GB geldt voor de omzetting zoals de dienst; die
+    met --fp32 (alleen voor BZ4) staat in het log, maar maakt BZ2 niet rood."""
+    uit, logs = _twee_omzettingen(tmp_path)
+    fp32, log32 = _met_fp32(tmp_path, uit[0])
+    leeg = tmp_path / "models.lock"
+    leeg.write_text("")
+    argv = ["vergelijk", "--werk", str(werk.map), "--lock", str(leeg)]
+    argv += ["--uit", str(uit[0]), "--uit", str(uit[1]), "--log", str(logs[0])]
+    argv += ["--log", str(logs[1]), "--uit-fp32", str(fp32), "--log-fp32", str(log32)]
+    assert bm.main(argv) == bm.VOORSTEL
+    assert _kort(werk)[:5] == [
+        "BZ2 omzetting 1: 101.5 s, maxrss 812 MiB (grens 1536)",
+        "BZ2 omzetting 2: 102.5 s, maxrss 790 MiB (grens 1536)",
+        "BZ2 twee keer omzetten: dezelfde sha256 voor alle 5 bestanden",
+        "BZ2 omzetting met --fp32 (voor BZ4): 18.7 s, maxrss 1582 MiB (geen grens)",
+        "BZ2 met --fp32: dezelfde sha256 voor alle 5 bestanden",
+    ]
+    assert werk.voorstel_lock.is_file()
+
+
+def test_vergelijk_met_fp32_andere_uitvoer_is_rood(werk, tmp_path):
+    """Review golf 5, uitrol F1: geeft --fp32 een ander meta.json (of een ander bestand van
+    UITVOER), dan rekent BZ4 met een ander model dan de dienst: rood, en geen voorstel."""
+    uit, logs = _twee_omzettingen(tmp_path)
+    fp32, log32 = _met_fp32(tmp_path, uit[0], anders=omzetten.META)
+    leeg = tmp_path / "models.lock"
+    leeg.write_text("")
+    assert bm.vergelijk(werk, leeg, uit, logs, fp32, log32) == 1
+    fouten = [r for r in _kort(werk) if r.startswith("BZ2 FOUT")]
+    assert len(fouten) == 1 and fouten[0].startswith("BZ2 FOUT meta.json: met --fp32 ")
+    assert not werk.voorstel_lock.exists()
+
+
+def test_vergelijk_met_fp32_wil_de_fp32_grafen_en_beide_opties(werk, tmp_path):
+    uit, logs = _twee_omzettingen(tmp_path)
+    fp32, log32 = _met_fp32(tmp_path, uit[0])
+    (fp32 / omzetten.TEKST_FP32).unlink()
+    with pytest.raises(bm.Fout, match="tekst.fp32.onnx: ontbreekt in de omzetting met --fp32"):
+        bm.vergelijk(werk, tmp_path / "x", uit, logs, fp32, log32)
+    with pytest.raises(bm.Fout, match="--uit-fp32 en --log-fp32 samen"):
+        bm.vergelijk(werk, tmp_path / "x", uit, logs, fp32, None)
 
 
 # --- de set ------------------------------------------------------------------------------------

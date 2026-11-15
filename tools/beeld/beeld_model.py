@@ -7,12 +7,18 @@ plek. De User-Agent is algemeen: geen persoon, geen e-mail, geen repository.
 
     beeld_model.py bereik   --werk W              BZ1: per host bereikbaar of niet
     beeld_model.py bron     --werk W --lock L     de vijf bronbestanden van SigLIP 2 (BZ2)
-    beeld_model.py vergelijk --werk W --lock L    twee omzettingen en models.lock (BZ2)
+    beeld_model.py vergelijk --werk W --lock L    twee omzettingen (en die met --fp32) en
+                                                  models.lock (BZ2)
     beeld_model.py set      --werk W --set S      de 120 foto's van Keuze 83 (BZ4)
     beeld_model.py uitslag  --werk W              rood zolang er een voorstel ligt
 
-De map W (in CI $RUNNER_TEMP/beeld) houdt alles bij elkaar: bron/, uit1/, uit2/, set/, de
-voorstellen en kort.txt, de regels voor het blok `=== kort ===` aan het eind van het log.
+De map W (in CI $RUNNER_TEMP/beeld) houdt alles bij elkaar: bron/, uit1/, uit2/, uitfp32/, set/,
+de voorstellen en kort.txt, de regels voor het blok `=== kort ===` aan het eind van het log.
+
+BZ2 zet twee keer om zoals de dienst analyse-omzetten (zonder --fp32): die twee moeten dezelfde
+sha256 geven en elk maxrss ≤ 1,5 GB. Een derde omzetting met --fp32 is er alleen voor BZ4 (de
+fp32-grafen, int8 tegen fp32): zijn maxrss staat in het log zonder grens (de fp32-embedding alleen
+is al 786 MB), maar zijn vijf bestanden van UITVOER moeten dezelfde zijn als zonder --fp32.
 
 Twee standen, zoals fotos.lock (het patroon van het ontwerp):
 - models.lock heeft nog geen regels van SigLIP: `bron` zoekt de huidige commit van
@@ -63,7 +69,7 @@ MAX_BRON = {
     "tokenizer.json": 64 << 20,  # 34,4 MB
     "tokenizer_config.json": 16 << 20,
 }
-MAX_RSS_MIB = 1536  # BZ2: maxrss van één omzetting ≤ 1,5 GB
+MAX_RSS_MIB = 1536  # BZ2: maxrss van één omzetting zoals de dienst (zonder --fp32) ≤ 1,5 GB
 
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 UPLOAD = "https://upload.wikimedia.org/"
@@ -342,9 +348,37 @@ def klaar_regel(log: Path) -> tuple[float, int]:
     return float(s), int(rss)
 
 
-def vergelijk(werk: Werk, lock_pad: Path, uit: list[Path], logs: list[Path]) -> int:
+def _met_fp32(werk: Werk, fp32: Path, log: Path, uitkomst: dict) -> list[str]:
+    """De omzetting met --fp32, alleen voor BZ4: maxrss zonder grens (de dienst zet nooit om met
+    --fp32), wel dezelfde vijf bestanden van UITVOER als zonder, en de twee fp32-grafen erbij."""
+    s, rss = klaar_regel(log)
+    werk.meld(f"BZ2 omzetting met --fp32 (voor BZ4): {s:.1f} s, maxrss {rss} MiB (geen grens)")
+    for naam in (*omzetten.UITVOER, omzetten.BEELD_FP32, omzetten.TEKST_FP32):
+        pad = fp32 / naam
+        if not pad.is_file() or pad.is_symlink():
+            raise Fout(f"{naam}: ontbreekt in de omzetting met --fp32")
+    fout = []
+    for naam, (sha, _) in uitkomst.items():
+        sha32 = sha256_van(fp32 / naam)
+        if sha32 != sha:
+            fout.append(f"{naam}: met --fp32 {sha32[:12]}…, zonder {sha[:12]}…")
+    if not fout:
+        werk.meld(f"BZ2 met --fp32: dezelfde sha256 voor alle {len(uitkomst)} bestanden")
+    return fout
+
+
+def vergelijk(
+    werk: Werk,
+    lock_pad: Path,
+    uit: list[Path],
+    logs: list[Path],
+    fp32: Path | None = None,
+    log_fp32: Path | None = None,
+) -> int:
     if len(uit) != 2 or len(logs) != 2:
         raise Fout("vergelijk wil twee uitvoermappen en twee logs")
+    if (fp32 is None) != (log_fp32 is None):
+        raise Fout("vergelijk wil --uit-fp32 en --log-fp32 samen")
     fout = []
     for i, log in enumerate(logs, start=1):
         s, rss = klaar_regel(log)
@@ -362,6 +396,8 @@ def vergelijk(werk: Werk, lock_pad: Path, uit: list[Path], logs: list[Path]) -> 
         uitkomst[naam] = (sha[0], paden[0].stat().st_size)
     if not fout:
         werk.meld(f"BZ2 twee keer omzetten: dezelfde sha256 voor alle {len(uitkomst)} bestanden")
+    if fp32 is not None and log_fp32 is not None:
+        fout += _met_fp32(werk, fp32, log_fp32, uitkomst)
     _, verwacht = siglip_regels(lock.load(lock_pad))
     if verwacht:
         for r in verwacht:
@@ -694,6 +730,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--set", type=Path, default=SET, help="beeld.tsv")
     p.add_argument("--uit", type=Path, action="append", default=[], help="een uitvoermap")
     p.add_argument("--log", type=Path, action="append", default=[], help="stderr van de omzetter")
+    p.add_argument("--uit-fp32", type=Path, help="de uitvoermap van de omzetting met --fp32 (BZ4)")
+    p.add_argument("--log-fp32", type=Path, help="stderr van de omzetting met --fp32")
     args = p.parse_args(argv)
     werk = Werk(args.werk)
     try:
@@ -702,7 +740,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.stap == "bron":
             return bron(werk, args.lock)
         if args.stap == "vergelijk":
-            return vergelijk(werk, args.lock, args.uit, args.log)
+            return vergelijk(werk, args.lock, args.uit, args.log, args.uit_fp32, args.log_fp32)
         if args.stap == "set":
             return set_(werk, args.set)
         return uitslag(werk)

@@ -155,9 +155,12 @@ voor wat een mens na een run doet.
    `env` binnen, nooit als expressie in het script, en komt niet in het log. Geen
    `workflow_dispatch`, geen cache.
 2. `uv sync --frozen --extra analyse`.
-3. BZ1 `bereik`, dan `bron` (de vijf bestanden, of het voorstel), dan twee keer omzetten met de
-   opdrachtregel van de dienst (de eerste met `--fp32`), dan `vergelijk` (BZ2: sha256 van beide,
-   tijd en maxrss ≤ 1,5 GB, `models.lock`), dan `set` (BZ4: de 120 foto's).
+3. BZ1 `bereik`, dan `bron` (de vijf bestanden, of het voorstel), dan twee keer omzetten met
+   precies de opdrachtregel van de dienst (`uit1`, `uit2`) en een derde keer met `--fp32`
+   (`uitfp32`, alleen voor BZ4), dan `vergelijk` (BZ2: sha256 van `uit1` en `uit2`, tijd en
+   maxrss ≤ 1,5 GB, `models.lock`; van `uitfp32` dezelfde vijf bestanden, maxrss alleen in het
+   log), dan `set` (BZ4: de 120 foto's). BZ4 rekent met `uitfp32`, BZ3 en BZ6 met `uit1` (sinds
+   de review van golf 5, uitrol F1 en F2).
 4. pytest `-m beeld_echt` voor BZ3/BZ7, BZ4 en BZ6 (die onder `taskset -c 0`); een `SKIPPED` telt
    als rood.
 5. `uitslag`: rood zolang er een voorstel ligt ("models.lock mist de regels van SigLIP",
