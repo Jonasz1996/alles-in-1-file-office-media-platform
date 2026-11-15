@@ -435,13 +435,20 @@ fi
 # pid 1 start uit python-tekst (review golf 5, veilig F6). Een proces uit die kopie (0711 van
 # root) is vanaf de exec niet dumpbaar, nog vóór een eigen prctl; uit python (leesbaar) wel.
 # PR_GET_DUMPABLE is 3. Of pid 1 er echt uit start, ziet procs_kort.py hieronder (argv[0])
+# De kernel geeft een programma dat het proces niet mag lezen bij de exec de waarde van
+# fs.suid_dumpable (fs/exec.c, begin_new_exec): 0 (uit) of 2 (alleen root; Ubuntu, dus de
+# runners van CI). Beide zijn voor dezelfde uid niet dumpbaar: /proc/<pid> wordt van root en
+# ptrace mag niet; alleen 1 (SUID_DUMP_USER) is dumpbaar. Staat de host op 1, dan beschermt de
+# exec niet en is dit FOUT
 DUMP='import ctypes;print(ctypes.CDLL(None).prctl(3,0,0,0,0))'
 uit_tekst="$(in_analyse /opt/venv/bin/python-tekst -I -c "$DUMP" 2>&1 | tr -d '\r' || true)"
 uit_python="$(in_analyse python -I -c "$DUMP" 2>&1 | tr -d '\r' || true)"
-if [ "$uit_tekst" = 0 ] && [ "$uit_python" = 1 ]; then
-  goed "een proces uit python-tekst is vanaf de exec niet dumpbaar (0), uit python wel (1)"
+suid_dumpable="$(in_analyse cat /proc/sys/fs/suid_dumpable 2>&1 | tr -d '\r' || true)"
+if { [ "$suid_dumpable" = 0 ] || [ "$suid_dumpable" = 2 ]; } \
+  && [ "$uit_tekst" = "$suid_dumpable" ] && [ "$uit_python" = 1 ]; then
+  goed "een proces uit python-tekst is vanaf de exec niet dumpbaar ($uit_tekst, fs.suid_dumpable $suid_dumpable), uit python wel (1)"
 else
-  fout "dumpbaar vanaf de exec: python-tekst \"$uit_tekst\", python \"$uit_python\""
+  fout "dumpbaar vanaf de exec: python-tekst \"$uit_tekst\", python \"$uit_python\", fs.suid_dumpable \"$suid_dumpable\" (verwacht: gelijk aan fs.suid_dumpable, en die 0 of 2; python 1)"
 fi
 
 # --- vanuit de app ----------------------------------------------------------------------------

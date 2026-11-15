@@ -503,7 +503,7 @@ deed.
 | Het decoderen van YuNet en het uitlijnen liggen vast in een test; het opvullen tot een veelvoud van 32 met de echte YuNet | `test_worker_faces.py` (21; na de nacontrole 23), `test_models_real.py::test_laden_met_alleen_de_cpu_en_de_vormen` | groen; de richting van het uitgelijnde gezicht lag pas vast na de nacontrole (`fc82be8`) |
 | `install.sh` haalt alleen de modellen van gezichten; een sleutel komt in geen argv; de reden van uit klopt | `test_install_analyse.sh` | groen: 128 controles |
 | Laag 3 haalt alleen de modellen van gezichten | `test_models_real.py::test_alleen_de_modellen_van_gezichten` (het bestand nu 6) | groen |
-| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` | compose groen; `test_analyse_container.sh` groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push |
+| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11 met de parameters); `test_analyse_container.sh` | compose groen; `test_analyse_container.sh` groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push [CI op `26c49ca`: zie onderaan; de waarde is die van `fs.suid_dumpable`, op de runner 2] |
 | `BUILT` en de handlers gelijk; golf 6 weet waar het samenkomt | `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`; bouwontwerp §2.0 en §3.5 | groen |
 | De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 209 (188, en 21 van de review: 2 + 12 + 1 + 1 + 2 + 2 + 1, zie de uitleg erboven), `ANALYSE_DESELECTED` 11 | 209 groen, 11 niet gekozen (root 47,3 s, nobody 66,3 s); na de nacontrole 211, zie De nacontrole |
 
@@ -613,7 +613,7 @@ Elke test die Klaar als hierboven noemt, bestaat (nagekeken met `pytest --collec
 | Elke reparatie van de review heeft een test die haar ziet | De reparaties weggehaald, hierboven | ja, op drie na die niet te toetsen zijn (de lock, `chown --reference` als root, het overslaan in de container zonder regels van SigLIP) en één die geen fout is (`max`) |
 | De telling van `api-analyse` | `ci.yml`: `ANALYSE_TESTS` 211, `ANALYSE_DESELECTED` 11 | klopt: 211 groen en 11 niet gekozen, als root en als nobody, op `e609341` |
 | De harde poort: ≥ 250 foto's per minuut per core met één gezicht | `test_models_real.py::test_de_tijd_per_foto_en_de_maxrss_van_het_kind` met `ANALYSE_RAPPORT` | gehaald op `e609341`: 1070 foto's per minuut per core als root en 1310 als nobody (26,5 en 22,6 ms per foto zonder gezicht, 29,5 en 23,2 ms per gezicht; maxrss van werk 240 MB) |
-| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11); `test_analyse_container.sh` | compose groen; de container groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push |
+| pid 1 is vanaf de exec niet dumpbaar | `test_compose_analyse.py` (11); `test_analyse_container.sh` | compose groen; de container groen tegen een stand-in op `e609341` (`python-tekst` 0, `python` 1, pid 1 en werk niet-dumpbaar); de echte image in `analyse-image` na de push [CI op `26c49ca`: de echte image ook niet-dumpbaar, met `python-tekst` 2 op een runner met `fs.suid_dumpable` 2; zie CI op 26c49ca] |
 | `test_analyse_container.sh` | tegen een stand-in van deze kop | 27 keer goed en 0 FOUT, in 65 s, tegen een stand-in op `e609341`; de echte image in `analyse-image` na de push |
 | Klaar als: `e2e/slim.sh` groen, en alle bestaande jobs blijven groen | Gedraaid in de nacontrole | groen op `e609341`: `slim.sh` in 1049 s, en de API-suite, `tests_analyse`, de e2e-set van CI en `-m office` (hieronder); de jobs zelf in CI na de push |
 
@@ -649,8 +649,30 @@ Lokaal in de sandbox, als root en als nobody (zoals CI). Elke zware run alleen, 
   sandbox, en spike S11 (CI-run 82) zag het mechanisme op een runner van GitHub. Is
   `analyse-image` op die regel rood, dan klopt de aanname van F6 op die runner niet, en moet
   pid 1 een andere weg krijgen. Dat is dan een nieuwe bevinding, niet iets om losser te maken.
+  [CI op `26c49ca`: rood op die regel, maar niet op de aanname van F6: zie hieronder.]
 - Buiten docker, als nobody via `setpriv`, voert deze sandbox een 0711-kopie uit door een map van
   0700 heen en houdt hem dumpbaar. Waarom, is niet uitgezocht; het raakt de container niet (daar
   is dezelfde kernel streng), wel wie F6 op de host van deze sandbox wil nameten.
 - Niet gedraaid: `test_install_update.sh` (Open 8: hij weigert zolang `python:3.12-slim` er is,
   en dat image blijft) en `test_install_search.sh --stappen` (alleen in de job `infra`).
+
+## CI op 26c49ca
+
+`analyse-image` (run 43755501967) gaf 1 FOUT en verder alleen goed: "dumpbaar vanaf de exec:
+python-tekst "2", python "1"". De controle eiste `PR_GET_DUMPABLE` 0 voor een proces uit
+`python-tekst`. Een programma dat het proces niet mag lezen, krijgt bij de exec de waarde van
+`fs.suid_dumpable` (`begin_new_exec` in fs/exec.c): 0 in deze sandbox, 2 op de runners (Ubuntu).
+Beide zijn voor dezelfde uid niet dumpbaar: alleen 1 (`SUID_DUMP_USER`) maakt `/proc/<pid>` van de
+eigen uid en laat ptrace toe. Dezelfde run bewijst dat: "uid 10003 in de container leest
+/proc/<pid>/environ, mem en fd van pid 1 en werk niet: 6 pogingen, ['EACCES']" en "pid 1 en werk
+niet-dumpbaar" waren goed. De aanname van F6 klopt dus ook op de runner; de controle had de
+waarde van één host vastgezet.
+
+De controle eist nu: `python-tekst` geeft precies `fs.suid_dumpable` uit de container, die waarde
+is 0 of 2, en `python` geeft 1. Dat is niet losser: staat de host op 1, dan beschermt de exec niet
+en is de regel FOUT, net als een `python-tekst` die 1 geeft. Lokaal: `bash -n` en `shellcheck` met
+de regel van CI; de container zelf ziet het pas in `analyse-image` na de push (de image bouwt
+alleen in CI).
+
+De andere jobs van X2a op `26c49ca`: `api-analyse` groen (211 en 11, en de licenties).
+`beeld-model` staat in [x3a.md](x3a.md#ci-op-26c49ca).
