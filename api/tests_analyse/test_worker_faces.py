@@ -414,6 +414,46 @@ async def test_gedraaide_punten_op_een_patroon_zoals_de_rekensom(gedraaide_worke
         assert vec == pytest.approx(np.array(fake_models.expected_vector(rood, groen)), abs=1e-5)
 
 
+# De test hierboven ziet alleen het gemiddelde rood en groen (het nep-SFace middelt): een
+# uitgelijnd gezicht dat getransponeerd of gespiegeld is, of een invoer van SFace met hoogte en
+# breedte verwisseld, heeft hetzelfde gemiddelde. De twee tests hieronder leggen de richting vast
+# (nacontrole golf 5: zulke mutaties in warp en sface_input bleven in heel tests_analyse groen).
+
+
+def test_het_uitgelijnde_gezicht_pixel_voor_pixel_zoals_de_rekensom():
+    """warp(similarity(punten)) tegen uitgelijnd(), elke pixel: de punten zoals het gedraaide
+    nep-YuNet ze zet (midden + VERSCHUIF + g / 112 · R(DRAAI) · (sjabloon − 56)), zonder
+    faces.py uitgerekend; een gezicht midden in de preview en een aan de rand (zwart erbuiten)."""
+    w, h = 352, 288
+    img = patroon(w, h)
+    cos, sin = math.cos(math.radians(DRAAI)), math.sin(math.radians(DRAAI))
+    for (kol, rij), g in {(5, 4): 60, (0, 0): 56}.items():
+        mx, my = (kol + 0.5) * CEL, (rij + 0.5) * CEL
+        punten = []
+        for tx, ty in fake_models.TEMPLATE:
+            dx, dy = (tx - 56) * g / 112, (ty - 56) * g / 112
+            punten.append(
+                [mx + VERSCHUIF[0] + cos * dx - sin * dy, my + VERSCHUIF[1] + sin * dx + cos * dy]
+            )
+        got = F.warp(img, F.similarity(np.array(punten, dtype=np.float64)))
+        assert got.shape == (112, 112, 3) and got.dtype == np.float32
+        np.testing.assert_allclose(got, uitgelijnd(img, (mx, my), g), rtol=0, atol=1e-3)
+
+
+def test_sface_krijgt_rgb_in_nchw_zonder_draai():
+    """sface_input: (1, 3, 112, 112) float32, kanaal c op rij y en kolom x is pixel (y, x) van
+    het uitgelijnde gezicht in RGB: niets gedraaid, gespiegeld of van kleur verwisseld."""
+    rng = np.random.default_rng(65)
+    aligned = rng.uniform(0, 255, (112, 112, 3)).astype(np.float32)
+    blob = F.sface_input(aligned)
+    assert blob.shape == (1, 3, 112, 112) and blob.dtype == np.float32
+    assert blob.flags["C_CONTIGUOUS"]
+    for c in range(3):
+        for y, x in ((0, 0), (0, 111), (111, 0), (7, 93), (93, 7), (111, 111)):
+            assert blob[0, c, y, x] == aligned[y, x, c]
+        np.testing.assert_array_equal(blob[0, c], aligned[:, :, c])
+
+
 # --- de modellen ------------------------------------------------------------------------------
 
 
