@@ -92,8 +92,9 @@ seconden tot de stand ok is (install.sh, na de start van de container) en is de 
 0: de regels zeggen wat er is, zoals media-status. Zonder --wait is de exitcode 1 bij down en
 models_missing. Staat de analyse uit, dan raakt hij de socket niet aan.
 
-analyse-bench en analyse-kwaliteit (X2), en beeld-bench, beeld-kwaliteit en beeld-status (X3)
-zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt, met exitcode 1.
+analyse-bench en analyse-kwaliteit (X2) zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt,
+met exitcode 1. beeld-status, beeld-bench en beeld-kwaliteit (X3) staan in app/beeld/cli.py; met de
+analyse uit doen ze niets (exitcode 1).
 """
 
 import argparse
@@ -115,6 +116,7 @@ from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
+from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.geo import load as geo_load
@@ -506,9 +508,6 @@ SEARCH_STUBS: dict[str, tuple[str, str]] = {}
 ANALYSE_STUBS: dict[str, tuple[str, str]] = {
     "analyse-bench": ("X2", "gezichten op deze CPU meten"),
     "analyse-kwaliteit": ("X2b", "de kwaliteit van gezichten meten"),
-    "beeld-bench": ("X3", "zoeken op beeld op deze CPU meten"),
-    "beeld-kwaliteit": ("X3", "de kwaliteit van zoeken op beeld meten"),
-    "beeld-status": ("X3", "de stand van zoeken op beeld"),
 }
 
 
@@ -686,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
+    beeld_cli.parsers(commands)
     for name, (package, what) in {**SEARCH_STUBS, **ANALYSE_STUBS}.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
@@ -699,6 +699,8 @@ def main(argv: list[str] | None = None) -> int:
         return benchlos.run(settings, args)
     if args.command in geo_load.COMMANDS:
         return geo_load.run(settings, args)
+    if args.command in beeld_cli.COMMANDS:
+        return beeld_cli.run(settings, args)
     if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":
