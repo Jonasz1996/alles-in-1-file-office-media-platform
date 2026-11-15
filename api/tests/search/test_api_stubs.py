@@ -7,7 +7,9 @@ slimme albums, sinds Z3 (stap 1) de plek, de kaart, de plaatsen en de bronnen, e
 (stap 2) share-check en de duplicaten.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
-zoeken met mode=image of like geeft 501 not_built("X3").
+zoeken met mode=image of like geeft 501 not_built("X3"). Sinds X2b zijn de routes van gezichten
+gebouwd (tests/people/faces/); draaien gezichten niet (ANALYSE uit, zoals hier en in 0.8.0), dan
+geeft elk van hen na de inlog 409 faces_unavailable.
 """
 
 from __future__ import annotations
@@ -297,6 +299,20 @@ BUILT = {
     ("POST", "/api/v1/admin/search/retry"),
     # X1: tekst herkennen (tests/ocr/test_ocr_limits.py, test_ocr_access.py)
     ("POST", "/api/v1/files/{node_id}/ocr"),
+    # X2b: gezichten (tests/people/faces/test_faces_api.py); hier draaien ze niet (ANALYSE uit),
+    # dus 409 faces_unavailable (test_gezichten_uit_geven_409_faces_unavailable)
+    ("GET", "/api/v1/people/faces/status"),
+    ("GET", "/api/v1/people/faces/suggestions"),
+    ("GET", "/api/v1/people/faces/groups"),
+    ("GET", "/api/v1/people/faces/groups/{key}"),
+    ("POST", "/api/v1/people/faces/confirm"),
+    ("POST", "/api/v1/people/faces/reject"),
+    ("POST", "/api/v1/people/faces/hide"),
+    ("POST", "/api/v1/people/faces/reset"),
+    ("POST", "/api/v1/people/faces/wipe-unnamed"),
+    ("GET", "/api/v1/people/faces/{face_id}/crop"),
+    ("GET", "/api/v1/files/{node_id}/faces"),
+    ("POST", "/api/v1/files/{node_id}/faces/rescan"),
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
@@ -392,14 +408,17 @@ async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin)
     """Een keuze uit vaste getallen in de query (?size=96, ?hidden=1) komt als tekst binnen, zoals
     de web hem stuurt (wireQuery). Literal[96, 192] alleen neemt geen "96": dan gaf elke waarde
     422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b). Een stub geeft dan
-    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1)."""
+    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1), een route van
+    gezichten met ANALYSE uit 409 faces_unavailable (X2b)."""
     headers, _ = admin
     schema = app.openapi()["paths"]
     gezien = set()
-    for method, path, body, who, _model, _out, status, _package in ENDPOINTS:
+    for method, path, body, who, _model, _out, status, package in ENDPOINTS:
         if who == "token":
             continue
         expect = (status or 200) if (method, path) in BUILT else 501
+        if package == "X2":
+            expect = 409
         for param in schema[path][method.lower()].get("parameters", []):
             keuzes = param["schema"].get("enum", [])
             if param["in"] != "query" or not keuzes or not all(type(k) is int for k in keuzes):
@@ -551,8 +570,33 @@ async def test_zoeken_op_beeld_is_van_x3(client, admin):
         assert r.status_code == 422, (params, r.status_code)
 
 
+async def test_gezichten_uit_geven_409_faces_unavailable(client, admin, settings):
+    """X2b: met ANALYSE uit (zoals 0.8.0) draaien gezichten niet. Elke route van gezichten geeft
+    na de inlog 409 faces_unavailable (een gast en een ander: tests/people/faces/
+    test_faces_off.py); zonder inlog 401 (test_zonder_login_geen_toegang_en_beheer_...)."""
+    assert not settings.analyse_on
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    node = (await put(client, headers, root_id, "foto.jpg", b"\xff\xd8\xff")).json()
+    gezien = []
+    for method, path, body, _who, *_rest, package in ENDPOINTS:
+        if package != "X2":
+            continue
+        params = {"size": "96"} if path.endswith("/crop") else {}
+        r = await client.request(
+            method, url_of(path, node["id"]), json=body, params=params, headers=headers
+        )
+        assert r.status_code == 409, (method, path, r.status_code, r.text)
+        detail = r.json()["detail"]
+        assert detail["code"] == "faces_unavailable", (method, path)
+        assert detail["message"] == "Gezichtsherkenning is op deze server niet geïnstalleerd"
+        gezien.append((method, path))
+    assert len(gezien) == 12
+
+
 async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
-    """De bodies van X2 worden gelezen voor de stub antwoordt: een fout geeft 422."""
+    """De bodies van X2 worden gelezen voor de route antwoordt: een fout geeft 422, ook als
+    gezichten niet draaien (dan is het antwoord daarna 409 faces_unavailable)."""
     headers, _ = admin
     url = "/api/v1/people/faces/confirm"
     for body in (
@@ -565,7 +609,7 @@ async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
         r = await client.post(url, json=body, headers=headers)
         assert r.status_code == 422, (body, r.status_code)
     r = await client.post(url, json={"faces": [ID], "person_id": ID}, headers=headers)
-    assert r.status_code == 501
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "faces_unavailable"
     r = await client.get(f"/api/v1/people/faces/{ID}/crop", params={"size": 128}, headers=headers)
     assert r.status_code == 422
 
@@ -582,7 +626,7 @@ async def test_een_uitsnede_alleen_met_de_inlog_in_de_header(client, admin):
         assert r.status_code == 401, (params, r.status_code)
         assert r.json()["detail"]["code"] == "not_logged_in"
     r = await client.get(url, params={"size": "96"}, headers=headers)
-    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "X2"}
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "faces_unavailable"
 
 
 async def test_met_de_index_uit_ook_like(client, admin, settings, monkeypatch):
