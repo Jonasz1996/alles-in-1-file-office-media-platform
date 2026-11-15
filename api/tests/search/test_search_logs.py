@@ -22,7 +22,8 @@ from sqlalchemy import event
 from sqlalchemy.exc import DBAPIError
 
 from app.db import get_engine
-from app.search import engine
+from app.people import search as people_search
+from app.search import engine, filters_photo
 from tests.beeld.conftest import beeld, mensen  # noqa: F401 - de fixtures van tests/beeld
 from tests.search import wereld as W
 from tests.search.server import App, zonder_2fa
@@ -38,6 +39,15 @@ BBOX = f"{LON},{LAT},{LON[:-1]}9,{LAT[:-1]}9"
 DAG = "-".join(("1999", "12", "31"))
 PERSOON = str(uuid.uuid4())
 GEHEIM = (WOORD, PLAATS, LAT, LON, DAG, PERSOON)
+
+
+@pytest.fixture(autouse=True)
+def _filters():
+    """De filters person, place, country en camera staan in het register: een test eerder in de
+    run kan filters.reset() gedaan hebben (test_contracts.py), en dan gaf de vraag met person een
+    501 in plaats van een antwoord, afhankelijk van de volgorde."""
+    people_search.register()
+    filters_photo.register()
 
 
 def vragen() -> list[tuple[str, dict]]:
