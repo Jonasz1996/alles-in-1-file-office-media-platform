@@ -172,6 +172,9 @@ hebben):
 
 - `app/analyse/worker/child.py`, `server.py` (X2a): de handlers en BUILT, hotspots sinds
   `913c318`;
+- `app/analyse/worker/caps.py` (X2a): welke regels van `models.lock` meetellen (de bronnen van
+  een omzetting niet, een model in een map pas als die map er is) en het blok `beeld` uit
+  `meta.json` (`58263d6`; de review van golf 6, G6-7);
 - `app/cli.py`: `beeld_cli` aangemeld, de drie stubs weg; `tests/test_cli_db.py`: de nieuwe exacte
   lijst van stubs;
 - `app/config.py`: `PLATFORM_BEELD_*`; `app/routers/search.py`: `mode=image` naar
@@ -204,6 +207,8 @@ Geen contract van A0 of Z0b is veranderd (`app/search/types.py`, `web/src/search
    `meta.json`) komen uit de run op `26c49ca`. Op de branch staat sinds `eb3f763` een andere
    int8-omzetting (|q| ≤ 64), dus na de samenvoeging kloppen die drie niet meer; de strenge run
    zegt het, en de lead vervangt ze dan uit het voorstel. Geen sha256 is hier verzonnen.
+   **Gedaan in de review van golf 6 (G6-2, `c921c66`):** de drie regels van VERSIE 3 (per
+   token) uit de run op `669f03c`; zie De review.
 3. **BZ5** (het geheugen met een groepsronde van 60.000, de cache vol en een herlaadactie) heeft
    de groepsronde van X2b nodig en het echte model: niet gemeten. Na de samenvoeging met X2b, in
    CI of op de LXC.
@@ -483,7 +488,8 @@ de herhaling van alleen die tests.
   Playwright 1.65.2; de job `e2e` haalt Playwright met `uv run --with playwright`, zonder versie.
   Verandert een nieuwe Playwright de vorm van de boom, dan wordt de test rood op elke pagina. Dan
   opnieuw opnemen met de web van 0.8.0 (`3fca440`; de test zegt hoe), niet de vergelijking
-  losser maken.
+  losser maken. **Sinds de review van golf 6 (G6-6)** haalt elke stap van de job `e2e`
+  `playwright==1.65.2`; een nieuwere Playwright komt er pas met een nieuwe opname.
 - **BZ5 met de echte modellen** en `memory.peak` van de cgroup: CI (`analyse-image`) of de LXC.
 - **`test_install_search.sh --stappen` en `test_install_update.sh`** zijn op deze kop niet
   gedraaid: de schijf van de sandbox heeft 6 GB vrij voor Docker en de tests vragen er 8 en 12
@@ -497,3 +503,30 @@ de herhaling van alleen die tests.
   `test_beeld_omzetten.py` (`wait4` van een kind) en `test_beeld_echt_perf.py` (`RUSAGE_SELF`
   van pytest). Niet veranderd: ze waren groen en zijn van X3a en X3b; dezelfde aanpak als
   `c2be5fc` (`VmHWM` in het kind) past ook daar.
+
+## De review (golf 6)
+
+De review van de samengevoegde kop gaf twee punten die moesten (G6-1, G6-2), drie die zouden
+moeten (G6-3, G6-4, G6-5) en twee kleine (G6-6, G6-7). G6-1 is van X2b (x2b.md, De review); de
+rest staat hier. Elk punt eerst zelf nagegaan; een test die zonder de herstelling rood is, de
+herstelling, en de test groen.
+
+| Punt | Wat er gedaan is | Test |
+|---|---|---|
+| **G6-2** (moet) De pins van `beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` in `models.lock` waren die van VERSIE 1 van `bouw.py` (de run op `26c49ca`); na de samenvoeging staat de omzetter op VERSIE 3 (per token), dus `beeld-model` rood en `install.sh` met `BEELD=aan` gooit elke uitkomst weg | Klopt (`meta.json` noemt `"omzetter"`, de int8-bytes veranderen mee). De drie regels komen nu uit het voorstel van BZ2 in de CI-run op `669f03c` (run 43850620942, job `beeld-model`, drie omzettingen met dezelfde regels; x3a.md, "CI op 669f03c"); de omzetter en wat hij gebruikt zijn tussen `669f03c` en deze kop gelijk. Geen sha256 of grootte verzonnen. Een proef in het kladblok liet de worker (`parse_meta`, `preprocess`, beide grafen, `unit_rows`) de uitkomst van VERSIE 3 van het kleine model lezen en draaien (`c921c66`). `beeld.tsv` blijft van de lead (Open 1) | `test_lock_siglip.py`: de nieuwe exacte PINS, en `test_de_uitkomst_in_models_lock_is_van_de_versie_van_de_omzetter` legt `PINS_OMZETTER` (3) naast `VERSIE` van `bouw.py`: met de versie van de oude regels (1) rood. Streng in CI: `beeld-model` na de push |
+| **G6-3** (zou) `origin` samenvoegen; `ANALYSE_TESTS` en `ANALYSE_DESELECTED` opnieuw tellen; drie conflicten | Een gewone merge van `origin/claude/stappenplan-uitwerken-lu4uv3` (`ffac665`), niets herschreven (`e004d24`). `ci.yml`: de telling opnieuw op de samengevoegde boom, niet van een van beide kanten genomen; het commentaar noemt de bijdragen van beide. `test_beeld_echt_hulp.py`: de imports van beide. `docs/runbooks/analyse.md`: de alinea over VERSIE 3, daarna de delen van X3b | `pytest --collect-only tests_analyse -m "not beeld_echt"` in de venv van de analyse: 329 van 345, 16 niet gekozen = `ANALYSE_TESTS` 329 en `ANALYSE_DESELECTED` 16. De job `api-analyse` eist die telling exact (CI na de push) |
+| **G6-4** (zou) Geen test voor Keuze 69 bij het zoeken (`origin_ok("n")` in `_select`): na beeld uit van de uploader kwam diens foto nog uit het bestand en de cache van de eigenaar | Klopt: zonder `text(beeld_rows.origin_ok("n"))` was `tests/beeld` groen. `test_beeld_other_uploader` zet Bram na zijn foto weer op uit, zonder jobs: bij Eva is zijn foto meteen weg, terwijl haar bestand en de cache van 60 s hem nog hebben (geen nieuwe rank, het bestand byte voor byte gelijk); en ook nadat de jobs het bestand opnieuw maakten (`2566acb`) | Met die mutatie rood op de nieuwe bewering (`test_beeld_events.py:128`), zonder groen; `test_beeld_events.py` 16 groen |
+| **G6-5** (zou) Het filter op het begin van de sha (§3.9) zou geen test hebben die zonder het filter rood is; `test_beeld_replace` zou het bestand opnieuw maken vóór de zoekvraag | Niet zo: tussen de nieuwe inhoud (PUT) en de zoekvraag draait in `test_beeld_replace` geen job, dus komt die vraag uit de warme cache met het oude bestand. Met `rows = list(rows)` in plaats van het filter is die test rood (`["<node>", "<oranje>"]` in plaats van `["<oranje>"]`), en hij is de enige van `tests/beeld` (180 groen, 1 rood). Om het zichtbaar te maken zegt de test het nu ook: geen nieuwe rank en het bestand gelijk (`2566acb`) | Met de mutatie rood op `test_beeld_events.py:230`; zonder groen |
+| **G6-6** (klein) De job `e2e` haalde Playwright zonder versie, terwijl `test_uit080.py` vergelijkt met een opname van 1.65.2 | Elke stap van de job (Chromium installeren, de e2e, de marker `office`) haalt `playwright==1.65.2`, zodat de browser bij de Playwright van de tests past (`7abdbfa`). "Open na de samenvoeging" zegt het | `tests/uit080/test_uit080_ci.py` leest de versie uit de docstring van `test_uit080.py` en eist die bij elke `--with` van de job: zonder de wijziging rood. Lokaal `test_uit080.py` met `--with playwright==1.65.2` (zie onder); de job zelf in CI |
+| **G6-7** (klein) `app/analyse/worker/caps.py` (X2a) ontbrak bij de bestanden van anderen | Toegevoegd in die lijst (`58263d6`: welke regels van `models.lock` meetellen, en het blok `beeld`) | Alleen tekst |
+
+Ook x3a.md, "Open na 669f03c": de pins van VERSIE 3 staan nu in `models.lock` (G6-2).
+
+**Gedraaid voor de review**, achter het slot van de zware runs en op drie cores: de tests die de
+herstellingen raken (`test_beeld_events.py` 16 groen; `test_compose_analyse.py`,
+`test_lock_siglip.py` en `test_models_lock.py` 44 groen; de tests die `ci.yml` lezen, met
+`test_uit080_ci.py`, 20 groen), `e2e/test_uit080.py` met `uv run --with playwright==1.65.2` (1
+groen in 164 s; lokaal met de Chromium van de sandbox, in CI die van 1.65.2), ruff, yamllint,
+`bash -n` en shellcheck schoon. De mutaties: zonder `origin_ok` in `_select` en met
+`rows = list(rows)` in plaats van het filter van §3.9, telkens hersteld en `search.py` weer gelijk
+aan de kop. De rest draait de nacontrole.

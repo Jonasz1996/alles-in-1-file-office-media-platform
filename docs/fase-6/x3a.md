@@ -2206,7 +2206,8 @@ het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze
 ### Open na 669f03c
 
 - **Het antwoord van Jonas** op de kaart hierboven.
-- **De pins van `VERSIE` 3** gaan met X3b in `models.lock`.
+- **De pins van `VERSIE` 3** gaan met X3b in `models.lock`. Gedaan in de review van golf 6
+  (`c921c66`; x3b.md, De review, G6-2).
 - **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
   helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
   poort.

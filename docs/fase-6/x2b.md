@@ -421,3 +421,14 @@ blijft 400 MB; op de kop 24,6 s en 255,7 MB.
 - **Alleen in CI, na de push:** `api` (met `tests/uit080` en `test_faces_naast_beeld.py`),
   `api-analyse` (263 en 11), `zoek-perf`, `e2e` (met `test_uit080.py`) en `analyse-image` (de
   echte scan, en BZ5 met de echte modellen: zie x3b.md).
+
+## De review (golf 6)
+
+De review van de samengevoegde kop gaf zeven punten (G6-1 … G6-7). Dit is het punt van X2b; de
+andere staan in x3b.md, De review (de pins van SigLIP, de samenvoeging met `origin` en de nieuwe
+telling van `api-analyse`, twee tests van beeld, Playwright in de job `e2e`, een regel in de lijst
+van bestanden).
+
+| Punt | Wat er gedaan is | Test |
+|---|---|---|
+| **G6-1** (moet) `infra/single/tests/test_analyse_container.sh` (job `analyse-image`) vroeg bij `analyse-status` en bij `caps.built` de lijst opdrachten zonder `group`; `server.BUILT` heeft `group` sinds X2b, dus de job werd rood | Klopt. Beide lijsten in het script noemen nu `group`: `analyse-status` met `cancel caps embed_image embed_text faces forget group rank`, en de proef in de container met `sorted(caps.built)` gelijk aan die acht (`8d0809c`) | `tests/test_compose_analyse.py::test_de_containertest_kent_precies_de_opdrachten_van_built` legt beide lijsten in het script vast op `caps.built(server.BUILT)`: zonder de wijziging rood, nu groen; `bash -n` en shellcheck schoon. Het script zelf draait alleen in de job `analyse-image` (CI na de push) |
