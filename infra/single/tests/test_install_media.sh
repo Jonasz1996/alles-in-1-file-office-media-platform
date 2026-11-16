@@ -448,6 +448,58 @@ PY
   ) || out="(geen uitvoer)"
   check "de commando's van Keuze 47 met de volledige hash, in het runbook en de README ($out)" test "$out" = ok
 
+  # Het adres van install.sh in de runbooks van fase 6 (I2, review A6): main heeft het script niet
+  # (de versies staan op de branch), dus `curl …/main/… | bash` haalt niets en eindigt toch met 0.
+  # Elk adres is de branch, en met `| bash` staat PLATFORM_BRANCH=<branch> ervoor (zoals
+  # zoeken.md); een vaste commit (40 hex, het script van een oude versie met -o) mag ook.
+  echo
+  echo "== het adres van install.sh in analyse.md, gezichten.md en zoeken.md: de branch"
+  cat >"$work/adres.py" <<'PY'
+import re
+import sys
+
+BRANCH = "claude/stappenplan-uitwerken-lu4uv3"
+RAW = "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/"
+URL = re.compile(re.escape(RAW) + r"(?P<ref>\S+?)/infra/single/install\.sh(?P<rest>.*)$")
+problems = []
+for path in sys.argv[1:]:
+    name = path.rsplit("/", 1)[-1]
+    seen = 0
+    for i, line in enumerate(open(path, encoding="utf-8").read().splitlines()):
+        m = URL.search(line)
+        if not m:
+            continue
+        seen += 1
+        ref, rest = m.group("ref"), m.group("rest")
+        where = "%s r. %d" % (name, i + 1)
+        if re.fullmatch(r"[0-9a-f]{40}", ref):
+            continue
+        if ref != BRANCH:
+            problems.append("%s: install.sh van %s, niet van de branch" % (where, ref))
+            continue
+        pipe = re.search(r"\|\s*(?P<env>(?:\S+=\S*\s+)*)bash\b", rest)
+        if pipe and "PLATFORM_BRANCH=" + BRANCH not in pipe.group("env").split():
+            problems.append("%s: de branch met | bash zonder PLATFORM_BRANCH=%s" % (where, BRANCH))
+    if not seen:
+        problems.append("%s: geen adres van install.sh" % name)
+print("; ".join(problems) or "ok")
+PY
+  out=$(python3 -I "$work/adres.py" "$top/docs/runbooks/analyse.md" "$top/docs/runbooks/gezichten.md" "$top/docs/runbooks/zoeken.md") || out="(geen uitvoer)"
+  check "elk adres van install.sh is de branch, met PLATFORM_BRANCH bij | bash ($out)" test "$out" = ok
+  # De controle zelf: de regels van vóór I2 (main) en een branch zonder PLATFORM_BRANCH vallen op
+  mkdir -p "$work/adres"
+  {
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash"
+    echo "   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=uit bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | ANALYSE=uit bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/v0.8.0/infra/single/install.sh | bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/59e0250ba63d31c41b92f7ec8430446810db8a74/infra/single/install.sh -o /root/platform-install-0.8.0.sh"
+  } >"$work/adres/oud.md"
+  : >"$work/adres/leeg.md"
+  out=$(python3 -I "$work/adres.py" "$work/adres/oud.md" "$work/adres/leeg.md") || out="(geen uitvoer)"
+  check "de controle ziet main (r. 1 en 2), een branch zonder PLATFORM_BRANCH (r. 3), een andere ref (r. 4) en een bestand zonder adres; een vaste commit mag" test "$out" = \
+    "oud.md r. 1: install.sh van main, niet van de branch; oud.md r. 2: install.sh van main, niet van de branch; oud.md r. 3: de branch met | bash zonder PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3; oud.md r. 4: install.sh van v0.8.0, niet van de branch; leeg.md: geen adres van install.sh"
+
   # De nooduitgang zonder afscherming (review van de integratie, S1): `MEDIA_SANDBOX=uit bash`
   # staat in de docs alleen waar binnen 8 regels "tijdelijk" staat, dus nooit als los voorbeeld
   # van "een instelling erbij".

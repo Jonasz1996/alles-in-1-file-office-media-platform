@@ -20,7 +20,7 @@ installatiescript; staat de container analyse er, dan ook `compose.analyse.yaml`
 Het installatiescript is steeds de nieuwste versie:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
 ```
 
 Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
@@ -129,7 +129,7 @@ van iedereen kunnen komen.
 ## Uitzetten en weer aan
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=uit bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 ANALYSE=uit bash
 ```
 
 Geen download en geen container meer: de app start zonder `compose.analyse.yaml`, en

@@ -120,7 +120,7 @@ sleutels uit de backups [niet getest in de sandbox: daar is geen Proxmox]:
    ```bash
    cp -a /opt/platform/sleutels.oud/gezichten /opt/platform/sleutels/
    ls -ln /opt/platform/sleutels/gezichten   # elk bestand 0600 en van 10001
-   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
    rm -rf /opt/platform/sleutels.oud
    ```
 
