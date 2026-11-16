@@ -1994,8 +1994,9 @@ het bouwontwerp zegt het.
 
 ### Open na 011bf2d
 
-- **De vraag voor de eigenaar** hierboven: set, model of poort. Eerst de nieuwe regels van de
-  volgende run lezen; die zeggen per categorie en per vraag waar het misgaat.
+- ~~**De vraag voor de eigenaar** hierboven: set, model of poort. Eerst de nieuwe regels van de
+  volgende run lezen; die zeggen per categorie en per vraag waar het misgaat.~~ [2026-11-16:
+  "Toch uitbrengen"; zie "Keuze 85" onderaan.]
 - **De pins van `VERSIE` 3** komen uit de volgende run en gaan met X3b in `models.lock`.
 - **Glad** is niet gekozen. Komt het ooit terug, dan met factoren in een vastgelegde tabel bij de
   sha256 van de bron (zie "Open na 3a9b07d"), geijkt op echte foto's, en met een test dat de fout
@@ -2201,7 +2202,8 @@ het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze
 
 ### Open na 669f03c
 
-- **Het antwoord van Jonas** op de kaart hierboven.
+- ~~**Het antwoord van Jonas** op de kaart hierboven.~~ [2026-11-16: "Toch uitbrengen"; zie
+  "Keuze 85" onderaan.]
 - **De pins van `VERSIE` 3** gaan met X3b in `models.lock`.
 - **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
   helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
@@ -2310,10 +2312,42 @@ pytest: `bz3` 4 goed, `bz4` 2 fout en 4 goed, `bz4r` 5 goed in 262,4 s, `bz6` 1 
 
 ### Open na ffac665
 
-- **Het antwoord van Jonas** op de kaart van "De vraag aan Jonas". Wordt het "toch uitbrengen",
+- ~~**Het antwoord van Jonas** op de kaart van "De vraag aan Jonas". Wordt het "toch uitbrengen",
   dan heeft een ondergrens marge nodig: tussen twee runs schoof "meer zoals deze" van 0,475 naar
   0,454 (int8) en van 0,463 naar 0,442 (fp32), en fp32 combinaties van 6/6 naar 5/6. Een grens
-  precies op één meting zou rood worden op de volgende set.
+  precies op één meting zou rood worden op de volgende set.~~ [2026-11-16: "Toch uitbrengen";
+  de ondergrenzen staan in "Keuze 85" hieronder.]
 - **De pins van `VERSIE` 3** gaan met X3b in `models.lock` (ongewijzigd, ook op deze CPU).
 - **BZ6 op een trage runner:** op deze CPU zonder VNNI 82,8 ms. Of er runners zijn die trager
   zijn, zegt pas een run op een andere CPU; de regel van BZ6 noemt ze nu.
+
+## Keuze 85: zoeken op beeld toch in 0.8.1
+
+Jonas koos op 2026-11-16 op de kaart "Toch uitbrengen" ("Breng zo maar uit kunnen we evt later
+bekijken"). De twee poorten van BZ4 die ook fp32 niet haalt, zijn sinds Keuze 85 in het
+[bouwontwerp](bouwontwerp.md) ondergrenzen. "Meer zoals deze" heeft marge: 0,05 onder de laagste
+meting, 0,06 boven de beste kapotte variant: per token na glad op `ffac665` (in "CI op ffac665"
+niet geciteerd; uit `beeld-model` van die run):
+
+```
+BZ4 variant per token + glad (rapport): nl 0.642 (zakt 0.058, slechtste 1/5), engels 0.733, combinaties 4/6, meer zoals deze 0.338
+```
+
+De regel "geen vraag met 0 van 5" voor de andere 22 vragen heeft weinig marge: de zwakste haalde
+in int8 2 van 5, in fp32 soms 1. De andere poorten blijven.
+
+| Poort | Keuze 83 | Keuze 85 | Gemeten int8 (fp32) op `669f03c` en `ffac665` |
+|---|---|---|---|
+| slechtste vraag nl | ≥ 1 van 5 | ≥ 1 van 5, behalve 'bergen' en 'boot' | 'bergen' 0 en 0 (0 en 0), 'boot' 0 en 0 (1 en 1); elke andere vraag in int8 ≥ 2 |
+| "Meer zoals deze" | ≥ 0,7 | ≥ 0,40; 0,7 blijft het doel in de regel | 0,475 en 0,454 (0,463 en 0,442) |
+
+- **In de test:** `BEKEND_ZWAK` en `MEER_ONDER` in `test_beeld_kwaliteit.py`. Staat een van de twee
+  vragen niet meer in `beeld_vragen.tsv`, dan is BZ4 rood: de uitzondering is dan oud. De regel van
+  BZ4 nl noemt de slechtste vraag buiten die twee en hun eigen uitslag; die van "meer zoals deze"
+  noemt de ondergrens en het doel. Het rapport van de zwakke vragen blijft zoals het was.
+- **Nagerekend zonder model:** de twee tests met de getallen van `ffac665` zijn goed; met 'stad' op
+  0 van 5, met 'boot' hernoemd in de vragen, of met "meer zoals deze" 0,399 (of 0,271, per tensor)
+  zijn ze rood.
+- **Nog te doen:** de volgende run van `beeld-model` (die draait omdat `test_beeld_kwaliteit.py`
+  verandert) moet BZ4 groen geven op een nieuwe set. De uitleg bij de schakelaar in Account →
+  Foto's (wat je mag verwachten, met 'bergen' en 'boot') komt met X3b.

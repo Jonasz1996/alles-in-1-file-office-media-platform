@@ -10,13 +10,15 @@ volgorde). Een foto telt als goed voor een categorie als die in zijn kolom categ
 60 andere foto's hebben er geen.
 
 De poorten (Keuze 83, vastgelegd vóór de eerste echte run; lager alleen met een nieuwe keuze in
-het ontwerp, nooit hier):
+het ontwerp, nooit hier). Twee ervan zijn sinds Keuze 85 (Jonas, 2026-11-16: "Toch uitbrengen")
+ondergrenzen, omdat ook fp32 ze niet haalt:
 
 - 24 vragen in het Nederlands met één begrip: gemiddelde precisie@5 ≥ 0,6, en geen vraag met 0
-  goede foto's in de top 5;
+  goede foto's in de top 5, behalve de twee bekend zwakke (BEKEND_ZWAK; Keuze 85);
 - 6 combinaties: de bedoelde foto in de top 10 bij ≥ 5 van de 6;
 - int8 tegen fp32 (dezelfde set, dezelfde vragen): precisie@5 zakt ≤ 0,05;
-- "Meer zoals deze": gemiddeld ≥ 0,7 van de top 4 uit dezelfde categorie;
+- "Meer zoals deze": gemiddeld ≥ 0,40 van de top 4 uit dezelfde categorie (MEER_ONDER; Keuze 85).
+  Het doel van Keuze 83, 0,7 (MEER_ZOALS), staat ernaast in de regel;
 - de zelftest van de container (Keuze 83): een rood, een blauw en een groen vlak van Pillow, en
   bij "rood", "blauw" en "groen" de goede bovenaan.
 
@@ -62,8 +64,15 @@ NL_PRECISIE = 0.6
 COMBI_TOP = 10
 COMBI_GENOEG = 5
 INT8_ZAKT = 0.05
-MEER_ZOALS = 0.7
+MEER_ZOALS = 0.7  # het doel van Keuze 83; alleen in de regel (Keuze 85)
 MEER_TOP = 4
+# Keuze 85: twee poorten van Keuze 83 zijn ondergrenzen. "Meer zoals deze" mat int8 0,450 tot 0,475
+# (fp32 0,442 tot 0,463) en schoof 0,021 tussen twee runs met dezelfde pins; 0,40 ligt daar 0,05
+# onder, en boven de kapotte varianten tot nu (0,258 tot 0,338). Alleen deze twee
+# vragen mogen 0 van 5 halen: ze haalden in elke run hooguit 1, ook in fp32. Ze moeten in
+# beeld_vragen.tsv staan, en blijven in het rapport van de zwakke vragen.
+MEER_ONDER = 0.40
+BEKEND_ZWAK = frozenset({"bergen", "boot"})
 PREVIEW_ZAKT = 0.02  # rapport: daarboven rekent X3 uit 1024.webp (Keuze 77)
 KLEUREN = {"rood": (255, 0, 0), "blauw": (0, 0, 255), "groen": (0, 255, 0)}
 MAX_PIXELS = 100_000_000  # settings.preview_max_pixels van de app
@@ -534,10 +543,17 @@ def uitkomst() -> dict:
     def gem(lijst) -> float:
         return round(float(np.mean(lijst)), 4)
 
+    rest8 = [a for r, a in zip(nl, nl8, strict=True) if r["vraag"] not in BEKEND_ZWAK]
     u = {
         "fotos": len(fotos),
         "set": tsv.name,
-        "nl": {"int8": gem(np.array(nl8) / 5), "fp32": gem(np.array(nl32) / 5), "min": min(nl8)},
+        "nl": {
+            "int8": gem(np.array(nl8) / 5),
+            "fp32": gem(np.array(nl32) / 5),
+            "min": min(nl8),
+            # de poort van Keuze 85: de slechtste vraag buiten BEKEND_ZWAK
+            "min_rest": min(rest8),
+        },
         "nl_per_vraag": [
             {"vraag": r["vraag"], "categorie": r["categorieen"], "int8": a, "fp32": b, "1024": c}
             for r, a, b, c in zip(nl, nl8, nl32, nl_groot, strict=True)
@@ -580,10 +596,17 @@ def uitkomst() -> dict:
         return "goed" if goed else "FOUT"
 
     verslag.kort(f"BZ4 set: {len(fotos)} foto's uit {tsv.name}, previews met app.render.image")
+    bekend = ", ".join(
+        f"{r['vraag']} {a}/5" for r, a in zip(nl, nl8, strict=True) if r["vraag"] in BEKEND_ZWAK
+    )
+    # zoals test_nl_precisie_at_5: een uitzondering voor een vraag die er niet is, is oud
+    ontbreekt = sorted(BEKEND_ZWAK - {r["vraag"] for r in nl})
+    if ontbreekt:
+        bekend += f"; niet in de vragen: {', '.join(ontbreekt)}"
     verslag.kort(
         f"BZ4 nl: precisie@5 {u['nl']['int8']:.3f} (poort ≥ {NL_PRECISIE}), slechtste vraag "
-        f"{u['nl']['min']}/5 (poort ≥ 1) — "
-        f"{oordeel(u['nl']['int8'] >= NL_PRECISIE and min(nl8) >= 1)}"
+        f"{u['nl']['min_rest']}/5 buiten de bekend zwakke (poort ≥ 1; Keuze 85: {bekend}) — "
+        f"{oordeel(u['nl']['int8'] >= NL_PRECISIE and u['nl']['min_rest'] >= 1 and not ontbreekt)}"
     )
     verslag.kort(
         f"BZ4 combinaties: {u['combinaties_top']}/6 in de top {COMBI_TOP} (poort ≥ "
@@ -595,7 +618,8 @@ def uitkomst() -> dict:
     )
     verslag.kort(
         f"BZ4 meer zoals deze: {u['meer_zoals_deze']['int8_256']:.3f} van de top {MEER_TOP} "
-        f"(poort ≥ {MEER_ZOALS}) — {oordeel(u['meer_zoals_deze']['int8_256'] >= MEER_ZOALS)}"
+        f"(poort ≥ {MEER_ONDER:.2f}, Keuze 85; doel {MEER_ZOALS}) — "
+        f"{oordeel(u['meer_zoals_deze']['int8_256'] >= MEER_ONDER)}"
     )
     verslag.kort(
         f"BZ4 zelftest kleuren: {sum(kleur_boven)}/3 bovenaan — {oordeel(all(kleur_boven))}"
@@ -637,8 +661,12 @@ def uitkomst() -> dict:
 
 
 def test_nl_precisie_at_5(uitkomst):
+    # een uitzondering voor een vraag die er niet (meer) is, is oud (Keuze 85)
+    assert BEKEND_ZWAK <= {r["vraag"] for r in uitkomst["nl_per_vraag"]}, sorted(BEKEND_ZWAK)
     assert uitkomst["nl"]["int8"] >= NL_PRECISIE, uitkomst["nl_per_vraag"]
-    assert uitkomst["nl"]["min"] >= 1, [r for r in uitkomst["nl_per_vraag"] if r["int8"] == 0]
+    assert uitkomst["nl"]["min_rest"] >= 1, [
+        r for r in uitkomst["nl_per_vraag"] if r["int8"] == 0 and r["vraag"] not in BEKEND_ZWAK
+    ]
 
 
 def test_combinaties_in_de_top_10(uitkomst):
@@ -650,7 +678,7 @@ def test_int8_tegen_fp32(uitkomst):
 
 
 def test_meer_zoals_deze(uitkomst):
-    assert uitkomst["meer_zoals_deze"]["int8_256"] >= MEER_ZOALS, uitkomst["meer_zoals_deze"]
+    assert uitkomst["meer_zoals_deze"]["int8_256"] >= MEER_ONDER, uitkomst["meer_zoals_deze"]
 
 
 def test_zelftest_met_drie_kleuren(uitkomst):
