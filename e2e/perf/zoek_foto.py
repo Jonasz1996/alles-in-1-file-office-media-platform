@@ -10,6 +10,10 @@ Alles gemaakt met een vast zaad, uit de fixtures van de tests (geen nieuwe afhan
   plek, 5% bijna-dubbel. Elk met het voorbeeld van 256 (WebP), zoals de preview-taak van 0.7.1
   het al schreef: de pHash leest dat, niet het origineel (render_meta._picture). Zo zegt de
   grootte van het origineel weinig: de EXIF staat vooraan, en het voorbeeld is altijd 256.
+  Met formaat=ANALYSE en groot=True (zoek_samen --analyse, 0.8.1): 1024 × 768, en ook het
+  voorbeeld van 1024 (de gezichten van X2 lezen dat, zoeken op beeld de 256), zoals de
+  preview-taak beide maakt (render.thumbnails: nooit groter dan het origineel, dus de verkleinde
+  kopie van 512 × 384 krijgt een 1024 van 512 × 384).
 - kleine_fotos(): een JPEG van 16 × 16 per punt, alleen voor de plek in de EXIF (land en plaats,
   55.000 punten; het beeld doet er niet toe, de pHash is in die stand al gerekend).
 - punten(): 3 op de 4 tot ±25 km van een plaats (uit places.sqlite, of rond een paar vaste
@@ -89,12 +93,18 @@ STEDEN = (
 SCAN_HOEKEN = F.SCAN_HOEKEN  # 0, 3, 7, −5 en 90 graden, zoals de poort van X1 (§4.5)
 
 
+FORMAAT = (640, 480)  # breedte × hoogte van fotos(), zoals sinds I1
+ANALYSE = (1024, 768)  # zoek_samen --analyse: zoals de meting van X2 (people/faces/meten.py)
+
+
 @dataclass(frozen=True)
 class Foto:
     naam: str
     data: bytes  # JPEG met EXIF
     thumb: bytes | None  # het voorbeeld van 256 (WebP); None: geen preview
     gps: tuple[float, float] | None
+    groot: bytes | None = None  # het voorbeeld van 1024 (WebP); None: geen
+    formaat: tuple[int, int] = FORMAAT  # breedte × hoogte van data
 
 
 def punten(
@@ -136,22 +146,50 @@ def _thumb(data: bytes) -> bytes:
     return buf.getvalue()
 
 
+def _groot(data: bytes) -> bytes:
+    """Het voorbeeld van 1024 (WebP) van een JPEG, zoals render.thumbnails het maakt (LANCZOS,
+    kwaliteit en methode van render; nooit groter dan het origineel)."""
+    from app import render
+
+    img = Image.open(io.BytesIO(data))
+    img.draft("RGB", (previews.LARGE, previews.LARGE))
+    img = img.convert("RGB")
+    img.thumbnail((previews.LARGE, previews.LARGE), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "WEBP", quality=render.WEBP_QUALITY, method=render.WEBP_METHOD)
+    return buf.getvalue()
+
+
 def fotos(
-    n: int, zaad: int = 7, plekken: Sequence[tuple[float, float]] | None = None
+    n: int,
+    zaad: int = 7,
+    plekken: Sequence[tuple[float, float]] | None = None,
+    *,
+    formaat: tuple[int, int] = FORMAAT,
+    groot: bool = False,
 ) -> Iterator[Foto]:
-    """n foto's van 640 × 480 met hun voorbeeld; de plekken (standaard punten(n, zaad)) op
-    volgorde, behalve voor een foto zonder GPS of een kopie (die heeft de plek van de vorige)."""
+    """n foto's van formaat (standaard 640 × 480) met hun voorbeeld van 256, met groot ook dat
+    van 1024; de plekken (standaard punten(n, zaad)) op volgorde, behalve voor een foto zonder GPS
+    of een kopie (die heeft de plek van de vorige, en de helft van zijn formaat)."""
     plekken = plekken if plekken is not None else punten(n, zaad)
+    breedte, hoogte = formaat
     vorige: Foto | None = None
     for i in range(n):
         if i % VARIANT == VARIANT - 1 and vorige is not None:
             data, gps = F.foto_klein(vorige.data), vorige.gps
+            maat = (vorige.formaat[0] // 2, vorige.formaat[1] // 2)  # F.foto_klein: factor 0,5
+        # Zoals F.foto_zonder_gps en F.foto_gps, met een eigen formaat (640 × 480 geeft precies
+        # dezelfde bytes als die twee)
         elif i % ZONDER_GPS == ZONDER_GPS - 1:
-            data, gps = F.foto_zonder_gps(zaad=f"{zaad}-{i}"), None
+            beeld = F.beeld(f"{zaad}-{i}", breedte, hoogte)
+            data, gps, maat = F._jpeg(beeld, F.exif()), None, formaat
         else:
             lat, lon = plekken[i]
-            data, gps = F.foto_gps(lat, lon, zaad=f"{zaad}-{i}"), (lat, lon)
-        vorige = Foto(f"foto-{i:05d}.jpg", data, _thumb(data), gps)
+            beeld = F.beeld(f"{zaad}-{i}", breedte, hoogte)
+            data, gps, maat = F._jpeg(beeld, F.exif(lat, lon)), (lat, lon), formaat
+        vorige = Foto(
+            f"foto-{i:05d}.jpg", data, _thumb(data), gps, _groot(data) if groot else None, maat
+        )
         yield vorige
 
 
@@ -245,6 +283,8 @@ def zaai(
                 doel = previews.directory(store, sha)
                 doel.mkdir(parents=True, exist_ok=True)
                 (doel / f"{previews.THUMB}.webp").write_bytes(foto.thumb)
+                if foto.groot is not None:
+                    (doel / f"{previews.LARGE}.webp").write_bytes(foto.groot)
             rijen["blob"].append(_blob_rij(sha, foto, stand, dag))
             at = dag + timedelta(seconds=i)
             rijen["node"].append(
@@ -269,7 +309,11 @@ def zaai(
 
 def _blob_rij(sha: str, foto: Foto, stand: str, dag: datetime) -> dict[str, Any]:
     if foto.thumb is not None:
-        preview, meta = "ready", {"width": 640, "height": 480, "sizes": [previews.THUMB]}
+        # De maten zoals render.thumbnails ze teruggeeft: groot eerst
+        maten = [previews.LARGE, previews.THUMB] if foto.groot is not None else [previews.THUMB]
+        # Zonder groot zoals sinds I1: ook de verkleinde kopie staat er als 640 × 480
+        breedte, hoogte = foto.formaat if foto.groot is not None else FORMAAT
+        preview, meta = "ready", {"width": breedte, "height": hoogte, "sizes": maten}
     else:
         preview, meta = "none", {}
     # OUD en GEO: een versie lager (0.7.1 las alleen de datum; de herbouw geo zet hem zo terug)
