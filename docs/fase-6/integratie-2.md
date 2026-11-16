@@ -192,7 +192,7 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
   loslaten. De test in `e2e/test_office_o2.py` wacht er nu op (`919d7f8`); de app is niet
   veranderd.
 - **Waarom de namenfuzz rood was in de hele suite, is niet bewezen.** `test_fuzz_10000_namen_met_vaste_seed`
-  was in de volle api-suite een paar keer 0,526–0,561 s (grens 0,5 s). Een volle ronde van de gc
+  was in de volle api-suite een paar keer 0,514–0,561 s (grens 0,5 s). Een volle ronde van de gc
   is een vermoeden: `388081c` bevriest de heap tijdens het meten, en bij rood noemt de melding nu de
   drie tijden, de gc-rondes en de draden (`c84ab57`). De grens bleef 0,5 s. In de volle suite van
   I2 was hij groen.
