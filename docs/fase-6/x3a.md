@@ -215,7 +215,7 @@ Hier gemeten, in de sandbox, onder `taskset -c 0-2`. Met het echte model is hier
 | Kleine vorm, fp32 tegen numpy | grootste absolute verschil | beeld 2,47·10⁻⁷, tekst 1,10·10⁻⁷ (grens 1·10⁻⁵) |
 | Kleine vorm, int8 tegen numpy | kleinste cosinus | beeld 0,99969, tekst 0,99985 (grens 0,99) [CI op `7569d48`: met \|q\| ≤ 64 voor een Linear beeld 0,99941, tekst 0,99970] |
 | Kleine vorm, grootte | bytes | `beeld.int8.onnx` 981.742, `tekst.int8.onnx` 161.642 (fp32: 1.412.840 en 517.284) |
-| BZ7 synthetisch: `tokenizer.bin` met 256.000 stukken en ±600.000 merges (13,6 MB) | `from_bin` vijf keer; maxrss-groei in een vers proces | 0,117 s; +13,3 MB (grens 0,5 s en 100 MB); de test in `api` eist het |
+| BZ7 synthetisch: `tokenizer.bin` met 256.000 stukken en ±600.000 merges (13,6 MB) | `from_bin` vijf keer; maxrss-groei in een vers proces | 0,117 s; +13,3 MB (grens 0,5 s en 100 MB); de test in `api` eist het [I2: gemeten als de groei van `ru_maxrss`, en die erft bij exec de piek van de ouder; de +13,3 MB kan dus te laag zijn. Sinds `d15499b` meet de test de VmHWM van het kind zelf: 34.660.352 B erbij (VmHWM 51,2 MB), 0,144 s, onder de grens.] |
 | Tokenizer, één vraag | `encode` op de kleine woordenlijst | ±50 µs |
 | `onnxw`, 300 MiB aan gewichten schrijven | callables tegen arrays (stap 0) | maxrss 30 → 55 MiB met callables (één tensor tegelijk); dezelfde sha256 |
 | De job op een nepbron (rook-test met het kleine model en 120 gemaakte foto's) | de stappen van de job met de hand | de code van BZ3, BZ4, BZ6 en BZ7 loopt; BZ4 rood, zoals verwacht bij willekeurige gewichten; BZ6 3,7 ms per foto (niets waard: het model is klein) |
@@ -385,7 +385,7 @@ Elke regel van "Bouwt", "Tests" en "Klaar als" van X3 die X3a raakt (bouwontwerp
 | **Klaar als:** het deel beeld in het runbook, en `docs/fase-6/x3.md` | `docs/runbooks/analyse.md` (deel X3a); dit bestand | het runbook-deel van X3a staat er; `x3.md` schrijft X3b |
 | **Klaar als:** `e2e/slim.sh` is groen, en alle bestaande jobs blijven groen | zie Gedraaid | zie Gedraaid |
 | BZ1: een regel per host in `=== kort ===` | `test_bereik_meldt_elke_host` | groen hier (nep-server); de echte hosts **in CI na de push** |
-| BZ7: `tokenizer.bin` ≤ 0,5 s en ≤ 100 MB | `test_bz7_laden_onder_een_halve_seconde_en_100_mb` (synthetisch, `api`); `test_bz7_tokenizer_bin_laden` (echt) | synthetisch groen (0,117 s, +13,3 MB); echt **in CI na de push** |
+| BZ7: `tokenizer.bin` ≤ 0,5 s en ≤ 100 MB | `test_bz7_laden_onder_een_halve_seconde_en_100_mb` (synthetisch, `api`); `test_bz7_tokenizer_bin_laden` (echt) | synthetisch groen (0,117 s, +13,3 MB); echt **in CI na de push** [I2: synthetisch nu 34,7 MB erbij, gemeten met VmHWM sinds `d15499b`; de +13,3 MB kwam uit de geërfde `ru_maxrss`] |
 
 Vraag 8, 10, 11, 12a, 12b, 13 en 14 staan op hun standaard; geen ervan is hier beslist.
 
@@ -640,7 +640,7 @@ De eerste run van `beeld-model` met het echte model (run 43755501967; het blok `
 | BZ1 | huggingface.co, commons.wikimedia.org en upload.wikimedia.org bereikbaar (HTTP 200); images-assets.nasa.gov 403 (de set komt alleen van Commons, Vraag 12a) |
 | BZ2 | de bron `google/siglip2-base-patch32-256` op commit `94dffa8cb1179de3e03f091dbc3917e5d5a9ae84`. Twee omzettingen in 8,0 en 7,6 s, maxrss 354 MiB (grens 1536), dezelfde sha256 voor alle vijf bestanden; met `--fp32` 18,9 s en 1607 MiB (geen grens), ook gelijk. Het voorstel voor `models.lock` (tien regels) staat in het log; de pins gaan pas mee met X3b (uitrol F3) — **goed** |
 | BZ3 | de eigen BPE: 2.000 zinnen (25.383 tokens), 0 verschillen, 0 na afkappen; `tokenizer.bin` gelijk aan `from_json(...).to_bin()`. De lijst: 27 rijen, 0 verschillen, maar 8 voorwaarden niet gehaald: U+E000 en U+E001 staan in stukken van de woordenlijst van SigLIP 2 (icoonlettertypen gebruiken ze). Een fout in de lijst, niet in de tokenizer, en de test zei dat zo — **rood** |
-| BZ7 | `tokenizer.bin` (12,4 MB) laden in 0,135 s (poort ≤ 0,5 s), 0,0 MB erbij (≤ 100 MB) — **goed** |
+| BZ7 | `tokenizer.bin` (12,4 MB) laden in 0,135 s (poort ≤ 0,5 s), 0,0 MB erbij (≤ 100 MB) — **goed** [I2: die 0,0 MB was een fout in de meting, niet het echte geheugen: `ru_maxrss` erft bij exec de piek van de ouder. Sinds `d15499b` meet BZ7 de VmHWM van het kind zelf; zie BZ7 in [x3b.md](x3b.md) voor het getal op ware grootte (±29 MB).] |
 | BZ6 | beeld int8 op één core 39,8 ms per foto, 1.508 per minuut (poort ≥ 500); een vraag (tokenizer en tekst int8) p50 35,3 ms, p95 35,5 ms (≤ 250 ms), met laden 533 ms; maxrss 843 MiB — **goed** |
 | BZ4 | niet gerekend: het voorstel van de set stopte op HTTP 429 van commons.wikimedia.org, na ±10 s vragen en drie snelle pogingen (2, 4 en 8 s) — **rood** |
 | Uitslag | rood zoals bedoeld: `models.lock` heeft de regels van SigLIP nog niet |
@@ -673,7 +673,7 @@ niet. Standaard, tot Jonas iets anders zegt: X3b gaat door, met BZ4 streng als p
 | BZ1 | zoals op `26c49ca` |
 | BZ2 | dezelfde commit, en dezelfde sha256 voor alle tien regels als op `26c49ca`: twee runs op andere runners, dezelfde omzetting. 7,4 en 7,3 s, maxrss 352 MiB; met `--fp32` 13,6 s en 1606 MiB — **goed** |
 | BZ3 | de lijst: 27 rijen, 0 voorwaarden niet gehaald, 0 verschillen (U+FDD0 en U+FDD1 staan in geen stuk); de eigen BPE weer 0 verschillen op 2.000 zinnen — **goed** |
-| BZ7 | laden 0,169 s, 0,0 MB erbij — **goed** |
+| BZ7 | laden 0,169 s, 0,0 MB erbij — **goed** [I2: die 0,0 MB was een fout in de meting, niet het echte geheugen: `ru_maxrss` erft bij exec de piek van de ouder. Sinds `d15499b` meet BZ7 de VmHWM van het kind zelf; zie BZ7 in [x3b.md](x3b.md) voor het getal op ware grootte (±29 MB).] |
 | BZ6 | 76,5 ms per foto, 785 per minuut (poort ≥ 500); een vraag p95 71,3 ms. Deze runner was ongeveer half zo snel als die van `26c49ca` (39,8 ms): de poort houdt op beide — **goed** |
 | BZ4 | Commons gaf geen 429 meer, maar de keuze stopte op de vierde combinatie: "geen bruikbare foto voor fiets+stad" (CC0 of publiek domein, zonder mens, JPEG van ≥ 640 px, met P180 fiets én stad) — **rood** |
 | Uitslag | rood zoals bedoeld (`models.lock` zonder de regels van SigLIP) |
@@ -2386,7 +2386,7 @@ groen is, zegt CI.
   102.609.072 B, `tekst.int8.onnx` `258337db…` 284.248.004 B, `tokenizer.bin` `1516dde1…`,
   `meta.json` `dfb3d153…` 2.376 B, de licentie `0d542e0c…`).
 - **BZ3 en BZ7:** de lijst 27 rijen en 2.000 zinnen, 0 verschillen; `tokenizer.bin` laden 0,109 s,
-  0,0 MB erbij.
+  0,0 MB erbij. [I2: die 0,0 MB was een fout in de meting, niet het echte geheugen: `ru_maxrss` erft bij exec de piek van de ouder. Sinds `d15499b` meet BZ7 de VmHWM van het kind zelf; zie BZ7 in [x3b.md](x3b.md) voor het getal op ware grootte (±29 MB).]
 - **BZ4 set:** 120 foto's met 1 tweede keus (`kat+sneeuw`), `beeld_niet.tsv` sloeg 49 kandidaten
   over; 43,6 MB in 287 s, 0 keer 429. Dat voorstel is `beeld.tsv` geworden (`d1c29e0`).
 - **BZ4:** goed met de grenzen van Keuze 85. Elk getal van de kwaliteit (per vraag, per categorie,

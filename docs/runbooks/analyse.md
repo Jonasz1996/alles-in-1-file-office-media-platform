@@ -179,8 +179,13 @@ staan: ook een volgende run zonder `ANALYSE` laat de analyse uit. Het script zeg
 **Uit nadat hij aan stond.** De app doet dan weer wat 0.8.0 deed. De routes van gezichten en van
 zoeken op beeld geven `501` (zoals de lege routes van 0.8.0), de schakelaars bij Account → Foto's
 verdwijnen, en in het antwoord voor `/beheer` zijn de delen voor gezichten en beeld leeg (`null`).
-De web zegt op `/beheer` dat de analyse niet draait (`ANALYSE=uit in /opt/platform/.env`) en hoe
-hij weer aan gaat. Uitzetten wist niets: de gezichten, de vectoren van beeld en de sleutels
+De web zegt op `/beheer` dat gezichten en zoeken op beeld niet draaien ("de analyse staat uit, of
+is niet helemaal geïnstalleerd"), en wijst naar de regel **Gezichten (de container analyse)** in de
+eindtekst van het installatiescript: die zegt waarom (`uit (ANALYSE=uit)`, of `uit, want …`). Een
+gewone gebruiker ziet alleen dat zoeken op beeld uitstaat op deze server en dat de beheerder het
+kan aanzetten, zonder pad of variabele. Dezelfde lege blokken zie je ook met `ANALYSE=aan` als de
+analyse toch niet draait: op PostgreSQL, als het script een map weigerde, of zonder de map met
+sleutels van gezichten. Dan helpt `ANALYSE=aan` niet; de regel in de eindtekst zegt wat wel. Uitzetten wist niets: de gezichten, de vectoren van beeld en de sleutels
 blijven staan, en zijn er weer zodra de analyse weer aan staat. Wil je ze echt kwijt, wis ze dan
 eerst met de analyse aan (per gebruiker "uit" bij Account → Foto's, of op `/beheer`
 "Gezichtsherkenning toestaan" uit en "Beeldindex wissen") en zet de analyse daarna pas uit.

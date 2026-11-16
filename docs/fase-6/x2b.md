@@ -160,7 +160,8 @@ Wat het ontwerp open liet, en hoe het nu is.
    dialoog. `PATCH faces=aan` zonder de analyse geeft wat 0.8.0 gaf.
 3. **Het blok op `/beheer` meldt zich pas bij de start aan, en alleen als gezichten draaien.**
    Anders is `faces` in `GET /admin/search` `null` en toont de web het blok van 0.8.0 ("Gezichten
-   herkennen komt later in fase 6.", zonder knop of schakelaar). De regel "Analyse: off" uit het
+   herkennen komt later in fase 6.", zonder knop of schakelaar) [I2: sinds 0.8.1 met de zin dat
+   gezichten niet draaien op deze server, en waar de reden staat; `bea29ca`, `d538cbb`]. De regel "Analyse: off" uit het
    ontwerp verschijnt daardoor nooit: met de analyse uit is er geen nieuw blok.
 4. **De sleutel van een groep** is `"<run>:<cluster>"`: `face_owner.run` gaat bij elke `full` één
    omhoog. Een oude sleutel geeft `409 faces_gone`.
@@ -276,7 +277,10 @@ onder het slot).
 4. **De kwaliteit is niet gemeten** (Afwijkingen 3): `analyse-kwaliteit` op de LXC, tegen de
    eigen ja en nee van Jonas. Verandert een drempel, dan gaat `FACES_VERSION` omhoog.
 5. **§4.5 met X2 aan** (de belastingtest met `analyse` vol): van de integratie. [I2: gemeten als
-   M13 ([metingen.md](metingen.md#gezichten-en-beeld-081)); ⟦I2: gehaald of niet, uit M13⟧.]
+   M13 ([metingen.md](metingen.md#gezichten-en-beeld-081)); gehaald op `e41b724`, alle 13 poorten:
+   de container `analyse` zonder OOM-kill (de som van VmHWM 1,51 GB), zoeken op beeld p95 191,8 ms,
+   de poorten van 0.8.0 alle 10. De gezichten zelf zijn daar niet geoefend: de testfoto's hebben
+   geen gezichten, dus SFace en het groeperen draaiden niet onder belasting.]
 6. **`analyse-bench` op de LXC**: niet gedraaid; het runbook zegt hoe (`gezichten.md`).
 7. ~~**`df` op `DATA_ROOT` voor de vectoren** (K2-19; x2a.md, Open 3): `install.sh` kijkt er niet
    naar voor gezichten (±0,8 kB per gezicht; `/beheer` toont de ruimte). X3b zet die controle
@@ -338,7 +342,7 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Klaar als: `e2e/test_zoek_gezichten_echt.py` groen in `analyse-image` | de stap in `analyse-image` | in CI na de push [I2: groen op `e535332`, run 43892193604] |
 | Klaar als: `test_faces_perf.py` p95 ≤ 100 ms in `zoek-perf` | de stap in `zoek-perf` | lokaal gehaald; in CI na de push [I2: groen op `dc5dfe5` en `e535332`] |
 | Klaar als: de initiële JS niet gegroeid, het chunk binnen zijn begroting | `npm run budget` | 11.831 ≤ 12.000 B; de initiële JS gelijk in ruwe bytes |
-| Klaar als: §4.5 met X2 aan | — | integratie (Open 5) [I2: M13; ⟦I2: gehaald of niet, uit M13⟧] |
+| Klaar als: §4.5 met X2 aan | — | integratie (Open 5) [I2: M13; gehaald op `e41b724`, maar zonder gezichten op de testfoto's] |
 | Klaar als: `analyse-bench` op de LXC, of het runbook zegt hoe | [gezichten.md](../runbooks/gezichten.md), "Hoe snel is het op deze CPU" | het runbook zegt hoe |
 | Klaar als: de documenten (README, runbook, x2.md, B57 en B61 en verder) | README "Gezichten in detail", `gezichten.md` (de map met sleutels niet in snapshots), dit bestand, notities bij B57, B61 en B64 | er |
 | Klaar als: `e2e/slim.sh` groen | `SLIM_CPUS=0-2 e2e/slim.sh` op `61b9d9b` | groen in 1106 s |
@@ -518,7 +522,7 @@ verbeterd.
   [I2: groen op `e535332` (run 43892193604). Op `dc5dfe5` waren drie tests rood die alleen in CI
   draaien (de kinderen in `test_analyse_container.sh`, de maxrss van de omzetter en `/proc` als
   gewone gebruiker); hersteld in `e535332`, met één test erbij: `api-analyse` telt nu 330 en 16
-  ([x3b.md](x3b.md), "CI op dc5dfe5").]
+  ([x3b.md](x3b.md), "CI op dc5dfe5"). Sinds `4aa42e1` (review I2, U1) is dat 331 en 16.]
 - **Op de LXC:** `analyse-bench` met de echte modellen (het runbook zegt hoe).
 - **`test_install_update.sh`** is niet gedraaid (de schijf; x3b.md) en staat niet in CI (x2a.md,
   Open 8).

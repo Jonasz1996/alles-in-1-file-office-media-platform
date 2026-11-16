@@ -129,7 +129,8 @@ Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoo
 
 Het land komt uit de grenzen van Natural Earth 10m (publiek domein), de plaats uit GeoNames
 cities1000 (CC BY 4.0; de vermelding staat onder de kaart op `/fotos/kaart`, uit
-`/geo/attribution`, en in de README onder Bronnen; een pagina `/over` komt later): de
+`/geo/attribution`, en in de README onder Bronnen; ~~een pagina `/over` komt later~~ sinds 0.8.1
+ook op `/over`, via Account → Bronnen en licenties): de
 dichtstbijzijnde plaats binnen 30 km, in hetzelfde land. Alles gebeurt in de container, zonder
 iets online op te zoeken. De bronnen (±16 MB) staan in `$DATA_ROOT/geo`, met de tabel die de app
 ervan maakt (`places.sqlite`).
@@ -418,6 +419,24 @@ beeld p95 ≤ 250 ms, en de som van het geheugen van de analyse (de hoogste VmHW
 `docs/fase-6/metingen.md`, "Gezichten en beeld (0.8.1)". In CI draait `--kort --analyse nep`
 (een nep-worker) alleen als rapport. Op de LXC is dit niet nodig: daar meten `beeld-bench` en
 `analyse-bench` de CPU ([analyse.md](analyse.md), [gezichten.md](gezichten.md)).
+
+De app draait uit `api/.venv` (zonder numpy en onnxruntime, zoals hij geleverd wordt); de worker
+van de analyse komt uit `api/.venv-analyse`, die er dus moet zijn. Nooit `uv run --extra analyse`
+zonder `UV_PROJECT_ENVIRONMENT=.venv-analyse`: dan komen numpy en onnxruntime in `api/.venv`. Zo
+draaide M13 (met DS zoals hierboven, en niet onder `taskset`):
+
+```bash
+cd api && UV_PROJECT_ENVIRONMENT=.venv-analyse uv sync --frozen --extra analyse
+E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secret \
+  uv run --no-sync --with playwright==1.65.2 python ../e2e/perf/zoek_samen.py --office \
+  --sessies 2 --bewerkers 3 --duur 300 --docs 5000 --analyse <map met modellen> \
+  --analyse-lock <models.lock> --json /tmp/zoek-samen-i2.json
+```
+
+**Ruimte op de schijf.** De hele meting moet ≥ 10 GiB vrij houden op de schijf van haar tijdelijke
+map: media weigert anders elke start (`503 media_busy`, reden `disk`; `DISK_MIN`, Keuze 31), en de
+poort van media faalt. Met `--analyse` gebruikte de meting tot 2,6 GiB, dus begin met ≥ 13 GiB
+vrij. In de sandbox brak de eerste run daarop af (11,69 GiB bij de start, 9,63 GiB in stap 1).
 
 ## Terug naar 0.8.0 van `59e0250`
 

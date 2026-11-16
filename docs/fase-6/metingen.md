@@ -14,7 +14,11 @@ en de getallen uit CI: [Gezichten en beeld (0.8.1)](#gezichten-en-beeld-081). De
 Elke poort van §4.4 en §4.5 die bij 0.8.0 hoort, is gehaald: 27 van de 27, en ook de grens voor de
 grootte van het image (X1). ~~De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
 zijn niet gemeten.~~ [I2: die staan nu onder [Gezichten en beeld (0.8.1)](#gezichten-en-beeld-081);
-⟦I2: hoeveel van de poorten van gezichten en beeld gehaald zijn, uit M11–M13 en CI⟧.] M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
+alle 8 die er gemeten zijn, zijn gehaald: §4.5 gezichten (in de sandbox), §4.5 beeld en BZ4 (in
+CI), BZ5 (M11), BZ6
+als geheel (M12) en de drie rijen van §4.5 stap 2 met de analyse aan (M13). De twee eisen van
+gezichten zonder gereedschap staan op "niet gemeten". De modellen van M10–M13 hebben de echte vorm
+met willekeurige gewichten: de kwaliteit komt alleen uit BZ4 in CI.] M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
 [M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat bij M1 tot
 en met M5 de mediaan van de 3 rondes of runs, bij M6 en M7e de slechtste waarde. Bij M2 tot en met
 M5 staat elke run bij de meting zelf. Bij M1 staan de rondes alleen bij de herinneringen, de kaart,
@@ -72,7 +76,11 @@ bijwerken van de index) staan bij M1, M2 en M8.
 - **Geheugen:** het minst vrije geheugen staat bij M7; bij de andere metingen in de sandbox is het
   niet gemeten. `MemAvailable` staat overal in MiB: `zoek_samen.py` rekent in MiB, al schrijft het
   "MB".
-- **I2 (0.8.1):** M10–M13 op ⟦I2: de machine, de commit en de cores van M10–M13⟧. De getallen uit
+- **I2 (0.8.1):** M11–M13 op 16 november 2026 in dezelfde sandbox (4 cores, 15 GB, als root;
+  `docker info` gaf 'true true'), op `e41b724`, elk alleen. M11 op cores 0-2 (`taskset -c 0-2`),
+  M12 op core 0 (dat zet de test zelf), M13 zonder `taskset` (het script zet de mediaworker op 0-2
+  en de analyse op 3), met DS op `--memory 2g --memory-swap 2g --cpus 2`. M10 is niet opnieuw
+  gedraaid: de getallen en de map met modellen komen uit P3 en P7. De getallen uit
   CI komen uit run 43888472609 op `dc5dfe5` (golf 6) en run 43892193604 op `e535332`, beide op een
   Xeon 6975P-C met VNNI, en ⟦I2: de run-id en de commit van CI op de kop van I2, met de CPU⟧.
 
@@ -460,9 +468,10 @@ niet gemeten.~~ [I2: hieronder gemeten.]
 
 De metingen van de integratie I2: M10–M13 in de sandbox, en wat CI al mat. De nummers gaan door na
 M9; het plan van I2 noemde ze M1–M4 ([integratie-2.md](integratie-2.md), "Waar het afwijkt van het
-plan"). Wat er bij het schrijven nog niet was, staat als ⟦I2: …⟧.
+plan"). Wat pas na de push bestaat (de run van CI op de commit van 0.8.1), staat nog als merkteken
+tussen ⟦ en ⟧.
 
-**Wat de modellen hier zijn.** M10–M12 draaien met SigLIP 2 op ware grootte met willekeurige
+**Wat de modellen hier zijn.** M10–M13 draaien met SigLIP 2 op ware grootte met willekeurige
 gewichten (`api/tests_analyse/siglip_vol.py`), omgezet zoals `analyse-omzetten` dat op de LXC doet,
 en met de echte YuNet en SFace van `models.lock`. De rekensom en het geheugen kloppen dan, de
 vectoren niet: deze metingen zeggen iets over de tijd en het geheugen, niets over de kwaliteit. De
@@ -471,15 +480,15 @@ kwaliteit komt alleen uit BZ4 in CI (het echte SigLIP 2) en, voor gezichten, uit
 
 | Poort | Grens | Gemeten | Meting | Uitkomst |
 |---|---|---|---|---|
-| §4.5 gezichten (X2) | ≥ 250 foto's per minuut per core, met één gezicht | 1.043 (28,1 ms per foto zonder gezicht, 29,4 ms per gezicht; `werk` 224 MB) | `test_models_real.py` met de echte modellen, op `9228eb6` ([x2b.md](x2b.md), De nacontrole) | gehaald |
+| §4.5 gezichten (X2) | ≥ 250 foto's per minuut per core, met één gezicht | 1.043 (28,1 ms per foto zonder gezicht, 29,4 ms per gezicht; `werk` 224 MB); op `e41b724` 1.231 (23,2 ms, 25,6 ms; `werk` 241 MB) | `test_models_real.py` met de echte modellen, op `9228eb6` ([x2b.md](x2b.md), De nacontrole), en in `tests_analyse` van I2 | gehaald |
 | §4.5 beeld (X3) | ≥ 500 foto's per minuut, dus ≤ 120 ms per foto op één core | 33,8 ms per foto (op `dc5dfe5` 34,7 ms) | BZ6 in de job `beeld-model`, CI op `e535332` | gehaald |
 | BZ6: het model-deel van een vraag | rapport | p95 22,2 ms | BZ6, CI op `e535332` | rapport |
 | BZ4: de kwaliteit van zoeken op beeld (Keuze 85) | Nederlands ≥ 0,6; "Meer zoals deze" ≥ 0,40; de andere poorten van BZ4 | Nederlands 0,692; "Meer zoals deze" 0,475; de slechtste vraag buiten 'bergen' en 'boot' 2 van 5; combinaties 6 van 6; int8 zakt 0,000; kleuren 3 van 3 | BZ4 in `beeld-model`, CI op `dc5dfe5` ([x3b.md](x3b.md)) | gehaald |
-| BZ5: het geheugen van de analyse samen | de som van VmHWM ≤ 2,5 GB, en elk kind onder zijn RLIMIT_DATA | ⟦I2: de som van VmHWM en per kind uit M11⟧ | M11 | ⟦I2: gehaald of niet, uit M11⟧ |
-| BZ6 als geheel: warm bij 55.000 en 100.000 foto's, en de eerste vraag | p95 ≤ 250 ms, één core | ⟦I2: de p95 per geval uit M12⟧ | M12 | ⟦I2: gehaald of niet, uit M12⟧ |
-| §4.5 stap 2: zoeken op beeld met `werk` vol | p95 ≤ 250 ms; de terugval is een rapport | ⟦I2: de p95 en het aandeel terugval uit M13⟧ | M13 | ⟦I2: gehaald of niet, uit M13⟧ |
-| §4.5 stap 2: de container `analyse` | geen `OOMKilled`; de som van VmHWM ≤ 2,5 GB | ⟦I2: de som van VmHWM en of een kind stopte, uit M13⟧ | M13 | ⟦I2: gehaald of niet, uit M13⟧ |
-| §4.5 stap 2: de poorten van 0.8.0 (media, OnlyOffice, zoeken, de app, `MemAvailable`, het achtergrondwerk) met de analyse aan | zoals M7e | ⟦I2: de uitkomst per poort van stap 2 uit M13⟧ | M13 | ⟦I2: gehaald of niet, per poort, uit M13⟧ |
+| BZ5: het geheugen van de analyse samen | de som van VmHWM ≤ 2,5 GB, en elk kind onder zijn RLIMIT_DATA | pid 1 37 MiB, `werk` 619 MiB (RLIMIT_DATA 1.024), `zoeken` 1.178 MiB (RLIMIT_DATA 1.536); de som 1.835 MiB tegen 2.384 MiB (2,5 GB) | M11 | gehaald |
+| BZ6 als geheel: warm bij 55.000 en 100.000 foto's, en de eerste vraag | p95 ≤ 250 ms, één core | warm bij 55.000 90,2 ms; warm bij 100.000 97,5 ms; de eerste 20 na het opwarmen bij 100.000 106,9 ms (max 150,8) | M12 | gehaald |
+| §4.5 stap 2: zoeken op beeld met `werk` vol | p95 ≤ 250 ms; de terugval is een rapport | p95 191,8 ms (106 vragen), 0 % terugval, 0 mislukt, de index vol | M13 | gehaald |
+| §4.5 stap 2: de container `analyse` | geen `OOMKilled`; de som van VmHWM ≤ 2,5 GB | de som van VmHWM 1,51 GB (pid 1 37, `werk` 525, `zoeken` 881 MiB); geen OOM-kill, pid 1 dezelfde; `zoeken` 1 keer en `werk` 40 keer gestart | M13 | gehaald |
+| §4.5 stap 2: de poorten van 0.8.0 (media, OnlyOffice, zoeken, de app, `MemAvailable`, het achtergrondwerk) met de analyse aan | zoals M7e | media: elke start ≤ 2,46 s, 0 keer haperen; zoeken p95 53,4 ms; `/files/root` 80,5 ms; `/health` 5,0 ms; `MemAvailable` minstens 11.268 MiB; DS niet `OOMKilled`; de app en de worker dezelfde processen; de index leest weer na 14,7 s; OnlyOffice opslaan 8,3 s (grens 8,9 s), 0 van 354 woorden verloren | M13 | gehaald, alle 10 |
 | gezichten: ≥ 95% van de portretten precies het goede gezicht gevonden | ≥ 95% | niet gemeten, geen gereedschap | — (Vraag 8) | open |
 | gezichten: de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere | ≥ 0,05 | niet gemeten, geen gereedschap | — (Vraag 8) | open |
 
@@ -492,7 +501,19 @@ LXC (runbook [gezichten.md](../runbooks/gezichten.md)).
 `siglip_vol.py` schrijft de vijf bronbestanden in de vorm van `google/siglip2-base-patch32-256`
 (±1,5 GB), met ruis met een vaste seed in plaats van de gewichten. De omzetter van
 `analyse-omzetten` maakt er int8 van, zoals `install.sh` dat met de echte bron doet; met de echte
-YuNet en SFace erbij is dat de map met modellen voor M11–M13. Uitkomst: ⟦I2: de grootte van de uitkomst, de tijd van de omzetting en de VmHWM van de omzetter, uit M10⟧.
+YuNet en SFace erbij is dat de map met modellen voor M11–M13. Uitkomst (uit P3 en P7, niet opnieuw
+gedraaid):
+
+- de bron: 11,9 s; `model.safetensors` 1.507.473.288 B, `tokenizer.json` met 256.000 stukken en
+  600.000 merges, seed 85;
+- omzetten in het proces: 13,0 s, VmHWM 338 MiB;
+- in de afgeschermde `analyse-omzetten` (P7, twee keer): 13,1 en 12,7 s, maxrss 339 MiB; de piek
+  van de cgroup 527,0 en 528,4 MiB met de page cache erbij (rss 314 en 301, cache 381), grens
+  3.072 MiB; `/tmp` 0 van 64 MiB; de stap `beeld_model` van begin tot eind 20 en 19 s; de sha256
+  van alle vijf bestanden gelijk aan die van het proces;
+- de uitkomst: `beeld.int8.onnx` 102.609.072 B, `tekst.int8.onnx` 284.248.004 B, `tokenizer.bin`
+  12.388.813 B (met de echte tokenizer 12.414.446 B), `meta.json` 2.363 B;
+- de ruimte die `beeld_model` met de echte bron nodig heeft: ±2,44 GB.
 
 ### M11: BZ5, het geheugen van de analyse samen
 
@@ -501,22 +522,42 @@ YuNet en SFace erbij is dat de map met modellen voor M11–M13. Uitkomst: ⟦I2:
 groepsronde van 60.000 open en 6.000 bevestigde gezichten, na het laden van YuNet, SFace en het
 beeldmodel; in `zoeken` de cache vol en midden in de ronde een vraag die de tokenizer en het
 tekstmodel laadt. De poort telt de VmHWM van elk proces (nooit de geërfde `ru_maxrss` van een
-ouder). Uitkomst: ⟦I2: de regel "BZ5 met modellen van de echte vorm" uit M11: pid 1, werk en zoeken met hun RLIMIT_DATA, de som en de piek tegelijk⟧.
+ouder). Uitkomst op `e41b724` (1 passed in 35,8 s): pid 1 37 MiB, `werk` 619 MiB (RLIMIT_DATA
+1.024 MiB), `zoeken` 1.178 MiB (RLIMIT_DATA 1.536 MiB); de som 1.835 MiB tegen 2.384 MiB
+(2.500.000.000 B), de hoogste som tegelijk 1.788 MiB. Gehaald. Het script schrijft "MB", maar het
+zijn MiB.
+
+Sinds de review (C2, `50213fb`) rekent de nepvorm in `api-analyse` voor `zoeken` 780 MB bij voor
+de echte modellen in plaats van 440 MB: gemeten kost de echte vorm daar +779 MiB. De echte vorm
+houdt ook de grens bij herladen: `zoeken` ≤ de cache + import + die 780 MB.
 
 ### M12: BZ6 als geheel
 
 `tests_analyse/test_beeld_perf.py` met `BEELD_PERF_MODELLEN` en `BEELD_PERF_LOCK`: `GET
 /search?mode=image` via HTTP bij 55.000 en 100.000 foto's, met het tekstmodel op ware grootte in
-elke vraag, alles op één core (de test zet zelf `taskset -c 0`). De test houdt zijn eigen grens van
-100 ms; die is strenger dan het ontwerp, want daar is 100 ms alles behalve het tekstmodel. De poort
-van het geheel is 250 ms (BZ6). P3 zag in de sandbox met de echte vorm bij 100.000 foto's p95
-105,7 ms warm en 113,0 ms na het opwarmen (het tekstmodel kost daar ±40 ms per vraag), met de nep
-69,0 en 68,8 ms (de toelichting van `test_beeld_perf.py`, `e8c4a02`). Uitkomst: ⟦I2: de p95 warm bij 55.000 en 100.000 en na het opwarmen uit M12, tegen 250 ms, en of de eigen grens van 100 ms gehaald is⟧.
+elke vraag, alles op één core (de test zet zelf `taskset -c 0`). Sinds de review (C1, `8934ee3`)
+meet de echte vorm beide getallen van het ontwerp: alles behalve het tekstmodel p95 ≤ 100 ms (wat
+het tekstmodel per vraag kost, meet de test na de reeks apart), en het geheel p95 ≤ 250 ms (BZ6).
+Daarvoor legde de test het geheel onder 100 ms; P3 zag zo bij 100.000 foto's 105,7 ms warm en
+113,0 ms na het opwarmen, rood op een goed systeem. De nepvorm in `api-analyse` houdt 100 ms op het
+geheel; daar kost het tekstmodel bijna niets.
 
-Het laden van de tokenizer en het tekstmodel in `zoeken` kostte in de sandbox 1,65 s, langer dan de
-deadline van een beeldvraag (800 ms). De eerste beeldvraag na de start van de worker antwoordt dan
-met gewoon zoeken (de terugval `slow`); `zoeken` laadt door en houdt het model, en de volgende
-vraag kost weer ±40 ms (P3, dezelfde toelichting). M12 meet daarna.
+Uitkomst op `e41b724` (1 passed in 89,4 s; het tekstmodel laden 1,78 s):
+
+| Geval | zonder het tekstmodel p95 (grens 100) | het tekstmodel p95 | het geheel p95 (grens 250) |
+|---|---|---|---|
+| warm, 55.000 foto's (40 vragen) | 58,7 ms | 40,5 ms | 90,2 ms (max 100,0) |
+| warm, 100.000 foto's (40 vragen) | 65,9 ms | 33,7 ms | 97,5 ms (max 100,2) |
+| de eerste 20 vragen na het opwarmen, 100.000 foto's | 73,3 ms | 41,5 ms | 106,9 ms (max 150,8) |
+
+Gehaald, beide grenzen in elk geval.
+
+Het laden van de tokenizer en het tekstmodel in `zoeken` kost in de sandbox 1,6–1,8 s, langer dan
+de klok van een beeldvraag (800 ms). Sinds de review (U1, `4aa42e1`) laadt het opwarmen
+(`GET /photos/beeld`, en na het bouwen van `beeld.vec`) het model mee, onder de deadline van
+`rank`; de eerste beeldvraag daarna valt niet meer terug. Na een herstart betaalt het opwarmen dat
+laden één keer. In de nepvorm warmt de test sinds `e41b724` ook eerst het bestand op, zoals na het
+bouwen: de eerste vraag die niet meetelt, kostte anders op één core 698–892 ms, rond de klok.
 
 ### M13: §4.5 stap 2 met de analyse helemaal aan
 
@@ -529,7 +570,46 @@ wacht tot `GET /photos/beeld` klaar meldt en elke foto in het bestand staat, en 
 een beeldvraag (nooit de vraag zelf in het rapport). Het geheugen is de som van de hoogste VmHWM van
 pid 1, `werk` en `zoeken`.
 
-Uitkomst: ⟦I2: het blok kort van M13 per poort, met het aantal vectoren van beeld bij de start van het meetvenster en de MemAvailable⟧.
+Uitkomst op `e41b724` (16 november 2026, run 2): geslaagd, alle 13 poorten van stap 2 gehaald. De
+duur 2.348 s (39,1 min), plus ±2 min voor de start van DS. De voorbereiding was klaar na 338,9 s:
+5.000 foto's van 1024 × 768 (160,6 s), 5.000 documenten (38,7 s) en 500 scans (81,0 s), en bij de
+start van het meetvenster 5.000 vectoren van beeld, alle 5.000 in het bestand.
+
+| Poort (stap `achtergrond`) | Grens | Gemeten |
+|---|---|---|
+| media: elke start, en haperen | ≤ 5 s, 0 keer | fase a 2,00 en 2,46 s, fase b 2,15 en 1,34 s; 0 keer |
+| zoeken p95 | ≤ 200 ms | 53,4 ms (1.014 vragen) |
+| `GET /files/root?limit=200` p95 | ≤ 200 ms | 80,5 ms |
+| `GET /health` p95 | ≤ 50 ms | 5,0 ms |
+| `MemAvailable` | ≥ 1,5 GiB | minstens 11.268 MiB |
+| DS niet `OOMKilled` | geen | grens 2.048 MiB, 0 herstarts |
+| de app en de worker | dezelfde processen | dezelfde |
+| de index leest weer na de laatste transcode | ≤ 90 s | 14,7 s |
+| OnlyOffice opslaan | ≤ 1,2 × de nulmeting (7,4 s) = 8,9 s | 8,3 s |
+| OnlyOffice verloren woorden | 0 | 0 (354 van 354) |
+| zoeken op beeld p95, warm en de index vol | ≤ 250 ms | 191,8 ms (106 vragen, 0 mislukt, 0 terugval) |
+| de analyse samen, VmHWM | ≤ 2,5 GB | 1,51 GB (pid 1 37, `werk` 525, `zoeken` 881 MiB) |
+| de container `analyse` leeft | geen OOM-kill of crash | pid 1 dezelfde; `zoeken` 1 keer en `werk` 40 keer gestart |
+
+De API p95 was 63,3 ms. De andere twee stappen zijn een rapport:
+
+- `pauze`: zoeken p95 46,0 ms (1.202 vragen), `/files/root` 75,8 ms, `/health` 4,3 ms,
+  `MemAvailable` minstens 11.430 MiB; zoeken op beeld p95 141,0 ms (123 vragen); OnlyOffice 7,4 s,
+  359 van 359 woorden; media 1,44 en 2,09 s, 1,87 en 1,02 s.
+- `zonder_defer`: zoeken p95 92,5 ms, `/files/root` 135,4 ms, `/health` 7,2 ms, `MemAvailable`
+  minstens 11.375 MiB; media 3,09 en 3,48 s, 2,30 en 1,39 s, 0 keer haperen; de tekst van 32 naar
+  10.518 klaar; OnlyOffice 9,4 s, 344 van 344 woorden; zoeken op beeld p95 290,4 ms (103 vragen,
+  9 boven 250 ms, max 679 ms). Hier liep de gezichtenscan van de 5.000 foto's op dezelfde core als
+  `zoeken` (`werk` 197 keer gestart): in de stappen ervoor wachtte `faces.plan` tot de index
+  bij was (Keuze 65). BZ6 is de poort van stap 2; zie [Bevindingen](#bevindingen), punt 12.
+
+Niet in deze meting: SFace en het groeperen van gezichten. De testfoto's hebben geen gezichten;
+YuNet las ze wel.
+
+De eerste run (dezelfde dag) brak af in stap `pauze`: alle vier de spelers kregen 503
+`media_busy` met de reden `disk`. De vrije ruimte op `/` zakte van 11,69 GiB bij de start naar
+9,63 GiB, onder de 10 GiB die media vrij wil houden (`DISK_MIN`, Keuze 31). Geen fout in de code;
+na het opruimen van tijdelijke resten begon run 2 op 14,81 GiB en kwam niet onder 12,21 GiB.
 
 In CI draait dezelfde stap met `--kort --analyse nep` (de nep van A0) in `e2e-media-perf`, als
 rapport.
@@ -537,8 +617,15 @@ rapport.
 ### De ruimte op de schijf
 
 Wat gezichten en beeld op de schijf innemen (x2b.md, Open 7): de modellen van gezichten ±39 MB, de
-omzetting van SigLIP 2 ±400 MB (de bron van ±1,55 GB gaat na de omzetting weg), en de vectoren:
-⟦I2: de grootte van de vectoren van gezichten en beeld en van de bestanden van beeld na M13, per 1.000 foto's⟧.
+omzetting van SigLIP 2 ±400 MB (de bron van ±1,55 GB gaat na de omzetting weg), en de vectoren,
+gemeten bij 5.000 foto's in de eerste run van M13:
+
+- beeld, het bestand `.vec`: 1.552 B per foto plus een kop van 64 B (5.000 foto's: 7.760.064 B),
+  dus ±1,55 MB per 1.000 foto's;
+- beeld, de tabel `blob_embed`: ±2,14 MB per 1.000 foto's (bij 5.000: de vectoren 7.680.000 B in
+  10.268.672 B aan pagina's, plus 409.600 B index);
+- gezichten: niet gemeten, want de testfoto's hebben geen gezichten. Per gezicht is de vector
+  AES-GCM over 128 × float32 (512 B klare tekst).
 
 ## Bevindingen
 
@@ -586,6 +673,19 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 10. **CI ziet het haperen in fase a niet.** `zoek_samen --kort` in `e2e-media-perf` draait alleen
     fase b, zonder sprong en zonder OnlyOffice; fase a draait in CI alleen in `test_fase_a_en_b`
     (job `api`), met een nep-worker. Het haperen van punt 2 en 3 ziet alleen een volle M7.
+11. **M13 brak de eerste keer af op de vrije ruimte** (geen fout in de code). Media weigert een
+    start als er minder dan 10 GiB vrij is (`DISK_MIN`, `api/app/media/admission.py`, Keuze 31).
+    De eerste run begon op 11,69 GiB en zakte naar 9,63 GiB; elke speler kreeg 503 `media_busy`
+    (reden `disk`). Run 2 begon op 14,81 GiB; de hele meting gebruikte 2,6 GiB. Begin M13 dus met
+    minstens 13 GiB vrij op de schijf van de tijdelijke map.
+12. **Zoeken op beeld naast de gezichtenscan** (M13, stap `zonder_defer`, een rapport): p95
+    290,4 ms, 9 van 103 vragen boven 250 ms. De poort van stap 2 (191,8 ms) meet zonder de scan
+    ernaast, omdat `faces.plan` wacht tot de index bij is (Keuze 65). Een vraag aan Jonas, met als
+    standaard (a): (a) zo laten, BZ6 is de poort van stap 2 en stap 3 een rapport; (b) een aparte
+    meting of rapportregel terwijl de scan loopt; (c) de scan laten wijken voor een beeldvraag
+    (een codewijziging, met een nieuwe test).
+13. **OnlyOffice opslaan had weinig marge in M13:** 8,3 s tegen 8,9 s (6,5 %). In de afgebroken
+    eerste run was de nulmeting 7,8 s.
 
 ## Wat alleen de LXC of CI kan laten zien
 
@@ -603,6 +703,9 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 - `memory.peak` en `OOMKilled` van `platform-analyse-1` onder de echte cgroup (`mem_limit: 3g`), na
   een paar dagen met de backfill.
 - De jobs met het image: de grootte (`images`) en `--stappen` (`media-image`).
+- SFace en het groeperen onder belasting: de testfoto's van M13 hebben geen gezichten.
+- BZ7 met de echte tokenizer: de job `beeld-model` op de commit van 0.8.1. P3 verwacht ±29 MB
+  (gemeten met een `tokenizer.bin` op ware grootte: 29.028.352 B erbij, VmHWM 45,7 MB).
 
 ## Opnieuw meten
 
@@ -640,8 +743,8 @@ PLATFORM_DATA_DIR=<lege map> taskset -c 0-2 uv run python -m app.cli bench --los
 
 M10–M13 (0.8.1) draaien de analyse uit een eigen omgeving, `api/.venv-analyse` (met numpy en
 onnxruntime); `api/.venv` blijft zonder (Keuze 57). Nooit `uv run --extra analyse` zonder
-`UV_PROJECT_ENVIRONMENT=.venv-analyse`. Zorg voor minstens 4 GB vrij voordat je begint, en gooi de
-bron van M10 na de omzetting weg.
+`UV_PROJECT_ENVIRONMENT=.venv-analyse`. Zorg voor minstens 4 GB vrij voor M10, en gooi de bron na
+de omzetting weg; M13 wil minstens 13 GiB vrij op de schijf van de tijdelijke map (Bevinding 11).
 
 ```bash
 # eenmalig: de omgeving van de analyse
@@ -662,8 +765,9 @@ BEELD_PERF_MODELLEN=<modellen> BEELD_PERF_LOCK=<lock> UV_PROJECT_ENVIRONMENT=.ve
 # M13: §4.5 stap 2 met de analyse; de app uit api/.venv, de worker uit api/.venv-analyse;
 # niet onder taskset (het script zet de worker zelf op core 3); de DS zoals bij M7
 E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=<map>/jwt.secret \
-  uv run --with playwright python ../e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 \
-  --duur 300 --docs 5000 --analyse <modellen> --analyse-lock <lock> --json /tmp/zoek-samen-i2.json
+  uv run --no-sync --with playwright==1.65.2 python ../e2e/perf/zoek_samen.py --office \
+  --sessies 2 --bewerkers 3 --duur 300 --docs 5000 --analyse <modellen> --analyse-lock <lock> \
+  --json /tmp/zoek-samen-i2.json
 # daarna api/.venv weer precies zoals uv.lock zegt (uv sync haalt weg wat er niet hoort)
 uv sync --frozen
 ```

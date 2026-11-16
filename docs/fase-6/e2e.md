@@ -21,7 +21,7 @@ getallen in [metingen.md](metingen.md).
 | `zoek` | `e2e/` | de echte app; in Chromium met alleen het toetsenbord (`test_zoek_z2.py` alleen via de API) | `e2e` | hard |
 | `analyse` | `e2e/` | de echte app met `PLATFORM_ANALYSE_ENABLED` en de nep-worker van de analyse in een draad (`api/tests/people/faces/schijven.py`, zonder numpy); `test_zoek_gezichten.py` (X2b) en `test_zoek_beeld.py` (X3b) | `e2e` | hard |
 | `analyse_echt` | `e2e/` | de echte compose met het image en de echte modellen van `models.lock`, alleen via de API; `test_zoek_gezichten_echt.py` (X2b) | `analyse-image` | hard (overgeslagen is rood) |
-| `analyse_echt` en zonder marker | `api/tests_analyse` | de echte worker van de analyse met numpy en onnxruntime uit `api/.venv-analyse` (laag 2), en met de echte YuNet en SFace van `models.lock` (laag 3) | `api-analyse` | hard, met een vaste telling (op `e535332`: 330 goed, 16 niet gekozen) |
+| `analyse_echt` en zonder marker | `api/tests_analyse` | de echte worker van de analyse met numpy en onnxruntime uit `api/.venv-analyse` (laag 2), en met de echte YuNet en SFace van `models.lock` (laag 3) | `api-analyse` | hard, met een vaste telling (op `e535332`: 330 goed, 16 niet gekozen; sinds `4aa42e1`, de review van I2: 331 en 16) |
 | `beeld_echt` | `api/tests_analyse` | het echte SigLIP 2, in de job omgezet: de pins (BZ2), de tokenizer (BZ3, BZ7), de kwaliteit op `beeld.tsv` (BZ4) en de tijd op één core (BZ6) | `beeld-model`, alleen als iets verandert dat het model raakt of met de regel "beeld-model: ja" in de PR | hard |
 | (meetscript) | `e2e/perf/zoek_ui.py` | Chromium met het profiel van `first_view.py` | `perf` | alleen een rapport |
 | (meetscript) | `e2e/perf/zoek_samen.py --kort` en `e2e/perf/zoek_backfill.py` | de app met media aan, de lokale worker en echte ffmpeg | `e2e-media-perf` | alleen een rapport |
@@ -180,7 +180,8 @@ browser.
   sleutel in de logs.
 - `test_zoek_beeld.py` (X3b, markers `zoek` en `analyse`): zoeken op beeld met de nep van beeld,
   "Meer zoals deze", de terugval, de schakelaar onder Account → Foto's, het blok op `/beheer`, en
-  met de analyse uit precies wat 0.8.0 toonde.
+  met de analyse uit wat 0.8.0 toonde, op de zinnen van 0.8.1 na (dat zoeken op beeld uitstaat op
+  deze server; sinds `d538cbb` zonder pad of variabele).
 - `test_uit080.py` (de samenvoeging van golf 6; zonder marker, dus in de job `e2e`): met de analyse
   uit is elke pagina, voor elke rol, gelijk aan de web van 0.8.0. Sinds I2 (P2) staat in de test
   precies wat 0.8.1 met de analyse uit anders toont: de zinnen die zeggen dat gezichten en zoeken
@@ -205,7 +206,7 @@ in het log (het blok `=== kort ===`) en in het artefact.
 | `images` | de grootte van het image met tesseract (Vraag 15) | hard |
 | `infra` | `test_install_search.sh`, de functies en `--stappen` (de update en terug naar 0.7.1); sinds X2a en X3b ook `test_install_analyse.sh` en `test_install_beeld.sh`; `shellcheck` over onder meer `e2e/slim.sh` | hard |
 | `api-analyse` | `api/tests_analyse` zonder `beeld_echt`, met een vaste telling (`ANALYSE_TESTS` en `ANALYSE_DESELECTED` in `ci.yml`); de licenties gelijk aan die van opencv_zoo | hard |
-| `analyse-image` | `test_analyse_container.sh` (de container met de echte modellen), daarna `test_zoek_gezichten_echt.py`; ⟦I2: de naam en de uitslag van de stap van P7 (de echte bron in analyse-omzetten), zoals hij in ci.yml op de kop van I2 staat⟧ | hard |
+| `analyse-image` | `test_analyse_container.sh` (de container met de echte modellen), daarna `test_zoek_gezichten_echt.py`; sinds P7 de stap "De echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh, X3)", alleen als de poort `omzet-poort` ja zegt (een wijziging in het image, `install.sh`, compose, de omzetter of `models.lock`, of "beeld-model: ja" in de PR); uitslag: ⟦I2: uitslag van de stap X3 in analyse-image op de commit van 0.8.1⟧ | hard |
 | `beeld-model` | het echte SigLIP 2: omzetten, de pins (BZ2), de tokenizer (BZ3, BZ7), de kwaliteit (BZ4, Keuze 85), de tijd (BZ6) en de stap "Uitslag"; alleen als iets verandert dat het model raakt, of met "beeld-model: ja" in de PR | hard |
 | `web` | typecheck, vitest, de build, i18n streng en de begrotingen | hard |
 | `perf` | `e2e/perf/zoek_ui.py`, na `run_all.py` | rapport (`continue-on-error`) |
@@ -238,8 +239,11 @@ De checks van I2 (0.8.1) op de samengevoegde kop staan in [integratie-2.md](inte
 controles"; de metingen M10–M13 in [metingen.md](metingen.md#gezichten-en-beeld-081). Kort:
 
 - de e2e van CI, met `test_zoek_gezichten.py`, `test_zoek_beeld.py` en `test_uit080.py`:
-  ⟦I2: uitslag van de e2e-sets op de kop van I2⟧;
-- `tests_analyse` zoals `api-analyse`: ⟦I2: precies '330 passed, 16 deselected' of het nieuwe getal uit ci.yml⟧;
+  285 goed en 136 niet gekozen (golf 6: 249); office 30 goed; de vier bestanden van I2 met de
+  metingen erbij 115 goed en 1 overgeslagen (`test_zoek_gezichten_echt.py`: geen image, dat zet de
+  job `analyse-image`), allemaal op `e41b724`;
+- `tests_analyse` zoals `api-analyse`: precies `331 passed, 16 deselected`, zoals `ci.yml` nu eist
+  (`ANALYSE_TESTS` 331 sinds `4aa42e1`);
 - CI op de kop van I2: ⟦I2: run-id, aantal jobs en wat groen was op de kop van I2⟧.
 
 Zie ook: [z7.md](z7.md) en [x1.md](x1.md) voor de laatste golf, en het runbook

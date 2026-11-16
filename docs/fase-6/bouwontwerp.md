@@ -1702,7 +1702,10 @@ Keuze 70–85 van X3.
       100.000 foto's tijdelijk +307 MB. `werk`: gezichten 224 MB, beeldmodel +165 MB, groeperen van
       60.000 gezichten +232 MB [gemeten: B6, `groep2_60000.json`; samen: K2-06]. Alles tegelijk is
       ±1,9 GB. Daarom `mem_limit: 3g`, met `RLIMIT_DATA` per kind (Keuze 56). BZ5 meet het met een
-      groepsronde en een herlaadactie tegelijk.
+      groepsronde en een herlaadactie tegelijk. [I2: gemeten met modellen van de echte vorm is
+      `zoeken` 779 MB groter dan met het nepmodel, niet 440 MB (het tekstmodel en de tokenizer
+      samen); BZ5 rekent sinds `50213fb` met 780 MB. Alles tegelijk was in M11 1.835 MiB, onder
+      de 2,5 GB.]
     - **De cache.** De vectoren in het geheugen hebben een eigen grens (`ANALYSE_BEELD_CACHE_MB` =
       400, ±130.000 foto's); de eigenaar die het langst niet zocht, gaat eruit. De sleutel is
       (eigenaar, `gen`, sha256 van het bestand), niet alleen `gen` (K2-23). Heeft één eigenaar meer
@@ -1904,18 +1907,26 @@ Keuze 70–85 van X3.
       | `GET /search?mode=image`, warm, niets anders actief | p95 ≤ 250 ms | hard (BZ6) |
       | hetzelfde bij 100.000 eigen foto's (in de container al ±125 ms: tekstmodel p95 ±74, scan p95 ±51 [K2-13]) | p95 ≤ 250 ms | hard (BZ6) |
       | hetzelfde terwijl `werk` vol draait | doel ≤ 300 ms | rapport |
+      | de eerste vraag na een nieuw bestand: dat is al vooraf geladen (lezen en f16 → f32 kost ±300 ms per 100.000 [gemeten, B6]) | p95 ≤ 250 ms | hard (BZ6; K2-13) |
+      | alles behalve het tekstmodel (nepmodel, 55.000 echte f16-vectoren) | p95 ≤ 100 ms via HTTP | hard (`api-analyse`) |
 
       *Noot (I2, 2026-11-16): §4.5 noemt voor zoeken op beeld p95 ≤ 250 ms, ook met `werk` vol
       (Vraag 14). Dat is de poort die de belastingtest toetst (M13, `e2e/perf/zoek_samen.py
       --analyse`); de 300 ms in deze tabel is alleen een doel voor het rapport.*
-      | de eerste vraag na een nieuw bestand: dat is al vooraf geladen (lezen en f16 → f32 kost ±300 ms per 100.000 [gemeten, B6]) | p95 ≤ 250 ms | hard (BZ6; K2-13) |
-      | alles behalve het tekstmodel (nepmodel, 55.000 echte f16-vectoren) | p95 ≤ 100 ms via HTTP | hard (`api-analyse`) |
+
+      *Noot (I2, 2026-11-16): met de modellen van de echte vorm (`BEELD_PERF_MODELLEN`) meet
+      `test_beeld_perf.py` sinds `8934ee3` beide rijen: alles behalve het tekstmodel p95 ≤ 100 ms,
+      en het geheel p95 ≤ 250 ms. Daarvoor legde hij 100 ms op het geheel, strenger dan deze tabel.
+      De nepvorm in CI houdt 100 ms op de hele tijd. M12 in [metingen.md](metingen.md) heeft de
+      getallen.*
 
     - **Opwarmen.** Zodra je de stand "Wat er op de foto staat" kiest, vraagt de web
       `GET /photos/beeld`. Dat zet je bestand al in het geheugen van de container (`rank` met
       `k = 0`), hooguit eens per minuut per gebruiker. En na elk nieuw bestand stuurt de job
       `beeld.vec` meteen zelf een `rank` met `k = 0`, als die eigenaar de afgelopen 24 uur op beeld
-      zocht (K2-13).
+      zocht (K2-13). [I2: sinds `4aa42e1` laadt opwarmen ook het tekstmodel en de tokenizer, onder
+      de deadline van `rank`; anders laadde de eerste vraag in woorden het model onder de klok
+      van de app en viel hij terug.]
     - **Waarom niet de 200 ms van het stappenplan.** Die gaat over gewoon zoeken (Keuze 9) en blijft
       precies zo: zonder `mode=image` raakt X3 het zoekpad niet. Het tekstmodel alleen kost al
       62–74 ms op één core; met HTTP en de SQL is 200 ms niet zeker, zeker niet bij 100.000 foto's
@@ -5683,7 +5694,7 @@ gekomen, en ook geen `v0.7.1` of `v0.8.0`: de weg terug gebruikt de volledige co
 `claude/stappenplan-uitwerken-lu4uv3`.
 
 **Notitie bij 0.8.1 (I2).** De rij "Integratie 2" is gedaan: 0.8.1 met gezichten en zoeken op
-beeld, op ⟦I2: de datum van de laatste push van I2⟧, op dezelfde branch. Ook nu geen tag; de weg
+beeld, op 16 november 2026, op dezelfde branch. Ook nu geen tag; de weg
 terug naar 0.8.0 gebruikt de volledige commit `59e0250`. Wat I2 deed en wat niet, staat in
 [integratie-2.md](integratie-2.md).
 

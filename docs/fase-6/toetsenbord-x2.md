@@ -16,11 +16,12 @@ en op `/beheer` → Zoeken en foto's het blok Gezichten (Keuze 67).
 **Zonder de analyse** (de container staat uit of `PLATFORM_ANALYSE_ENABLED` niet aan) is er
 niets van dit alles: geen schakelaar, geen regel, geen raster, geen rij, en op `/beheer` ~~het blok
 van 0.8.0 ("Gezichten herkennen komt later in fase 6.", zonder knop of schakelaar)~~ het blok
-zonder knop of schakelaar, met sinds 0.8.1 de zin "Gezichten herkennen staat uit op deze server:
-de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het
-installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's.
-Zie docs/runbooks/analyse.md." [I2, `bea29ca`; in 0.8.0 stond er "Gezichten herkennen komt later
-in fase 6."]. Er komt dan ook geen nieuwe sneltoets bij. `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`
+zonder knop of schakelaar, met sinds 0.8.1 de zin "Gezichten herkennen draait niet op deze
+server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van
+het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het
+script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie
+docs/runbooks/analyse.md." [I2, `bea29ca` en na de review `d538cbb`; in 0.8.0 stond er "Gezichten
+herkennen komt later in fase 6."]. Er komt dan ook geen nieuwe sneltoets bij. `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`
 controleert dat, en dat de web dan geen enkele route van gezichten vraagt.
 
 `e2e/test_zoek_gezichten.py::test_gezichten_met_alleen_het_toetsenbord` doet met alleen Tab,
