@@ -204,8 +204,10 @@ daarheen gaat geen vraag. De API van Commons
 (commons.wikimedia.org) krijgt hooguit één vraag per 8 s, en ook een nieuwe poging na een 429
 telt: zonder contact in de User-Agent staat Wikimedia volgens wie de grenzen citeert (september
 2026) 10 vragen per minuut per IP toe (x3a.md, "CI op 3148c2f"). Een voorstel doet ±90 tot 200
-vragen aan de API en duurt daardoor ±12 tot 27 minuten; met `beeld.tsv` vraagt `set` de API
-niets. Thumb en upload krijgen elk hooguit één vraag per seconde.
+vragen aan de API en duurt daardoor ±12 tot 27 minuten; is de eerste keus van een zoekopdracht op
+(zie stap 4), dan leest hij nog pagina's tot het uiterste van vroeger, 3 vragen per pagina, en
+hooguit 750 vragen samen (x3a.md, "De set strenger"). Met `beeld.tsv` vraagt `set` de API niets.
+Thumb en upload krijgen elk hooguit één vraag per seconde.
 Na een 429 of 503 vraagt de job nooit eerder opnieuw dan Retry-After zegt (seconden, ook met
 decimalen, of een HTTP-datum). Zegt die meer dan 600 s, is hij niet te lezen, of past het wachten
 niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij meteen,
@@ -242,13 +244,25 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   tekst), en de rest als `… om een andere reden`. De redenen: `geen image/jpeg`, `origineel niet
   op upload`, `geen bestandspagina`, `te klein`, `te groot`, `mens erop`, `licentie`, `geen
   thumbnail van 1280 px`, `thumbnail op een andere host (<host>)`, `te langgerekt`, `onleesbare
-  gegevens`, `al gekozen` en `beeldt een categorie af`. De host staat er alleen als het een
-  gewone hostnaam is van hooguit 64 tekens, anders `een onbekende host`; nooit een URL. Zeggen
+  gegevens`, `al gekozen`, `uitgesloten (beeld_niet.tsv)` (de bron staat in
+  `api/tests/analyse/sets/beeld_niet.tsv`; stap 4) en `beeldt een categorie af`. De host staat
+  er alleen als het een gewone hostnaam is van hooguit 64 tekens, anders `een onbekende host`;
+  nooit een URL. Zeggen
   bijna alle kandidaten `thumbnail op een andere host`, dan geeft de API de thumbnails op een
   host die de job niet kent: kijk in x3a.md ("CI op 45bb926") en pas `THUMB` in
   `tools/beeld/beeld_model.py` aan, alleen naar een host van Wikimedia (`*.wikimedia.org`):
   `THUMB` krijgt ook het contact (`BEELD_CONTACT`) en is een toegestaan doel van omleidingen. Een
   andere host vraagt eerst toestemming van Jonas;
+- `BZ4 set: … tweede keus (<zoekopdracht> …, …); de eerste keus was op; het bewijs per foto staat
+  in het log`: alleen als een voorstel foto's van de tweede keus nam (stap 4), met per
+  zoekopdracht hoeveel;
+- `BZ4 set: beeld_niet.tsv: … foto's op de lijst, als kandidaat overgeslagen: …`: alleen als die
+  lijst er is; hoeveel foto's erop staan en hoeveel daarvan het voorstel tegenkwam en oversloeg;
+- `FOUT set: beeld_niet.tsv regel …: …`: de lijst klopt niet (de kop, een bron die geen
+  bestandspagina van Commons is, een reden die niet bestaat, een lege of te lange `gezien`, een
+  dubbele bron; ook `FOUT set: beeld_niet.tsv: geen UTF-8`); `set` vraagt dan niets aan Commons.
+  `FOUT set: beeld.tsv: regel … (<sleutel>) staat in beeld_niet.tsv regel …
+  (<reden>); …`: een vaste foto staat op de lijst; `set` haalt dan niets op;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
   (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
@@ -292,7 +306,18 @@ Het hele verslag staat bij de run als artifact `beeld-model` (`kort.txt`, `bz3.j
 `bz6.txt`), de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
 het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van Commons hooguit
 één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar
-het repository als contact; zonder contact `… per 8 s, …; contact: nee`).
+het repository als contact; zonder contact `… per 8 s, …; contact: nee`). Bij een voorstel ook,
+per zoekopdracht, `BZ4 set: <zoekopdracht>: … van … gekozen, … tweede keus (… kandidaten bekeken
+op … pagina's; geen eerste keus: … kunstwerk, … collectie)`: hoeveel bruikbare kandidaten er
+tweede keus waren en waarom (`kunstwerk`, `collectie`, `persoon` of `sjablonen onvolledig`, zoals
+bij een tekort), en per gekozen foto `BZ4 set: bewijs <sleutel>: eerste keus; kunstwerk nee,
+collectie nee, persoon nee, eigen werk ja, prominent ja, P180 3`: eerste of tweede keus, en waar
+elk teken uit blijkt (een eigenschap als `P6243` of `P195`, een waarde als `P31 Q3305213` of
+`P180 Q8441`, of een sjabloon als `Artwork` of `Personality rights`). `eigen werk` is P7482 = eigen
+werk; `prominent` zegt of de categorie van de zoekopdracht op P180 de rang preferred heeft (bij
+een combinatie `1 van 2` als één van de twee); `P180 …` is hoeveel dingen er volgens Commons op
+staan. Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons. Daarmee
+kijk je stap 4 sneller na.
 
 ### Een contact in de User-Agent (`BEELD_CONTACT`, in de CI aan)
 
@@ -363,9 +388,35 @@ zelf nooit iets in het repo; een mens doet dat, zo:
    sha256, bytes, de URL van de thumbnail van 1280 px breed zoals de API hem gaf (op
    thumb.wikimedia.org, of in de oude vorm op upload.wikimedia.org: `…/thumb/…/1280px-…`; van een
    origineel dat niet breder is: het origineel zelf, op upload.wikimedia.org) en de
-   bestandspagina van het origineel op Commons. Staat er toch een herkenbaar persoon op een foto,
-   vervang die regel door een andere foto van Commons met dezelfde sleutel-soort, categorie en
-   licentie. De URL is die van zijn thumbnail van 1280 breed: `thumburl` uit
+   bestandspagina van het origineel op Commons (`bron`). Open de bestandspagina's; het log zegt per
+   foto of hij eerste of tweede keus was en waar dat uit blijkt (`BZ4 set: bewijs …`, hierboven).
+   Klopt een foto niet:
+   1. zet zijn `bron` met een reden in `api/tests/analyse/sets/beeld_niet.tsv`: `persoon` (er
+      staat een herkenbaar mens op), `kunstwerk` (een schilderij, prent, tekening, beeld of
+      museumvoorwerp, terwijl de categorie het onderwerp is), `niet-zichtbaar` (de categorie, bij
+      `anders-*` het onderwerp, is niet te zien) of `toont-categorie` (een `anders-*` die toch een
+      van de twaalf categorieën laat zien), en in `gezien` de sleutel en de commit, zoals `stad-5
+      op 3a9b07d`;
+   2. commit en push. De job draait weer als `beeld_niet.tsv` verandert (x3a.md, "De set
+      strenger"), en anders met `beeld-model: ja` in de tekst van de PR;
+   3. het volgende voorstel slaat die foto's over en neemt de volgende in dezelfde volgorde, met
+      alle controles van de tool. Kijk het weer door, tot er geen foto meer fout is; dan stap 5.
+      Eén ronde is één run van de job (op 3a9b07d ±5 minuten, waarvan ±3 voor `set`).
+
+   Zet een foto alleen om een van die vier redenen op de lijst, die je aan de foto en zijn pagina
+   ziet; nooit om een score van het model of een uitkomst van BZ4 (`bz4.json` heeft geen score per
+   foto, en dat blijft zo). Een ontbrekend of verkeerd gegeven op Commons zelf rechtzetten (depicts
+   toevoegen, als prominent markeren) mag ook; het volgende voorstel leest het. Een vaste foto van
+   een combinatie (`<a>+<b>.jpg`) hoort niet op de lijst zonder overleg: daar zijn maar weinig
+   kandidaten voor, en een tekort maakt `set` rood. Welke combinaties nog nagekeken moeten worden,
+   staat in x3a.md ("De set strenger"). Vallen er foto's weg, dan schuiven de sleutels erna op
+   (`strand-3` kan `strand-2` worden); dat is geen probleem.
+
+   Alleen als het niet anders kan (een combinatie zonder andere kandidaat): vervang de regel met
+   de hand door een andere foto van Commons met dezelfde sleutel-soort, categorie en licentie.
+   Dat gaat buiten de controles van de tool om (de licentie uit de gegevens, de grootte, P180, de
+   eerste keus), dus kijk die zelf na. De URL is die van zijn thumbnail van 1280 breed:
+   `thumburl` uit
    `https://commons.wikimedia.org/w/api.php?action=query&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=1280&titles=File:<naam>`
    (een liggende foto moet dan ten minste 320 px hoog zijn). sha256 en bytes zijn die van precies
    dat bestand: haal het één keer op en reken ze uit. Een thumbnail van een andere breedte weigert
@@ -385,7 +436,10 @@ zelf nooit iets in het repo; een mens doet dat, zo:
 waarschijnlijk opnieuw gemaakt, met andere bytes. Zolang de cache in CI de eerste goede kopie
 heeft, merkt de job het niet; pas als die cache weg is. Haal de thumbnail (de URL in die regel)
 één keer op, kijk of het dezelfde foto is, en zet de nieuwe sha256 en grootte in die regel van
-`beeld.tsv`, in een eigen commit. Is het een andere foto, vervang de regel zoals in stap 4.
+`beeld.tsv`, in een eigen commit. Is het een andere foto, vervang de regel met de hand zoals aan
+het eind van stap 4. Zo ook als een vaste foto later toch fout blijkt: zet je zijn `bron` in
+`beeld_niet.tsv`, dan stopt `set` met `FOUT set: beeld.tsv: regel … (<sleutel>) staat in
+beeld_niet.tsv regel … (<reden>); …` tot die regel van `beeld.tsv` vervangen is.
 
 Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
 `models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van

@@ -1609,3 +1609,134 @@ fp32, per token + glad (geijkt op synthetische foto's en vaste zinnen, nooit op 
 - **Of BZ4 vragen één voor één meet** zoals `embed_text`, is een keuze voor Keuze 83, nooit stil.
 - **Hoe lang de varianten op de runner duren**, is niet bekend; de tijdgrens van 8 minuten en de
   15 minuten van de stap houden de job binnen zijn tijd.
+
+### De set strenger
+
+Het voorstel op 3a9b07d (run 43816803103) haalde de kwaliteitspoort niet. De review van dat
+voorstel zag alleen de titels van de bestandspagina's (de foto's zelf zijn vanaf hier niet te
+zien), en vond bij 64 van de 120 foto's ten minste één van drie dingen: (a) waarschijnlijk een
+herkenbaar mens, zonder P180 = mens (15, en 6 misschien); (b) een kunstwerk of museumvoorwerp in
+plaats van een foto van het onderwerp (41, waarvan 34 bestanden van het Metropolitan Museum: 10 bij
+de categorieën, 24 bij `anders-*`); (c) de categorie, bij `anders-*` het onderwerp, waarschijnlijk
+niet het onderwerp (37, en 16 misschien). Drie van de zes vaste foto's van de combinaties zijn
+schilderijen (`berg+sneeuw`, `kat+sneeuw`, `bos+berg`), en de poort van de combinaties haalde
+precies 5 van 6. Dit pakket maakt de set strenger zonder een poort of test lager te zetten, en
+zonder een nieuwe harde regel die een tekort kan geven (een tekort maakt `set` rood, en dan draait
+BZ4 niet).
+
+**Eerste en tweede keus** (`tools/beeld/beeld_model.py`: `_tweede_keus`, `_voorkeur`,
+`stel_voor`). Een bruikbare kandidaat (dezelfde regels als vroeger) is tweede keus als zijn
+gegevens een van deze tekens hebben, in deze volgorde:
+
+- kunstwerk: een uitspraak op P6243 (digital representation of), een P31 uit `KUNSTWERK_P31`
+  (schilderij, tekening, prent, beeldhouwwerk, kunstwerk, beeldend kunstwerk, ansichtkaart), of
+  het sjabloon Artwork of Art Photo (de uploads van musea);
+- collectie: een uitspraak op P195 (collection) of P217 (inventory number);
+- persoon (naast P180 = mens, dat nog altijd afvalt): een P180 uit `PERSOON_P180` (persoon, man,
+  vrouw, kind, portret, muzikant, …) of het sjabloon Personality rights;
+- sjablonen onvolledig: de API gaf de sjablonen van de pagina niet in één keer (`tlcontinue`).
+
+Per zoekopdracht neemt het voorstel eerst de eerste keus, pagina na pagina. Pas als die op is,
+na alle pagina's tot het uiterste van vroeger (2 licenties × `max_pagina` 4), vult hij aan met de
+tweede keus van alle pagina's die hij las. Binnen elke keus eerst een kandidaat waarop de
+categorie van de zoekopdracht prominent is (P180 met rang preferred; bij een combinatie: hoeveel
+van de twee), dan eigen werk (P7482 = Q66458942), en verder de volgorde van Commons. Er komt geen
+tekort bij: wat vroeger genoeg was, is nu ook genoeg, en de regel van een tekort is dezelfde. De
+tekens komen uit vragen die de tool al deed: de sjablonen in dezelfde vraag als imageinfo
+(`prop=imageinfo|templates`, met `tltemplates` alleen die drie sjablonen), de rang en de andere
+uitspraken uit wbgetentities. Geen nieuwe host, geen vraag erbij per pagina.
+
+De ids in `KUNSTWERK_P31` en `PERSOON_P180` komen uit het geheugen en zijn niet nagekeken:
+www.wikidata.org is vanaf hier niet te bereiken, en is geen host van de tool. Een verkeerd id maakt
+de voorkeur alleen zwakker (hooguit een foto met dat id tweede keus); het sluit nooit iets uit.
+
+**`api/tests/analyse/sets/beeld_niet.tsv`**: de foto's die een voorstel nooit neemt, met `bron`
+(de bestandspagina zoals in het voorstel, vergeleken zonder procentcodering en met `_` voor een
+spatie), `reden` (`persoon`, `kunstwerk`, `niet-zichtbaar` of `toont-categorie`) en `gezien`
+(waar een mens de foto zag). `lees_niet` is streng, net als `lees_set`: de kop, een bestandspagina
+van Commons in afdrukbare ASCII, een van de vier redenen, `gezien` van 1 tot 80 tekens, geen
+dubbele bron; een fout noemt de regel. `set` leest de lijst vóór de eerste vraag aan Commons. Een
+voorstel slaat een kandidaat van de lijst over, ook als tweede keus en als reserve (de reden
+`uitgesloten (beeld_niet.tsv)`, ook in de regel van een tekort); de volgende in dezelfde volgorde
+krijgt de plek. Met `beeld.tsv` is een foto van de lijst een fout. Zonder het bestand doet de tool
+wat hij deed. Het voorstel blijft een vaste functie van de antwoorden van Commons,
+`beeld_vragen.tsv`, `beeld_niet.tsv` en de code. Stap 4 van het runbook (analyse) gaat nu zo:
+een foto die niet klopt op de lijst zetten, pushen, het volgende voorstel nakijken.
+
+De eerste lijst heeft 49 foto's uit het voorstel op 3a9b07d, volgens één vaste regel op de
+review, alleen "ja" en "waarschijnlijk" (misschien telt niet):
+
+| reden | aantal | regel |
+|---|---|---|
+| `persoon` | 13 | (a) ja |
+| `niet-zichtbaar` | 33 | anders: (c) ja of waarschijnlijk |
+| `toont-categorie` | 3 | anders: een `anders-*` die een categorie laat zien (`anders-brug-3`, `anders-brug-4`, `anders-trein-5`) |
+| `kunstwerk` | 0 | een (b) zonder (a) of (c) is werk voor de eerste keus, als zijn pagina het zegt |
+
+Geen combinatie. 27 van de 41 (b) staan er toch op, om (a), (c) of een categorie. Alleen de titel
+was te zien: wie een foto van de lijst ziet die wel klopt, haalt die regel weg.
+
+**In het log en in `kort.txt`** (runbook analyse, "De job `beeld-model`"): alleen in het log per
+zoekopdracht hoeveel tweede keus en waarom, en per gekozen foto het bewijs (`BZ4 set: bewijs
+<sleutel>: …`); in het blok `=== kort ===` één regel als er tweede keus was, en één over de lijst.
+Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons, het contact, een
+vector of pixels; de regels veranderen geen uitslag.
+
+**Wat het kost.** Per pagina van 50 nog altijd 3 vragen aan de API (zoek, imageinfo met de
+sjablonen, wbgetentities). Heeft een zoekopdracht genoeg eerste keus op de pagina's die hij
+vroeger ook las, dan is het aantal vragen hetzelfde: met de nep van de tests 90 (30 × 3), als
+vroeger. Vroeger las hij soms een pagina meer (die kwam binnen voordat de lus zag dat hij klaar
+was); dat is weg. Is de eerste keus op, dan kost elke pagina erbij 3 vragen, tot hooguit 24 per
+zoekopdracht en 750 samen met de reserves: hetzelfde uiterste als vroeger, dus de opmerking bij
+`timeout-minutes` van de job in `ci.yml` blijft kloppen. Met contact (de CI, 1 s per vraag) is
+dat uiterste 12,5 minuten, zonder contact (8 s) 100. Hoeveel pagina's het echte voorstel erbij
+leest, zegt pas de volgende run (in het log: `… kandidaten bekeken op … pagina's`).
+
+**Nakijken** (niet op de lijst; in het volgende voorstel, met het bewijs uit het log):
+
+- de combinaties `berg+sneeuw` (een waaier uit de Zuidelijke Song, Met; ook (c) waarschijnlijk),
+  `kat+sneeuw` (een schilderij van Liljefors, de enige rij publiek domein) en `bos+berg` (*Heart
+  of the Andes*, Met). Zegt hun pagina dat het een kunstwerk of een stuk uit een collectie is,
+  dan zijn ze nu tweede keus, en neemt de combinatie een eerste keus als die er is; zo niet, dan
+  blijven ze. `auto+sneeuw` ("Uusikatu 47 Oulu") en `boot+zonsondergang` ("Mazandaran Province
+  04"): (c) misschien. Een combinatie op de lijst kan een tekort geven; daarom niet zonder
+  overleg;
+- (a) waarschijnlijk: `strand-1` (badgasten) en `hond-1` (een sledehondenrace);
+- (b) zonder (a) of (c): `stad-3`, `bos-2`, `bos-4`, `eten-5`, `anders-paard-1`,
+  `anders-paard-3`, `anders-vliegtuig-5`, `anders-boek-1`, `anders-boek-5`, `anders-klok-5`,
+  `anders-stoel-4`. Zegt het log bij zo'n foto `eerste keus; kunstwerk nee, collectie nee`, dan
+  hoort hij op de lijst als `kunstwerk`;
+- misschien: (a) `auto-3`, `eten-1`; (c) `strand-3`, `hond-2`, `sneeuw-2`, `berg-1`, `boot-4`,
+  `anders-trein-1`, `anders-trein-4`, `anders-klok-2`;
+- een categorie op de foto zonder het label (`sneeuw-3`, `boot-1`, `boot-3`, `boot-4`,
+  `zonsondergang-5`) is geen reden van de lijst; dat blijft ruis in de metingen.
+
+**Tests.** `test_beeld_tools.py`, met de nep van Commons (die nu ook P31, P7482, de rang van P180,
+P6243, P195, P217 en de sjablonen kent): de eerste keus gaat voor op dezelfde pagina (90 vragen,
+30 per soort); zonder genoeg eerste keus vult de tweede aan (93 vragen); sjablonen die niet in
+één keer komen; het bewijs alleen in het log (120 regels bewijs en 30 per zoekopdracht); waarom een
+kandidaat tweede keus is (11 gevallen); de voorkeur binnen een keus; een goede lijst en 15
+kapotte; een voorstel neemt nooit een foto van de lijst, ook de reserves niet; een tekort noemt
+de lijst; met `beeld.tsv` is een foto van de lijst een fout; een kapotte lijst stopt `set` vóór
+de eerste vraag; zonder lijst het voorstel als vroeger. `test_beeld_sets.py`: de lijst in het
+repo komt door `lees_niet`, heeft alleen de vier redenen en geen combinatie, en met `beeld.tsv`
+geen foto daarvan.
+
+Teruggedraaid getest: met de tool van 3a9b07d op de plek van de nieuwe (daarna terug met `git
+checkout`, nagekeken met `git status`) gaven `test_beeld_tools.py` en `test_beeld_sets.py` 39
+rood en 166 groen. De 39 zijn precies de nieuwe tests: in `test_beeld_tools.py` 12 losse en de
+26 gevallen van twee tests met parameters (15 en 11), en `test_beeld_niet_tsv_klopt`; de
+bestaande bleven groen. Met de nieuwe
+tool 205 groen, `tests/analyse` 486 groen; ruff schoon. `tests_analyse`, `ci.yml` en
+`test_beeld_ci.py` zijn niet veranderd, en de pins van de omzetter niet geraakt.
+
+### Open na de set strenger
+
+- **De paden van de job.** `tests/analyse/sets/beeld_niet.tsv` hoort in `paden` van de poort van
+  `beeld-model` in `ci.yml` (bij `beeld_vragen.tsv`) en in `PADEN` van `test_beeld_ci.py`, zodat
+  een push die alleen de lijst verandert de job draait; dat doet het pakket dat `ci.yml` nu
+  heeft (int8). Tot dan: `beeld-model: ja` in de tekst van de PR.
+- **Of de eerste keus genoeg vangt**, en hoeveel pagina's erbij, zegt pas het volgende voorstel:
+  hoeveel van de 34 bestanden van het Met P195, P217, P6243 of het sjabloon Artwork hebben, is
+  vanaf hier niet na te kijken.
+- **De ids** van `KUNSTWERK_P31` en `PERSOON_P180` (hierboven).
