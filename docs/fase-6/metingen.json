@@ -698,5 +698,115 @@
   "keten_s": 0.26,
   "stukken": 7,
   "uitkomst": "gehaald"
+ },
+ "I2": {
+  "omschrijving": "De metingen van gezichten en zoeken op beeld bij de integratie I2 (0.8.1): M10–M13 in de sandbox en de getallen uit CI; zie metingen.md, Gezichten en beeld (0.8.1). M10–M12 met SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py) en de echte YuNet en SFace: tijd en geheugen, geen kwaliteit. null is nog niet ingevuld (een token ⟦I2: …⟧ in metingen.md).",
+  "datum": null,
+  "omstandigheden": {
+   "machine": null,
+   "commit": null,
+   "cores": null,
+   "ci": {
+    "dc5dfe5": {
+     "id": 43888472609,
+     "cpu": "Xeon 6975P-C met VNNI",
+     "beeld_model": "groen, ook Uitslag"
+    },
+    "e535332": {
+     "id": 43892193604,
+     "jobs_groen": 19,
+     "api_analyse": "330 goed, 16 niet gekozen",
+     "cpu": "Xeon 6975P-C met VNNI"
+    },
+    "kop_I2": null
+   }
+  },
+  "gezichten_per_minuut": {
+   "waarde": 1043,
+   "ms_zonder_gezicht": 28.1,
+   "ms_per_gezicht": 29.4,
+   "werk_maxrss_mb": 224,
+   "poort": 250,
+   "bron": "test_models_real.py op 9228eb6 (x2b.md, De nacontrole)",
+   "uitkomst": "gehaald"
+  },
+  "beeld_bz6": {
+   "ms_per_foto": 33.8,
+   "ms_per_foto_dc5dfe5": 34.7,
+   "poort_ms_per_foto": 120,
+   "vraag_p95_ms": 22.2,
+   "bron": "beeld-model in CI op e535332",
+   "uitkomst": "gehaald"
+  },
+  "beeld_bz4": {
+   "nl_precisie_5": 0.692,
+   "poort_nl": 0.6,
+   "meer_zoals_deze": 0.475,
+   "poort_meer_zoals_deze": 0.4,
+   "slechtste_vraag_buiten_bergen_boot": "2/5",
+   "combinaties": "6/6",
+   "int8_zakt": 0.0,
+   "kleuren": "3/3",
+   "bron": "beeld-model in CI op dc5dfe5 (Keuze 85)",
+   "uitkomst": "gehaald"
+  },
+  "gezichten_zonder_gereedschap": {
+   "portretten_95": "niet gemeten, geen gereedschap",
+   "kleurvolgorde_0_05": "niet gemeten, geen gereedschap",
+   "vraag": "Vraag 8"
+  },
+  "schijf": {
+   "modellen_gezichten": "±39 MB",
+   "siglip_omgezet": "±400 MB (de bron van ±1,55 GB gaat na de omzetting weg)",
+   "vectoren": null
+  }
+ },
+ "M10": {
+  "script": "tests_analyse/siglip_vol.py en de omzetter van analyse-omzetten",
+  "grootte_uitkomst": null,
+  "tijd_s": null,
+  "vmhwm_omzetter_mb": null,
+  "uitkomst": null
+ },
+ "M11": {
+  "script": "tests_analyse/test_geheugen_samen.py met ANALYSE_GEHEUGEN_MODELLEN en ANALYSE_GEHEUGEN_LOCK",
+  "pid1_mb": null,
+  "werk_mb": null,
+  "zoeken_mb": null,
+  "som_mb": null,
+  "piek_tegelijk_mb": null,
+  "poort_mb": 2500,
+  "uitkomst": null
+ },
+ "M12": {
+  "script": "tests_analyse/test_beeld_perf.py met BEELD_PERF_MODELLEN en BEELD_PERF_LOCK",
+  "p95_warm_55000_ms": null,
+  "p95_warm_100000_ms": null,
+  "p95_na_opwarmen_100000_ms": null,
+  "poort_ms": 250,
+  "eigen_grens_ms": 100,
+  "eerder_p3_sandbox": {
+   "p95_warm_100000_ms": 105.7,
+   "p95_na_opwarmen_100000_ms": 113.0,
+   "nep_ms": [
+    69.0,
+    68.8
+   ],
+   "tekstmodel_laden_s": 1.65,
+   "bron": "toelichting van test_beeld_perf.py, e8c4a02"
+  },
+  "uitkomst": null
+ },
+ "M13": {
+  "script": "e2e/perf/zoek_samen.py --office --analyse <map> --analyse-lock <lock>",
+  "beeld_p95_ms": null,
+  "beeld_terugval": null,
+  "vectoren_bij_start": null,
+  "analyse_vmhwm_som_mb": null,
+  "oomkilled": null,
+  "poorten_stap_2": null,
+  "poort_beeld_ms": 250,
+  "poort_analyse_mb": 2500,
+  "uitkomst": null
  }
 }

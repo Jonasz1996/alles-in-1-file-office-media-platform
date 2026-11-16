@@ -14,9 +14,13 @@ vijf plekken bij, alle vijf in de plekken die Z0b neerzette (lazy, met het gebie
 en op `/beheer` → Zoeken en foto's het blok Gezichten (Keuze 67).
 
 **Zonder de analyse** (de container staat uit of `PLATFORM_ANALYSE_ENABLED` niet aan) is er
-niets van dit alles: geen schakelaar, geen regel, geen raster, geen rij, en op `/beheer` het blok
-van 0.8.0 ("Gezichten herkennen komt later in fase 6.", zonder knop of schakelaar). Er komt dan
-ook geen nieuwe sneltoets bij. `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`
+niets van dit alles: geen schakelaar, geen regel, geen raster, geen rij, en op `/beheer` ~~het blok
+van 0.8.0 ("Gezichten herkennen komt later in fase 6.", zonder knop of schakelaar)~~ het blok
+zonder knop of schakelaar, met sinds 0.8.1 de zin "Gezichten herkennen staat uit op deze server:
+de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het
+installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's.
+Zie docs/runbooks/analyse.md." [I2, `bea29ca`; in 0.8.0 stond er "Gezichten herkennen komt later
+in fase 6."]. Er komt dan ook geen nieuwe sneltoets bij. `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`
 controleert dat, en dat de web dan geen enkele route van gezichten vraagt.
 
 `e2e/test_zoek_gezichten.py::test_gezichten_met_alleen_het_toetsenbord` doet met alleen Tab,
@@ -143,3 +147,18 @@ dus het filter Persoon vindt ze.
   Totaal, Snelheid, Wissen, Kwaliteit) zijn tekst; de kwaliteit is "niet gemeten" tot
   `app.cli analyse-kwaliteit` draaide. Geen namen, geen gezichten, geen per-gebruiker.
 - De tab ververst elke 5 s; de focus blijft staan.
+
+## Bronnen en licenties (`/over`, sinds 0.8.1)
+
+Voor iedereen die is ingelogd, ook een gast, met de analyse aan of uit (I2).
+
+| Toets | Wat |
+|---|---|
+| Tab (op `/account`) | naar de link "Bronnen en licenties" in het deel "Over dit platform" |
+| Enter | opent `/over`; de focus staat op de kop "Over dit platform" |
+| Tab | langs de links naar de bronnen van de kaart en de modellen |
+
+- Vaste tekst: de kaart en de plaatsen, de drie modellen (YuNet, SFace, SigLIP 2), de pakketten
+  van de analyse en waar de volledige licentieteksten staan. De pagina vraagt de server niets.
+- `e2e/test_zoek_gezichten.py` doet dit met alleen het toetsenbord, met de analyse aan
+  (`44262c7`); `e2e/test_uit080.py` opent `/over` als gast met de analyse uit (`ca8af68`).

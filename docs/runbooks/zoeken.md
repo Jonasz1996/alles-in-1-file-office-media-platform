@@ -5,6 +5,9 @@ plaatsnamen en landen bij foto's, vindt duplicaten en kent personen. Zoeken op n
 database zelf (triggers) en werkt meteen. De rest komt op de achtergrond: de inhoud van
 documenten, de tekst van scans, de plek, camera en hash van foto's. Wat 0.8.0 is en hoe je
 bijwerkt, staat in `infra/single/README.md` ("Bijwerken naar 0.8.0 (zoeken en foto's)").
+Versie 0.8.1 brengt daar gezichten en zoeken op beeld bij ("Bijwerken naar 0.8.1 (gezichten en
+zoeken op beeld)" in dezelfde README); die hebben hun eigen runbooks: [analyse.md](analyse.md)
+en [gezichten.md](gezichten.md).
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
 wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten,
 terug naar 0.8.0 van `59e0250` en terug naar 0.7.1.
@@ -20,7 +23,7 @@ F3):
 DATA_ROOT=$(sed -n 's/^DATA_ROOT=//p' /opt/platform/.env) && echo "$DATA_ROOT"
 ```
 
-Het installatiescript staat, zolang 0.8.0 niet op `main` staat, op de branch:
+Het installatiescript staat, zolang 0.8.0 en 0.8.1 niet op `main` staan, op de branch:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
@@ -62,7 +65,7 @@ Vóór elke update maakt het script een kopie van de database:
 `$DATA_ROOT/backup/platform-<schemaversie>-<tijd>.db`, bijvoorbeeld
 `platform-0009-20261109T201502.123Z.db` (de tijd in UTC). De schemaversie is de alembic-head van
 de database op dat moment: `0009` voor 0.7.1, `0010` voor 0.8.0 tot en met `59e0250`, en `0012`
-voor de branch daarna (met de tabellen voor gezichten en zoeken op beeld, die nog uit staan; zie
+voor de branch daarna en voor 0.8.1 (met de tabellen voor gezichten en zoeken op beeld; zie
 "Terug naar 0.8.0 van `59e0250`").
 
 - **Hoe.** Met `sqlite3.Connection.backup`, terwijl de app draait: de kopie klopt, ook als er
@@ -90,7 +93,7 @@ voor de branch daarna (met de tabellen voor gezichten en zoeken op beeld, die no
   `backup`. Los het op en draai het script opnieuw.
 - **Eerste installatie** (nog geen database): geen kopie.
 
-Een kopie voor de hand, met de app van 0.8.0 (dezelfde tekst, dezelfde regels):
+Een kopie voor de hand, met de app van 0.8.0 of 0.8.1 (dezelfde tekst, dezelfde regels):
 
 ```bash
 dc exec -T platform python -m app.cli db-backup
@@ -402,17 +405,26 @@ de maat voor 8 GB van §4.5). Met `--docs`, `--fotos` of `--scans` kleiner is he
 van §4.5; dat staat dan onder `niet in deze meting`. Exitcode 1 als een poort van stap 2 niet
 gehaald of niet te meten is (met `--kort` altijd 0). Zonder `--office` zijn de poorten van
 OnlyOffice en van `OOMKilled` niet te meten, dus eindigt een hele meting zonder OnlyOffice altijd
-op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in deze meting: de
-container `analyse` (gezichten en beeld) en de beeldvraag. Gezichten staan gepland voor 0.8.1;
-zoeken op beeld ook ~~, maar dat kan naar een eigen fase 6b schuiven~~. [2026-11-16: het blijft in
-0.8.1, standaard uit per gebruiker (Keuze 85 in `docs/fase-6/bouwontwerp.md`).]
+op `niet geslaagd` (exitcode 1): de andere poorten staan er wel.
+
+**Met de analyse helemaal aan** (0.8.1, §4.5 stap 2): `--analyse <map met modellen>` en
+`--analyse-lock <models.lock>` zetten er een echte worker van de analyse bij, op één core, met
+gezichten en zoeken op beeld aan voor de beheerder van de meting, en de meting wacht tot zijn
+foto's in de beeldindex staan. De foto's zijn dan 1024 × 768, met de previews van 256 en 1024
+die de analyse leest, en elke 5 s gaat er één vraag naar zoeken op beeld (de woorden van die
+vragen staan nooit in het rapport). Twee poorten komen erbij: zoeken op
+beeld p95 ≤ 250 ms, en de som van het geheugen van de analyse (de hoogste VmHWM per soort proces)
+≤ 2,5 GB. Hoe het in de sandbox ging, met modellen van de echte vorm maar willekeurige gewichten:
+`docs/fase-6/metingen.md`, "Gezichten en beeld (0.8.1)". In CI draait `--kort --analyse nep`
+(een nep-worker) alleen als rapport. Op de LXC is dit niet nodig: daar meten `beeld-bench` en
+`analyse-bench` de CPU ([analyse.md](analyse.md), [gezichten.md](gezichten.md)).
 
 ## Terug naar 0.8.0 van `59e0250`
 
-De versie heet nog 0.8.0, maar de branch heeft sinds 12 november ook de basis voor gezichten en
-zoeken op beeld (A0: migratie 0011 en 0012, en de container `analyse`, die standaard uit staat).
-Werkt de branch sindsdien niet goed, ga dan eerst hierheen terug en niet naar 0.7.1: zoeken,
-plaatsnamen, duplicaten, personen en slimme albums blijven. Het zijn deze commando's, in deze
+Sinds 0.8.0 kwamen er gezichten en zoeken op beeld bij (migratie 0011 en 0012, en de container
+`analyse`; in 0.8.1 standaard aan). Werkt 0.8.1 niet goed, ga dan eerst hierheen terug en niet
+naar 0.7.1: zoeken, plaatsnamen, duplicaten, personen en slimme albums blijven. Dat gaat ook met
+de analyse aan. Het zijn deze commando's, in deze
 volgorde, met de volledige commit van 0.8.0 (`59e0250`, de laatste vóór A0):
 
 ```bash
@@ -454,11 +466,16 @@ Per stap (zoals bij 0.7.1 hieronder):
    stap 3 blijft), bouwt het image van 0.8.0 en start het.
 
 Wat blijft: alles van 0.8.0. Wat weg is: wie welk bestand uploadde, en de gezichten en de
-beeldindex als de analyse aan stond.
+beeldindex als de analyse aan stond. Van 0.8.1 blijft ook iets liggen waar 0.8.0 niets mee doet:
+de regels `ANALYSE`, `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT`, `SLEUTELS_ROOT` en `BEELD` in `.env`,
+en de mappen `/opt/platform/modellen` en `/opt/platform/sleutels/gezichten`. De container
+`analyse` haalt het script van 0.8.0 weg wanneer het de app start (`--remove-orphans`).
 
 **Weer vooruit.** Het script van de branch, zonder `PLATFORM_SRC_REF` (hetzelfde commando als bij
 "Terug naar 0.7.1" hieronder). De database gaat bij de start weer naar `0012`. Wie welk bestand
-uploadde, komt niet terug: een bestand zonder die regel telt als door de eigenaar geüpload.
+uploadde, komt niet terug: een bestand zonder die regel telt als door de eigenaar geüpload. De
+modellen staan er nog, dus het script haalt niets opnieuw op. Zoeken op beeld staat daarna voor
+iedereen uit (die schakelaar zat in 0012); wie gezichten aan had, krijgt een nieuwe scan.
 
 ## Terug naar 0.7.1
 

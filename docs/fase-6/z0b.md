@@ -327,9 +327,18 @@ Voor de volgende pakketten:
 2. **X2**: zet de 422 van meer dan 200 gezichten om naar `faces_too_many`, of het ontwerp laat
    die code vallen. `FacesConfirm` is een union in de web en één model met een controle in de API;
    de contracttest vergelijkt alleen de velden, de vitest de twee bodies.
-3. **~~A0,~~ X2 en X3**: de vormen van Z0b zijn een voorstel tot ze vastliggen. Een vorm die verandert,
-   verandert in de web en de API tegelijk; `test_web_contracts.py` houdt ze gelijk. Voor A0
+   [I2, 2026-11-16: nog open. X2b gaf de API de code (`_too_many` in
+   `routers/people_faces.py`), maar `FacesIn` heeft `max_length=MAX_FACES`: bij 201 gezichten
+   geeft de validatie eerst 422 `invalid_input`, en `faces_too_many` komt nooit. De web
+   stuurt in stukken van hooguit 200 (`photos/faces/logic.ts`), dus een gebruiker ziet het niet.
+   Niet veranderd in I2.]
+3. ~~**A0, X2 en X3**: de vormen van Z0b zijn een voorstel tot ze vastliggen. Een vorm die verandert,
+   verandert in de web en de API tegelijk; `test_web_contracts.py` houdt ze gelijk.~~ Voor A0
    gedaan: A0 veranderde geen vorm van Z0b, en zijn eigen vormen staan in [a0.md](a0.md) (Vormen).
+   [I2: ook X2 en X3 lieten de vormen zoals Z0b ze maakte: [x2b.md](x2b.md) (de vormen zijn die
+   van Z0b, `app/people/faces_types.py` niet veranderd) en [x3b.md](x3b.md) ("Geen contract van
+   A0 of Z0b is veranderd").
+   Daarmee liggen ze vast; `test_web_contracts.py` houdt ze gelijk.]
 4. **De aanroepen van de web tegen de API** zijn bij deze samenvoeging één keer met de hand
    nagelopen (zie De samenvoeging), niet in een vaste test. De vaste test dekt alleen de soort fout
    die het vond (een vast getal in de query). Wie een route vult, draait zijn aanroepen uit de

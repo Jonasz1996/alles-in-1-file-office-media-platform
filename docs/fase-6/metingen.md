@@ -1,15 +1,20 @@
-# Metingen fase 6 (I1)
+# Metingen fase 6 (I1 en I2)
 
 De metingen van §4.4 en §4.5 van het [bouwontwerp](bouwontwerp.md) bij de integratie I1 (0.8.0).
 Alle getallen staan ook in [metingen.json](metingen.json). De scripts staan in [e2e.md](e2e.md); de
 uitleg bij de uitkomst in [integratie.md](integratie.md). Wat niet gehaald werd, is niet bijgesteld
 om te slagen; de oorzaak staat bij elke meting en onder [Bevindingen](#bevindingen).
 
+Sinds de integratie I2 (0.8.1) staan hier ook de metingen van gezichten en zoeken op beeld, M10–M13
+en de getallen uit CI: [Gezichten en beeld (0.8.1)](#gezichten-en-beeld-081). De uitleg staat in
+[integratie-2.md](integratie-2.md).
+
 ## Kort
 
 Elke poort van §4.4 en §4.5 die bij 0.8.0 hoort, is gehaald: 27 van de 27, en ook de grens voor de
-grootte van het image (X1). De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
-zijn niet gemeten. M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
+grootte van het image (X1). ~~De vier poorten van gezichten en beeld (X2 en X3) horen bij 0.8.1 en
+zijn niet gemeten.~~ [I2: die staan nu onder [Gezichten en beeld (0.8.1)](#gezichten-en-beeld-081);
+⟦I2: hoeveel van de poorten van gezichten en beeld gehaald zijn, uit M11–M13 en CI⟧.] M7 haalde het pas in de vijfde ronde (M7e); de rondes ervoor staan bij
 [M7](#m7-zoeken-naast-media-en-onlyoffice-45-deel-b). Bij een poort over meer runs staat bij M1 tot
 en met M5 de mediaan van de 3 rondes of runs, bij M6 en M7e de slechtste waarde. Bij M2 tot en met
 M5 staat elke run bij de meting zelf. Bij M1 staan de rondes alleen bij de herinneringen, de kaart,
@@ -67,6 +72,9 @@ bijwerken van de index) staan bij M1, M2 en M8.
 - **Geheugen:** het minst vrije geheugen staat bij M7; bij de andere metingen in de sandbox is het
   niet gemeten. `MemAvailable` staat overal in MiB: `zoek_samen.py` rekent in MiB, al schrijft het
   "MB".
+- **I2 (0.8.1):** M10–M13 op ⟦I2: de machine, de commit en de cores van M10–M13⟧. De getallen uit
+  CI komen uit run 43888472609 op `dc5dfe5` (golf 6) en run 43892193604 op `e535332`, beide op een
+  Xeon 6975P-C met VNNI, en ⟦I2: de run-id en de commit van CI op de kop van I2, met de CPU⟧.
 
 ## M1: zoeken en foto's (§4.4)
 
@@ -447,8 +455,90 @@ geen land. Het lezen duurde 45,5 s, de bouw 3,1 s en de keten 0,26 s in 7 stukke
 
 ## Gezichten en beeld (0.8.1)
 
-De rijen van X2 en X3 in §4.5 (gezichten en beeld in de container) horen bij 0.8.1 en worden in I1
-niet gemeten.
+~~De rijen van X2 en X3 in §4.5 (gezichten en beeld in de container) horen bij 0.8.1 en worden in I1
+niet gemeten.~~ [I2: hieronder gemeten.]
+
+De metingen van de integratie I2: M10–M13 in de sandbox, en wat CI al mat. De nummers gaan door na
+M9; het plan van I2 noemde ze M1–M4 ([integratie-2.md](integratie-2.md), "Waar het afwijkt van het
+plan"). Wat er bij het schrijven nog niet was, staat als ⟦I2: …⟧.
+
+**Wat de modellen hier zijn.** M10–M12 draaien met SigLIP 2 op ware grootte met willekeurige
+gewichten (`api/tests_analyse/siglip_vol.py`), omgezet zoals `analyse-omzetten` dat op de LXC doet,
+en met de echte YuNet en SFace van `models.lock`. De rekensom en het geheugen kloppen dan, de
+vectoren niet: deze metingen zeggen iets over de tijd en het geheugen, niets over de kwaliteit. De
+kwaliteit komt alleen uit BZ4 in CI (het echte SigLIP 2) en, voor gezichten, uit
+`analyse-kwaliteit` op de LXC.
+
+| Poort | Grens | Gemeten | Meting | Uitkomst |
+|---|---|---|---|---|
+| §4.5 gezichten (X2) | ≥ 250 foto's per minuut per core, met één gezicht | 1.043 (28,1 ms per foto zonder gezicht, 29,4 ms per gezicht; `werk` 224 MB) | `test_models_real.py` met de echte modellen, op `9228eb6` ([x2b.md](x2b.md), De nacontrole) | gehaald |
+| §4.5 beeld (X3) | ≥ 500 foto's per minuut, dus ≤ 120 ms per foto op één core | 33,8 ms per foto (op `dc5dfe5` 34,7 ms) | BZ6 in de job `beeld-model`, CI op `e535332` | gehaald |
+| BZ6: het model-deel van een vraag | rapport | p95 22,2 ms | BZ6, CI op `e535332` | rapport |
+| BZ4: de kwaliteit van zoeken op beeld (Keuze 85) | Nederlands ≥ 0,6; "Meer zoals deze" ≥ 0,40; de andere poorten van BZ4 | Nederlands 0,692; "Meer zoals deze" 0,475; de slechtste vraag buiten 'bergen' en 'boot' 2 van 5; combinaties 6 van 6; int8 zakt 0,000; kleuren 3 van 3 | BZ4 in `beeld-model`, CI op `dc5dfe5` ([x3b.md](x3b.md)) | gehaald |
+| BZ5: het geheugen van de analyse samen | de som van VmHWM ≤ 2,5 GB, en elk kind onder zijn RLIMIT_DATA | ⟦I2: de som van VmHWM en per kind uit M11⟧ | M11 | ⟦I2: gehaald of niet, uit M11⟧ |
+| BZ6 als geheel: warm bij 55.000 en 100.000 foto's, en de eerste vraag | p95 ≤ 250 ms, één core | ⟦I2: de p95 per geval uit M12⟧ | M12 | ⟦I2: gehaald of niet, uit M12⟧ |
+| §4.5 stap 2: zoeken op beeld met `werk` vol | p95 ≤ 250 ms; de terugval is een rapport | ⟦I2: de p95 en het aandeel terugval uit M13⟧ | M13 | ⟦I2: gehaald of niet, uit M13⟧ |
+| §4.5 stap 2: de container `analyse` | geen `OOMKilled`; de som van VmHWM ≤ 2,5 GB | ⟦I2: de som van VmHWM en of een kind stopte, uit M13⟧ | M13 | ⟦I2: gehaald of niet, uit M13⟧ |
+| §4.5 stap 2: de poorten van 0.8.0 (media, OnlyOffice, zoeken, de app, `MemAvailable`, het achtergrondwerk) met de analyse aan | zoals M7e | ⟦I2: de uitkomst per poort van stap 2 uit M13⟧ | M13 | ⟦I2: gehaald of niet, per poort, uit M13⟧ |
+| gezichten: ≥ 95% van de portretten precies het goede gezicht gevonden | ≥ 95% | niet gemeten, geen gereedschap | — (Vraag 8) | open |
+| gezichten: de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere | ≥ 0,05 | niet gemeten, geen gereedschap | — (Vraag 8) | open |
+
+De twee laatste rijen hebben geen gereedschap zolang Vraag 8 op "nee" staat: `analyse-kwaliteit`
+meet alleen de precisie van voorstellen, de zuiverheid en de vangst, tegen de eigen ja en nee op de
+LXC (runbook [gezichten.md](../runbooks/gezichten.md)).
+
+### M10: SigLIP 2 op ware grootte, omgezet
+
+`siglip_vol.py` schrijft de vijf bronbestanden in de vorm van `google/siglip2-base-patch32-256`
+(±1,5 GB), met ruis met een vaste seed in plaats van de gewichten. De omzetter van
+`analyse-omzetten` maakt er int8 van, zoals `install.sh` dat met de echte bron doet; met de echte
+YuNet en SFace erbij is dat de map met modellen voor M11–M13. Uitkomst: ⟦I2: de grootte van de uitkomst, de tijd van de omzetting en de VmHWM van de omzetter, uit M10⟧.
+
+### M11: BZ5, het geheugen van de analyse samen
+
+`tests_analyse/test_geheugen_samen.py` met `ANALYSE_GEHEUGEN_MODELLEN` en `ANALYSE_GEHEUGEN_LOCK`
+(de map van M10): de echte worker met pid 1 en de kinderen `werk` en `zoeken`. In `werk` een
+groepsronde van 60.000 open en 6.000 bevestigde gezichten, na het laden van YuNet, SFace en het
+beeldmodel; in `zoeken` de cache vol en midden in de ronde een vraag die de tokenizer en het
+tekstmodel laadt. De poort telt de VmHWM van elk proces (nooit de geërfde `ru_maxrss` van een
+ouder). Uitkomst: ⟦I2: de regel "BZ5 met modellen van de echte vorm" uit M11: pid 1, werk en zoeken met hun RLIMIT_DATA, de som en de piek tegelijk⟧.
+
+### M12: BZ6 als geheel
+
+`tests_analyse/test_beeld_perf.py` met `BEELD_PERF_MODELLEN` en `BEELD_PERF_LOCK`: `GET
+/search?mode=image` via HTTP bij 55.000 en 100.000 foto's, met het tekstmodel op ware grootte in
+elke vraag, alles op één core (de test zet zelf `taskset -c 0`). De test houdt zijn eigen grens van
+100 ms; die is strenger dan het ontwerp, want daar is 100 ms alles behalve het tekstmodel. De poort
+van het geheel is 250 ms (BZ6). P3 zag in de sandbox met de echte vorm bij 100.000 foto's p95
+105,7 ms warm en 113,0 ms na het opwarmen (het tekstmodel kost daar ±40 ms per vraag), met de nep
+69,0 en 68,8 ms (de toelichting van `test_beeld_perf.py`, `e8c4a02`). Uitkomst: ⟦I2: de p95 warm bij 55.000 en 100.000 en na het opwarmen uit M12, tegen 250 ms, en of de eigen grens van 100 ms gehaald is⟧.
+
+Het laden van de tokenizer en het tekstmodel in `zoeken` kostte in de sandbox 1,65 s, langer dan de
+deadline van een beeldvraag (800 ms). De eerste beeldvraag na de start van de worker antwoordt dan
+met gewoon zoeken (de terugval `slow`); `zoeken` laadt door en houdt het model, en de volgende
+vraag kost weer ±40 ms (P3, dezelfde toelichting). M12 meet daarna.
+
+### M13: §4.5 stap 2 met de analyse helemaal aan
+
+`e2e/perf/zoek_samen.py --office --analyse <map> --analyse-lock <lock>`, alleen op de machine en
+niet onder `taskset`: de belastingtest van media, OnlyOffice met bewerkers, zoeken, en de echte
+worker van de analyse uit `api/.venv-analyse` op een eigen core (`taskset -c 3`, zoals `cpus: 1.0`
+in `compose.analyse-limits.yaml`). De app draait uit `api/.venv`, zonder numpy en onnxruntime,
+zoals hij geleverd wordt. De foto's zijn 1024 × 768 met voorbeelden van 256 en 1024. Het script
+wacht tot `GET /photos/beeld` klaar meldt en elke foto in het bestand staat, en vraagt dan elke 5 s
+een beeldvraag (nooit de vraag zelf in het rapport). Het geheugen is de som van de hoogste VmHWM van
+pid 1, `werk` en `zoeken`.
+
+Uitkomst: ⟦I2: het blok kort van M13 per poort, met het aantal vectoren van beeld bij de start van het meetvenster en de MemAvailable⟧.
+
+In CI draait dezelfde stap met `--kort --analyse nep` (de nep van A0) in `e2e-media-perf`, als
+rapport.
+
+### De ruimte op de schijf
+
+Wat gezichten en beeld op de schijf innemen (x2b.md, Open 7): de modellen van gezichten ±39 MB, de
+omzetting van SigLIP 2 ±400 MB (de bron van ±1,55 GB gaat na de omzetting weg), en de vectoren:
+⟦I2: de grootte van de vectoren van gezichten en beeld en van de bestanden van beeld na M13, per 1.000 foto's⟧.
 
 ## Bevindingen
 
@@ -504,7 +594,14 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 - M7 met de echte verdeling van de LXC: de worker in zijn container met `cpus: 3`, de app en DS in
   de hunne, en de bewerkers op andere computers. In de sandbox draaien de bewerkers (Chromium) op
   dezelfde 4 vCPU als de server.
-- De kwaliteit van gezichten en beeld op echte foto's (0.8.1).
+- De kwaliteit van gezichten en beeld op echte foto's (0.8.1). Voor gezichten:
+  `analyse-kwaliteit` (precisie, zuiverheid en vangst tegen de eigen ja en nee) en `analyse-bench`
+  (de snelheid) uit het runbook [gezichten.md](../runbooks/gezichten.md); de twee eisen zonder
+  gereedschap blijven "niet gemeten, geen gereedschap". Voor beeld: BZ9 (`beeld-bench`, p95 ≤ 250 ms
+  en ≥ 500 foto's per minuut op de CPU van de LXC) en BZ10 (`beeld-kwaliteit --personen`, na
+  bevestigde personen) uit het runbook [analyse.md](../runbooks/analyse.md).
+- `memory.peak` en `OOMKilled` van `platform-analyse-1` onder de echte cgroup (`mem_limit: 3g`), na
+  een paar dagen met de backfill.
 - De jobs met het image: de grootte (`images`) en `--stappen` (`media-image`).
 
 ## Opnieuw meten
@@ -539,4 +636,34 @@ uv run pytest -q -m geo tests/geo/test_places_later_echt.py
 taskset -c 0-2 uv run --with playwright python ../e2e/perf/zoek_ui.py --json /tmp/zoek-ui.json
 PLATFORM_DATA_DIR=<lege map> taskset -c 0-2 uv run python -m app.cli bench --los --n 100000 --seed 6
 # de rest van M8 staat in de blokken kort van de jobs zoek-perf, perf, images en e2e-media-perf in CI
+```
+
+M10–M13 (0.8.1) draaien de analyse uit een eigen omgeving, `api/.venv-analyse` (met numpy en
+onnxruntime); `api/.venv` blijft zonder (Keuze 57). Nooit `uv run --extra analyse` zonder
+`UV_PROJECT_ENVIRONMENT=.venv-analyse`. Zorg voor minstens 4 GB vrij voordat je begint, en gooi de
+bron van M10 na de omzetting weg.
+
+```bash
+# eenmalig: de omgeving van de analyse
+UV_PROJECT_ENVIRONMENT=.venv-analyse uv sync --frozen --extra analyse
+# M10: SigLIP 2 op ware grootte met willekeurige gewichten, en de omzetting zoals ci.yml (BOOT)
+UV_PROJECT_ENVIRONMENT=.venv-analyse uv run --no-sync python -m tests_analyse.siglip_vol \
+  --uit <bron>
+BOOT="import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.analyse.worker.omzetten.siglip',run_name='__main__',alter_sys=True)"
+UV_PROJECT_ENVIRONMENT=.venv-analyse taskset -c 0-2 uv run --no-sync python -I -c "$BOOT" "$PWD" \
+  --bron <bron> --uit <modellen>/siglip2-b32-256 > <siglip.lock>
+# daarna: de echte YuNet en SFace in <modellen> en hun regels samen met <siglip.lock> in <lock>
+# M11: BZ5 met modellen van de echte vorm
+ANALYSE_GEHEUGEN_MODELLEN=<modellen> ANALYSE_GEHEUGEN_LOCK=<lock> UV_PROJECT_ENVIRONMENT=.venv-analyse \
+  taskset -c 0-2 uv run --no-sync pytest -q -s -p no:cacheprovider tests_analyse/test_geheugen_samen.py
+# M12: BZ6 als geheel (de test zet zelf taskset -c 0)
+BEELD_PERF_MODELLEN=<modellen> BEELD_PERF_LOCK=<lock> UV_PROJECT_ENVIRONMENT=.venv-analyse \
+  uv run --no-sync pytest -q -s -p no:cacheprovider tests_analyse/test_beeld_perf.py
+# M13: §4.5 stap 2 met de analyse; de app uit api/.venv, de worker uit api/.venv-analyse;
+# niet onder taskset (het script zet de worker zelf op core 3); de DS zoals bij M7
+E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=<map>/jwt.secret \
+  uv run --with playwright python ../e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 \
+  --duur 300 --docs 5000 --analyse <modellen> --analyse-lock <lock> --json /tmp/zoek-samen-i2.json
+# daarna api/.venv weer precies zoals uv.lock zegt (uv sync haalt weg wat er niet hoort)
+uv sync --frozen
 ```

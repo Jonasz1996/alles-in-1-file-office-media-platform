@@ -19,7 +19,11 @@ route van 0.8.0 antwoordt zoals in 0.8.0. De routes van gezichten geven dan na d
 not_built("X2")`, zoals de stubs van 0.8.0 (sinds de samenvoeging, `dcd6bc1`; `409
 faces_unavailable` alleen met de analyse aan zonder de map met sleutels). Bewezen met `test_faces_off.py` (6), `faces.test.ts` ("uit is onzichtbaar") en
 `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`. Tests en CI zetten
-het aan met `ANALYSE=aan` (of `PLATFORM_ANALYSE_ENABLED` en een map met sleutels).
+het aan met `ANALYSE=aan` (of `PLATFORM_ANALYSE_ENABLED` en een map met sleutels). [I2: in 0.8.1
+staat de analyse standaard aan (P1), en elke gebruiker zet gezichten zelf aan. Met de analyse uit
+toont 0.8.1 bewust iets meer dan 0.8.0: de zinnen dat gezichten en zoeken op beeld op deze server
+uitstaan (ook in het blok op `/beheer`), en de link naar `/over` (P2); `test_uit080.py` legt dat
+precies vast.]
 
 Gebouwd op de tak `wip/golf6-x2b`, vanaf `625e946` (golf 5 na de nacontrole), in de worktree
 `/home/user/wt-g6-x2b`, naast X3b (`/home/user/wt-g6-x3b`). Niet gepusht.
@@ -257,20 +261,27 @@ onder het slot).
 
 ## Open
 
-1. **CI na de push**: `api` (de volle suite), `api-analyse` (229), `zoek-perf` (de stap
+1. ~~**CI na de push**: `api` (de volle suite), `api-analyse` (229), `zoek-perf` (de stap
    gezichten), `e2e` (met `analyse`, zonder `analyse_echt`) en `analyse-image` (de echte scan)
-   hebben nog niet gedraaid. De echte test draaide alleen tegen een stand-in.
-2. **De zin in het dialoog van Z6 bij persoon wissen** (Afwijkingen 7): een aanraking van
-   `PersonPage` buiten de plekken, voor wie Z6 bijhoudt of voor I2.
-3. **`/over`**: de naamsvermelding van YuNet en SFace (MIT, Apache-2.0) staat in de README en naast
-   de modellen, nog niet op `/over`; gepland voor 0.8.1 (I2).
+   hebben nog niet gedraaid. De echte test draaide alleen tegen een stand-in.~~ [I2: alle 19 jobs
+   groen op `e535332` (run 43892193604), met `api-analyse` 330 en 16 en de echte scan in
+   `analyse-image`.]
+2. ~~**De zin in het dialoog van Z6 bij persoon wissen** (Afwijkingen 7): een aanraking van
+   `PersonPage` buiten de plekken, voor wie Z6 bijhoudt of voor I2.~~ [I2: gedaan in P2 (`1a00a0f`
+   en `93c303c`): de zin over de bevestigde gezichten staat er als gezichten aanstaan, en het
+   dialoog vraagt één ding tegelijk.]
+3. ~~**`/over`**: de naamsvermelding van YuNet en SFace (MIT, Apache-2.0) staat in de README en naast
+   de modellen, nog niet op `/over`; gepland voor 0.8.1 (I2).~~ [I2: gedaan in P2 (`6890c2f`):
+   `/over` noemt YuNet, SFace en SigLIP 2 met hun licentie, voor iedereen.]
 4. **De kwaliteit is niet gemeten** (Afwijkingen 3): `analyse-kwaliteit` op de LXC, tegen de
    eigen ja en nee van Jonas. Verandert een drempel, dan gaat `FACES_VERSION` omhoog.
-5. **§4.5 met X2 aan** (de belastingtest met `analyse` vol): van de integratie.
+5. **§4.5 met X2 aan** (de belastingtest met `analyse` vol): van de integratie. [I2: gemeten als
+   M13 ([metingen.md](metingen.md#gezichten-en-beeld-081)); ⟦I2: gehaald of niet, uit M13⟧.]
 6. **`analyse-bench` op de LXC**: niet gedraaid; het runbook zegt hoe (`gezichten.md`).
-7. **`df` op `DATA_ROOT` voor de vectoren** (K2-19; x2a.md, Open 3): `install.sh` kijkt er niet
+7. ~~**`df` op `DATA_ROOT` voor de vectoren** (K2-19; x2a.md, Open 3): `install.sh` kijkt er niet
    naar voor gezichten (±0,8 kB per gezicht; `/beheer` toont de ruimte). X3b zet die controle
-   voor beeld neer; gezichten kunnen er bij I2 een regel bij krijgen.
+   voor beeld neer; gezichten kunnen er bij I2 een regel bij krijgen.~~ [I2: gedaan in P1
+   (`e0a271e`): `gezichten_ruimte` waarschuwt onder 105 MB vrij op `DATA_ROOT`, nooit fataal.]
 8. **Niet in een e2e** (toetsenbord-x2.md): V, Spatie om te deselecteren, Home en End, "Meer
    laden", "Niet benoemde gezichten wissen", "Misschien ook Anna", "?" met Ja, Nee en Niet tonen
    in de viewer, "Opnieuw zoeken" en "Mislukte opnieuw". De toetsen toetst `faces.test.ts`, de API
@@ -316,18 +327,18 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Tests: `test_faces_quality.py` (laag 4) | niet gebouwd (Vraag 8 nee; Afwijkingen 3) | — |
 | Tests: `web/src/photos/faces/faces.test.ts` | 25 (toetsen, alleen gezien en geselecteerd naar `confirm`, nl en en, de stand) | groen |
 | Tests: `e2e/test_zoek_gezichten.py` | 2 tests | groen (los, in `slim.sh` en in de CI-set; zie Gedraaid) |
-| Tests: `e2e/test_zoek_gezichten_echt.py` | 1 test | stand-in groen; `analyse-image` in CI na de push |
-| Tests: `test_faces_perf.py` (`zoek-perf`) | p95 46,5 / 35,7 / 10,0 / 31,7 ms | gehaald lokaal; in CI na de push |
+| Tests: `e2e/test_zoek_gezichten_echt.py` | 1 test | stand-in groen; `analyse-image` in CI na de push [I2: groen op `e535332`, run 43892193604] |
+| Tests: `test_faces_perf.py` (`zoek-perf`) | p95 46,5 / 35,7 / 10,0 / 31,7 ms | gehaald lokaal; in CI na de push [I2: `zoek-perf` groen op `dc5dfe5` en `e535332`] |
 | Klaar als: `/beheer` toont de juiste stand bij ok, down, models_missing en off | `facesBlock.test.ts::de regel Analyse` (ok, off, elke reden van down, models_missing met de namen); `test_faces_meten.py`; de e2e: "werkt" met de nep-worker, en zonder de analyse het blok van 0.8.0 (Vormen 3) | groen |
 | Klaar als: de lagen 1 en 2 groen (scan, groeperen, keuzes, levensloop, kopieën, versie) | `tests/people/faces/` (96, en 1 perf; 94 bij X2b, sinds de samenvoeging ook `test_faces_naast_beeld.py` (2)), `test_worker_group.py` (14) | groen |
 | Klaar als: privacy (`off`, `wipe_bytes`, `no_vector`, `privacy`, `crypto`, `backup`, `test_db_pragmas.py`) | in de volle suite, en `tests/people/faces` als nobody | groen (zie Gedraaid) |
 | Klaar als: poort 60.000 gezichten ≤ 60 s en ≤ 400 MB | `test_group_perf.py` | 23,5 s, 254 MB |
 | Klaar als: de kwaliteit op echte gezichten, de drempels in `drempels.py`; tot dan "niet gemeten" in de README en op `/beheer` | `drempels.py` (0,50, 0,45, voorlopig); README; `facesBlock.test.ts` en de e2e ("niet gemeten") | het deel tot de meting: groen; de meting zelf open (Open 4) |
 | Klaar als: `e2e/test_zoek_gezichten.py` groen en `toetsenbord-x2.md` af | de e2e (zie Gedraaid); [toetsenbord-x2.md](toetsenbord-x2.md), met wat niet in een e2e staat | groen; af |
-| Klaar als: `e2e/test_zoek_gezichten_echt.py` groen in `analyse-image` | de stap in `analyse-image` | in CI na de push |
-| Klaar als: `test_faces_perf.py` p95 ≤ 100 ms in `zoek-perf` | de stap in `zoek-perf` | lokaal gehaald; in CI na de push |
+| Klaar als: `e2e/test_zoek_gezichten_echt.py` groen in `analyse-image` | de stap in `analyse-image` | in CI na de push [I2: groen op `e535332`, run 43892193604] |
+| Klaar als: `test_faces_perf.py` p95 ≤ 100 ms in `zoek-perf` | de stap in `zoek-perf` | lokaal gehaald; in CI na de push [I2: groen op `dc5dfe5` en `e535332`] |
 | Klaar als: de initiële JS niet gegroeid, het chunk binnen zijn begroting | `npm run budget` | 11.831 ≤ 12.000 B; de initiële JS gelijk in ruwe bytes |
-| Klaar als: §4.5 met X2 aan | — | integratie (Open 5) |
+| Klaar als: §4.5 met X2 aan | — | integratie (Open 5) [I2: M13; ⟦I2: gehaald of niet, uit M13⟧] |
 | Klaar als: `analyse-bench` op de LXC, of het runbook zegt hoe | [gezichten.md](../runbooks/gezichten.md), "Hoe snel is het op deze CPU" | het runbook zegt hoe |
 | Klaar als: de documenten (README, runbook, x2.md, B57 en B61 en verder) | README "Gezichten in detail", `gezichten.md` (de map met sleutels niet in snapshots), dit bestand, notities bij B57, B61 en B64 | er |
 | Klaar als: `e2e/slim.sh` groen | `SLIM_CPUS=0-2 e2e/slim.sh` op `61b9d9b` | groen in 1106 s |
@@ -501,9 +512,13 @@ verbeterd.
 
 ### Open na de nacontrole
 
-- **Alleen in CI, na de push:** `analyse-image` (G6-1: `test_analyse_container.sh` met `group` in
+- ~~**Alleen in CI, na de push:** `analyse-image` (G6-1: `test_analyse_container.sh` met `group` in
   de container; `test_zoek_gezichten_echt.py` met het echte image), `api-analyse` (exact 329 en
-  16), `zoek-perf` (ook `test_faces_perf.py`) en de rest uit x3b.md, "Open na de nacontrole".
+  16), `zoek-perf` (ook `test_faces_perf.py`) en de rest uit x3b.md, "Open na de nacontrole".~~
+  [I2: groen op `e535332` (run 43892193604). Op `dc5dfe5` waren drie tests rood die alleen in CI
+  draaien (de kinderen in `test_analyse_container.sh`, de maxrss van de omzetter en `/proc` als
+  gewone gebruiker); hersteld in `e535332`, met één test erbij: `api-analyse` telt nu 330 en 16
+  ([x3b.md](x3b.md), "CI op dc5dfe5").]
 - **Op de LXC:** `analyse-bench` met de echte modellen (het runbook zegt hoe).
 - **`test_install_update.sh`** is niet gedraaid (de schijf; x3b.md) en staat niet in CI (x2a.md,
   Open 8).

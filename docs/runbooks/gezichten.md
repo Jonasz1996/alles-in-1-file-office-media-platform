@@ -7,11 +7,13 @@ melding betekent, staat in [analyse.md](analyse.md). Dit runbook gaat over de ge
 er bewaard wordt, de toestemming, de versleuteling, wissen, reservekopieën en snapshots (met de
 map met sleutels), de stand, `analyse-bench` en `analyse-kwaliteit`, en de wet.
 
-**Tot 0.8.1 staat dit uit.** Zonder `ANALYSE=aan` draait de container `analyse` niet, en dan is
-er in de web niets van gezichten te zien: geen schakelaar, geen voorstellen, op `/beheer` het blok
-van 0.8.0. De app maakt dan geen rijen, geen jobs en geen bestanden voor gezichten. Wie
-`ANALYSE=aan` vóór 0.8.1 zet, probeert een versie die nog niet af is: de kwaliteit is niet
-gemeten en de drempels zijn voorlopig (hieronder).
+**Sinds 0.8.1 staat de analyse standaard aan, en gezichten per gebruiker uit.** Het
+installatiescript start de container `analyse`; elke gebruiker zet gezichten daarna zelf aan bij
+Account → Foto's. Tot hij dat doet, gebeurt er met zijn foto's niets. De kwaliteit is nog niet
+gemeten en de drempels zijn voorlopig (hieronder, `analyse-kwaliteit`). Met `ANALYSE=uit` draait
+de container niet, en dan is er in de web niets van gezichten te zien: geen schakelaar, geen
+voorstellen, op `/beheer` alleen dat de analyse uit staat. De app maakt dan geen rijen, geen jobs
+en geen bestanden voor gezichten.
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root, tenzij er "op de
 Proxmox-host" staat. `dc` is de functie uit de README (Handige commando's).
@@ -79,8 +81,11 @@ link nooit).
 **Wat het platform zelf maakt** (`app.cli db-backup`, en de reservekopie van `install.sh` vóór
 een update) bevat **geen** gezichten: de kopie gooit `face`, `face_person`, `face_scan` en
 `face_owner` leeg, zonder journaal, voordat hij af is. Na het terugzetten van zo'n kopie zijn er
-geen gezichten; wie het aan had, krijgt een nieuwe scan (±2,2–2,5 uur per 55.000 foto's), en
-bevestigde personen komen terug als ja via hun kader.
+geen gezichten; wie het aan had, krijgt een nieuwe scan, en bevestigde personen komen terug als
+ja via hun kader. Hoe lang die scan duurt, is een schatting: ±2,2–2,5 uur per 55.000 foto's op één
+core (uit het ontwerp, K2-04). Gemeten is alleen de container zelf, in de sandbox: 1.043 foto's
+per minuut per core met één gezicht, op `9228eb6` ([x2b.md](../fase-6/x2b.md)). Op jouw CPU zegt
+`analyse-bench` het (hieronder).
 
 **Wat je zelf maakt** (de ZFS-snapshots van `/tank`, de offsite-kopie) bevat de rijen van
 gezichten tot die kopie weg is, met versleutelde vectoren. Na "uit" zijn ze daar niet meer te
@@ -162,17 +167,21 @@ dc exec -T platform python -m app.cli analyse-bench --fotos 50 # sneller, minder
 Stuurt gemaakte foto's van 1024 × 768 (ruis, een verloop, een landschap; zonder gezicht) door de
 echte container, zoals de scan dat doet. Uitvoer: ms per foto, foto's per minuut, en hoe lang
 wat er nu wacht nog duurt. De uitkomst komt ook op `/beheer` (Snelheid). De tijd per extra
-gezicht meet hij niet: gemaakte foto's hebben geen gezicht (in de sandbox: ±25 ms per gezicht
-extra, [x2a.md](../fase-6/x2a.md)). Exitcode 0 met een uitkomst, 1 als er niets gemeten is (de
+gezicht meet hij niet: gemaakte foto's hebben geen gezicht. In de sandbox was dat 29,4 ms per
+gezicht op `9228eb6` ([x2b.md](../fase-6/x2b.md)); X2a mat eerder 23,2–29,5 ms
+([x2a.md](../fase-6/x2a.md)). Exitcode 0 met een uitkomst, 1 als er niets gemeten is (de
 analyse staat uit, is niet bereikbaar of bezig; de reden staat op stderr). Draai hem als de rij
 leeg is of op pauze staat: hij wacht anders op de scan.
 
 ## Hoe goed is het: `analyse-kwaliteit`
 
-**De kwaliteit is niet gemeten.** In de sandbox zijn er geen echte gezichten (Vraag 8 heeft de
-standaard nee: geen foto's van NASA in CI), dus de drempels zijn voorlopig: **0,50** voor groepen en
-**0,45** voor een voorstel (strenger dan 0,363 van OpenCV), in `app/people/faces/drempels.py`.
-`/beheer` zegt "niet gemeten" tot dit commando gedraaid heeft.
+**De kwaliteit is niet gemeten**, ook niet voor 0.8.1. In de sandbox zijn er geen echte
+gezichten (Vraag 8 heeft de standaard nee: geen foto's van NASA in CI), dus de drempels zijn
+voorlopig: **0,50** voor groepen en **0,45** voor een voorstel (strenger dan 0,363 van OpenCV), in
+`app/people/faces/drempels.py`. `/beheer` zegt "niet gemeten" tot dit commando gedraaid heeft.
+Twee poorten van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het
+goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan voor
+0.8.1 op "niet gemeten, geen gereedschap"; het gereedschap komt pas met een antwoord op Vraag 8.
 
 ```bash
 dc exec -T platform python -m app.cli analyse-kwaliteit
@@ -201,9 +210,10 @@ en "niet tonen" blijft niet tonen. Afwijzingen beginnen opnieuw.
 ## Terug naar 0.8.0
 
 Zoals [analyse.md](analyse.md), "Terug naar 0.8.0". `db-downgrade 0010` haalt de tabellen van
-gezichten (0011) en beeld (0012) weg; de sleutels en de modellen blijven op hun plek. Weer vooruit
-begint met lege tabellen: wie gezichten aan had, krijgt bij de volgende ronde (elk uur) een
-nieuwe scan.
+gezichten (0011) en beeld (0012) weg; de sleutels en de modellen blijven op hun plek. Personen en
+wie er op een foto staat (`photo_person`, van 0010) blijven ook, net als de schakelaar gezichten
+per gebruiker. Weer vooruit begint met lege tabellen: wie gezichten aan had, krijgt bij de
+volgende ronde (elk uur) een nieuwe scan.
 
 ## De wet (AVG)
 
