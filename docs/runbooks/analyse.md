@@ -443,7 +443,9 @@ de API weer hooguit één keer per 8 s.
 Zolang `app/analyse/models.lock` geen regels van SigLIP heeft, of
 `api/tests/analyse/sets/beeld.tsv` ontbreekt, stelt de job ze voor en is hij rood met
 "models.lock mist de regels van SigLIP" en "beeld.tsv ontbreekt". Dat is de bedoeling. De job zet
-zelf nooit iets in het repo; een mens doet dat, zo:
+zelf nooit iets in het repo; een mens doet dat, zo: (Sinds golf 6 staan beide er: de regels van
+`VERSIE` 3 in `c921c66`, `beeld.tsv` uit de run op `502f4c3` in `d1c29e0`. Deze stappen gelden
+weer na een nieuwe omzetter of een nieuwe set.)
 
 1. Kijk in `=== kort ===` of BZ1 bij huggingface.co en Commons kon. Kon dat niet, dan gaat de rest
    naar de LXC (X3b: `beeld-kwaliteit`, `beeld-bench`, trust-on-first-use).

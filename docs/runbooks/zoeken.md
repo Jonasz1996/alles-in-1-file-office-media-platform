@@ -404,7 +404,8 @@ gehaald of niet te meten is (met `--kort` altijd 0). Zonder `--office` zijn de p
 OnlyOffice en van `OOMKilled` niet te meten, dus eindigt een hele meting zonder OnlyOffice altijd
 op `niet geslaagd` (exitcode 1): de andere poorten staan er wel. Nog niet in deze meting: de
 container `analyse` (gezichten en beeld) en de beeldvraag. Gezichten staan gepland voor 0.8.1;
-zoeken op beeld ook, maar dat kan naar een eigen fase 6b schuiven.
+zoeken op beeld ook ~~, maar dat kan naar een eigen fase 6b schuiven~~. [2026-11-16: het blijft in
+0.8.1, standaard uit per gebruiker (Keuze 85 in `docs/fase-6/bouwontwerp.md`).]
 
 ## Terug naar 0.8.0 van `59e0250`
 

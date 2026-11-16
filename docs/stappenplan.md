@@ -537,7 +537,9 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   die zijn te zoeken. Gezichten vanzelf herkennen (YuNet en SFace) is
   gepland voor 0.8.1. Zoeken op wat er op een foto staat (SigLIP 2, met
   de vectoren in de SQLite in plaats van pgvector) is ook gepland voor
-  0.8.1, maar kan naar een eigen fase 6b schuiven (B57, B66, B68)
+  0.8.1, ~~maar kan naar een eigen fase 6b schuiven~~ (B57, B66, B68).
+  [2026-11-16: het blijft in 0.8.1, standaard uit per gebruiker (Keuze 85 in
+  docs/fase-6/bouwontwerp.md; Vraag 11 staat nog open).]
 
 - [x] Herinneringen (vandaag X jaar geleden) en slimme albums.
   Herinneringen staan op `/fotos` en zijn uit te zetten op `/account`.
