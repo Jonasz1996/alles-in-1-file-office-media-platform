@@ -1998,8 +1998,9 @@ het bouwontwerp zegt het.
 
 ### Open na 011bf2d
 
-- **De vraag voor de eigenaar** hierboven: set, model of poort. Eerst de nieuwe regels van de
-  volgende run lezen; die zeggen per categorie en per vraag waar het misgaat.
+- ~~**De vraag voor de eigenaar** hierboven: set, model of poort. Eerst de nieuwe regels van de
+  volgende run lezen; die zeggen per categorie en per vraag waar het misgaat.~~ [2026-11-16:
+  "Toch uitbrengen"; zie "Keuze 85" onderaan.]
 - **De pins van `VERSIE` 3** komen uit de volgende run en gaan met X3b in `models.lock`.
 - **Glad** is niet gekozen. Komt het ooit terug, dan met factoren in een vastgelegde tabel bij de
   sha256 van de bron (zie "Open na 3a9b07d"), geijkt op echte foto's, en met een test dat de fout
@@ -2205,8 +2206,9 @@ het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze
 
 ### Open na 669f03c
 
-- **Het antwoord van Jonas** op de kaart hierboven.
-- **De pins van `VERSIE` 3** gaan met X3b in `models.lock`. Gedaan in de review van golf 6
+- ~~**Het antwoord van Jonas** op de kaart hierboven.~~ [2026-11-16: "Toch uitbrengen"; zie
+  "Keuze 85" onderaan.]
+- ~~**De pins van `VERSIE` 3** gaan met X3b in `models.lock`.~~ Gedaan in de review van golf 6
   (`c921c66`; x3b.md, De review, G6-2).
 - **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
   helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
@@ -2258,3 +2260,99 @@ wel.
 
 Na de punten: `tests_analyse` telt 282 en 16 gedeselecteerd (één test erbij), de tests die `ci.yml`
 lezen 246 goed, ruff en yamllint schoon.
+
+## CI op ffac665
+
+`API analyse` groen: 282 goed en 16 gedeselecteerd, op een Xeon Platinum 8573C met `amx_int8`,
+`avx512_vnni` en `avx_vnni`. `e2e media` groen. `beeld-model` rood op BZ4 en de uitslag, zoals
+verwacht; de uitslag noemt alleen de regels die met X3b komen (`models.lock`, `beeld.tsv`).
+
+**Voor het eerst per token op een runner zonder VNNI.** `beeld-model` liep op een AMD EPYC 7763
+zonder VNNI en zonder AMX, en de regel van BZ6 zegt dat nu zelf (R2 hierboven werkt):
+
+```
+BZ6 beeld int8 op 1 core(s): 82.8 ms per foto uit 256.webp, 725 per minuut (poort ≥ 500) — goed; cpu AMD EPYC 7763 64-Core Processor, vnni nee, amx nee
+BZ6 vraag (tokenizer + tekst int8): p50 74.6 ms, p95 75.4 ms (voorwaarde ≤ 250 ms), eerste 76.1 ms, met laden 757 ms; maxrss 864 MiB — goed
+```
+
+- **BZ2:** twee omzettingen met dezelfde sha256 voor alle vijf bestanden, ook met `--fp32`, en de
+  vijf pins zijn precies die van `669f03c` (een Xeon met VNNI). De omzetting hangt niet aan de CPU.
+- **BZ6:** 82,8 ms per foto, 31 % onder de 120 ms van de poort. In de varianten van het rapport
+  kost per token hier 80,0 ms tegen 73,8 ms met per tensor: 1,08 ×, niet 1,5 × zoals op de Xeon.
+  De schatting van ±115 ms in "Open na 669f03c" kwam uit die 1,5 × en de 76,5 ms van `625e946`;
+  op deze CPU klopt ze niet. Welke CPU `625e946` had, staat niet in dat log. De poort blijft.
+- **BZ4:** dezelfde twee rode poorten. De set kwam weer vers van Commons, en `beeld_niet.tsv` sloeg
+  nu 40 kandidaten over in plaats van 49; de 120 foto's zijn dus mogelijk niet precies dezelfde.
+  Ook fp32 schoof, dus dit is niet alleen int8 op een andere CPU.
+
+| | int8 | fp32 | poort | int8 op `669f03c` |
+|---|---|---|---|---|
+| nl precisie@5 | 0,692 | 0,700 | ≥ 0,6, goed | 0,692 |
+| slechtste vraag | 0/5 (`bergen`, `boot`) | 0/5 (`bergen`) | ≥ 1, **fout** | 0/5 (dezelfde) |
+| int8 zakt | 0,008 | | ≤ 0,05, goed | 0,000 |
+| combinaties | 6/6 | 5/6 | ≥ 5, goed | 6/6 |
+| meer zoals deze (top 4) | 0,454 | 0,442 | ≥ 0,7, **fout** | 0,475 (fp32 0,463) |
+| kleuren | 3/3 | | 3/3, goed | 3/3 |
+
+Het rapport (`kort.txt`), de regels van de poorten en de zwakke vragen letterlijk:
+
+```
+BZ4 nl: precisie@5 0.692 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 combinaties: 6/6 in de top 10 (poort ≥ 5), plekken [4, 1, 2, 5, 1, 9] — goed
+BZ4 int8 tegen fp32: precisie@5 0.692 tegen 0.700, zakt 0.008 (poort ≤ 0.05) — goed
+BZ4 meer zoals deze: 0.454 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 zelftest kleuren: 3/3 bovenaan — goed
+BZ4 fp32 (rapport): engels 0.833 (int8 0.833), meer zoals deze 0.442 (int8 0.454), MIN_FOTO zelfde p5 0.475 anders p95 0.6448, MIN_TEKST kans goed p5 0.0 niet goed p95 0.0, combinaties 5/6 plekken [4, 1, 2, 5, 1, 12]
+BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 0.998 mediaan 0.9991 laagste 0.9975 (zandstrand); beeld p5 0.9838 mediaan 0.9938 laagste 0.9655 (berg-3)
+BZ4 zwakke vragen (rapport) 1/2: bergen (nl; int8 0/5, fp32 0/5): int8 anders-trein-4 boot-1 anders-kerk-2 hond-1 auto+sneeuw; fp32 anders-trein-4 boot-1 anders-kerk-2 hond-1 boot-2
+BZ4 zwakke vragen (rapport) 2/2: boot (nl; int8 0/5, fp32 1/5): int8 anders-stoel-1 anders-paard-4 anders-gitaar-2 anders-paard-1 anders-vogel-5; fp32 anders-stoel-1 anders-paard-1 anders-gitaar-2 anders-vogel-5 boot-4
+BZ4 meer zoals deze top 1 (rapport): int8 0.617 (37/60), fp32 0.633 (38/60)
+BZ4 cpu (rapport): AMD EPYC 7763 64-Core Processor; vnni nee
+BZ4 variant fp32 (rapport): nl 0.700 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 5/6, meer zoals deze 0.442, cos beeld p5 1.0000 tekst p5 1.0000; beeld 378 MB 130.7 ms per foto, tekst 1129 MB 125.8 ms per vraag
+BZ4 variant zoals nu (rapport): nl 0.692 (zakt 0.008, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.454, cos beeld p5 0.9838 tekst p5 0.9981; beeld 103 MB 80.0 ms per foto, tekst 284 MB 74.0 ms per vraag
+BZ4 variant per tensor (v2) (rapport): nl 0.475 (zakt 0.225, slechtste 0/5), engels 0.700, combinaties 6/6, meer zoals deze 0.296, cos beeld p5 0.5889 tekst p5 0.8733; beeld 103 MB 73.8 ms per foto, tekst 284 MB 68.7 ms per vraag
+```
+
+pytest: `bz3` 4 goed, `bz4` 2 fout en 4 goed, `bz4r` 5 goed in 262,4 s, `bz6` 1 goed.
+
+### Open na ffac665
+
+- ~~**Het antwoord van Jonas** op de kaart van "De vraag aan Jonas". Wordt het "toch uitbrengen",
+  dan heeft een ondergrens marge nodig: tussen twee runs schoof "meer zoals deze" van 0,475 naar
+  0,454 (int8) en van 0,463 naar 0,442 (fp32), en fp32 combinaties van 6/6 naar 5/6. Een grens
+  precies op één meting zou rood worden op de volgende set.~~ [2026-11-16: "Toch uitbrengen";
+  de ondergrenzen staan in "Keuze 85" hieronder.]
+- **De pins van `VERSIE` 3** gaan met X3b in `models.lock` (ongewijzigd, ook op deze CPU).
+- **BZ6 op een trage runner:** op deze CPU zonder VNNI 82,8 ms. Of er runners zijn die trager
+  zijn, zegt pas een run op een andere CPU; de regel van BZ6 noemt ze nu.
+
+## Keuze 85: zoeken op beeld toch in 0.8.1
+
+Jonas koos op 2026-11-16 op de kaart "Toch uitbrengen" ("Breng zo maar uit kunnen we evt later
+bekijken"). De twee poorten van BZ4 die ook fp32 niet haalt, zijn sinds Keuze 85 in het
+[bouwontwerp](bouwontwerp.md) ondergrenzen. "Meer zoals deze" heeft marge: 0,05 onder de laagste
+meting, 0,06 boven de beste kapotte variant: per token na glad op `ffac665` (in "CI op ffac665"
+niet geciteerd; uit `beeld-model` van die run):
+
+```
+BZ4 variant per token + glad (rapport): nl 0.642 (zakt 0.058, slechtste 1/5), engels 0.733, combinaties 4/6, meer zoals deze 0.338
+```
+
+De regel "geen vraag met 0 van 5" voor de andere 22 vragen heeft weinig marge: de zwakste haalde
+in int8 2 van 5, in fp32 soms 1. De andere poorten blijven.
+
+| Poort | Keuze 83 | Keuze 85 | Gemeten int8 (fp32) op `669f03c` en `ffac665` |
+|---|---|---|---|
+| slechtste vraag nl | ≥ 1 van 5 | ≥ 1 van 5, behalve 'bergen' en 'boot' | 'bergen' 0 en 0 (0 en 0), 'boot' 0 en 0 (1 en 1); elke andere vraag in int8 ≥ 2 |
+| "Meer zoals deze" | ≥ 0,7 | ≥ 0,40; 0,7 blijft het doel in de regel | 0,475 en 0,454 (0,463 en 0,442) |
+
+- **In de test:** `BEKEND_ZWAK` en `MEER_ONDER` in `test_beeld_kwaliteit.py`. Staat een van de twee
+  vragen niet meer in `beeld_vragen.tsv`, dan is BZ4 rood: de uitzondering is dan oud. De regel van
+  BZ4 nl noemt de slechtste vraag buiten die twee en hun eigen uitslag; die van "meer zoals deze"
+  noemt de ondergrens en het doel. Het rapport van de zwakke vragen blijft zoals het was.
+- **Nagerekend zonder model:** de twee tests met de getallen van `ffac665` zijn goed; met 'stad' op
+  0 van 5, met 'boot' hernoemd in de vragen, of met "meer zoals deze" 0,399 (of 0,271, per tensor)
+  zijn ze rood.
+- **Nog te doen:** de volgende run van `beeld-model` (die draait omdat `test_beeld_kwaliteit.py`
+  verandert) moet BZ4 groen geven op een nieuwe set. De uitleg bij de schakelaar in Account →
+  Foto's (wat je mag verwachten, met 'bergen' en 'boot') komt met X3b.

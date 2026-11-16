@@ -23,7 +23,7 @@ kaart met tegels van buiten?" Het antwoord was dus: gezichten ja, tegels van bui
 |---|---|---|
 | 1. tesseract in het image | ja ("alles") | X1 is een gewoon pakket van fase 6, met tesseract in het image (Keuze 22–24). |
 | 2. gezichten automatisch | ja, in fase 6 (het kaartje) | X2 hoort bij fase 6 (Keuze 39, 56–69). numpy en onnxruntime komen als optionele extra, alleen in de afgeschermde container `analyse`. De app importeert ze nooit. De modellen downloadt `install.sh`. |
-| 3. zoeken op wat er op een foto staat | ja, in fase 6 ("alles") | X3 hoort bij fase 6 (Keuze 40, 70–84). |
+| 3. zoeken op wat er op een foto staat | ja, in fase 6 ("alles") | X3 hoort bij fase 6 (Keuze 40, 70–85). |
 | 7. de omvang | alles | De planning wordt ±43 werkdagen, in twee opleveringen (§5, Vraag 13). |
 | de kaart (het kaartje) | geen tegels van buiten | Alleen landsgrenzen, zoals Keuze 31. De CSP blijft gelijk. |
 | 5 en 6 | geen eigen antwoord: de kaartjes zijn ingetrokken, omdat "alles" ze dekt | De standaard geldt: GeoNames en Natural Earth bij de installatie, en alleen grenzen onder de kaart. |
@@ -338,7 +338,7 @@ gezichten zijn te benoemen en te zoeken.
 | B22: GPS lezen we in fase 3 niet, "dat hoort bij fase 6". | GPS wordt nu bewust weggegooid (`render_meta.py:21–22`, `media/worker/ops/meta.py:32`, `previews.SECRET_META:69`, `photodate.split_capture`) [code]. Het gaat open, maar alleen naar een eigen tabel per bestand en eigenaar, nooit naar `preview_meta`. |
 | B40: onvertrouwde bestanden lezen hoort in de worker, zonder netwerk en zonder `/data`. | Tekst lezen en OCR draaien in de worker als media aan staat (Keuze 17, 22). Alleen zonder media blijft het in het renderproces, zoals de voorbeelden van 0.7.0. |
 | InsightFace: gewichten alleen voor niet-commercieel onderzoek [doc]. | Valt af. YuNet (MIT) en SFace (Apache-2.0) kunnen wel (X2, Keuze 58). |
-| CLIP is Engelstalig; SigLIP 2 is meertalig en Apache-2.0 [doc]. Als int8 ±390 MB, de bron in fp32 ±1,5 GB [B4, B6]. | Zoeken op beeld komt met SigLIP 2 B/32 in fase 6 (X3, Keuze 70–84). Er komen geen labels of objecten als filter (Keuze 71). |
+| CLIP is Engelstalig; SigLIP 2 is meertalig en Apache-2.0 [doc]. Als int8 ±390 MB, de bron in fp32 ±1,5 GB [B4, B6]. | Zoeken op beeld komt met SigLIP 2 B/32 in fase 6 (X3, Keuze 70–85). Er komen geen labels of objecten als filter (Keuze 71). |
 | Zoeken nu: alleen op naam, 590–670 ms bij 101.000 nodes [gemeten]. | Haalt de 200 ms niet. Er komt een index. |
 | SQLite in het image is 3.46.1 [gemeten]. | Elke meting en elke plan-test draait in `python:3.12-slim`, ook in de sandbox (V8). |
 | Op de LXC draaien al OnlyOffice (≤ 2 GB) en de mediaworker (≤ 3 GB, `cpus: 3.0`) (B43, B47). | Indexeren en de container `analyse` wijken voor transcodes. Laagste voorrang, eerlijk per eigenaar. `analyse` krijgt ≤ 3 GB en `cpus: 1.0`: samen 8 van de 16 GB (§3.11, K2-06). |
@@ -1176,7 +1176,7 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 
 40. **Zoeken op beeld: X3, in fase 6** (herzien in r3: "alles"). SigLIP 2 B/32 (Apache-2.0,
     meertalig) in dezelfde container, met vectoren als BLOB in SQLite in plaats van pgvector
-    (B15). Standaard uit per gebruiker tot het gemeten is (Vraag 11). Hoe, staat in Keuze 70–84.
+    (B15). Standaard uit per gebruiker tot het gemeten is (Vraag 11). Hoe, staat in Keuze 70–85.
 
 ### Herinneringen, slimme albums en filters
 
@@ -1313,7 +1313,7 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
 
 Nieuw in r3. Gezichten (X2) en beeld (X3) delen één container, één handdruk, één rij en één
 lijst met modellen. De keuzes hieronder leggen vast wat ze delen; Keuze 56–69 zijn van X2,
-Keuze 70–84 van X3.
+Keuze 70–85 van X3.
 
 55. **Z0b: de contracten van X2 en X3 komen vóór golf 1** (K2-01). Z0 bevriest de contracten,
     zodat golf 1–4 naast elkaar kunnen bouwen. X2 en X3 voegen er velden, waarden en een rij aan
@@ -2179,6 +2179,10 @@ Keuze 70–84 van X3.
       | twee keer omzetten | dezelfde sha256 |
       | de 6 vragen in het Engels | rapport |
 
+      *Noot (Keuze 85, 2026-11-16):* twee poorten zijn ondergrenzen geworden. "Geen vraag met 0
+      goede foto's in de top 5" geldt niet meer voor 'bergen' en 'boot', en "Meer zoals deze" moet
+      ≥ 0,40 (0,7 blijft het doel en staat in de regel). De andere poorten blijven zoals ze zijn.
+
     - **Haalt het model de poort niet,** dan in deze volgorde: de tekstkant in fp32 meten (past dat
       in het geheugen? BZ5), dan B/16 (Vraag 10c). Haalt niets de poort, dan levert X3 alleen
       "Meer zoals deze" (daar is alleen het beeldmodel voor nodig), en gaat er een kaart naar Jonas
@@ -2240,6 +2244,55 @@ Keuze 70–84 van X3.
     - **Bronvermelding** op `/over`: "Zoeken op beeld: SigLIP 2 van Google, Apache-2.0." Ook YuNet
       (MIT) en SFace (Apache-2.0) staan daar (K1-13).
 
+85. **Zoeken op beeld toch in 0.8.1, met twee poorten als ondergrens** (nieuw, 2026-11-16).
+    - **Waarom.** Met per token (`VERSIE` 3) haalde het model op `669f03c` en `ffac665` vier
+      poorten van Keuze 83: nl precisie@5 0,692 (≥ 0,6), combinaties 6/6 (≥ 5), int8 zakt 0 en
+      0,008 (≤ 0,05) en de zelftest 3/3. Twee haalt ook fp32 niet: 'bergen' vindt 0 van 5 (fp32 ook
+      0), 'boot' 0 van 5 (fp32 1), en "Meer zoals deze" is 0,475 en 0,454 (fp32 0,463 en 0,442;
+      als variant op `011bf2d` 0,450) tegen ≥ 0,7. Geen variant van het rapport (fc2, mlp,
+      aandacht, kop, lagen of embedding in fp32) haalt "Meer zoals deze"; alleen laag 0-3 in fp32
+      op `011bf2d` (bovenop per tensor) had geen vraag met 0 van 5, maar zakte 0,067 [gemeten: CI
+      op `011bf2d`, `669f03c` en `ffac665`, zie [x3a.md](x3a.md)]. Het is dus het model, niet de
+      omzetting. Jonas koos op 2026-11-16 op de kaart "Toch uitbrengen" ("Breng zo maar uit kunnen
+      we evt later bekijken").
+    - **Wat er verandert.** Twee poorten van Keuze 83 worden ondergrenzen; de rest blijft.
+
+      | Wat | Keuze 83 | Nu |
+      |---|---|---|
+      | 24 vragen in het Nederlands | geen vraag met 0 goede foto's in de top 5 | geen vraag met 0 goede foto's in de top 5, behalve 'bergen' en 'boot' |
+      | "Meer zoals deze" | gemiddeld ≥ 0,7 van de top 4 | gemiddeld ≥ 0,40 van de top 4; 0,7 blijft het doel en staat in de regel |
+
+    - **Waarom deze grenzen.** Een ondergrens moet een fout in de omzetting of de tokenizer vangen,
+      niet de ruis van de set. De set komt elke run opnieuw van Commons en schuift, ook voor fp32:
+      tussen `669f03c` en `ffac665` (dezelfde pins) ging "Meer zoals deze" van 0,475 naar 0,454
+      (fp32 van 0,463 naar 0,442). Een grens precies op één meting wordt bij de volgende set rood.
+      0,40 ligt 0,05 onder de laagste meting (0,450), ruim twee keer die verschuiving, en 0,06
+      boven de beste kapotte variant tot nu. Kapotte (int8 zakt > 0,05) gaven 0,258 tot 0,338: per
+      tensor als poort op `3a9b07d` 0,258, als variant 0,271 tot 0,296, met `Q_MAX` 127 0,292,
+      laag 0-3 in fp32 bovenop per tensor 0,308, per token na glad 0,304 tot 0,338 (dat laatste op
+      `ffac665`). Gezonde varianten bovenop per token gaven 0,438 tot 0,479 (x3a.md, "CI op
+      011bf2d", "CI op 669f03c" en "CI op ffac665"). Voor de vragen krijgen alleen de twee een
+      uitzondering die in elke run hooguit 1 van 5 haalden, bij naam. Elke andere vraag blijft
+      ≥ 1 van 5. Die poort heeft weinig marge: op `669f03c` en `ffac665` haalde de zwakste daarvan
+      in int8 2 van 5 ('stad', 'personenauto', 'een maaltijd'), en in fp32 haalden 'stad' en
+      'personenauto' op `669f03c` 1 van 5. Wordt een van die vragen op een nieuwe set 0 van 5, dan
+      is BZ4 rood en zegt het rapport welke; dat is een vraag voor de eigenaar, nooit een stille
+      uitzondering erbij. Een fout in de omzetting blijft rood: per tensor gaf 'poes' en 'bos' 0 van
+      5. 'berg' (3/5) en 'bootje' (3 tot 4/5) houden de poort.
+    - **In de test** (`test_beeld_kwaliteit.py`): `BEKEND_ZWAK = {"bergen", "boot"}` en
+      `MEER_ONDER = 0.40`; `MEER_ZOALS` (0,7) staat alleen nog in de regel. De test eist dat beide
+      vragen in `beeld_vragen.tsv` staan, anders is de uitzondering oud en is BZ4 rood. Ze blijven in
+      het rapport van de zwakke vragen, met hun top 5, en de regel van BZ4 nl noemt hun uitslag.
+      `beeld_vragen.tsv` verandert niet.
+    - **In de app.** Zoeken op beeld blijft standaard uit per gebruiker (Vraag 11; deze keuze
+      beantwoordt die vraag niet). De uitleg bij de schakelaar in Account → Foto's zegt wat je mag
+      verwachten: één woord vindt meestal een paar goede foto's bovenaan, sommige woorden vinden
+      weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel), en "Meer zoals deze" geeft ongeveer de
+      helft uit hetzelfde onderwerp. Die tekst komt met X3b.
+    - **Later.** Beter kan met het grotere model B/16 (Vraag 10c) of met een vaste vorm van de vraag
+      ("een foto van …"); geen van beide is gemeten. Haalt een latere run de poorten van Keuze 83
+      weer, dan kan een nieuwe keuze ze terugzetten. Lager dan hier kan alleen met een nieuwe keuze.
+
 ### Vragen voor Jonas
 
 **Beantwoord op 3 november 2026.** Jonas vroeg "ja voeg alles toe", en koos daarna op een kaartje
@@ -2249,7 +2302,7 @@ Keuze 70–84 van X3.
 |---|---|
 | 1. Mag tesseract in het image, voor OCR? | Ja ("alles"). X1 is een gewoon pakket (Keuze 24). De vraag noemde ±20 MB; S5 mat 69 MiB, daarom Vraag 15 (ook ja). |
 | 2. Mogen gezichten automatisch gevonden worden? | Ja, in fase 6 (het kaartje "Ook gezichten"). X2, Keuze 56–69. |
-| 3. Zoeken op wat er op een foto staat? | Ja, in fase 6 ("alles"). X3, Keuze 70–84. Het kaartje noemde beeld niet apart; daarom Vraag 11. |
+| 3. Zoeken op wat er op een foto staat? | Ja, in fase 6 ("alles"). X3, Keuze 70–85. Het kaartje noemde beeld niet apart; daarom Vraag 11. |
 | 5. GeoNames en Natural Earth bij de installatie downloaden? | Geen eigen antwoord: het kaartje is ingetrokken, omdat "alles" het dekt. De standaard geldt: ja, met sha256, niet fataal, uit te zetten met `PLAATSEN=uit`. |
 | 6. Wat ligt er onder de kaart? | Alleen landsgrenzen, geen tegels van buiten (het kaartje). De CSP blijft gelijk. |
 | 7. Mag fase 6 langer duren? | Ja, met alles. Met gezichten en beeld is het ±43 werkdagen (§5). Hoe we opleveren, is Vraag 13. |
