@@ -578,21 +578,22 @@ niets op. Niet willen: `curl … | BEELD=uit bash` (dat blijft in `.env` staan; 
 staat, blijft staan). Meer: `docs/runbooks/analyse.md`, "Zoeken op beeld".
 
 Zonder `ANALYSE=uit` ziet een gebruiker de schakelaars bij Account → Foto's. Elke gebruiker zet
-zoeken op beeld zelf aan (standaard uit). Dan bekijkt de container op de achtergrond alleen de eigen foto's van die
-gebruiker, en vindt hij ze op `/zoeken` in de stand "Wat er op de foto staat" met woorden ("hond
-op het strand"), of vanuit een eigen foto met "Meer zoals deze" in het infopaneel. Er gaat niets
-naar buiten. Is het te traag of draait de container niet, dan krijgt hij de treffers van gewoon
-zoeken met een melding. Op `/beheer` → Zoeken en foto's staat de stand, met de knoppen om het voor
-iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, meet
+zoeken op beeld zelf aan (standaard uit). Dan bekijkt de container op de achtergrond alleen de eigen
+foto's van die gebruiker, en vindt hij ze op `/zoeken` in de stand "Wat er op de foto staat" met
+woorden ("hond op het strand"), of vanuit een eigen foto met "Meer zoals deze" in het infopaneel. Er
+gaat niets naar buiten. Is het te traag of draait de container niet, dan krijgt hij de treffers van
+gewoon zoeken met een melding. Op `/beheer` → Zoeken en foto's staat de stand, met de knoppen om het
+voor iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, meet
 `dc exec -T platform python -m app.cli beeld-bench` (het runbook, BZ9).
 
 **Uit:** hetzelfde commando met `ANALYSE=uit`. Dat komt in `.env` en blijft: ook een volgende
 run zonder `ANALYSE` laat hem uit. Dan geen download en geen container meer; de modellen blijven
 in `/opt/platform/modellen` tot je die map zelf weggooit. Zet je hem uit nadat hij aan stond, dan
 verdwijnen de schakelaars bij Account → Foto's, en zeggen `/beheer` en `/zoeken` dat het op deze
-server uit staat en hoe het weer aan gaat. Terug naar 0.8.0 (hierboven) gaat ook met de analyse aan: het script van
-0.8.0 haalt de container weg, en de modellen, de sleutels en `.env` blijven; weer vooruit wordt er
-niets opnieuw gehaald. Meer, ook wat elke melding betekent: `docs/runbooks/analyse.md`.
+server uit staat en hoe het weer aan gaat. Terug naar 0.8.0 (hierboven) gaat ook met de analyse
+aan: het script van 0.8.0 haalt de container weg, en de modellen, de sleutels en `.env` blijven;
+weer vooruit wordt er niets opnieuw gehaald. Meer, ook wat elke melding betekent:
+`docs/runbooks/analyse.md`.
 
 ## 2FA kwijt
 

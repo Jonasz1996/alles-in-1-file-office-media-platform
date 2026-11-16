@@ -66,9 +66,9 @@ vragen zijn sneller.
 - **Zoeken op beeld** (0.8.1): een zin als "hond op het strand", of **Meer zoals deze** vanuit een
   foto. In CI haalde het model de kwaliteitspoorten van Keuze 85 (op `dc5dfe5`: van de eerste vijf
   foto's bij een Nederlandse vraag klopten er gemiddeld 0,692, poort 0,6; "Meer zoals deze" 0,475,
-  ondergrens 0,40; [x3b.md](x3b.md)). Eén foto verwerken voor de beeldindex kostte 33,8 ms op één core (grens 120 ms) en
-  het model-deel van een vraag p95 22,2 ms (op `e535332`). Het geheel onder belasting, met alles
-  aan: ⟦I2: de p95 van zoeken op beeld uit M13 (§4.5 stap 2 met de analyse, `zoek_samen --analyse`)⟧, grens 250 ms ([metingen.md](metingen.md)).
+  ondergrens 0,40; [x3b.md](x3b.md)). Eén foto verwerken voor de beeldindex kostte 33,8 ms op
+  één core (grens 120 ms) en het model-deel van een vraag p95 22,2 ms (op `e535332`). Het geheel
+  onder belasting, met alles aan: ⟦I2: de p95 van zoeken op beeld uit M13 (§4.5 stap 2 met de analyse, `zoek_samen --analyse`)⟧, grens 250 ms ([metingen.md](metingen.md)).
 - **De tekst uit documenten** (PDF, docx, xlsx, pptx, txt, md) is doorzoekbaar. Het lezen op de
   achtergrond moet minstens 1.000 documenten per minuut halen op één core; gemeten
   1.977 per minuut (M2).
