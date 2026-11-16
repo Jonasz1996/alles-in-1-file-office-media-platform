@@ -1451,6 +1451,7 @@ class NepCommons:
         self.duim: dict[int, bytes] = {}  # de thumbnails van DUIM_BREEDTE breed
         self.weg = lambda q: False
         self.druk = lambda q: None
+        self.tl_later: set[int] = set()  # bestanden waarvan de sjablonen pas na tlcontinue komen
         rnd = random.Random(seed)
         pid = 1000
 
@@ -1462,6 +1463,11 @@ class NepCommons:
                 "P180": set(p180),
                 "P275": {"Q6938433"},
                 "P6216": set(),
+                "P31": set(),
+                "P7482": set(),
+                "prominent": set(),  # de P180's met rang preferred
+                "eigen": set(),  # P6243, P195, P217: alleen of er een uitspraak is
+                "sjablonen": set(),
                 "mime": "image/jpeg",
                 "breedte": 1600,
                 "hoogte": 1200,
@@ -1516,8 +1522,10 @@ class NepCommons:
             return None
         if q.get("list") == "search":
             return self._zoek(q)
-        if q.get("prop") == "imageinfo":
+        props = q.get("prop", "").split("|")
+        if "imageinfo" in props:
             pages = []
+            doc: dict = {}
             for i in map(int, q["pageids"].split("|")):
                 d = self.bestanden[i]
                 info = {
@@ -1537,17 +1545,40 @@ class NepCommons:
                     else:
                         info["thumburl"] = info["url"]
                         info["thumbwidth"], info["thumbheight"] = d["breedte"], d["hoogte"]
-                pages.append({"pageid": i, "imageinfo": [info]})
-            return {"query": {"pages": pages}}
+                pagina = {"pageid": i, "imageinfo": [info]}
+                # prop=templates: alleen de gevraagde (tltemplates), zoals MediaWiki; van een
+                # bestand in self.tl_later komen ze pas na tlcontinue
+                if "templates" in props:
+                    if i in self.tl_later:
+                        doc["continue"] = {"tlcontinue": f"{i}|10|Artwork", "continue": "||"}
+                    else:
+                        wil = set(q.get("tltemplates", "").split("|"))
+                        pagina["templates"] = [
+                            {"ns": 10, "title": t} for t in sorted(d["sjablonen"] & wil)
+                        ]
+                pages.append(pagina)
+            doc["query"] = {"pages": pages}
+            return doc
         if q.get("action") == "wbgetentities":
             ent = {}
             for m in q["ids"].split("|"):
                 d = self.bestanden[int(m[1:])]
                 st = {}
-                for p in ("P180", "P275", "P6216"):
+                for p in ("P180", "P275", "P6216", "P31", "P7482"):
                     st[p] = [
-                        {"mainsnak": {"snaktype": "value", "datavalue": {"value": {"id": v}}}}
+                        {
+                            "mainsnak": {"snaktype": "value", "datavalue": {"value": {"id": v}}},
+                            "rank": "preferred" if v in d["prominent"] else "normal",
+                        }
                         for v in sorted(d[p])
+                    ]
+                for p in sorted(d["eigen"]):
+                    waarde = "SK-A-1" if p == "P217" else {"id": "Q190804"}
+                    st[p] = [
+                        {
+                            "mainsnak": {"snaktype": "value", "datavalue": {"value": waarde}},
+                            "rank": "normal",
+                        }
                     ]
                 ent[m] = {"id": m, "statements": st}
             return {"entities": ent}

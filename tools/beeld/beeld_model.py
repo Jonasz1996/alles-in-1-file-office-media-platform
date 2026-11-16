@@ -11,7 +11,8 @@ een contact mee.
     beeld_model.py bron     --werk W --lock L     de vijf bronbestanden van SigLIP 2 (BZ2)
     beeld_model.py vergelijk --werk W --lock L    twee omzettingen (en die met --fp32) en
                                                   models.lock (BZ2)
-    beeld_model.py set      --werk W --set S      de 120 foto's van Keuze 83 (BZ4)
+    beeld_model.py set      --werk W --set S      de 120 foto's van Keuze 83 (BZ4); --niet N:
+                                                  de foto's die een voorstel nooit neemt
     beeld_model.py uitslag  --werk W              rood zolang er een voorstel ligt
 
 De map W (in CI $RUNNER_TEMP/beeld) houdt alles bij elkaar: bron/, uit1/, uit2/, uitfp32/, set/,
@@ -32,14 +33,17 @@ Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor u
 gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op,
 elk als thumbnail van de vaste breedte DUIM_BREEDTE (1280 px), niet als origineel. Met beeld.tsv
 haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache op de sha256
-van beeld.tsv). Van thumb.wikimedia.org (de thumbnails) en upload.wikimedia.org (de originelen,
-en oude URL's van thumbnails) elk gemiddeld hooguit BANDBREEDTE, altijd als JPEG (ACCEPT), van de
-API van Commons hooguit één vraag per PAUZE_API_S (de grens zonder contact), en Retry-After altijd
-gevolgd (de robotregels van Wikimedia). Een omleiding van Commons volgt hij alleen naar een host
-van Commons (_Omleiding). `uitslag` faalt met "models.lock mist de regels van
-SigLIP" en "beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit
-de job zelf, en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de
-container ze als ontbrekend).
+van beeld.tsv). Een voorstel neemt eerst foto's zonder teken van een kunstwerk, een collectie of
+een persoon (de eerste keus) en vult pas daarna aan met de rest (de tweede keus; _tweede_keus),
+en nooit een foto uit api/tests/analyse/sets/beeld_niet.tsv (een mens wees hem af; lees_niet);
+met beeld.tsv is een foto uit die lijst een fout. Van thumb.wikimedia.org (de thumbnails) en
+upload.wikimedia.org (de originelen, en oude URL's van thumbnails) elk gemiddeld hooguit
+BANDBREEDTE, altijd als JPEG (ACCEPT), van de API van Commons hooguit één vraag per PAUZE_API_S
+(de grens zonder contact), en Retry-After altijd gevolgd (de robotregels van Wikimedia). Een
+omleiding van Commons volgt hij alleen naar een host van Commons (_Omleiding). `uitslag` faalt
+met "models.lock mist de regels van SigLIP" en "beeld.tsv ontbreekt" zolang er een voorstel
+ligt; een mens zet de regels erin, nooit de job zelf, en die van SigLIP pas samen met X3b (de
+stap BEELD van install.sh; anders meldt de container ze als ontbrekend).
 
 Codes: 0 goed, 1 fout, 3 voorstel geschreven (de job gaat door, `uitslag` maakt hem rood).
 """
@@ -68,6 +72,7 @@ API = ROOT / "api"
 LOCK = API / "app" / "analyse" / "models.lock"
 SET = API / "tests" / "analyse" / "sets" / "beeld.tsv"
 VRAGEN = API / "tests" / "analyse" / "sets" / "beeld_vragen.tsv"
+NIET = API / "tests" / "analyse" / "sets" / "beeld_niet.tsv"  # lees_niet
 
 UA = "beeld-model-meting/1.0 (CI van een zelf-gehost fotoplatform)"
 # Optioneel en standaard uit: een contact in de User-Agent, in de vorm van de richtlijn van
@@ -157,6 +162,57 @@ RESERVE_COMBIS = (
     ("hond", "sneeuw"),
     ("hond", "bos"),
 )
+# De eerste keus van een voorstel (_tweede_keus; x3a.md, "De set strenger"). Het voorstel op
+# 3a9b07d had 34 bestanden van het Metropolitan Museum, schilderijen, prenten en foto's van mensen
+# zonder P180 = mens (set-review van run 43816803103). Geen nieuwe harde regel: een kandidaat met
+# zo'n teken is tweede keus, en vult een zoekopdracht pas aan als de eerste keus op is, zodat er
+# nooit een tekort bij komt (een tekort maakt set rood, en dan draait BZ4 niet).
+# Alles uit gegevens die de tool al vraagt: de uitspraken uit wbgetentities en de sjablonen uit
+# dezelfde vraag als imageinfo (details).
+# - Een kunstwerk: een uitspraak op P6243 (digital representation of), een P31 uit KUNSTWERK_P31,
+#   of het sjabloon Artwork of Art Photo (de uploads van musea);
+# - een collectie: een uitspraak op P195 (collection) of P217 (inventory number);
+# - een persoon (naast P180 = mens, dat altijd afvalt): een P180 uit PERSOON_P180, of het sjabloon
+#   Personality rights (de uploader zegt zelf dat er herkenbare mensen op staan).
+# Binnen de eerste en binnen de tweede keus eerst een kandidaat waarop de categorie van de
+# zoekopdracht prominent is (P180 met rang preferred), dan eigen werk (P7482 = EIGEN_WERK), en
+# verder de volgorde van Commons (_voorkeur).
+KUNSTWERK_EIGENSCHAPPEN = ("P6243",)
+COLLECTIE = ("P195", "P217")
+# De ids hieronder komen uit het geheugen en zijn niet nagekeken: www.wikidata.org is vanaf hier
+# niet te bereiken, en is geen host van de tool (geen toestemming om hem te vragen). Een verkeerd id
+# kan de voorkeur alleen zwakker maken: het maakt hooguit een foto met dat id tweede keus, en sluit
+# nooit iets uit (de tweede keus vult aan). Een foto (Q125191) staat er bewust niet in
+KUNSTWERK_P31 = {
+    "Q3305213": "schilderij",
+    "Q93184": "tekening",
+    "Q11060274": "prent",
+    "Q860861": "beeldhouwwerk",
+    "Q838948": "kunstwerk",
+    "Q4502142": "beeldend kunstwerk",
+    "Q192425": "ansichtkaart",
+}
+PERSOON_P180 = {
+    "Q215627": "persoon",
+    "Q8441": "man",
+    "Q467": "vrouw",
+    "Q7569": "kind",
+    "Q3010": "jongen",
+    "Q3031": "meisje",
+    "Q2472587": "mensen",
+    "Q16334295": "groep mensen",
+    "Q134307": "portret",
+    "Q639669": "muzikant",
+    "Q855091": "gitarist",
+    "Q177220": "zanger",
+}
+# De sjablonen die details opvraagt, met waar ze een teken van zijn
+SJABLONEN = {
+    "Template:Artwork": "kunstwerk",
+    "Template:Art Photo": "kunstwerk",
+    "Template:Personality rights": "persoon",
+}
+EIGEN_WERK = "Q66458942"  # P7482 (source of file): original creation by uploader
 LICENTIES = {"CC0": "P275=Q6938433", "publiek domein": "P6216=Q19652"}
 PER_CATEGORIE = 5
 PER_ANDER = 5
@@ -1142,23 +1198,36 @@ def zoek(srsearch: str, offset: int) -> tuple[list[int], int | None]:
 def details(pageids: list[int]) -> dict[int, dict]:
     """Per pageid: url, bytes, maten, mime en de bestandspagina van het origineel, de url en de
     maten van de thumbnail van DUIM_BREEDTE breed (iiurlwidth), plus wat de gestructureerde
-    gegevens zeggen (P180, P275, P6216)."""
+    gegevens zeggen (P180, P275, P6216; voor de eerste keus ook P31, P7482, de rang van P180 en of
+    er een uitspraak is op P6243, P195 of P217) en welke SJABLONEN de bestandspagina gebruikt.
+
+    Twee vragen, zoals altijd: imageinfo en wbgetentities. De sjablonen komen mee in de eerste
+    (prop=imageinfo|templates, met tltemplates alleen SJABLONEN): geen vraag erbij. wbgetentities
+    gaf altijd al de hele MediaInfo (elke uitspraak met zijn rang); de tool las er alleen minder
+    van. Geeft de API de sjablonen niet in één keer (tlcontinue; met 50 pagina's en drie
+    sjablonen hooguit 150 van de 500), dan zijn ze voor die pagina's onbekend: sjablonen_heel
+    False, en dan is geen van die kandidaten eerste keus (_tweede_keus)."""
     if not pageids:
         return {}
     q = {
         "action": "query",
         "format": "json",
         "formatversion": "2",
-        "prop": "imageinfo",
+        "prop": "imageinfo|templates",
         "iiprop": "url|size|mime",
         "iiurlwidth": str(DUIM_BREEDTE),
+        "tltemplates": "|".join(SJABLONEN),
+        "tllimit": "max",
         "pageids": "|".join(map(str, pageids)),
     }
     doc = json_van(f"{COMMONS}?{urllib.parse.urlencode(q)}")
+    verder = doc.get("continue")
+    heel = not (isinstance(verder, dict) and "tlcontinue" in verder)
     uit: dict[int, dict] = {}
     for p in (doc.get("query") or {}).get("pages") or []:
         info = (p.get("imageinfo") or [None])[0]
         if isinstance(info, dict):
+            sjablonen = {t.get("title") for t in p.get("templates") or [] if isinstance(t, dict)}
             uit[int(p["pageid"])] = {
                 "url": info.get("url"),
                 "bytes": info.get("size"),
@@ -1169,6 +1238,8 @@ def details(pageids: list[int]) -> dict[int, dict]:
                 "duim": info.get("thumburl"),
                 "duim_breedte": info.get("thumbwidth"),
                 "duim_hoogte": info.get("thumbheight"),
+                "sjablonen": sjablonen & set(SJABLONEN),
+                "sjablonen_heel": heel,
             }
     q = {"action": "wbgetentities", "format": "json", "ids": "|".join(f"M{i}" for i in uit)}
     ent = json_van(f"{COMMONS}?{urllib.parse.urlencode(q)}").get("entities") or {}
@@ -1177,20 +1248,39 @@ def details(pageids: list[int]) -> dict[int, dict]:
         uitspraken = e.get("statements") or e.get("claims") or {}
         if not isinstance(uitspraken, dict):
             uitspraken = {}
-        for eigenschap in ("P180", "P275", "P6216"):
+        for eigenschap in ("P180", "P275", "P6216", "P31", "P7482"):
             d[eigenschap] = _waarden(uitspraken.get(eigenschap))
+        d["P180_prominent"] = _waarden(uitspraken.get("P180"), rang="preferred")
+        d["P180_aantal"] = _aantal(uitspraken.get("P180"))
+        d["aanwezig"] = {p for p in (*KUNSTWERK_EIGENSCHAPPEN, *COLLECTIE) if uitspraken.get(p)}
     return uit
 
 
-def _waarden(lijst: object) -> set[str]:
+def _waarden(lijst: object, *, rang: str | None = None) -> set[str]:
+    """De ids van de uitspraken met een waarde; met rang alleen die met die rang ("preferred":
+    "mark as prominent" op Commons)."""
     uit = set()
     for s in lijst if isinstance(lijst, list) else []:
         try:
+            if rang is not None and s.get("rank") != rang:
+                continue
             if s["mainsnak"]["snaktype"] == "value":
                 uit.add(s["mainsnak"]["datavalue"]["value"]["id"])
-        except (KeyError, TypeError):
+        except (AttributeError, KeyError, TypeError):
             continue
     return uit
+
+
+def _aantal(lijst: object) -> int:
+    """Hoeveel uitspraken met een waarde (voor het bewijs: een lange lijst P180 komt vaak van
+    trefwoorden van een museum)."""
+    n = 0
+    for s in lijst if isinstance(lijst, list) else []:
+        try:
+            n += s["mainsnak"]["snaktype"] == "value"
+        except (KeyError, TypeError):
+            continue
+    return n
 
 
 def _licentie(d: dict) -> str | None:
@@ -1321,11 +1411,12 @@ def _bruikbaar(d: dict) -> bool:
 MAX_REDENEN = 4  # zoveel redenen hooguit in een regel van een tekort
 
 
-def _afgevallen(redenen: dict[str, int]) -> str:
+def _afgevallen(redenen: dict[str, int], woord: str = "afgevallen") -> str:
     """Wat er afviel, voor de regel van een tekort: "; afgevallen: 371 thumbnail op een andere
     host (thumb.wikimedia.org), 29 te klein". De MAX_REDENEN redenen die het vaakst voorkwamen,
     de meeste eerst (bij een gelijk aantal op de tekst), en de rest samen als "N om een andere
-    reden"; leeg als er niets afviel."""
+    reden"; leeg als er niets afviel. woord: wat ervoor staat ("geen eerste keus" voor de redenen
+    van TWEEDE_KEUS)."""
     if not redenen:
         return ""
     rij = sorted(redenen.items(), key=lambda r: (-r[1], r[0]))
@@ -1333,25 +1424,97 @@ def _afgevallen(redenen: dict[str, int]) -> str:
     rest = sum(n for _, n in rij[MAX_REDENEN:])
     if rest:
         delen.append(f"{rest} om een andere reden")
-    return "; afgevallen: " + ", ".join(delen)
+    return f"; {woord}: " + ", ".join(delen)
+
+
+# Waarom een bruikbare kandidaat tweede keus is (_tweede_keus), de eerste die geldt, in deze
+# volgorde. "sjablonen onvolledig": de API gaf de sjablonen niet in één keer (details)
+TWEEDE_KEUS = ("kunstwerk", "collectie", "persoon", "sjablonen onvolledig")
+
+
+def _kenmerken(d: dict) -> dict[str, list[str]]:
+    """Per teken (kunstwerk, collectie, persoon) waar het uit blijkt, in een vaste volgorde: de
+    eigenschap ("P6243", "P195"), de waarde ("P31 Q3305213", "P180 Q8441") of het sjabloon
+    ("Artwork"). Alleen namen en ids uit de vaste lijsten van de tool, nooit tekst van Commons.
+    Een veld dat ontbreekt (een kandidaat van vóór deze velden), telt als niets."""
+    aanwezig = d.get("aanwezig") or set()
+    sjablonen = sorted(d.get("sjablonen") or set())
+    uit: dict[str, list[str]] = {
+        "kunstwerk": [p for p in KUNSTWERK_EIGENSCHAPPEN if p in aanwezig],
+        "collectie": [p for p in COLLECTIE if p in aanwezig],
+        "persoon": [],
+    }
+    uit["kunstwerk"] += [f"P31 {q}" for q in sorted((d.get("P31") or set()) & set(KUNSTWERK_P31))]
+    uit["persoon"] += [f"P180 {q}" for q in sorted((d.get("P180") or set()) & set(PERSOON_P180))]
+    for titel in sjablonen:
+        uit[SJABLONEN[titel]].append(titel.removeprefix("Template:"))
+    return uit
+
+
+def _tweede_keus(d: dict) -> str | None:
+    """Waarom een bruikbare kandidaat tweede keus is (een van TWEEDE_KEUS), of None: eerste
+    keus. Nooit een reden om af te vallen: een tweede keus vult aan (stel_voor)."""
+    kenmerken = _kenmerken(d)
+    for reden in ("kunstwerk", "collectie", "persoon"):
+        if kenmerken[reden]:
+            return reden
+    if d.get("sjablonen_heel") is False:
+        return "sjablonen onvolledig"
+    return None
+
+
+def _prominent(d: dict, qids: tuple[str, ...]) -> int:
+    """Hoeveel van de qids van de zoekopdracht prominent zijn: P180 met rang preferred."""
+    prominent = d.get("P180_prominent") or set()
+    return sum(1 for q in qids if q in prominent)
+
+
+def _voorkeur(d: dict, qids: tuple[str, ...]) -> tuple[int, bool]:
+    """De volgorde binnen de eerste of de tweede keus: eerst meer qids prominent, dan eigen werk.
+    Verder de volgorde van Commons (sorted is stabiel; _kandidaten)."""
+    return (-_prominent(d, qids), EIGEN_WERK not in (d.get("P7482") or set()))
+
+
+def _bewijs(d: dict, qids: tuple[str, ...], eerste: bool) -> str:
+    """Wat het log per gekozen foto zegt (stel_voor): eerste of tweede keus, en de tekens, met
+    waar ze uit blijken. Bijvoorbeeld "tweede keus; kunstwerk ja (P6243, Artwork), collectie ja
+    (P195), persoon nee, eigen werk nee, prominent nee, P180 14"."""
+    kenmerken = _kenmerken(d)
+    delen = []
+    for naam in ("kunstwerk", "collectie", "persoon"):
+        bron_ = kenmerken[naam]
+        delen.append(f"{naam} ja ({', '.join(bron_)})" if bron_ else f"{naam} nee")
+    delen.append(f"eigen werk {'ja' if EIGEN_WERK in (d.get('P7482') or set()) else 'nee'}")
+    n = _prominent(d, qids)
+    prominent = "nee" if n == 0 else "ja" if n == len(qids) else f"{n} van {len(qids)}"
+    delen.append(f"prominent {prominent}")
+    delen.append(f"P180 {d.get('P180_aantal', len(d.get('P180') or ()))}")
+    if d.get("sjablonen_heel") is False:
+        delen.append("sjablonen onvolledig")
+    return f"{'eerste' if eerste else 'tweede'} keus; {', '.join(delen)}"
 
 
 # Hoeveel vragen een voorstel aan de API doet, en dus hoe lang het duurt op PAUZE_API_S (8 s).
 # Per zoekopdracht (een combinatie van beeld_vragen.tsv, een categorie of een ander onderwerp) en
-# per pagina van 50 drie vragen: zoek, imageinfo en wbgetentities (details); een lege pagina één.
-# Een zoekopdracht stopt zodra hij genoeg heeft, een combinatie na de eerste bruikbare foto, de
-# rest na vijf, meestal op de eerste pagina van de eerste licentie (soms een pagina meer: de
-# volgende pagina komt binnen voordat de lus ziet dat hij klaar is). Met 6 combinaties, 12
-# categorieën en 12 andere onderwerpen zijn dat minstens 30 × 3 = 90 vragen, 12 minuten; met een
-# paar tekorten of tweede pagina's ±150 tot 200, 20 tot 27 minuten. Hooguit 2 licenties ×
+# per pagina van 50 drie vragen: zoek, imageinfo (met de sjablonen) en wbgetentities (details);
+# een lege pagina één. Een zoekopdracht stopt na de pagina waarop hij genoeg eerste keus heeft
+# (_tweede_keus), een combinatie na één, de rest na vijf, meestal op de eerste pagina van de
+# eerste licentie. Pas als de eerste keus op de pagina's tot dan te weinig is, leest hij de
+# volgende pagina, tot het uiterste van vroeger (2 licenties × max_pagina), en vult hij daarna aan
+# met de tweede keus van alle pagina's die hij las: elke extra pagina is 3 vragen, maar nooit een
+# pagina meer dan het uiterste, en een tekort alleen als vroeger ook. Vóór de eerste keus las hij
+# soms een pagina meer (die kwam binnen voordat de lus zag dat hij klaar was); nu niet meer. Met 6
+# combinaties, 12 categorieën en 12 andere onderwerpen zijn dat minstens 30 × 3 = 90 vragen, 12
+# minuten (met contact 1,5 minuut); met tweede pagina's of tekorten meer. Hooguit 2 licenties ×
 # max_pagina (4) × 3 = 24 per zoekopdracht, 720 samen, plus de reserves alleen bij een tekort (5
-# paren, de eerste pagina per licentie: 30): 750 vragen, 100 minuten. Dat uiterste wil zeggen dat
-# Commons bijna niets bruikbaars heeft, en dan is de set toch rood. De 120 thumbnails (PAUZE_S en
-# BANDBREEDTE) lopen grotendeels door in de pauzes van de API. Of het past in timeout-minutes van
-# de job beeld-model: zie de opmerking daar in ci.yml
-def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
-    """Bestanden die alle qids afbeelden, met CC0 of publiek domein, zonder mens; per licentie
-    tot max_pagina pagina's van 50."""
+# paren, de eerste pagina per licentie: 30): 750 vragen, 100 minuten zonder contact, 12,5 met
+# contact (PAUZE_S; zo draait de CI). De 120 thumbnails (PAUZE_S en BANDBREEDTE) lopen grotendeels
+# door in de pauzes van de API. Of het past in timeout-minutes van de job beeld-model: zie de
+# opmerking daar in ci.yml
+def _paginas(qids: tuple[str, ...], *, max_pagina: int = 4):
+    """Per pagina van 50 de bestanden die alle qids afbeelden, met CC0 of publiek domein, zonder
+    mens, op pageid; per licentie tot max_pagina pagina's. Een pagina komt pas als de vorige op is
+    (elke pagina is 3 vragen; zie hierboven)."""
     for lic in LICENTIES.values():
         zoekterm = " ".join(
             [*(f"haswbstatement:P180={q}" for q in qids), f"haswbstatement:{lic}"]
@@ -1362,7 +1525,13 @@ def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
             if offset is None:
                 break
             ids, offset = zoek(zoekterm, offset)
-            yield from sorted(details(ids).items())
+            yield sorted(details(ids).items())
+
+
+def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
+    """De bestanden van _paginas na elkaar (de reserves)."""
+    for pagina in _paginas(qids, max_pagina=max_pagina):
+        yield from pagina
 
 
 class Voortgang:
@@ -1445,6 +1614,13 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
     """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download): van
     elke foto de thumbnail van DUIM_BREEDTE breed (_duim), nooit een groot origineel.
 
+    Per zoekopdracht eerst de eerste keus (_tweede_keus None), pagina voor pagina, en pas als die
+    op is (tot het uiterste van _paginas) de tweede keus van alle pagina's die hij las; binnen elk
+    van de twee op _voorkeur. Zo komt er door de voorkeur nooit een tekort bij: een kandidaat die
+    vroeger bruikbaar was, is het nog. Het log (niet het blok) zegt per zoekopdracht hoeveel er
+    tweede keus waren en waarom ("geen eerste keus: ..."), en per gekozen foto het bewijs
+    (_bewijs); het blok één regel met alle tweede keus samen, als die er was.
+
     Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten en waarom
     ze afvielen (_afgevallen) in het blok, en pas daarna volgt de fout. Zo laat één run alles zien
     wat Commons niet heeft, en waarom."""
@@ -1455,14 +1631,17 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
     gebruikt: set[int] = set()
     tekort: list[str] = []
     combi_tekort = False
+    tweede_keus: dict[str, int] = {}  # per zoekopdracht hoeveel er tweede keus waren
 
-    def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...]) -> None:
+    def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...], bewijs: str) -> None:
         doel = werk.set / f"{sleutel}.jpg"
         url, grootte = _duim(d)
         sha, n = voortgang.haal(url, doel, max_bytes=MAX_FOTO, grootte=grootte)
         gekozen.append(Foto(sleutel, cats, _licentie(d), sha, n, url, d["bron"]))
         gebruikt.add(pageid)
         voortgang.klaar = len(gekozen)
+        # Alleen in het log: niet in het blok, en niet in beeld.tsv (die houdt zijn 7 kolommen)
+        print(f"BZ4 set: bewijs {sleutel}: {bewijs}", flush=True)
 
     def cats_van(d: dict, hoofd: tuple[str, ...]) -> tuple[str, ...]:
         rest = [c for c, q in CATEGORIEEN.items() if q in d["P180"] and c not in hoofd]
@@ -1483,16 +1662,77 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
         redenen[reden] = redenen.get(reden, 0) + 1
         return True
 
+    def zoek_en_neem(naam: str, qids: tuple[str, ...], nodig: int, plaats, *, anders=False):
+        """Tot nodig foto's voor één zoekopdracht (naam in het log), elk meteen opgehaald;
+        plaats(nr, d) geeft de sleutel en de categorieën van de nr-de. Geeft (genomen, bekeken,
+        redenen): de kandidaten die het voorstel bekeek en waarom ze afvielen (REDENEN), voor de
+        regel van een tekort.
+
+        Een kandidaat van de tweede keus die op een volgende pagina terugkomt (onder de andere
+        licentie), telt daar als "al gekozen": bij een tekort neemt hij hem altijd, zoals vroeger
+        bij de eerste keer."""
+        genomen = gezien = paginas = n_tweede = 0
+        redenen: dict[str, int] = {}
+        geen_eerste: dict[str, int] = {}  # waarom, per kandidaat van de tweede keus
+        tweede: list[tuple[int, dict]] = []
+        in_tweede: set[int] = set()
+
+        def neem_uit(rij: list[tuple[int, dict]], eerste: bool) -> None:
+            nonlocal genomen, n_tweede
+            rij.sort(key=lambda r: _voorkeur(r[1], qids))
+            for pageid, d in rij[: nodig - genomen]:
+                genomen += 1
+                n_tweede += not eerste
+                sleutel, cats = plaats(genomen, d)
+                neem(pageid, d, sleutel, cats, _bewijs(d, qids, eerste))
+
+        if nodig <= 0:
+            return 0, 0, redenen
+        for pagina in _paginas(qids):
+            paginas += 1
+            eerste: list[tuple[int, dict]] = []
+            for pageid, d in pagina:
+                gezien += 1
+                if pageid in in_tweede:
+                    redenen["al gekozen"] = redenen.get("al gekozen", 0) + 1
+                    continue
+                if afval(pageid, d, redenen, anders=anders):
+                    continue
+                reden = _tweede_keus(d)
+                if reden is None:
+                    eerste.append((pageid, d))
+                else:
+                    tweede.append((pageid, d))
+                    in_tweede.add(pageid)
+                    geen_eerste[reden] = geen_eerste.get(reden, 0) + 1
+            neem_uit(eerste, True)
+            if genomen >= nodig:
+                break
+        else:
+            neem_uit(tweede, False)
+        if n_tweede:
+            tweede_keus[naam] = n_tweede
+        # Alleen in het log: per zoekopdracht hoeveel tweede keus, en waarom de bruikbare
+        # kandidaten op de gelezen pagina's geen eerste keus waren
+        op = f"{paginas} pagina" if paginas == 1 else f"{paginas} pagina's"
+        print(
+            f"BZ4 set: {naam}: {genomen} van {nodig} gekozen, {n_tweede} tweede keus ({gezien} "
+            f"kandidaten bekeken op {op}{_afgevallen(geen_eerste, 'geen eerste keus')})",
+            flush=True,
+        )
+        return genomen, gezien, redenen
+
     hoofd_telt = dict.fromkeys(CATEGORIEEN, 0)
     for a, b in combis:
-        gezien = 0
-        redenen: dict[str, int] = {}
-        for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b])):
-            gezien += 1
-            if not afval(pageid, d, redenen):
-                neem(pageid, d, f"{a}+{b}", cats_van(d, (a, b)))
-                hoofd_telt[a] += 1
-                break
+
+        def combi(_nr: int, d: dict, a=a, b=b) -> tuple[str, tuple[str, ...]]:
+            return f"{a}+{b}", cats_van(d, (a, b))
+
+        genomen, gezien, redenen = zoek_en_neem(
+            f"{a}+{b}", (CATEGORIEEN[a], CATEGORIEEN[b]), 1, combi
+        )
+        if genomen:
+            hoofd_telt[a] += 1
         else:
             combi_tekort = True
             tekort.append(
@@ -1500,16 +1740,14 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
                 f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
             )
     for naam, qid in CATEGORIEEN.items():
-        nr = gezien = 0
-        redenen = {}
-        for pageid, d in _kandidaten((qid,)):
-            if hoofd_telt[naam] >= PER_CATEGORIE:
-                break
-            gezien += 1
-            if not afval(pageid, d, redenen):
-                nr += 1
-                neem(pageid, d, f"{naam}-{nr}", cats_van(d, (naam,)))
-                hoofd_telt[naam] += 1
+
+        def categorie(nr: int, d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
+            return f"{naam}-{nr}", cats_van(d, (naam,))
+
+        genomen, gezien, redenen = zoek_en_neem(
+            naam, (qid,), PER_CATEGORIE - hoofd_telt[naam], categorie
+        )
+        hoofd_telt[naam] += genomen
         if hoofd_telt[naam] < PER_CATEGORIE:
             n = hoofd_telt[naam]
             tekort.append(
@@ -1517,20 +1755,22 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
                 f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
             )
     for naam, qid in ANDERE.items():
-        nr = gezien = 0
-        redenen = {}
-        for pageid, d in _kandidaten((qid,)):
-            if nr >= PER_ANDER:
-                break
-            gezien += 1
-            if not afval(pageid, d, redenen, anders=True):
-                nr += 1
-                neem(pageid, d, f"anders-{naam}-{nr}", ())
+
+        def ander(nr: int, _d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
+            return f"anders-{naam}-{nr}", ()
+
+        nr, gezien, redenen = zoek_en_neem(f"anders-{naam}", (qid,), PER_ANDER, ander, anders=True)
         if nr < PER_ANDER:
             tekort.append(
                 f"maar {nr} bruikbare foto's voor {naam} "
                 f"(anders; {gezien} bekeken{_afgevallen(redenen)})"
             )
+    if tweede_keus:
+        samen = ", ".join(f"{naam} {n}" for naam, n in tweede_keus.items())
+        werk.meld(
+            f"BZ4 set: {sum(tweede_keus.values())} tweede keus ({samen}); de eerste keus was "
+            "op; het bewijs per foto staat in het log"
+        )
     if not tekort:
         return gekozen
     # De keuze is klaar: een fout vanaf hier (ook bij het tellen van de reserves) zegt hoeveel
