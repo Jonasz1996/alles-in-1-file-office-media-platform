@@ -3,7 +3,8 @@
 
 Alleen de standaardbibliotheek; draait op de runner met `python3 -I`, nooit in het image. Alles
 wat hij ophaalt, is onvertrouwd: eerst naar een .part, dan grootte en sha256, en pas dan op zijn
-plek. De User-Agent is algemeen: geen persoon, geen e-mail, geen repository.
+plek. De User-Agent is algemeen: geen persoon, geen e-mail, geen repository. Alleen als
+BEELD_CONTACT gezet is (standaard niet; zie UA_MET_CONTACT) krijgt Wikimedia een contact mee.
 
     beeld_model.py bereik   --werk W              BZ1: per host bereikbaar of niet
     beeld_model.py bron     --werk W --lock L     de vijf bronbestanden van SigLIP 2 (BZ2)
@@ -30,8 +31,9 @@ Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor u
 gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op,
 elk als thumbnail van de vaste breedte DUIM_BREEDTE (1280 px), niet als origineel. Met beeld.tsv
 haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache op de sha256
-van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE, en Retry-After altijd
-gevolgd (de robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van
+van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE, van de API van Commons
+hooguit één vraag per PAUZE_API_S (de grens zonder contact), en Retry-After altijd gevolgd (de
+robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van
 SigLIP" en "beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit
 de job zelf, en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de
 container ze als ontbrekend).
@@ -54,7 +56,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +66,16 @@ SET = API / "tests" / "analyse" / "sets" / "beeld.tsv"
 VRAGEN = API / "tests" / "analyse" / "sets" / "beeld_vragen.tsv"
 
 UA = "beeld-model-meting/1.0 (CI van een zelf-gehost fotoplatform)"
+# Optioneel en standaard uit: een contact in de User-Agent, in de vorm van de richtlijn van
+# Wikimedia voor de User-Agent ("naam/versie (contactgegevens) ..."; een e-mailadres of een URL).
+# Alleen als de omgevingsvariabele BEELD_CONTACT gezet en niet leeg is (_zet_contact), en alleen
+# naar Commons (de API en upload), nooit naar Hugging Face. Het contact is van de eigenaar en
+# Wikimedia ziet het in elke vraag: ci.yml zet het niet, het runbook zegt hoe het met zijn
+# toestemming kan. Het log zegt alleen "contact: ja" of "contact: nee", nooit het contact zelf
+UA_MET_CONTACT = "beeld-model-meting/1.0 ({contact}; CI van een zelf-gehost fotoplatform)"
+MAX_CONTACT = 200  # tekens
+_CONTACT_URL = re.compile(r"https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:[0-9]{1,5})?(/[!-~]*)?")
+_CONTACT_MAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")
 VOORSTEL = 3
 
 REPO = "google/siglip2-base-patch32-256"
@@ -183,13 +195,57 @@ BRON_MAP = f"{omzetten.MAP}/bron"
 # --- het netwerk -------------------------------------------------------------------------------
 
 
+_contact: str | None = None  # BEELD_CONTACT als hij klopt (_zet_contact); None: zonder contact
+
+
+def _zet_contact(waarde: str | None) -> None:
+    """BEELD_CONTACT nakijken, vóór de eerste vraag. Niet gezet of leeg: zonder contact. Anders
+    streng: hooguit MAX_CONTACT tekens, alleen afdrukbare ASCII zonder ";", "(" of ")" (die
+    breken de vorm van de User-Agent), en een https://-URL of een e-mailadres. Alles anders is een
+    Fout, en dan gaat er niets weg. De fout noemt nooit de waarde zelf."""
+    global _contact
+    _contact = None
+    if not waarde:
+        return
+    if len(waarde) > MAX_CONTACT:
+        raise Fout(f"BEELD_CONTACT: langer dan {MAX_CONTACT} tekens")
+    if any(not " " <= c <= "~" or c in ";()" for c in waarde):
+        raise Fout("BEELD_CONTACT: alleen afdrukbare ASCII, zonder ; ( of )")
+    if not (_CONTACT_URL.fullmatch(waarde) or _CONTACT_MAIL.fullmatch(waarde)):
+        raise Fout("BEELD_CONTACT: geen https://-URL en geen e-mailadres")
+    _contact = waarde
+
+
+def _user_agent(url: str) -> str:
+    """UA, of met BEELD_CONTACT UA_MET_CONTACT, maar dan alleen naar Commons (_dienst)."""
+    if _contact is not None and _dienst(url) is not None:
+        return UA_MET_CONTACT.format(contact=_contact)
+    return UA
+
+
 def _vraag(url: str, *, methode: str = "GET") -> urllib.request.Request:
-    return urllib.request.Request(url, method=methode, headers={"User-Agent": UA})
+    return urllib.request.Request(url, method=methode, headers={"User-Agent": _user_agent(url)})
 
 
 # Wikimedia vraagt om vragen na elkaar en om Retry-After te volgen (API:Etiquette). Zonder pauze
 # gaf commons.wikimedia.org na ±10 s HTTP 429, ook na drie pogingen (CI-run op 26c49ca)
-PAUZE_S = 1.0  # tussen twee vragen aan Commons (de API of upload.wikimedia.org)
+PAUZE_S = 1.0  # tussen twee vragen aan upload.wikimedia.org (en aan de API met BEELD_CONTACT)
+# De API van Commons heeft sinds maart 2026 grenzen per soort client (wikitech-l, 2 maart 2026,
+# "New global API rate limits": eerst lage grenzen voor anonieme vragen, vanaf april hogere voor
+# wie zich identificeert). De getallen staan op mediawiki.org, "Wikimedia APIs/Rate limits"; die
+# pagina was vanaf hier niet te lezen. Wie haar citeert (stand november 2026): zonder
+# identificatie (alleen een IP-adres) 10 vragen per minuut, per IP; met een User-Agent volgens de
+# richtlijn (met contact: e-mail, een URL of een gebruikerspagina) 200; aangemeld meer. Een
+# oudere kopie van de pagina noemde 500 per uur zonder identificatie. Onze User-Agent heeft geen
+# contact, dus geldt 10 per minuut, en dat budget hoort bij het IP van de runner, dat ook ander
+# verkeer kan hebben. Op 3148c2f gaf de API zo vanaf de eerste vraag een 429 (Retry-After 50);
+# eerder die dag (f16ed5a, 9ebf298) kwam set met 1 vraag per seconde wel door de keuze.
+# Tussen twee vragen aan de API (elke poging telt, ook een herhaling na een 429) zit daarom
+# minstens PAUZE_API_S: met een vaste tussentijd g zitten er in een venster van 60 s hooguit
+# floor(60 / g) + 1 vragen, bij 8 s dus 8 (op 0, 8, ..., 56 s), onder de 10 met ruimte voor een
+# klok die anders telt; en in een uur hooguit 451, onder de 500. Met BEELD_CONTACT (200 per
+# minuut) is het PAUZE_S. Hoeveel vragen een voorstel doet: zie _kandidaten
+PAUZE_API_S = 8.0
 # Retry-After geldt altijd (de robotregels): na een 429 of 503 vraagt _open nooit eerder opnieuw
 # dan hij zegt. Op 9ebf298 zei upload.wikimedia.org "Retry-After 600", en de tool wachtte toen
 # hooguit 120 s: vijf keer te vroeg opnieuw. Zegt Retry-After meer dan MAX_WACHT_S, is hij niet
@@ -213,21 +269,73 @@ MAX_REGEL = 160  # tekens, alleen afdrukbare ASCII
 # Zoveel bytes van het antwoord leest hij hooguit om die tekst te vinden. De foutpagina van
 # Wikimedia is ±2,8 kB; de <p> met de reden begint na ±2,2 kB, na de css en een script
 MAX_ANTWOORD = 4096
-_vorige: dict[str, float] = {}
+_vorige: dict[str, float] = {}  # per dienst van Commons (_dienst): de laatste vraag
 _klaar: dict[str, float] = {}  # per host: wanneer de bytes tot nu toe op BANDBREEDTE binnen zijn
 _gewacht = 0.0  # seconden, samen gewacht na 429 en 5xx in dit proces (WACHT_TOTAAL_S)
 _opgehaald = 0  # bytes die haal in dit proces binnenkreeg (de voortgang van set)
+DIENSTEN = ("API", "upload")
+
+
+@dataclass
+class Teller:
+    """Per dienst van Commons, per proces: de vragen (elke poging, ook een herhaling na een 429),
+    hoe vaak het antwoord 429 of 5xx was, en wanneer elke 429 kwam (time.monotonic). Op 3148c2f
+    zei het log niet hoeveel vragen de API weigerde, en ook niet sinds wanneer."""
+
+    vragen: int = 0
+    n429: int = 0
+    n5xx: int = 0
+    momenten_429: list[float] = field(default_factory=list)
+
+
+_tellers: dict[str, Teller] = {}
+
+
+def _teller(dienst: str) -> Teller:
+    return _tellers.setdefault(dienst, Teller())
+
+
+def _dienst(url: str) -> str | None:
+    """Welke dienst van Commons een url is: "API" (COMMONS; de tool vraagt commons.wikimedia.org
+    niets anders), "upload" (UPLOAD, upload.wikimedia.org), of None voor elke andere host."""
+    if url.startswith(COMMONS):
+        return "API"
+    if url.startswith(UPLOAD):
+        return "upload"
+    return None
+
+
+def _tussen(dienst: str) -> float:
+    """De kortste tijd tussen twee vragen aan een dienst van Commons: PAUZE_API_S voor de API
+    zonder contact in de User-Agent, anders PAUZE_S."""
+    return PAUZE_API_S if dienst == "API" and _contact is None else PAUZE_S
 
 
 def _pauze(url: str) -> None:
-    """PAUZE_S tussen twee vragen aan dezelfde host van Commons; andere hosts wachten niet."""
-    if not url.startswith((COMMONS, UPLOAD)):
+    """Vóór elke vraag aan Commons, ook vóór elke nieuwe poging van _open: minstens _tussen na
+    de vorige vraag aan dezelfde dienst (de API en upload elk apart; een download loopt door in de
+    pauze van de API), en de vraag telt (Teller). Andere hosts wachten niet en tellen niet."""
+    dienst = _dienst(url)
+    if dienst is None:
         return
-    host = _host(url)
-    rest = _vorige.get(host, float("-inf")) + PAUZE_S - time.monotonic()
+    rest = _vorige.get(dienst, float("-inf")) + _tussen(dienst) - time.monotonic()
     if rest > 0:
         time.sleep(rest)
-    _vorige[host] = time.monotonic()
+    _vorige[dienst] = time.monotonic()
+    _teller(dienst).vragen += 1
+
+
+def _tel_weigering(url: str, code: int) -> None:
+    """Een 429 of 5xx van Commons telt bij zijn dienst; van een 429 ook het moment."""
+    dienst = _dienst(url)
+    if dienst is None:
+        return
+    teller = _teller(dienst)
+    if code == 429:
+        teller.n429 += 1
+        teller.momenten_429.append(time.monotonic())
+    else:
+        teller.n5xx += 1
 
 
 def _rem(url: str, n: int) -> None:
@@ -349,7 +457,9 @@ def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
     zegt: is dat meer dan MAX_WACHT_S, is hij niet te lezen, of past het wachten (ook 2 tot 32 s
     zonder Retry-After) niet meer in WACHT_TOTAAL_S, dan stopt hij meteen. Geeft hij het op na
     een 429 of 5xx, dan krijgt de HTTPError een uitleg voor het log mee (_uitleg, _reden): op
-    f16ed5a zei "HTTP 429" niet wat Wikimedia vroeg."""
+    f16ed5a zei "HTTP 429" niet wat Wikimedia vroeg. Elke poging gaat door _pauze (en telt), dus
+    ook na het wachten nooit eerder dan PAUZE_API_S na de vorige vraag aan de API; het wachten en
+    de pauze lopen samen, ze tellen niet op."""
     global _gewacht
     wacht = 2.0
     retry_after: str | None = None  # de laatste die hij zag, zoals hij binnenkwam
@@ -360,6 +470,7 @@ def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
         except urllib.error.HTTPError as e:
             if e.code != 429 and e.code < 500:
                 raise
+            _tel_weigering(url, e.code)
             if e.headers is not None and e.headers.get("Retry-After"):
                 retry_after = e.headers.get("Retry-After")
             if poging == pogingen - 1:
@@ -900,6 +1011,19 @@ def _bruikbaar(d: dict) -> bool:
         return False
 
 
+# Hoeveel vragen een voorstel aan de API doet, en dus hoe lang het duurt op PAUZE_API_S (8 s).
+# Per zoekopdracht (een combinatie van beeld_vragen.tsv, een categorie of een ander onderwerp) en
+# per pagina van 50 drie vragen: zoek, imageinfo en wbgetentities (details); een lege pagina één.
+# Een zoekopdracht stopt zodra hij genoeg heeft, een combinatie na de eerste bruikbare foto, de
+# rest na vijf, meestal op de eerste pagina van de eerste licentie (soms een pagina meer: de
+# volgende pagina komt binnen voordat de lus ziet dat hij klaar is). Met 6 combinaties, 12
+# categorieën en 12 andere onderwerpen zijn dat minstens 30 × 3 = 90 vragen, 12 minuten; met een
+# paar tekorten of tweede pagina's ±150 tot 200, 20 tot 27 minuten. Hooguit 2 licenties ×
+# max_pagina (4) × 3 = 24 per zoekopdracht, 720 samen, plus de reserves alleen bij een tekort (5
+# paren, de eerste pagina per licentie: 30): 750 vragen, 100 minuten. Dat uiterste wil zeggen dat
+# Commons bijna niets bruikbaars heeft, en dan is de set toch rood. De 120 thumbnails (PAUZE_S en
+# BANDBREEDTE) lopen grotendeels door in de pauzes van de API. Of het past in timeout-minutes van
+# de job beeld-model: zie de opmerking daar in ci.yml
 def _kandidaten(qids: tuple[str, ...], *, max_pagina: int = 4):
     """Bestanden die alle qids afbeelden, met CC0 of publiek domein, zonder mens; per licentie
     tot max_pagina pagina's van 50."""
@@ -920,7 +1044,8 @@ class Voortgang:
     """Hoe ver set kwam: in de fout ("bij foto 37 van 120, een thumbnail van 1280 px, 12,3 MB
     opgehaald"; CI op 9ebf298 zei niet hoe ver de stap was) en, als het goed ging, in de regel van
     het blok (hoeveel originelen, bytes en tijd). Of de download die misging een thumbnail of een
-    origineel was, zegt of thumbnails de 429 voorkomen (x3a.md, "Open na 9ebf298")."""
+    origineel was, zegt of thumbnails de 429 voorkomen (x3a.md, "Open na 9ebf298"). In beide
+    ook het verkeer met Commons sinds het begin van set (verkeer)."""
 
     def __init__(self, totaal: int) -> None:
         self.totaal = totaal
@@ -930,6 +1055,8 @@ class Voortgang:
         self.originelen = 0  # downloads van een origineel in plaats van een thumbnail
         self._bytes = _opgehaald
         self._begin = time.monotonic()
+        # wat de tellers al hadden: de regel zegt alleen wat set zelf vroeg
+        self._voor = {d: (_teller(d).vragen, _teller(d).n429, _teller(d).n5xx) for d in DIENSTEN}
 
     def haal(self, url: str, doel: Path, **kw) -> tuple[str, int]:
         """haal, en onthoud wat er opgehaald wordt (voor de fout) en of het een origineel was."""
@@ -945,15 +1072,41 @@ class Voortgang:
 
     def waar(self) -> str:
         if self.gekozen:
-            return f"{self.klaar} van {self.totaal} foto's opgehaald, {_mb(self.bytes())}"
+            gehaald = f"{self.klaar} van {self.totaal} foto's opgehaald, {_mb(self.bytes())}"
+            return f"{gehaald}; {self.verkeer()}"
         n = min(self.klaar + 1, self.totaal)
         soort = f", {self.bezig}" if self.bezig else ""
-        return f"bij foto {n} van {self.totaal}{soort}, {_mb(self.bytes())} opgehaald"
+        bij = f"bij foto {n} van {self.totaal}{soort}, {_mb(self.bytes())} opgehaald"
+        return f"{bij}; {self.verkeer()}"
 
     def samen(self) -> str:
         """Hoeveel originelen, bytes en tijd, voor de regel van een goede set."""
         tijd = time.monotonic() - self._begin
-        return f"{self.originelen} als origineel; {_mb(self.bytes())} in {tijd:.0f} s"
+        gehaald = f"{self.originelen} als origineel; {_mb(self.bytes())} in {tijd:.0f} s"
+        return f"{gehaald}; {self.verkeer()}"
+
+    def verkeer(self) -> str:
+        """Per dienst van Commons de vragen sinds het begin van set (elke poging telt), hoe vaak
+        het antwoord 429 was (en 5xx, als dat er waren) en na hoeveel seconden de eerste 429 kwam,
+        en dan of de User-Agent een contact had, nooit het contact zelf. Bijvoorbeeld "API: 23
+        vragen, 17 keer 429, eerste 429 na 3 s; upload: 0 vragen; contact: nee"."""
+        delen = []
+        for dienst in DIENSTEN:
+            teller = _teller(dienst)
+            vragen, n429, n5xx = self._voor[dienst]
+            n = teller.vragen - vragen
+            if not n:
+                delen.append(f"{dienst}: 0 vragen")
+                continue
+            deel = f"{dienst}: {n} {'vraag' if n == 1 else 'vragen'}, {teller.n429 - n429} keer 429"
+            if teller.n5xx > n5xx:
+                deel += f", {teller.n5xx - n5xx} keer 5xx"
+            if teller.n429 > n429:
+                eerste = teller.momenten_429[n429] - self._begin
+                deel += f", eerste 429 na {eerste:.0f} s"
+            delen.append(deel)
+        delen.append(f"contact: {'nee' if _contact is None else 'ja'}")
+        return "; ".join(delen)
 
 
 def _mb(n: int) -> str:
@@ -1061,7 +1214,14 @@ def set_tsv(fotos: list[Foto]) -> str:
 def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
     """Gaat het ophalen mis, dan zegt de fout ook hoe ver set kwam en wat hij ophaalde (een
     thumbnail of een origineel; Voortgang); in een voorstel is het totaal het doel van Keuze 83
-    (120). De regel van een goede set zegt hoeveel er als origineel kwamen, de bytes en de tijd."""
+    (120). De regel van een goede set zegt hoeveel er als origineel kwamen, de bytes en de tijd.
+    Beide zeggen ook het verkeer met Commons (Voortgang.verkeer)."""
+    # Alleen in het log, niet in het blok: het tempo, en of er een contact meegaat (nooit welk)
+    print(
+        f"BZ4 set: de API van Commons hooguit één vraag per {_tussen('API'):.0f} s, upload één "
+        f"per {PAUZE_S:.0f} s; contact: {'nee' if _contact is None else 'ja'}",
+        flush=True,
+    )
     combis = combis if combis is not None else combinaties()
     if set_pad.is_file():
         fotos = lees_set(set_pad.read_text(encoding="utf-8"), combis)
@@ -1141,6 +1301,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     werk = Werk(args.werk)
     try:
+        # Vóór de eerste vraag: een BEELD_CONTACT die niet klopt, gaat nooit weg
+        _zet_contact(os.environ.get("BEELD_CONTACT"))
         if args.stap == "bereik":
             return bereik(werk)
         if args.stap == "bron":

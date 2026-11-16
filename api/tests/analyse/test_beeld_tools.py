@@ -15,11 +15,14 @@ alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
   voor de kwaliteitstest; beeld.tsv streng nagekeken, en met beeld.tsv alleen halen wat in set/
   ontbreekt of niet klopt; een fout zegt hoe ver set kwam en of hij een thumbnail of een
   origineel ophaalde;
-- het netwerk: een pauze per host van Commons, Retry-After altijd gevolgd (te lang, niet te
-  lezen of buiten het budget: meteen stoppen), van upload gemiddeld hooguit BANDBREEDTE, en bij
-  een opgegeven 429 of 5xx de laatste Retry-After en de reden uit het antwoord in de fout (de
-  titel, de eerste <p> of de eerste regel tekst; nooit "Wikimedia Error");
-- elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository.
+- het netwerk: een pauze per dienst van Commons (de API PAUZE_API_S, 8 s, ook voor elke nieuwe
+  poging; upload PAUZE_S), Retry-After altijd gevolgd (te lang, niet te lezen of buiten het
+  budget: meteen stoppen), van upload gemiddeld hooguit BANDBREEDTE, en bij een opgegeven 429 of
+  5xx de laatste Retry-After en de reden uit het antwoord in de fout (de titel, de eerste <p> of
+  de eerste regel tekst; nooit "Wikimedia Error"); de fout en de regel van set zeggen ook hoeveel
+  vragen de API en upload kregen en hoe vaak het antwoord 429 was;
+- elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository; alleen met
+  BEELD_CONTACT (standaard uit, streng nagekeken) een contact, en dat staat nooit in het log.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import ast
 import email.utils
 import hashlib
 import importlib.util
+import itertools
 import json
 import random
 import subprocess
@@ -62,13 +66,14 @@ bm = _laad()
 class Nep:
     """Een server met vaste antwoorden per pad (zonder query), plus een eigen handler voor de API
     van Commons. vragen: (pad met query, User-Agent) van elke vraag; tijden: time.monotonic() bij
-    elke vraag (de nepklok van een test, als die er is)."""
+    elke vraag (de nepklok van een test, als die er is); codes: de status van elk antwoord."""
 
     def __init__(self) -> None:
         # (status, body) of (status, body, extra kopregels)
         self.paden: dict[str, list[tuple]] = {}
         self.vragen: list[tuple[str, str]] = []
         self.tijden: list[float] = []
+        self.codes: list[int] = []
         self.commons = None
         nep = self
 
@@ -80,8 +85,15 @@ class Nep:
                 extra: list[tuple[str, str]] = []
                 if pad == "/w/api.php" and nep.commons is not None:
                     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
-                    doc = nep.commons.antwoord(q)
-                    status, body = (404, b"weg") if doc is None else (200, json.dumps(doc).encode())
+                    druk = nep.commons.druk(q)
+                    if druk is not None:  # de API weigert deze vraag (429 of 5xx)
+                        status, body, kop = druk
+                        extra += list(kop.items())
+                    else:
+                        doc = nep.commons.antwoord(q)
+                        status, body = (
+                            (404, b"weg") if doc is None else (200, json.dumps(doc).encode())
+                        )
                 else:
                     rij = nep.paden.get(pad)
                     if not rij:
@@ -90,6 +102,7 @@ class Nep:
                         status, body, *kop = rij[0] if len(rij) == 1 else rij.pop(0)
                         for naam, waarde in kop[0].items() if kop else ():
                             extra.append((naam, waarde))
+                nep.codes.append(status)
                 self.send_response(status)
                 for naam, waarde in extra:
                     self.send_header(naam, waarde)
@@ -129,8 +142,17 @@ def nep(monkeypatch):
     # en met het hele budget voor wachten na 429 en 5xx, en de teller van de voortgang op 0
     monkeypatch.setattr(bm, "_gewacht", 0.0, raising=False)
     monkeypatch.setattr(bm, "_opgehaald", 0, raising=False)
+    # en met de tellers van het verkeer met Commons op 0
+    monkeypatch.setattr(bm, "_tellers", {}, raising=False)
     yield n
     n.sluit()
+
+
+@pytest.fixture(autouse=True)
+def _zonder_contact(monkeypatch):
+    """Elke test begint zonder BEELD_CONTACT: niet uit de omgeving, niet van een vorige test."""
+    monkeypatch.delenv("BEELD_CONTACT", raising=False)
+    monkeypatch.setattr(bm, "_contact", None, raising=False)
 
 
 @pytest.fixture
@@ -151,6 +173,53 @@ def _ua_algemeen(nep: Nep) -> None:
     for _, ua in nep.vragen:
         assert ua == bm.UA
     assert "@" not in bm.UA and "github" not in bm.UA.lower() and "/" in bm.UA
+
+
+def _verkeer(nep: Nep, *, van: int = 0, begin: float = 0.0, contact: str = "nee") -> str:
+    """Wat de fout en de regel van set over het verkeer met Commons horen te zeggen
+    (Voortgang.verkeer), uit wat de nep zelf zag vanaf nep.vragen[van]: per dienst elke vraag (ook
+    een die 429 kreeg), hoe vaak het antwoord 429 of 5xx was, en na hoeveel seconden (vanaf begin,
+    op de klok van de test) de eerste 429 kwam."""
+    delen = []
+    for dienst, voor in (("API", "/w/api.php"), ("upload", "/upload/")):
+        rij = [
+            (t, c)
+            for (p, _), t, c in zip(
+                nep.vragen[van:], nep.tijden[van:], nep.codes[van:], strict=True
+            )
+            if p.startswith(voor)
+        ]
+        if not rij:
+            delen.append(f"{dienst}: 0 vragen")
+            continue
+        n429 = [t for t, c in rij if c == 429]
+        n5xx = sum(1 for _, c in rij if c >= 500)
+        deel = (
+            f"{dienst}: {len(rij)} {'vraag' if len(rij) == 1 else 'vragen'}, {len(n429)} keer 429"
+        )
+        if n5xx:
+            deel += f", {n5xx} keer 5xx"
+        if n429:
+            deel += f", eerste 429 na {n429[0] - begin:.0f} s"
+        delen.append(deel)
+    return "; ".join([*delen, f"contact: {contact}"])
+
+
+def _api_tijden(nep: Nep) -> list[float]:
+    """Wanneer (op de klok van de test) elke vraag aan de API van Commons binnenkwam."""
+    return [
+        t for (p, _), t in zip(nep.vragen, nep.tijden, strict=True) if p.startswith("/w/api.php")
+    ]
+
+
+def _kortste(tijden: list[float]) -> float:
+    """De kortste tijd tussen twee vragen na elkaar, op een microseconde (de nepklok is float)."""
+    return round(min(b - a for a, b in itertools.pairwise(tijden)), 6)
+
+
+def _per_minuut(tijden: list[float]) -> int:
+    """Het meeste aantal vragen in een venster van 60 s (begin en eind erbij)."""
+    return max((sum(1 for u in tijden if t <= u <= t + 60.0) for t in tijden), default=0)
 
 
 # --- de tool zelf ------------------------------------------------------------------------------
@@ -506,7 +575,19 @@ def test_te_lang_of_buiten_het_budget_stopt_meteen(nep, tmp_path, monkeypatch):
     )
     assert [p for p, _ in nep.vragen].count("/upload/hond-1.jpg") == 1
     assert bm._gewacht == 400.0
-    # zonder Retry-After telt 2, 4, 8 s ook: met een budget van 10 s komt de vierde vraag niet
+    # zonder Retry-After telt 2, 4, 8 s ook: met een budget van 10 s komt de vierde vraag niet.
+    # Op een nepklok: aan de API zit tussen twee pogingen ook PAUZE_API_S, en het wachten loopt
+    # daarin mee (na 2 s wachten nog 6 s pauze, na 4 s nog 4); alleen het wachten telt in het
+    # budget
+    klok = [1000.0]
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    monkeypatch.setattr(bm, "_vorige", {})
     monkeypatch.setattr(bm, "_gewacht", 0.0)
     monkeypatch.setattr(bm, "WACHT_TOTAAL_S", 10.0, raising=False)
     slapen.clear()
@@ -517,13 +598,15 @@ def test_te_lang_of_buiten_het_budget_stopt_meteen(nep, tmp_path, monkeypatch):
         "127.0.0.1: HTTP 502 (geen Retry-After; 8 s wachten past niet in wat er over is van "
         "WACHT_TOTAAL_S (4 van 10 s), dus meteen gestopt; antwoord zonder tekst)"
     )
-    assert [p.split("?")[0] for p, _ in nep.vragen].count("/w/api.php") == 3
-    assert [s for s in slapen if s > bm.PAUZE_S] == [2.0, 4.0] and bm._gewacht == 6.0
+    assert _api_tijden(nep) == [1000.0, 1008.0, 1016.0]
+    assert slapen == [2.0, 6.0, 4.0, 4.0] and bm._gewacht == 6.0
 
 
 def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
-    """Naar de API en upload van Commons nooit twee vragen binnen PAUZE_S; andere hosts (Hugging
-    Face) wachten niet."""
+    """CI op 3148c2f: met één vraag per seconde gaf de API van Commons vanaf de eerste vraag 429
+    (Retry-After 50). Nu nooit twee vragen aan de API binnen PAUZE_API_S (8 s), aan upload binnen
+    PAUZE_S; elk op zijn eigen klok, en elke vraag telt. Andere hosts (Hugging Face) wachten niet
+    en tellen niet."""
     klok = [1000.0]
     slapen: list[float] = []
 
@@ -540,10 +623,43 @@ def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
     bm._pauze("https://commons.example/w/api.php?a=2")
     klok[0] += 0.25
     bm._pauze("https://commons.example/w/api.php?a=3")
-    bm._pauze("https://upload.example/x.jpg")  # een andere host: eigen beurt
+    bm._pauze("https://upload.example/x.jpg")  # upload: een eigen beurt, geen 8 s
+    bm._pauze("https://upload.example/y.jpg")
     bm._pauze("https://huggingface.co/x")
-    assert slapen == [bm.PAUZE_S, bm.PAUZE_S - 0.25]
-    assert bm.PAUZE_S >= 1.0
+    assert slapen == [8.0, 7.75, 1.0]
+    assert bm.PAUZE_API_S == 8.0 and bm.PAUZE_S == 1.0
+    assert bm._tellers["API"].vragen == 3 and bm._tellers["upload"].vragen == 2
+    assert set(bm._tellers) == {"API", "upload"}
+
+
+def test_elke_poging_aan_de_api_wacht_pauze_api_s(nep, monkeypatch):
+    """Ook een nieuwe poging na een 429 gaat nooit eerder dan PAUZE_API_S na de vorige vraag aan
+    de API, en nooit eerder dan Retry-After zegt: het wachten en de pauze lopen samen (3 s
+    Retry-After en dan nog 5 s pauze; 20 s Retry-After en dan geen pauze meer). Elke poging telt,
+    en van elke 429 het moment."""
+    klok = [1000.0]
+    slapen: list[float] = []
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    nep.paden["/w/api.php"] = [
+        (429, b"", {"Retry-After": "3"}),
+        (200, b"{}"),
+        (429, b"", {"Retry-After": "20"}),
+        (200, b"{}"),
+        (200, b"{}"),
+    ]
+    for _ in range(3):
+        assert bm.json_van(f"{bm.COMMONS}?action=query") == {}
+    assert _api_tijden(nep) == [1000.0, 1008.0, 1016.0, 1036.0, 1044.0]
+    assert slapen == [3.0, 5.0, 8.0, 20.0, 8.0] and bm._gewacht == 23.0
+    api = bm._tellers["API"]
+    assert (api.vragen, api.n429, api.n5xx, api.momenten_429) == (5, 2, 0, [1000.0, 1016.0])
+    assert "upload" not in bm._tellers
 
 
 ROBOT_BPS = 25_000_000 // 8  # de robotregels van Wikimedia (media): samen hooguit 25 Mbps
@@ -895,7 +1011,8 @@ class NepCommons:
     MediaWiki: van een breder origineel een eigen bestand onder /upload/thumb/ (duim), van een
     origineel dat niet breder is het origineel zelf als thumburl, en dan zijn thumbwidth en
     thumbheight de maten van het origineel (MediaWiki, ApiQueryImageInfo: "T25834 - If the URLs
-    are the same, we haven't resized it"). weg: vragen aan de API waarop de nep 404 zegt."""
+    are the same, we haven't resized it"). weg: vragen aan de API waarop de nep 404 zegt; druk:
+    (status, body, kopregels) als de API die vraag weigert (429 of 5xx), anders None."""
 
     def __init__(self, url: str, seed: int = 83) -> None:
         self.url = url
@@ -903,6 +1020,7 @@ class NepCommons:
         self.inhoud: dict[int, bytes] = {}  # de originelen
         self.duim: dict[int, bytes] = {}  # de thumbnails van DUIM_BREEDTE breed
         self.weg = lambda q: False
+        self.druk = lambda q: None
         rnd = random.Random(seed)
         pid = 1000
 
@@ -1084,12 +1202,16 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
     assert sum(1 for f in fotos if "zonsondergang" in f.categorieen) == 7  # 5 + 1 + boot
     assert len({f.url for f in fotos}) == 120
     # het voorstel staat ook in het log, regel voor regel, zodat een mens het kan overnemen; de
-    # eerste regel zegt hoeveel er van upload kwam en hoe lang dat duurde
+    # eerste regel zegt hoeveel er van upload kwam en hoe lang dat duurde, en het verkeer met
+    # Commons: een voorstel zonder tekort is 30 zoekopdrachten van elk drie vragen aan de API (zie
+    # _kandidaten)
     samen = sum(f.bytes for f in fotos)
     assert bm._opgehaald == samen
+    verkeer = "API: 90 vragen, 0 keer 429; upload: 120 vragen, 0 keer 429; contact: nee"
+    assert verkeer == _verkeer(nep)
     assert _kort(werk) == [
         f"BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
-        f"(1 als origineel; {_mb(samen)} in 0 s)",
+        f"(1 als origineel; {_mb(samen)} in 0 s; {verkeer})",
         "BZ4 voorstel voor beeld.tsv:",
         *(f"  {r}" for r in werk.voorstel_set.read_text().splitlines()),
     ]
@@ -1107,7 +1229,8 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path, monkeypatch):
     assert len(list(werk2.set.iterdir())) == 120
     assert _kort(werk2) == [
         "BZ4 set: 120 foto's kloppen met beeld.tsv (0 uit de cache, 120 van Commons, "
-        f"1 als origineel; {_mb(samen)} in 0 s)"
+        f"1 als origineel; {_mb(samen)} in 0 s; "
+        "API: 0 vragen; upload: 120 vragen, 0 keer 429; contact: nee)"
     ]
     regels = set_pad.read_text().splitlines()
     i = next(n for n, r in enumerate(regels) if r.startswith("kat-2\t"))
@@ -1160,7 +1283,8 @@ def test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt(nep, commons, werk, tmp
     samen = sum(fotos[s].bytes for s in opnieuw)
     assert _kort(werk2) == [
         "BZ4 set: 120 foto's kloppen met beeld.tsv (116 uit de cache, 4 van Commons, "
-        f"0 als origineel; {_mb(samen)} in 0 s)"
+        f"0 als origineel; {_mb(samen)} in 0 s; "
+        "API: 0 vragen; upload: 4 vragen, 0 keer 429; contact: nee)"
     ]
 
 
@@ -1196,7 +1320,9 @@ def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, common
     # hoeveel er wel kwamen, niet "bij foto ...": de keuze was klaar
     gehaald = sorted(werk.set.iterdir())
     mb = _mb(sum(p.stat().st_size for p in gehaald))
-    assert str(fout.value).endswith(f" ({len(gehaald)} van 120 foto's opgehaald, {mb})")
+    assert str(fout.value).endswith(
+        f" ({len(gehaald)} van 120 foto's opgehaald, {mb}; {_verkeer(nep)})"
+    )
     regels = _kort(werk)
     assert [r.split(" (")[0] for r in regels[:3]] == [
         "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw",
@@ -1232,7 +1358,9 @@ def test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen(
     gehaald = sorted(werk.set.iterdir())
     mb = _mb(sum(p.stat().st_size for p in gehaald))
     assert len(gehaald) == 116  # 120, min 3 van eten en 1 van gitaar
-    assert str(fout.value) == f"127.0.0.1: HTTP 404 ({len(gehaald)} van 120 foto's opgehaald, {mb})"
+    assert str(fout.value) == (
+        f"127.0.0.1: HTTP 404 ({len(gehaald)} van 120 foto's opgehaald, {mb}; {_verkeer(nep)})"
+    )
     assert [r.split(" (")[0] for r in _kort(werk)] == [
         "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw",
         "BZ4 set: Commons: maar 2 bruikbare foto's voor eten",
@@ -1262,21 +1390,26 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
     assert bm._opgehaald == samen
     assert _kort(werk)[0] == (
         "BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
-        f"(1 als origineel; {_mb(samen)} in {sum(slapen):.0f} s)"
+        f"(1 als origineel; {_mb(samen)} in {sum(slapen):.0f} s; "
+        "API: 90 vragen, 0 keer 429; upload: 120 vragen, 0 keer 429; contact: nee)"
     )
     assert sum(slapen) >= samen / bm.BANDBREEDTE
+    assert sum(slapen) >= 89 * bm.PAUZE_API_S  # 90 vragen aan de API, 8 s ertussen
     # een voorstel dat bij de 37e foto (een thumbnail) een 404 krijgt (de 36 ervoor staan er al)
     assert bm._is_duim(fotos[36].url) and bm._is_duim(fotos[49].url)
     pad = urllib.parse.urlsplit(fotos[36].url).path
     nep.paden[pad] = [(404, b"weg")]
     werk2 = bm.Werk(tmp_path / "werk2")
+    van = len(nep.vragen)
     with pytest.raises(bm.Fout) as fout:
         bm.set_(werk2, tmp_path / "geen.tsv")
     voor = sum(f.bytes for f in fotos[:36])
     assert str(fout.value) == (
         f"{fotos[36].sleutel}.jpg: HTTP 404 "
-        f"(bij foto 37 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald)"
+        f"(bij foto 37 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald; "
+        f"{_verkeer(nep, van=van)})"
     )
+    assert "; upload: 37 vragen, 0 keer 429; contact: nee)" in str(fout.value)
     assert len(list(werk2.set.iterdir())) == 36
     nep.zet(pad, (werk.set / f"{fotos[36].sleutel}.jpg").read_bytes())  # de 37e is er weer
     # een voorstel dat op het ene smalle origineel (fiets-1) de 429 van Wikimedia krijgt, met een
@@ -1285,14 +1418,17 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
     assert fotos[k].sleutel == "fiets-1"
     origineel = urllib.parse.urlsplit(fotos[k].url).path
     nep.paden[origineel] = [(429, WIKIMEDIA_429, {"Retry-After": "1000"})]
+    van, begin = len(nep.vragen), klok[0]
     with pytest.raises(bm.Fout) as fout:
         bm.set_(bm.Werk(tmp_path / "werk4"), tmp_path / "geen.tsv")
     voor = sum(f.bytes for f in fotos[:k])
     assert str(fout.value) == (
         "fiets-1.jpg: HTTP 429 (Retry-After 1000; langer dan MAX_WACHT_S (600 s), dus meteen "
         f"gestopt; antwoord: {WIKIMEDIA_REDEN}) "
-        f"(bij foto {k + 1} van 120, een origineel, {_mb(voor)} opgehaald)"
+        f"(bij foto {k + 1} van 120, een origineel, {_mb(voor)} opgehaald; "
+        f"{_verkeer(nep, van=van, begin=begin)})"
     )
+    assert f"; upload: {k + 1} vragen, 1 keer 429, eerste 429 na " in str(fout.value)
     nep.zet(origineel, (werk.set / "fiets-1.jpg").read_bytes())
     # streng: Wikimedia maakte de 50e thumbnail opnieuw, met andere bytes van dezelfde lengte
     set_pad = tmp_path / "beeld.tsv"
@@ -1305,9 +1441,229 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
     voor = sum(f.bytes for f in fotos[:50])
     assert str(fout.value).startswith(f"{fotos[49].sleutel}.jpg: sha256 ")
     assert str(fout.value).endswith(
-        f" (bij foto 50 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald)"
+        f" (bij foto 50 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald; "
+        "API: 0 vragen; upload: 50 vragen, 0 keer 429; contact: nee)"
     )
     assert fotos[49].sha256 in str(fout.value)
+
+
+def _nepklok(monkeypatch) -> tuple[list[float], list[float]]:
+    """Een nepklok die alleen door slapen verder loopt: (klok, slapen)."""
+    klok = [1000.0]
+    slapen: list[float] = []
+
+    def slaap(s: float) -> None:
+        slapen.append(s)
+        klok[0] += s
+
+    monkeypatch.setattr(bm.time, "monotonic", lambda: klok[0])
+    monkeypatch.setattr(bm.time, "sleep", slaap)
+    return klok, slapen
+
+
+def test_een_voorstel_vraagt_de_api_hooguit_8_keer_per_minuut(
+    nep, commons, werk, tmp_path, monkeypatch
+):
+    """CI op 3148c2f: zonder contact in de User-Agent staat Wikimedia van één IP 10 vragen per
+    minuut aan de API toe (zie PAUZE_API_S), en set vroeg er één per seconde. Een heel voorstel op
+    de nepklok, met af en toe een 429 (Retry-After 5, korter dan de pauze): tussen twee vragen aan
+    de API, ook een nieuwe poging, minstens 8 s, en dus in geen enkel venster van 60 s meer dan
+    8 (onder de 9, en onder de 10 van Wikimedia). De regel van set zegt hoeveel vragen en 429's
+    er waren, en na hoeveel seconden de eerste 429 kwam."""
+    _, slapen = _nepklok(monkeypatch)
+    n = [0]
+
+    def druk(q):
+        n[0] += 1
+        if n[0] % 10 == 3:  # de 3e, 13e, ..., 93e vraag aan de API
+            return 429, b"<title>Too many requests</title>", {"Retry-After": "5"}
+        return None
+
+    commons.druk = druk
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    assert len(bm.lees_set(werk.voorstel_set.read_text())) == 120
+    tijden = _api_tijden(nep)
+    assert len(tijden) == 100  # 90 vragen en 10 nieuwe pogingen
+    assert _kortste(tijden) >= bm.PAUZE_API_S
+    assert _per_minuut(tijden) <= 8
+    assert bm._gewacht == 10 * 5.0
+    verkeer = (
+        "API: 100 vragen, 10 keer 429, eerste 429 na 16 s; upload: 120 vragen, 0 keer 429; "
+        "contact: nee"
+    )
+    assert verkeer == _verkeer(nep, begin=1000.0)
+    assert _kort(werk)[0].endswith(f" in {sum(slapen):.0f} s; {verkeer})")
+
+
+def test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout(
+    nep, commons, werk, tmp_path, monkeypatch
+):
+    """CI op 3148c2f: "FOUT set: commons.wikimedia.org: HTTP 429 (Retry-After 50; 50 s wachten
+    past niet in wat er over is van WACHT_TOTAAL_S (32 van 900 s), dus meteen gestopt; antwoord:
+    You are making too many requests to the API.) (bij foto 1 van 120, 0,0 MB opgehaald)" zei niet
+    hoeveel vragen de API had gekregen, hoeveel daarvan 429 waren, en sinds wanneer. Hier zegt de
+    API op elke tweede vraag 429 met Retry-After 50, tot WACHT_TOTAAL_S op is: de fout zegt nu ook
+    het verkeer, en ook hier zit tussen twee vragen aan de API minstens PAUZE_API_S."""
+    _nepklok(monkeypatch)
+    n = [0]
+    weigering = (429, b"You are making too many requests to the API.\n", {"Retry-After": "50"})
+
+    def druk(q):
+        n[0] += 1
+        return weigering if n[0] % 2 == 0 else None
+
+    commons.druk = druk
+    with pytest.raises(bm.Fout) as fout:
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    mb = _mb(sum(p.stat().st_size for p in werk.set.iterdir()))
+    # 19 vragen gingen goed: 6 combinaties van 3 vragen, en de eerste van de zevende foto
+    assert str(fout.value) == (
+        "127.0.0.1: HTTP 429 (Retry-After 50; 50 s wachten past niet in wat er over is van "
+        "WACHT_TOTAAL_S (0 van 900 s), dus meteen gestopt; antwoord: You are making too many "
+        f"requests to the API.) (bij foto 7 van 120, {mb} opgehaald; API: 38 vragen, 19 keer "
+        "429, eerste 429 na 8 s; upload: 6 vragen, 0 keer 429; contact: nee)"
+    )
+    assert str(fout.value).endswith(f"; {_verkeer(nep, begin=1000.0)})")
+    tijden = _api_tijden(nep)
+    assert _kortste(tijden) >= bm.PAUZE_API_S
+    assert bm._gewacht == bm.WACHT_TOTAAL_S == 900.0
+
+
+def _stop_bij_de_zevende_vraag(commons) -> None:
+    """Vanaf de zevende vraag aan de API zegt de nep 404: set stopt dan snel, bij foto 3."""
+    n = [0]
+
+    def weg(q):
+        n[0] += 1
+        return n[0] >= 7
+
+    commons.weg = weg
+
+
+def _set(werk, tmp_path) -> int:
+    return bm.main(["set", "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")])
+
+
+@pytest.mark.parametrize("waarde", [None, ""], ids=["niet gezet", "leeg"])
+def test_zonder_beeld_contact_gaat_er_geen_contact_mee(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, waarde
+):
+    """De eigenaar heeft Wikimedia geen contact gegeven. Zonder BEELD_CONTACT (niet gezet of
+    leeg) is de User-Agent precies UA, zonder persoon, e-mail of repository; de API krijgt hooguit
+    één vraag per PAUZE_API_S; het log zegt "contact: nee". En geen workflow zet BEELD_CONTACT."""
+    if waarde is not None:
+        monkeypatch.setenv("BEELD_CONTACT", waarde)
+    _nepklok(monkeypatch)
+    _stop_bij_de_zevende_vraag(commons)
+    assert _set(werk, tmp_path) == 1
+    assert bm.UA == "beeld-model-meting/1.0 (CI van een zelf-gehost fotoplatform)"
+    _ua_algemeen(nep)
+    uit = capsys.readouterr().out
+    assert (
+        "BZ4 set: de API van Commons hooguit één vraag per 8 s, upload één per 1 s; contact: nee\n"
+    ) in uit
+    mb = _mb(sum(p.stat().st_size for p in werk.set.iterdir()))
+    assert _kort(werk) == [
+        f"FOUT set: 127.0.0.1: HTTP 404 (bij foto 3 van 120, {mb} opgehaald; "
+        "API: 7 vragen, 0 keer 429; upload: 2 vragen, 0 keer 429; contact: nee)"
+    ]
+    tijden = _api_tijden(nep)
+    assert _kortste(tijden) == bm.PAUZE_API_S
+    for workflow in (ROOT / ".github" / "workflows").iterdir():
+        assert "BEELD_CONTACT" not in workflow.read_text(encoding="utf-8"), workflow.name
+
+
+GELDIG = [
+    "https://example.org/beeld-model",
+    "https://beeld.example.org:8443/over?wie=ci#contact",
+    "beeld-model+ci@example.org",
+    "https://example.org/" + "a" * 180,  # precies MAX_CONTACT tekens
+]
+
+
+@pytest.mark.parametrize("contact", GELDIG, ids=["URL", "URL met poort", "e-mail", "200 tekens"])
+def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, contact
+):
+    """Met een BEELD_CONTACT die klopt: de User-Agent in de vorm van de richtlijn van Wikimedia
+    ("naam/versie (contact) ..."), maar alleen naar Commons (de API en upload), nooit naar Hugging
+    Face of een andere host; de API dan op PAUZE_S (de grens met contact is 200 per minuut). Het
+    contact staat nergens in het log, niet in kort.txt en niet in een ander bestand van de
+    werkmap: alleen "contact: ja"."""
+    assert len(GELDIG[-1]) == bm.MAX_CONTACT == 200
+    monkeypatch.setenv("BEELD_CONTACT", contact)
+    _nepklok(monkeypatch)
+    assert bm.main(["bereik", "--werk", str(werk.map)]) == 0
+    _stop_bij_de_zevende_vraag(commons)
+    assert _set(werk, tmp_path) == 1
+    met = f"beeld-model-meting/1.0 ({contact}; CI van een zelf-gehost fotoplatform)"
+    assert met == bm.UA_MET_CONTACT.format(contact=contact)
+    anders = 0
+    for pad, ua in nep.vragen:
+        if pad.startswith(("/w/api.php", "/upload/")):
+            assert ua == met, pad
+        else:
+            assert ua == bm.UA, pad
+            anders += 1
+    assert anders == 2  # Hugging Face en NASA in bereik
+    tijden = _api_tijden(nep)
+    assert _kortste(tijden) == bm.PAUZE_S
+    uit, fout = capsys.readouterr()
+    assert (
+        "BZ4 set: de API van Commons hooguit één vraag per 1 s, upload één per 1 s; contact: ja\n"
+    ) in uit
+    assert _kort(werk)[-1].endswith(
+        "; API: 7 vragen, 0 keer 429; upload: 2 vragen, 0 keer 429; contact: ja)"
+    )
+    teksten = [uit, fout] + [
+        p.read_text(encoding="utf-8", errors="replace")
+        for p in werk.map.rglob("*")
+        if p.is_file() and p.suffix != ".jpg"
+    ]
+    assert len(teksten) >= 3
+    for tekst in teksten:
+        assert contact not in tekst
+        assert "example.org" not in tekst
+
+
+@pytest.mark.parametrize(
+    ("waarde", "reden"),
+    [
+        ("https://example.org/" + "a" * 181, "langer dan 200 tekens"),
+        ("beeld@example.org; ja", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("https://example.org/(beeld)", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("beeld@example.org) X-Mee: (ja", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("beeld@example.org\r\nX-Mee: ja", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("beeld@example.org\t", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("beeld@exämple.org", "alleen afdrukbare ASCII, zonder ; ( of )"),
+        ("http://example.org/beeld", "geen https://-URL en geen e-mailadres"),
+        ("https://example.org/ beeld", "geen https://-URL en geen e-mailadres"),
+        ("https://localhost/beeld", "geen https://-URL en geen e-mailadres"),
+        ("beeld@localhost", "geen https://-URL en geen e-mailadres"),
+        ("Beeld Model", "geen https://-URL en geen e-mailadres"),
+        ("ftp://example.org", "geen https://-URL en geen e-mailadres"),
+    ],
+)
+def test_een_beeld_contact_dat_niet_klopt_gaat_nooit_weg(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, waarde, reden
+):
+    """BEELD_CONTACT wordt nagekeken vóór de eerste vraag: te lang, iets anders dan afdrukbare
+    ASCII, ";", "(" of ")" (die breken de vorm van de User-Agent, en een regeleinde zou er een
+    kopregel bij maken), of geen https://-URL en geen e-mailadres. Dan een fout, geen enkele
+    vraag, ook niet in bereik, en de waarde staat niet in het log."""
+    monkeypatch.setenv("BEELD_CONTACT", waarde)
+    _stop_bij_de_zevende_vraag(commons)
+    for stap in ("bereik", "set"):
+        assert bm.main([stap, "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")]) == 1
+    assert nep.vragen == []
+    assert _kort(werk) == [
+        f"FOUT bereik: BEELD_CONTACT: {reden}",
+        f"FOUT set: BEELD_CONTACT: {reden}",
+    ]
+    uit, fout = capsys.readouterr()
+    for tekst in (uit, fout, werk.kort.read_text()):
+        assert waarde not in tekst and "example.org" not in tekst
+    assert bm._contact is None
 
 
 def _geldige_set() -> list[str]:

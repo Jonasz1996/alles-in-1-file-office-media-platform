@@ -1409,8 +1409,18 @@ jobs:
   beeld-model:
     name: Beeld-model (SigLIP 2 omzetten, tokenizer en de kwaliteitspoort)
     runs-on: ubuntu-24.04
-    # de bron ±1,5 GB, drie omzettingen, 120 foto's van Commons, BZ4 in int8 en fp32
-    timeout-minutes: 60
+    # De bron ±1,5 GB, drie omzettingen, 120 foto's van Commons, BZ4 in int8 en fp32. Op 3148c2f
+    # duurde alles buiten set ±2 minuten (BZ4 zelf draaide nog niet). Na 3148c2f vraagt set de
+    # API van Commons hooguit één keer per 8 s (PAUZE_API_S in tools/beeld/beeld_model.py; de
+    # grens zonder contact in de User-Agent): een voorstel zonder tekort is ±90 vragen (12 min),
+    # met een paar tekorten of tweede pagina's ±150 tot 200 (20 tot 27 min), en daarbij hooguit 15
+    # min wachten na 429 en 5xx (WACHT_TOTAAL_S). Met beeld.tsv vraagt set de API niets. 60 min
+    # liet naast dat wachten en BZ4 (nog niet gemeten) te weinig ruimte voor een voorstel met
+    # tekorten; 90 min draagt ±450 vragen aan de API naast 15 min wachten en 15 min voor de rest.
+    # Het uiterste van de code (750 vragen, 100 min) past niet: dan heeft Commons bijna niets
+    # bruikbaars, en is de set toch rood. Een contact in de User-Agent zet deze job bewust niet:
+    # dat kan alleen met toestemming van de eigenaar (docs/runbooks/analyse.md)
+    timeout-minutes: 90
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
     defaults:

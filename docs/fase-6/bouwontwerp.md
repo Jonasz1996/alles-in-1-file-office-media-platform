@@ -2123,6 +2123,14 @@ Keuze 70–84 van X3.
       maken met andere bytes. Dan is streng rood op de sha256 van die foto, nooit stil, en zet een
       mens die regel opnieuw; de cache in CI houdt de eerste goede kopie. Uitleg in
       [x3a.md](x3a.md), "CI op 9ebf298".
+      *Noot (CI op `3148c2f`, 2026-11-15):* de API van Commons gaf vanaf de eerste vraag een 429
+      (Retry-After 50): zonder contact in de User-Agent staat Wikimedia sinds maart 2026 10 vragen
+      per minuut per IP toe, en de job vroeg er één per seconde. Nu vraagt de job de API hooguit
+      één keer per 8 s, ook bij een nieuwe poging; een voorstel duurt daardoor ±12 tot 27 minuten
+      (`timeout-minutes` van `beeld-model` is nu 90). De fout en de regel van `set` zeggen hoeveel
+      vragen de API en upload kregen en hoe vaak het antwoord 429 was. Een contact in de
+      User-Agent (`BEELD_CONTACT`; dan 200 per minuut) kan, maar alleen met toestemming van de
+      eigenaar, en staat uit. Uitleg in [x3a.md](x3a.md), "CI op 3148c2f".
     - **De poorten.** Vastgelegd vóór de eerste echte run. Lager alleen met een nieuwe keuze in dit
       ontwerp, nooit stil in de test.
 

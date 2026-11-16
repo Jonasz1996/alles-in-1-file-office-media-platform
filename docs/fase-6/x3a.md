@@ -1020,3 +1020,151 @@ Met de nieuwe tool: `tests/analyse` 372 groen.
   alleen met zijn toestemming, en is niet gedaan. De User-Agent blijft algemeen.
 - **`timeout-minutes: 60` is niet veranderd.** `set` wacht nu hooguit `WACHT_TOTAAL_S` (900 s)
   na 429 en 5xx, bovenop het ophalen van 120 thumbnails op `BANDBREEDTE`.
+
+## CI op 3148c2f
+
+`beeld-model` op `3148c2f` (run 43772387468), de eerste run met de thumbnails van 1280 px (zie
+"CI op 9ebf298"):
+
+| Stap | Uitkomst |
+|---|---|
+| BZ2 | twee omzettingen met dezelfde sha256 voor alle vijf bestanden, en dezelfde pins als op `9ebf298`. **Goed** |
+| BZ1, BZ3 en BZ7 | **goed** |
+| BZ6 | beeld int8 op één core 776 foto's per minuut (poort ≥ 500); een vraag p95 71,7 ms (≤ 250 ms). **Goed** |
+| BZ4 | niet gerekend: de stap `set` (een voorstel, zonder `beeld.tsv`) liep van 23:01:28 tot 23:19:10 en stopte op "FOUT set: commons.wikimedia.org: HTTP 429 (Retry-After 50; 50 s wachten past niet in wat er over is van WACHT_TOTAAL_S (32 van 900 s), dus meteen gestopt; antwoord: You are making too many requests to the API.) (bij foto 1 van 120, 0,0 MB opgehaald)". **Rood** |
+
+**Deze keer was het de API van Commons, en vanaf het begin.** Niet upload.wikimedia.org maar
+commons.wikimedia.org (`/w/api.php`) gaf de 429, en al vóór de eerste foto: van de 900 s in
+`WACHT_TOTAAL_S` was 868 s gewacht na een 429 voordat de eerste foto van de eerste combinatie
+binnen was. Of de thumbnails de 429 op upload voorkomen, zei deze run dus niet. Hoeveel vragen de
+API had gekregen en hoeveel daarvan 429 waren, stond nergens.
+
+Wat erbij past: Wikimedia kondigde op 2 maart 2026 op wikitech-l "New global API rate limits" aan
+([de aankondiging](https://www.mail-archive.com/wikitech-l@lists.wikimedia.org/msg97202.html)):
+eerst lage grenzen voor anonieme vragen, vanaf april hogere voor wie zich identificeert. De
+getallen staan op mediawiki.org,
+["Wikimedia APIs/Rate limits"](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits); die
+pagina was vanaf hier niet te lezen. Wie haar citeert, stand november 2026: zonder identificatie
+(alleen een IP-adres) 10 vragen per minuut, per IP; met een User-Agent volgens de richtlijn van
+Wikimedia (met contact: een e-mailadres, een URL of een gebruikerspagina) 200 per minuut;
+aangemeld meer ([craigtrim/axiom, issue 22](https://github.com/craigtrim/axiom/issues/22), 30
+september 2026;
+[fuzheado/Wikipedia-AI-Skills, `SKILL.md`](https://github.com/fuzheado/Wikipedia-AI-Skills/blob/main/.claude/skills/wikimedia-api-access/SKILL.md):
+10, 200 en 2000 per minuut). Een oudere kopie van de pagina noemde 500 per uur zonder
+identificatie. De User-Agent van de job heeft geen contact (zo besloten: geen gegevens van de
+eigenaar), dus geldt 10 per minuut, en `set` vroeg de API één keer per seconde (`PAUZE_S`). Dat
+`f16ed5a` (20:25) en `9ebf298` (21:18) eerder die dag met hetzelfde tempo wel door de keuze
+kwamen, past bij een budget per IP: hoeveel ervan al op is, hangt af van wat de runner en zijn IP
+eerder deden.
+
+Hersteld na de run (`tools/beeld/beeld_model.py`, `.github/workflows/ci.yml`; de tests in
+`api/tests/analyse/test_beeld_tools.py`):
+
+1. **De API van Commons op 8 s.** Tussen twee vragen aan de API zit nu minstens `PAUZE_API_S` =
+   8 s. Met een vaste tussentijd g zitten er in een venster van 60 s hooguit floor(60 / g) + 1
+   vragen: bij 8 s dus 8 (op 0, 8, …, 56 s), onder de 10, met ruimte voor een klok die anders
+   telt; in een uur hooguit 451, onder de 500 van de oudere kopie. Elke poging telt: `_open` laat
+   ook een nieuwe poging na een 429 of 5xx door `_pauze` gaan, en het wachten na Retry-After en de
+   pauze lopen samen, ze tellen niet op (3 s Retry-After en dan nog 5 s pauze; 20 s Retry-After en
+   dan geen pauze meer). De pauze geldt per dienst, niet meer per host: de API en upload hebben
+   elk hun eigen klok (upload blijft `PAUZE_S` = 1 s plus `BANDBREEDTE`, en een download loopt
+   door in de pauze van de API); Hugging Face en andere hosts wachten niet. `MAX_WACHT_S`,
+   `WACHT_TOTAAL_S` en het volgen van Retry-After zijn niet veranderd.
+
+   **Hoeveel vragen een voorstel doet** (geteld uit de code, `_kandidaten` en `stel_voor`). Per
+   zoekopdracht (een combinatie uit `beeld_vragen.tsv`, een categorie of een ander onderwerp) en
+   per pagina van 50 drie vragen: zoeken, imageinfo en wbgetentities; een lege pagina één. Een
+   zoekopdracht stopt zodra hij genoeg heeft (een combinatie na de eerste bruikbare foto, de rest
+   na vijf), meestal op de eerste pagina van de eerste licentie. Met 6 combinaties, 12 categorieën
+   en 12 andere onderwerpen is dat minstens 30 × 3 = 90 vragen: 12 minuten op 8 s (de nep van
+   Commons in de tests doet er precies 90). Met een paar tekorten of tweede pagina's ±150 tot 200:
+   20 tot 27 minuten. Hooguit 2 licenties × 4 pagina's × 3 = 24 per zoekopdracht, 720 samen, plus
+   de reserves alleen bij een tekort (5 paren, de eerste pagina per licentie: 30): 750 vragen, 100
+   minuten. De 120 thumbnails lopen grotendeels door in de pauzes van de API. Met `beeld.tsv`
+   vraagt `set` de API niets.
+
+   **`timeout-minutes` van `beeld-model` van 60 naar 90.** Op `3148c2f` duurde alles buiten `set`
+   ±2 minuten (de bron 26 s, drie omzettingen 29 s, BZ3 en BZ7 8 s, BZ6 42 s); BZ4 zelf draaide
+   nog niet en is niet gemeten. Met 60 minuten bleef naast 15 minuten wachten (`WACHT_TOTAAL_S`)
+   en ±15 minuten voor de rest ±30 minuten voor de API over: ±225 vragen, krap voor een voorstel
+   met een paar tekorten. 90 minuten draagt ±450 vragen. Het uiterste van de code (750 vragen, 100
+   minuten) past niet: dan heeft Commons bijna niets bruikbaars, en is de set toch rood.
+   `timeout-minutes` is een grens van CI, geen poort.
+
+   Tests: `test_tussen_twee_vragen_aan_commons_zit_een_pauze` (op de nepklok 8 s en 7,75 s aan de
+   API, 1 s aan upload, niets aan Hugging Face, en elke vraag telt),
+   `test_elke_poging_aan_de_api_wacht_pauze_api_s` (nieuw: een nieuwe poging na een 429 wacht
+   Retry-After en de rest van de pauze, niet de som),
+   `test_een_voorstel_vraagt_de_api_hooguit_8_keer_per_minuut` (nieuw: een heel voorstel op de
+   nepklok, met op elke tiende vraag een 429; nooit twee vragen aan de API binnen 8 s, in geen
+   venster van 60 s meer dan 8) en `test_te_lang_of_buiten_het_budget_stopt_meteen` (het deel aan
+   de API nu op de nepklok: de pauze zit tussen de pogingen en telt niet in het budget).
+2. **Wat de API kreeg en zei.** Per proces en per dienst van Commons (de API en upload) telt de
+   tool elke poging, hoe vaak het antwoord 429 of 5xx was, en wanneer elke 429 kwam. De fout van
+   `set` en de regel van een goede set zeggen het verkeer sinds het begin van de stap, kort, zoals
+   "(bij foto 1 van 120, 0,0 MB opgehaald; API: 23 vragen, 17 keer 429, eerste 429 na 3 s;
+   upload: 0 vragen; contact: nee)"; `… keer 5xx` alleen als die er waren. Een `eerste 429 na`
+   van een paar seconden bij weinig vragen zegt dat het budget van het IP al op was voordat de
+   stap begon. Aan het begin van `set` staat in het log (niet in het blok) het tempo: "BZ4 set: de
+   API van Commons hooguit één vraag per 8 s, upload één per 1 s; contact: nee". Tests:
+   `test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout` (nieuw: de API zegt op
+   elke tweede vraag 429 met Retry-After 50, tot `WACHT_TOTAAL_S` op is: "… (0 van 900 s), dus
+   meteen gestopt; antwoord: You are making too many requests to the API.) (bij foto 7 van 120,
+   … opgehaald; API: 38 vragen, 19 keer 429, eerste 429 na 8 s; upload: 6 vragen, 0 keer 429;
+   contact: nee)"), en met het verkeer erbij `test_set_zonder_beeld_tsv_stelt_120_fotos_voor`,
+   `test_set_met_beeld_tsv_is_streng`, `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt`,
+   `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld`,
+   `test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen` en
+   `test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam`. De nep van Commons onthoudt nu de status van
+   elk antwoord, en de tests leggen het verkeer dat de tool meldt naast wat de nep zag.
+3. **Een contact in de User-Agent, standaard uit.** Met contact geldt 200 per minuut, maar het
+   zijn gegevens van de eigenaar, en die heeft daar niet mee ingestemd. Daarom alleen het
+   mechanisme: is de omgevingsvariabele `BEELD_CONTACT` gezet en niet leeg, dan is de User-Agent
+   naar Commons (de API en upload; nooit naar Hugging Face of een andere host)
+   "beeld-model-meting/1.0 (<contact>; CI van een zelf-gehost fotoplatform)", in de vorm van de
+   richtlijn van Wikimedia, en zakt de pauze van de API naar `PAUZE_S`. Streng nagekeken vóór de
+   eerste vraag: hooguit 200 tekens, alleen afdrukbare ASCII zonder ";", "(" of ")" (die breken de
+   vorm; een regeleinde zou er een kopregel bij maken), en een https://-URL of een e-mailadres;
+   anders een fout ("FOUT set: BEELD_CONTACT: …", zonder de waarde) en geen enkele vraag. Het log
+   en het verslag zeggen alleen "contact: ja" of "contact: nee". `ci.yml` zet `BEELD_CONTACT`
+   niet; het runbook zegt hoe het met toestemming van de eigenaar kan
+   ([analyse.md](../runbooks/analyse.md), "Een contact in de User-Agent"). Tests:
+   `test_zonder_beeld_contact_gaat_er_geen_contact_mee` (niet gezet en leeg: precies de algemene
+   User-Agent, 8 s, "contact: nee", en geen workflow noemt `BEELD_CONTACT`),
+   `test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log` (4 gevallen: een URL, een URL
+   met poort, een e-mailadres, precies 200 tekens; alleen Commons krijgt het, de API dan op 1 s,
+   en het staat niet in het log, niet in `kort.txt` en niet in een ander bestand van de werkmap)
+   en `test_een_beeld_contact_dat_niet_klopt_gaat_nooit_weg` (13 gevallen; ook `bereik` stopt
+   zonder één vraag).
+
+De algemene User-Agent is niet veranderd: "beeld-model-meting/1.0 (CI van een zelf-gehost
+fotoplatform)", zonder persoon, e-mail of repository.
+
+Teruggedraaid getest (de `beeld_model.py` van `3148c2f` terug, de nieuwe tests ongewijzigd; daarna
+de nieuwe weer terug, met `cmp` en `git status` nagekeken): in `test_beeld_tools.py` 30 rood en 81
+groen. Rood: de vier tests van de pauze (de oude vroeg de API opnieuw zodra Retry-After of de
+terugval op was, na 2, 3 of 4 s, en wachtte 1,0 en 0,75 s in plaats van 8,0 en 7,75 s), de zes
+tests van `set` met het verkeer in de regel of de fout (de oude tekst, zonder "; API: …; contact:
+nee"), `test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout` (een fout zonder
+tellers), beide gevallen van `test_zonder_beeld_contact_gaat_er_geen_contact_mee` (geen regel met
+het tempo), alle 4 van `test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log` en alle 13
+van `test_een_beeld_contact_dat_niet_klopt_gaat_nooit_weg` (de oude kende `BEELD_CONTACT` niet:
+`bereik` gaf 0 en vroeg gewoon). Vijf daarvan stopten op een naam die de oude tool niet had
+(`PAUZE_API_S`, `MAX_CONTACT`). Met alleen `PAUZE_API_S`, `MAX_CONTACT` en `UA_MET_CONTACT` erbij
+in de oude tool zijn ze alle 5 rood om de goede reden: twee vragen aan de API 1 s na elkaar
+("1.0 >= 8.0"), en de vraag van `bereik` aan de API zonder contact in de User-Agent. Met de nieuwe
+tool: `test_beeld_tools.py` 111 groen, `tests/analyse` 394 groen.
+
+### Open na 3148c2f
+
+- **Of 8 s genoeg is**, zegt de volgende run van `beeld-model` (`tools/beeld` is een pad van de
+  job). Het budget hoort bij het IP van de runner, en GitHub deelt runners en hun IP's: wat ander
+  verkeer al opmaakte, ziet de job niet. Was het al op, dan zegt de fout dat nu, bijvoorbeeld "API:
+  6 vragen, 6 keer 429, eerste 429 na 0 s". Helpt 8 s niet, dan blijven een langere pauze (bij
+  12 s duurt een voorstel van 200 vragen 40 minuten) of een contact in de User-Agent over.
+- **`BEELD_CONTACT` staat uit.** Het mechanisme is er, maar een contact meesturen kan alleen met
+  toestemming van de eigenaar; tot dan blijft de User-Agent algemeen en de API op 8 s.
+- **Of thumbnails de 429 van upload voorkomen**, is nog open (zie "Open na 9ebf298"): deze run
+  kwam niet tot de eerste foto.
+- **Hoe lang BZ4 duurt** (de kwaliteitspoort in int8 en fp32) is nog nooit gemeten; de ruimte in
+  `timeout-minutes: 90` voor de rest van de job is een schatting.
