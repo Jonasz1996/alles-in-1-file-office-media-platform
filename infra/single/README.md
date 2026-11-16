@@ -156,9 +156,9 @@ na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afg
 `.env`. Hoe je hem terugzet, de index herbouwt en zoeken meet: `docs/runbooks/zoeken.md`.
 
 **Terug naar 0.8.0 van `59e0250`.** Werkt 0.8.1 niet goed, ga dan eerst hierheen terug en niet
-naar 0.7.1: alles van 0.8.0 blijft. Dat gaat ook met de analyse aan. Het zijn deze commando's, in deze volgorde en met de volledige commit van 0.8.0
-(`dc` uit Handige commando's hieronder; de uitleg per stap staat in `docs/runbooks/zoeken.md`,
-"Terug naar 0.8.0 van `59e0250`"):
+naar 0.7.1: alles van 0.8.0 blijft. Dat gaat ook met de analyse aan. Het zijn deze commando's, in
+deze volgorde en met de volledige commit van 0.8.0 (`dc` uit Handige commando's hieronder; de
+uitleg per stap staat in `docs/runbooks/zoeken.md`, "Terug naar 0.8.0 van `59e0250`"):
 
 ```bash
 git -C /opt/platform/src fetch -q origin
@@ -561,11 +561,12 @@ keer een eigen sleutel `ANALYSE_WORKER_KEY` in `.env`, en start de container. St
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 ANALYSE=aan bash
 ```
 
-Staat er minder dan 105 MB vrij in `/tank/platform`, dan zegt het script `Let op: weinig ruimte in
-… voor de gezichten (105 MB aangeraden; ±90 MB per 100.000 gezichten). De analyse gaat door.` Lukt een download of de start niet, dan zegt het script
-`Let op: …` en werkt het platform gewoon verder; het volgende script probeert het opnieuw. De
-stand: `dc exec -T platform python -m app.cli analyse-status` (de eerste regel is
-`Analyse: ok`, of `down` met de reden).
+Staat er minder dan 105 MB vrij in `/tank/platform`, dan zegt het script
+`Let op: weinig ruimte in … voor de gezichten (105 MB aangeraden; ±90 MB per 100.000 gezichten). De analyse gaat door.`
+Lukt een download of de start niet, dan zegt het script `Let op: …` en werkt het platform gewoon
+verder; het volgende script probeert het opnieuw. De stand:
+`dc exec -T platform python -m app.cli analyse-status` (de eerste regel is `Analyse: ok`, of
+`down` met de reden).
 
 **Zoeken op beeld.** Met de analyse aan haalt het script ook het model voor zoeken op beeld op
 (SigLIP 2 van Google, Apache-2.0; ±1,55 GB, met hun sha256 nagekeken), zet het één keer om in een
@@ -588,8 +589,8 @@ iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, 
 **Uit:** hetzelfde commando met `ANALYSE=uit`. Dat komt in `.env` en blijft: ook een volgende
 run zonder `ANALYSE` laat hem uit. Dan geen download en geen container meer; de modellen blijven
 in `/opt/platform/modellen` tot je die map zelf weggooit. Zet je hem uit nadat hij aan stond, dan
-staan gezichten en zoeken op beeld in de web op uit, en zegt `/beheer` dat de analyse niet draait
-en hoe hij weer aan gaat. Terug naar 0.8.0 (hierboven) gaat ook met de analyse aan: het script van
+zeggen de web-app en `/beheer` dat gezichten en zoeken op beeld op deze server uit staan, en hoe
+ze weer aan gaan. Terug naar 0.8.0 (hierboven) gaat ook met de analyse aan: het script van
 0.8.0 haalt de container weg, en de modellen, de sleutels en `.env` blijven; weer vooruit wordt er
 niets opnieuw gehaald. Meer, ook wat elke melding betekent: `docs/runbooks/analyse.md`.
 
