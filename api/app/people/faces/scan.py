@@ -69,6 +69,7 @@ log = logging.getLogger("platform.faces")
 
 PLAN = "faces.plan"
 SCAN = "faces.scan"
+NOT_OWN_UPLOAD = "not_own_upload"  # face_scan.code (Keuze 69), alleen op /beheer, geen HTTP-fout
 PLAN_CHUNK = 500
 PER_OWNER = 4
 MAX_TRIES = 3
@@ -197,13 +198,16 @@ async def plan_nodes(
             "state": "skip" if foreign else "wait",
             "faces": 0,
             "tries": 0,
-            "code": "not_own_upload" if foreign else None,
+            "code": NOT_OWN_UPLOAD if foreign else None,
             "prio": prio_of(r.taken_at, r.created_at),
             "queued_at": at,
             "updated_at": at,
         }
-        stmt = sqlite_insert(FaceScan).values(node_id=r.id, **values)
-        await db.execute(stmt.on_conflict_do_update(index_elements=["node_id"], set_=values))
+        await db.execute(
+            sqlite_insert(FaceScan)
+            .values(node_id=r.id, **values)
+            .on_conflict_do_update(index_elements=["node_id"], set_=values)
+        )
         waiting += not foreign
     last = rows[-1].id if len(rows) == PLAN_CHUNK else None
     return waiting, last
@@ -736,8 +740,11 @@ async def rescan(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> bool:
         "queued_at": at,
         "updated_at": at,
     }
-    stmt = sqlite_insert(FaceScan).values(node_id=node, **values)
-    await db.execute(stmt.on_conflict_do_update(index_elements=["node_id"], set_=values))
+    await db.execute(
+        sqlite_insert(FaceScan)
+        .values(node_id=node, **values)
+        .on_conflict_do_update(index_elements=["node_id"], set_=values)
+    )
     await queue_scan(db)
     return True
 

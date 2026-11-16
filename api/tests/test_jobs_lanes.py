@@ -393,7 +393,17 @@ def test_de_bestaande_soorten_veranderen_niet():
     assert {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in ocr} == {
         t: ("ocr", limit) for t, limit in ocr.items()
     }
-    for t in known - {"preview", "preview.large", "analysis.index", "analysis.backfill", *ocr}:
+    # X2b: faces.plan en faces.wipe in de rij default (uit en wissen werken ook zonder de
+    # container), faces.scan en faces.group in de rij analyse; elk met een eigen grens
+    faces = {
+        "faces.plan": ("default", 600),
+        "faces.scan": ("analyse", 600),
+        "faces.group": ("analyse", 600),
+        "faces.wipe": ("default", 900),
+    }
+    assert {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in faces} == faces
+    eigen = {"preview", "preview.large", "analysis.index", "analysis.backfill", *ocr, *faces}
+    for t in known - eigen:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t
     assert jobs.lane_of("bestaat.niet") == "default"
