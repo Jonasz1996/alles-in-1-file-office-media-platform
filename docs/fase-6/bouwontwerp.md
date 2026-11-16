@@ -1609,6 +1609,14 @@ Keuze 70–84 van X3.
         dat over (255·127·2 = 64.770). Met 64 is het hooguit 32.640, op elke CPU; zo doet
         onnxruntime het zelf met `reduce_range`. De embedding blijft 127: daar zit geen matmul in
         gehele getallen. Uitleg en metingen in [x3a.md](x3a.md), "CI op 7569d48".
+        *Noot (CI op `011bf2d`, 2026-11-16):* de invoer van een Linear is nu per token, niet per
+        tensor: `MatMulInteger` met de invoer in uint8 per rij (max |x| / 127, nulpunt 128), het
+        gewicht zoals hierboven (int8 per kolom, |q| ≤ 64), daarna × de schaal van de rij × die
+        van de kolom + bias; in beide torens, ook de MAP-kop. `DynamicQuantizeMatMul` had één
+        schaal voor de hele batch, en de invoer van fc2 in laag 5 en 9 van het beeld heeft
+        uitschieters tot 585 × de rms. De omzetter heet nu `VERSIE` 3; de vorm van `VERSIE` 2
+        blijft alleen als optie voor het rapport. Zelfde grootte; de pins van `VERSIE` 2 gelden
+        niet meer. Uitleg en metingen in [x3a.md](x3a.md), "CI op 011bf2d".
     - **Uitkomst** in `MODELLEN_ROOT/siglip2-b32-256/`: `beeld.int8.onnx`, `tekst.int8.onnx`,
       `tokenizer.bin` (Keuze 74), `meta.json` (de `logit_scale` en `logit_bias` van het model, en de
       voorbewerking uit `preprocessor_config.json`) en de licentie. Root kopieert ze uit de
@@ -2134,6 +2142,30 @@ Keuze 70–84 van X3.
       eigenaar. Die gaf Jonas op 2026-11-15 voor de link naar zijn openbare repository, en alleen
       die: `BZ1 bereik` en `BZ4 set` sturen hem mee, en `set` vraagt de API dan hooguit één keer
       per seconde. Uitleg in [x3a.md](x3a.md), "CI op 3148c2f" en "Het contact aan".
+      *Noot (CI op `45bb926`, 2026-11-16):* de API gaf met contact 630 antwoorden zonder 429, maar
+      het voorstel nam geen enkele kandidaat (30 tekorten). De thumbnails staan sinds september
+      2026 op thumb.wikimedia.org (phabricator T427465; volgens bronnen uit de tweede hand, de
+      sandbox komt niet bij Wikimedia), en de job nam alleen een thumbnail op upload. Nu neemt hij
+      de thumbnail van 1280 px op thumb.wikimedia.org of, in de oude vorm, op upload, en een
+      origineel alleen op upload; in `beeld.tsv` staat de URL zoals de API hem gaf. thumb is een
+      eigen dienst van Commons met hetzelfde tempo als upload (1 s, 20 Mbps) en het contact. Elke
+      foto wordt als JPEG gevraagd (`Accept: image/jpeg`; thumb.wikimedia.org geeft op dezelfde
+      URL ook WebP) en nagekeken op de eerste bytes. Een omleiding van een vraag aan Commons volgt
+      de job alleen naar https op de drie hosts van Commons, zodat het contact nooit elders komt.
+      De regel van een tekort zegt nu waarom de kandidaten afvielen. Uitleg in [x3a.md](x3a.md),
+      "CI op 45bb926".
+      *Noot (CI op `011bf2d`, 2026-11-16):* BZ4 rekende op een voorstel van 120 foto's. Met int8
+      per tensor (`VERSIE` 2) zakte nl van 0,692 (fp32) naar 0,450. Per token (nu de standaard,
+      `VERSIE` 3; Keuze 73) haalt nl 0,675 (zakt 0,017, poort ≤ 0,05), engels 0,833,
+      combinaties 6/6, cos tegen fp32 p5 beeld 0,985 en tekst 0,998, met dezelfde bestanden
+      (103 en 284 MB), ±31 ms per foto en ±28 ms per vraag op één draad (BZ6: ≥ 500 foto's per
+      minuut is ≤ 120 ms, een vraag p95 ≤ 250 ms). Twee poorten haalt ook fp32 niet: "geen
+      vraag met 0 goede foto's in de top 5" ("bergen" 0/5, "boot" 1/5) en "Meer zoals deze"
+      ≥ 0,7 (fp32 0,442, per token 0,450). Geen kwantisering lost dat op. De poorten blijven
+      zoals ze zijn; of de set, het model (B/16, Vraag 10c) of een poort moet veranderen, is een
+      vraag voor de eigenaar. Het rapport van de volgende run zegt per categorie waar "Meer zoals
+      deze" misgaat en geeft de top 5 van elke zwakke vraag. Uitleg in [x3a.md](x3a.md), "CI op
+      011bf2d".
     - **De poorten.** Vastgelegd vóór de eerste echte run. Lager alleen met een nieuwe keuze in dit
       ontwerp, nooit stil in de test.
 
@@ -3714,7 +3746,7 @@ alleen de staart tonen.
 
 | # | Wat | Waarom | Klaar als |
 |---|---|---|---|
-| BZ1 | Kan een runner bij huggingface.co, upload.wikimedia.org en images-assets.nasa.gov? | De sandbox niet (code 000) [gemeten, B3]; CI is niet aangetoond | een regel per host in `=== kort ===`. Nee: de echte stappen BZ2–BZ6 gaan naar de LXC (`beeld-kwaliteit`, `beeld-bench`) |
+| BZ1 | Kan een runner bij huggingface.co, upload.wikimedia.org en images-assets.nasa.gov? *Noot (CI op `45bb926`, 2026-11-16): `bereik` vraagt huggingface.co, commons.wikimedia.org (de API), thumb.wikimedia.org (de thumbnails sinds T427465), upload.wikimedia.org en images-assets.nasa.gov ([x3a.md](x3a.md), "CI op 45bb926").* | De sandbox niet (code 000) [gemeten, B3]; CI is niet aangetoond | een regel per host in `=== kort ===`. Nee: de echte stappen BZ2–BZ6 gaan naar de LXC (`beeld-kwaliteit`, `beeld-bench`) |
 | BZ2 | De echte omzetting: de commit en de sha256 van de vijf bronbestanden; twee keer omzetten, op twee runners; tijd en maxrss | Keuze 73 | de sha256's in `models.lock`; twee keer dezelfde uitkomst; maxrss ≤ 1,5 GB |
 | BZ3 | De tokenizer met het tokenizer.json van SigLIP 2 zelf, tegen een vaste lijst verwachte tokens in het repo; met ja op Vraag 12b ook tegen `tokenizers`. Nooit met het bestand van Gemma (K1-14, K2-14) | het algoritme is alleen bewezen met een ander bestand van dezelfde soort [B5] | 0 verschillen op de lijst in het repo; met ja op Vraag 12b ook op de 2.181 zinnen van B5 |
 | BZ4 | De kwaliteitspoort, int8 tegen fp32, de drempels `MIN_TEKST` en `MIN_FOTO`, de zelftest met drie kleuren | Keuze 83 | de poorten gehaald; de drempels in een test |

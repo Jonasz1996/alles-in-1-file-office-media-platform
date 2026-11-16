@@ -12,6 +12,11 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 - de omzetter start zoals de dienst analyse-omzetten (compose van X2a);
 - BZ1, BZ2, BZ3, BZ4, BZ6 en BZ7 hebben elk een stap; de tests met marker beeld_echt draaien
   alleen hier, BZ6 onder taskset -c 0;
+- het rapport van int8 (x3a.md, "CI op 3a9b07d") heeft een eigen stap na BZ6, die mag falen en
+  geen poort is: continue-on-error, hooguit 15 min, || true, en Uitslag leest het niet;
+- timeout-minutes van de job draagt het uiterste uit de opmerking erboven (de vragen aan de API
+  zonder contact, het wachten na 429 en de rest) plus de timeout-minutes van die stap (de review,
+  N1);
 - het verslag via upload-artifact, en als laatste stap het blok `=== kort ===`;
 - BEELD_CONTACT (de link naar het repository als contact in de User-Agent naar Wikimedia, met
   toestemming van de eigenaar, 2026-11-15) staat alleen op de twee stappen die Commons vragen.
@@ -19,6 +24,7 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -48,7 +54,13 @@ PADEN = [
     "tests/analyse/sets/beeld_tokens.tsv",
     "tests/analyse/sets/beeld_vragen.tsv",
     "tests/analyse/sets/beeld.tsv",
+    "tests_analyse/test_beeld_int8_lagen.py",
+    # de lijst van wat een voorstel nooit neemt (x3a.md, "De set strenger"): een push die alleen
+    # die lijst verandert, draait de job ook
+    "tests/analyse/sets/beeld_niet.tsv",
 ]
+# Paden die nog niet hoeven te bestaan: beeld.tsv komt met de vaste set van X3b
+LATER = ("/beeld.tsv",)
 
 
 def _stappen() -> list[dict]:
@@ -136,10 +148,9 @@ def test_de_poort_kijkt_naar_git_diff_en_de_tekst_van_de_pr():
     assert "${{" not in script  # alles via env: geen expressie in het script
     m = re.findall(r"^paden\+?=\((.*)\)$", script, re.M)
     assert re.search(r"^paden=\(", script, re.M) and [p for g in m for p in g.split()] == PADEN
-    # elk pad bestaat (een tikfout zou de job stil overslaan), behalve beeld.tsv: die komt pas
-    # met de vaste set van X3b
+    # elk pad bestaat (een tikfout zou de job stil overslaan), behalve die van LATER
     for pad in PADEN:
-        assert pad.endswith("/beeld.tsv") or (API / pad).exists(), pad
+        assert pad.endswith(LATER) or (API / pad).exists(), pad
     assert 'git diff --name-only "$reeks" -- "${paden[@]}"' in script
     assert "beeld-model:[[:space:]]*ja" in script
     assert 'echo "draaien=$draaien" >> "$GITHUB_OUTPUT"' in script
@@ -184,6 +195,7 @@ def test_bz2_begrenst_alleen_de_omzettingen_zoals_de_dienst():
         "test_beeld_tokenizer_echt.py": "$WERK/uit1",
         "test_beeld_kwaliteit.py": "$WERK/uitfp32",
         "test_beeld_echt_perf.py": "$WERK/uit1",
+        "test_beeld_int8_lagen.py": "$WERK/uitfp32",
     }
 
 
@@ -201,6 +213,72 @@ def test_elke_bz_heeft_een_stap():
         "tests_analyse/test_beeld_echt_perf.py" in blokken
     )
     assert blokken.count('grep -q "^SKIPPED"') == 3  # overslaan telt als mislukt
+    # het rapport van int8: dezelfde omgeving als BZ4, plus de bron
+    assert (
+        'BEELD_BRON="$WERK/bron" BEELD_MODEL="$WERK/uitfp32" BEELD_SET="$WERK/set" '
+        'BEELD_SET_TSV="$tsv" BEELD_RAPPORT="$WERK" uv run --no-sync pytest -q -m beeld_echt -rs '
+        'tests_analyse/test_beeld_int8_lagen.py | tee "$WERK/bz4r.txt" || true'
+    ) in blokken
+
+
+RAPPORT = "BZ4 rapport int8 per laag en varianten (geen poort)"
+
+
+def test_het_rapport_van_int8_mag_falen_en_is_geen_poort():
+    """x3a.md, "CI op 3a9b07d": een eigen stap na BZ6 en vóór Uitslag, die de job niet rood kan
+    maken (continue-on-error en || true), hooguit 15 min duurt, alleen draait als de omzetting en
+    de set goed waren, en geen netwerk vraagt (geen BEELD_CONTACT). Uitslag leest alleen de
+    voorstellen, en de samenvatting toont de laatste regel van bz4r.txt."""
+    stappen = _stappen()
+    namen = [s.get("name", "") for s in stappen]
+    i = namen.index(RAPPORT)
+    stap = stappen[i]
+    assert namen[i - 1].startswith("BZ6 ") and namen[i + 1].startswith("Uitslag")
+    assert stap["continue-on-error"] is True and stap["timeout-minutes"] == 15
+    assert stap["if"] == (
+        "${{ !cancelled() && steps.omzetten.outcome == 'success' "
+        "&& steps.set.outcome == 'success' }}"
+    )
+    assert "env" not in stap and "BEELD_CONTACT" not in stap["run"]
+    assert stap["run"].rstrip().endswith('| tee "$WERK/bz4r.txt" || true')
+    assert "bz4r" not in stappen[i + 1]["run"]
+    assert "for stap in bz3 bz4 bz4r bz6; do" in stappen[-1]["run"]
+
+
+TOOL = API.parent / "tools" / "beeld" / "beeld_model.py"
+
+
+def _constante(naam: str) -> float:
+    """Een getal uit tools/beeld/beeld_model.py, zonder de tool te laden."""
+    for knoop in ast.parse(TOOL.read_text(encoding="utf-8")).body:
+        doelen = [getattr(d, "id", "") for d in getattr(knoop, "targets", [])]
+        if isinstance(knoop, ast.Assign) and doelen == [naam]:
+            return float(ast.literal_eval(knoop.value))
+    raise AssertionError(f"{naam} staat niet in {TOOL.name}")
+
+
+def test_de_tijd_van_de_job_draagt_ook_het_rapport_van_int8():
+    """De review, N1: de opmerking boven timeout-minutes rekent het uiterste zonder contact (±V
+    vragen aan de API, elk PAUZE_API_S, plus WACHT_TOTAAL_S en R min voor de rest); daar komt de
+    timeout-minutes van elke stap bij die er een heeft (het rapport van int8). Het getal van de
+    opmerking is dat van de job, en het budget aan vragen is niet kleiner dan op 3a9b07d."""
+    tekst = re.sub(r"\n\s*#\s*", " ", CI.read_text())
+    draagt = re.findall(r"(\d+) min draagt ±(\d+) vragen", tekst)
+    rest = re.findall(r"(\d+) min voor de rest", tekst)
+    assert len(draagt) == 1 and len(rest) == 1, (draagt, rest)
+    (minuten, vragen), rest_min = (int(x) for x in draagt[0]), int(rest[0])
+    j = yaml.safe_load(CI.read_text())["jobs"]["beeld-model"]
+    assert minuten == j["timeout-minutes"]
+    assert vragen >= 450
+    stappen = sum(s.get("timeout-minutes", 0) for s in j["steps"])
+    assert stappen >= 15  # het rapport van int8
+    nodig = (
+        vragen * _constante("PAUZE_API_S") / 60
+        + _constante("WACHT_TOTAAL_S") / 60
+        + rest_min
+        + stappen
+    )
+    assert j["timeout-minutes"] >= nodig, (j["timeout-minutes"], nodig)
 
 
 def test_het_verslag_en_als_laatste_het_blok_kort():

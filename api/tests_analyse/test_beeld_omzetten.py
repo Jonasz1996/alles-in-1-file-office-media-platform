@@ -6,7 +6,9 @@ van het echte bestand) gaat door de omzetter zoals compose hem start (`python -I
 float64, rechtstreeks uit de gewichten en de regels van SiglipModel (niet uit de omzetter), en eist:
 
 - fp32 hooguit 1·10⁻⁵ van de numpy-versie, voor beeld en tekst;
-- int8 cosinus ≥ 0,99 met de numpy-versie;
+- int8 cosinus ≥ 0,99 met de numpy-versie (en met de fp32-graaf);
+- int8 is sinds VERSIE 3 per token (MatMulInteger, CI op 011bf2d); de vorm van VERSIE 2 (per
+  tensor, DynamicQuantizeMatMul) geeft met per_token=False nog byte voor byte de bestanden van toen;
 - twee omzettingen, in twee processen, geven dezelfde sha256 voor elk bestand;
 - maxrss en tijd van het proces worden gemeten (en begrensd);
 - een safetensors met een kop die liegt, en elke andere bron die niet klopt, geeft OmzetFout:
@@ -33,6 +35,7 @@ import numpy as np
 import pytest
 
 from app.analyse import lock
+from app.analyse.onnxw import Model
 from app.analyse.runtime import OMZET_BOOT
 from app.analyse.tokenizer import Tokenizer
 from app.analyse.worker.omzetten import (
@@ -236,6 +239,7 @@ def _cos(a, b):
 
 
 def test_int8_cosinus_minstens_0_99(omgezet, sessies):
+    """De standaardomzetting (per token, VERSIE 3) tegen de numpy-versie en tegen de fp32-graaf."""
     w, runs = omgezet
     pixels, tokens = _pixels(), _tokens(runs[0][0])
     (beeld,) = sessies[BEELD].run(None, {"pixels": pixels})
@@ -243,6 +247,9 @@ def test_int8_cosinus_minstens_0_99(omgezet, sessies):
     cb, ct = _cos(beeld, ref_beeld(pixels, w)), _cos(tekst, ref_tekst(tokens, w))
     assert cb.min() >= COS, cb
     assert ct.min() >= COS, ct
+    (beeld32,) = sessies[BEELD_FP32].run(None, {"pixels": pixels})
+    (tekst32,) = sessies[TEKST_FP32].run(None, {"tokens": tokens})
+    assert _cos(beeld, beeld32).min() >= COS and _cos(tekst, tekst32).min() >= COS
 
 
 def test_twee_omzettingen_dezelfde_sha256(omgezet):
@@ -254,6 +261,71 @@ def test_twee_omzettingen_dezelfde_sha256(omgezet):
     for naam in namen:
         assert _sha(uit1 / naam) == _sha(uit2 / naam), naam
     assert res1.stdout == res2.stdout
+
+
+# De sha256 van dit kleine model in de vorm van VERSIE 2 (per tensor), gemeten vóór de opties voor
+# het int8-rapport van BZ4 in bouw.py kwamen (x3a.md, "CI op 3a9b07d"). Sinds VERSIE 3 geeft
+# omzet(..., per_token=False) nog precies deze bytes (de variant `per tensor (v2)` van het rapport)
+VOOR_DE_OPTIES = {
+    BEELD: "31fb8622f226cdb17523cd72a1acf10d9a63f3bb633b678fd10138aee64c57ff",
+    TEKST: "ebbb3c053be978fc8e8d5904df48729003e0c28864f2afa79744827cf14b37cb",
+    BEELD_FP32: "9d58a41e3a7ca75acddd4a479fae84860097a112d944874397d4ec3aeade6404",
+    TEKST_FP32: "4037109fabe0222d7e6749721eecb928cb11ad6178917096d0ef7826bbc56904",
+    TOKENIZER_BIN: "b70f6c67f9f0365348ccca704a92cb2d2524a32da658206e0bc56194010924ba",
+    META: "868e9777827b22330845b27c451303756c35853caa89775b1bb99aaeb7b95763",
+    LICENTIE: "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+}
+
+
+# De sha256 van de standaardomzetting (VERSIE 3, per token), bewust nieuw: uitgerekend na de
+# overstap op per token (x3a.md, "CI op 011bf2d"). Alleen beeld.int8.onnx, tekst.int8.onnx en
+# meta.json zijn anders dan in VERSIE 2; de fp32-grafen, tokenizer.bin en de licentie niet
+V3 = {
+    **VOOR_DE_OPTIES,
+    BEELD: "3eb97f5fd9775f7eeaeb39a7232f219d1319de63fe0a48b57dc24544041184d2",
+    TEKST: "81e231565cc31aba1791578de2641d1f2099434bb6d71adf9cc3b33d0a360f67",
+    META: "93e6f02f144aaf3f470e76acb4051dbd839bfd3e4ad00d861cfe96e43a59be50",
+}
+
+
+def test_de_standaard_geeft_de_bytes_van_v3(omgezet):
+    uit = omgezet[1][0][0]
+    assert {p.name: _sha(p) for p in uit.iterdir()} == V3
+    assert {k for k in V3 if V3[k] != VOOR_DE_OPTIES[k]} == {BEELD, TEKST, META}
+
+
+def test_per_tensor_geeft_byte_voor_byte_de_bestanden_van_v2(tmp_path):
+    """omzet(..., per_token=False) is de vorm van VERSIE 2: alle zeven bestanden (met --fp32)
+    precies zoals toen, meta.json ook (omzetter 2, zonder `int8`)."""
+    klein.schrijf_bron(tmp_path / "bron")
+    (tmp_path / "uit").mkdir()
+    uitkomsten = bouw.omzet(tmp_path / "bron", tmp_path / "uit", fp32=True, per_token=False)
+    assert {p.name: _sha(p) for p in (tmp_path / "uit").iterdir()} == VOOR_DE_OPTIES
+    assert {u.naam: u.sha256 for u in uitkomsten} == VOOR_DE_OPTIES
+    meta = json.loads((tmp_path / "uit" / META).read_text())
+    assert meta["omzetter"] == bouw.VERSIE_PER_TENSOR == 2 and "int8" not in meta
+
+
+def test_varianten_uit_dezelfde_bytes(tmp_path):
+    """De opties van bouw.py expliciet op hun standaard maken precies dezelfde graaf als zonder:
+    de bytes van V3. Met per_token=False en de rest op de standaard: die van VOOR_DE_OPTIES (v2).
+    De fp32-grafen zijn met en zonder per_token dezelfde."""
+    klein.schrijf_bron(tmp_path / "bron")
+    st = Safetensors(tmp_path / "bron" / "model.safetensors")
+    vorm = bouw.lees_config(json.loads((tmp_path / "bron" / "config.json").read_text()))
+    standaard = [
+        ({}, V3),
+        ({"fp32_als": None, "per_token": True, "glad": None, "q_max": None, "meet": None}, V3),
+        ({"fp32_als": lambda _label: False, "glad": {}, "q_max": bouw.Q_MAX}, V3),
+        ({"per_token": False}, VOOR_DE_OPTIES),
+        ({"fp32_als": None, "per_token": False, "glad": {}, "q_max": None}, VOOR_DE_OPTIES),
+    ]
+    for int8, (beeld, tekst) in ((True, (BEELD, TEKST)), (False, (BEELD_FP32, TEKST_FP32))):
+        for opties, sha in standaard:
+            g = bouw.beeld_graaf(st, vorm, int8=int8, **opties)
+            assert hashlib.sha256(Model(g).to_bytes()).hexdigest() == sha[beeld], (int8, opties)
+            g = bouw.tekst_graaf(st, vorm, int8=int8, embedding_fp32=False, **opties)
+            assert hashlib.sha256(Model(g).to_bytes()).hexdigest() == sha[tekst], (int8, opties)
 
 
 def test_regels_voor_models_lock(omgezet):
@@ -282,8 +354,19 @@ def test_meta_json(omgezet):
     _, runs = omgezet
     uit = runs[0][0]
     meta = json.loads((uit / META).read_text())
-    # omzetter 2: het gewicht van een Linear met |q| ≤ 64 (de int8-bytes anders dan bij 1)
-    assert meta["formaat"] == 1 and meta["omzetter"] == bouw.VERSIE == 2
+    # omzetter 2: het gewicht van een Linear met |q| ≤ 64 (de int8-bytes anders dan bij 1); 3: elke
+    # Linear per token (MatMulInteger), en meta.json zegt dat onder `int8`
+    assert meta["formaat"] == 1 and meta["omzetter"] == bouw.VERSIE == 3
+    assert (
+        meta["int8"]
+        == bouw.INT8_META
+        == {
+            "linear": "MatMulInteger",
+            "invoer": "uint8 per rij (token): a = max|x|/127, nulpunt 128",
+            "gewicht": "int8 per kolom: s = max|kolom|/64, |q| <= 64",
+            "embedding": "int8 per rij: s = max|rij|/127, |q| <= 127",
+        }
+    )
     assert meta["dim"] == klein.BREEDTE and meta["model"] == MAP
     assert meta["logit_scale"] == float(np.float32(klein.LOGIT_SCALE))
     assert meta["logit_bias"] == float(np.float32(klein.LOGIT_BIAS))
@@ -321,12 +404,16 @@ def test_tokenizer_bin_en_licentie(omgezet):
 
 
 def test_int8_echt_int8(omgezet):
-    """beeld.int8.onnx gebruikt DynamicQuantizeMatMul, en is kleiner dan fp32."""
+    """De standaard (VERSIE 3) van beide torens rekent met MatMulInteger, nooit meer met
+    DynamicQuantizeMatMul; de fp32-grafen met geen van beide; int8 is kleiner dan fp32."""
     _, runs = omgezet
     uit = runs[0][0]
     for i8, f32 in ((BEELD, BEELD_FP32), (TEKST, TEKST_FP32)):
-        assert b"DynamicQuantizeMatMul" in (uit / i8).read_bytes()
-        assert b"DynamicQuantizeMatMul" not in (uit / f32).read_bytes()
+        ops8 = {n[0] for n in lees_onnx(uit / i8)[0]}
+        ops32 = {n[0] for n in lees_onnx(uit / f32)[0]}
+        assert "MatMulInteger" in ops8 and "DynamicQuantizeMatMul" not in ops8, i8
+        assert not ops32 & {"MatMulInteger", "DynamicQuantizeMatMul"}, f32
+        assert b"DynamicQuantizeMatMul" not in (uit / i8).read_bytes()
         assert (uit / i8).stat().st_size < (uit / f32).stat().st_size
 
 
@@ -336,7 +423,7 @@ def test_int8_echt_int8(omgezet):
 # test_int8_echt_int8 kijkt alleen of de op er is. Hier de grafen zelf: een eigen lezer van het
 # protobuf (veldnummers van onnx.proto), zonder onnxw en zonder het pakket onnx.
 
-_DTYPE = {1: "<f4", 3: "i1", 7: "<i8"}  # FLOAT, INT8, INT64
+_DTYPE = {1: "<f4", 2: "u1", 3: "i1", 7: "<i8"}  # FLOAT, UINT8, INT8, INT64
 
 
 def _varint(b: memoryview, i: int) -> tuple[int, int]:
@@ -420,8 +507,9 @@ def _wt(w: dict, label: str) -> np.ndarray:
     return rijen.T
 
 
-# De grootste |q|: 64 voor een Linear (DynamicQuantizeMatMul; zonder VNNI loopt een paar van
-# uint8 maal int8 met 127 over in int16, CI op 7569d48), 127 voor de embedding (geen matmul)
+# De grootste |q|: 64 voor een Linear (MatMulInteger, of DynamicQuantizeMatMul per tensor; zonder
+# VNNI loopt een paar van uint8 maal int8 met 127 over in int16, CI op 7569d48), 127 voor de
+# embedding (geen matmul)
 LINEAR, EMBEDDING = 64, 127
 
 
@@ -431,27 +519,58 @@ def _q8_per_kolom(wt: np.ndarray, top: int) -> tuple[np.ndarray, np.ndarray]:
     return np.clip(np.rint(wt / s.astype(np.float64)), -top, top).astype(np.int8), s
 
 
-def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
-    """Elke Linear is DynamicQuantizeMatMul met B int8 [in, uit], B_scale [uit] en een nulpunt
-    [uit] van nullen; de schalen per kolom tegen de gewichten van de bron, |q| ≤ 64 en elke kolom
-    haalt 64. Geen MatMul of Gemm meer met een gewicht. De embedding van de tekst: een schaal per
-    rij, [woorden, 1], en elke rij haalt 127."""
+# Per vorm de op van elke Linear: (op, domein, invoer na x); de standaard (VERSIE 3) en per tensor
+# (VERSIE 2)
+VORM = {
+    "standaard": ("MatMulInteger", "", lambda x: [f"{x}.w8", f"{x}.nul"]),
+    "per tensor": (
+        "DynamicQuantizeMatMul",
+        "com.microsoft",
+        lambda x: [f"{x}.w8", f"{x}.s", f"{x}.z", f"{x}.b"],
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def per_tensor(tmp_path_factory, omgezet):
+    """De grafen van VERSIE 2 (per_token=False) uit dezelfde bron als `omgezet`."""
+    uit = tmp_path_factory.mktemp("per_tensor")
+    bouw.omzet(omgezet[1][0][0].parent / "bron", uit, per_token=False)
+    return uit
+
+
+@pytest.mark.parametrize("vorm", sorted(VORM))
+def test_int8_een_schaal_per_kolom_en_per_rij(omgezet, per_tensor, vorm):
+    """Elke Linear is in de standaard MatMulInteger met B int8 [in, uit] en een scalair nulpunt
+    128 (uint8), daarna × a × s + b; per tensor (VERSIE 2) DynamicQuantizeMatMul met B, B_scale
+    [uit] en een nulpunt [uit] van nullen. In beide de schalen per kolom tegen de gewichten van de
+    bron, |q| ≤ 64 en elke kolom haalt 64. Geen MatMul of Gemm meer met een gewicht. De embedding
+    van de tekst: een schaal per rij, [woorden, 1], en elke rij haalt 127."""
     w, runs = omgezet
-    uit = runs[0][0]
+    uit = runs[0][0] if vorm == "standaard" else per_tensor
+    op_naam, domein_naam, verwacht = VORM[vorm]
     for model, toren in ((BEELD, "vision_model"), (TEKST, "text_model")):
         nodes, inits = lees_onnx(uit / model)
-        dqmm = [n for n in nodes if n[0] == "DynamicQuantizeMatMul"]
-        labels = [n[2][1].removesuffix(".w8") for n in dqmm]
+        ops = {n[0] for n in nodes}
+        assert not ops & ({"MatMulInteger", "DynamicQuantizeMatMul"} - {op_naam}), (model, ops)
+        lin = [n for n in nodes if n[0] == op_naam]
+        labels = [n[2][1].removesuffix(".w8") for n in lin]
         assert labels == _linears(toren), model
-        for (_op, domein, invoer), label in zip(dqmm, labels, strict=True):
-            assert domein == "com.microsoft"
-            assert invoer[1:] == [f"{label}.w8", f"{label}.s", f"{label}.z", f"{label}.b"]
-            q, s, z = inits[f"{label}.w8"], inits[f"{label}.s"], inits[f"{label}.z"]
+        for (_op, domein, invoer), label in zip(lin, labels, strict=True):
+            assert domein == domein_naam
+            assert invoer[1:] == verwacht(label), (label, invoer)
+            q, s = inits[f"{label}.w8"], inits[f"{label}.s"]
             wt = _wt(w, label)
             assert q.dtype == np.int8 and q.shape == wt.shape, label
             assert s.dtype == np.float32 and s.shape == (wt.shape[1],), label
-            assert z.dtype == np.int8 and z.shape == (wt.shape[1],) and not z.any(), label
             assert inits[f"{label}.b"].shape == (wt.shape[1],), label
+            if vorm == "standaard":
+                nul = inits[f"{label}.nul"]
+                assert nul.dtype == np.uint8 and nul.shape == () and int(nul) == 128, label
+                assert f"{label}.z" not in inits, label
+            else:
+                z = inits[f"{label}.z"]
+                assert z.dtype == np.int8 and z.shape == (wt.shape[1],) and not z.any(), label
             q_ref, s_ref = _q8_per_kolom(wt, LINEAR)
             assert np.array_equal(s, s_ref), label
             assert np.array_equal(q, q_ref), label
@@ -469,14 +588,16 @@ def test_int8_een_schaal_per_kolom_en_per_rij(omgezet):
     assert (np.abs(tabel.astype(np.int16)).max(axis=1) == EMBEDDING).all()
 
 
-def test_int8_geen_gewicht_van_een_linear_boven_64(omgezet):
-    """Elk int8-gewicht dat B is van een DynamicQuantizeMatMul, in beide grafen, heeft |q| ≤ 64:
-    zo past elk paar van vpmaddubsw (255·64·2 = 32.640) in int16, ook op een CPU zonder VNNI. Het
-    enige andere int8-gewicht is de embedding van de tekst, en die mag tot 127."""
-    uit = omgezet[1][0][0]
+@pytest.mark.parametrize("vorm", sorted(VORM))
+def test_int8_geen_gewicht_van_een_linear_boven_64(omgezet, per_tensor, vorm):
+    """Elk int8-gewicht dat B is van een MatMulInteger (of per tensor van een
+    DynamicQuantizeMatMul), in beide grafen, heeft |q| ≤ 64: zo past elk paar van vpmaddubsw
+    (255·64·2 = 32.640) in int16, ook op een CPU zonder VNNI. Het enige andere int8-gewicht is de
+    embedding van de tekst, en die mag tot 127."""
+    uit = omgezet[1][0][0] if vorm == "standaard" else per_tensor
     for model in (BEELD, TEKST):
         nodes, inits = lees_onnx(uit / model)
-        b = {invoer[1] for op, _domein, invoer in nodes if op == "DynamicQuantizeMatMul"}
+        b = {invoer[1] for op, _domein, invoer in nodes if op == VORM[vorm][0]}
         int8 = {naam for naam, a in inits.items() if a.dtype == np.int8 and a.ndim == 2}
         assert b and b <= int8, model
         for naam in b:

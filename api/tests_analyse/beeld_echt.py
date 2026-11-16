@@ -79,6 +79,30 @@ def sessie(pad: Path):
     return onnxruntime.InferenceSession(str(pad), opties, providers=["CPUExecutionProvider"])
 
 
+def cpu(pad: Path = Path("/proc/cpuinfo")) -> dict:
+    """De naam van de CPU, of hij VNNI heeft (avx512_vnni of avx_vnni) en AMX (amx_int8).
+
+    Zonder VNNI rekent onnxruntime int8 anders (CI op 669f03c), en de tijd van BZ6 hangt aan de
+    runner: de regels van BZ4 en BZ6 zeggen daarom op welke CPU ze liepen.
+    """
+    naam, vlaggen = "onbekend", set()
+    try:
+        regels = pad.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        regels = []
+    for regel in regels:
+        sleutel, _, waarde = regel.partition(":")
+        if sleutel.strip() == "model name" and naam == "onbekend":
+            naam = waarde.strip()
+        elif sleutel.strip() == "flags" and not vlaggen:
+            vlaggen = set(waarde.split())
+    return {
+        "model": naam,
+        "vnni": bool(vlaggen & {"avx512_vnni", "avx_vnni"}),
+        "amx": "amx_int8" in vlaggen,
+    }
+
+
 def voorbewerk(beeld, vb: dict) -> np.ndarray:
     """Een pad of een Image van Pillow naar float32 [3, S, S] volgens meta.json."""
     from PIL import Image
@@ -157,8 +181,11 @@ class Verslag:
         self.inhoud: dict = {}
 
     def zet(self, sleutel: str, waarde) -> None:
-        self.inhoud[sleutel] = waarde
-        self.pad.write_text(json.dumps(self.inhoud, indent=2, ensure_ascii=False) + "\n")
+        # eerst json.dumps: een waarde die geen JSON is, laat het verslag zoals het was (review N4)
+        inhoud = {**self.inhoud, sleutel: waarde}
+        tekst = json.dumps(inhoud, indent=2, ensure_ascii=False) + "\n"
+        self.inhoud = inhoud
+        self.pad.write_text(tekst)
 
     def kort(self, regel: str) -> None:
         print(regel, flush=True)

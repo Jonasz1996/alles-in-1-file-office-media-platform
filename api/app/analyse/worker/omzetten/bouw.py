@@ -18,24 +18,44 @@ config.json een sleutel niet noemt, geldt de standaard van SiglipTextConfig en S
   text_model.head;
 - beide: L2-genormaliseerd. De logits zijn cos · exp(logit_scale) + logit_bias (meta.json).
 
-**int8** (zoals de proxy van B6): elke Linear wordt `DynamicQuantizeMatMul` (com.microsoft) met
-gewichten in int8, symmetrisch, een schaal per kolom (max |kolom| / Q_MAX) en nulpunt 0; de invoer
-kwantiseert onnxruntime zelf per oproep, naar uint8 (0..255). Q_MAX is 64, niet 127: op een x86-CPU
-zonder VNNI telt onnxruntime twee producten van uint8 en int8 op in int16, en dat loopt bij 127 over
-(zie Q_MAX). De Conv van de patches blijft fp32. De embedding van de tekst is int8 met een schaal
-per rij (max |rij| / 127): Gather, Cast, en Mul met de geschaalde rij. Daar zit geen matmul in
-gehele getallen, dus 127 kan daar. q, k en v van een laag zijn één MatMul (de kolommen naast
-elkaar); de schaal per kolom verandert daardoor niet.
+**int8** (sinds `VERSIE` 3, CI op 011bf2d): elke Linear van beide torens, ook de MAP-kop van het
+beeld en de kop van de tekst, rekent per token. De invoer gaat per rij (per token) symmetrisch
+naar uint8: a = max |x| / 127 per rij, u = rint(x / a) + 128 (1..255); dan `MatMulInteger` met
+één scalair nulpunt 128 (een nulpunt per rij weigert onnxruntime) in int32, × a × s + bias. De
+gewichten zijn int8, symmetrisch, met een schaal per kolom (s = max |kolom| / Q_MAX) en |q| ≤
+Q_MAX = 64, niet 127: op een x86-CPU zonder VNNI telt onnxruntime twee producten van uint8 en int8
+op in int16, en dat loopt bij 127 over (zie Q_MAX). Een rij hangt zo niet af van de andere items
+van de batch, en één grote waarde in één token maakt de stap van de andere tokens niet grof. De
+Conv van de patches blijft fp32. De embedding van de tekst is int8 met een schaal per rij (max
+|rij| / 127): Gather, Cast, en Mul met de geschaalde rij. Daar zit geen matmul in gehele getallen,
+dus 127 kan daar. q, k en v van een laag zijn één MatMul (de kolommen naast elkaar); de schaal per
+kolom verandert daardoor niet. meta.json zegt het onder `int8` (INT8_META).
+
+**De vorm van `VERSIE` 2** (per tensor) blijft als optie (`per_token=False`, ook in `omzet`):
+elke Linear een `DynamicQuantizeMatMul` (com.microsoft); de invoer kwantiseert onnxruntime zelf
+per oproep naar uint8 met één schaal voor de hele tensor, dus over alle items van de batch. Dat
+gaf in BZ4 precisie@5 0,450 tegen 0,692 in fp32 (x3a.md, "CI op 011bf2d"). Met
+`per_token=False` geeft de omzetter byte voor byte de bestanden van `VERSIE` 2, meta.json ook
+(`omzetter` 2, zonder `int8`); alleen voor het rapport van BZ4 (de variant `per tensor (v2)`).
 
 **Altijd dezelfde bytes.** Alleen bewerkingen per element (abs, max, delen in float64, rint) en
 herschikken; geen BLAS, geen draden, geen tijd of pad in de uitvoer. meta.json met gesorteerde
 sleutels. Twee keer omzetten geeft dezelfde sha256 (BZ2 doet het twee keer op een runner), en
 `--fp32` voegt alleen de twee fp32-grafen toe: de vijf bestanden van UITVOER, meta.json ook, blijven
-byte voor byte gelijk.
+byte voor byte gelijk. De fp32-grafen zijn met en zonder per_token dezelfde bytes.
 
 **Geheugen.** Elke initializer is een callable die onnxw pas bij het schrijven aanroept: er staat
 één gewicht tegelijk in het geheugen. De embedding (256.000 × 768) wordt in blokken van rijen
 gelezen; alleen zijn int8-vorm (197 MB) staat er even helemaal.
+
+**Varianten, alleen voor het rapport van BZ4** (x3a.md, "CI op 3a9b07d" en "CI op 011bf2d";
+tests_analyse/test_beeld_int8_lagen.py). `Bouwer`, `beeld_graaf` en `tekst_graaf` hebben opties
+die standaard de omzetting van `VERSIE` geven: `fp32_als` (een Linear in fp32; standaard geen),
+`per_token` (standaard aan; uit is de vorm van `VERSIE` 2), `glad` (een factor per invoerkanaal,
+machten van 2; standaard geen), `q_max` (standaard Q_MAX), `meet` (tussenwaarden als extra
+uitvoer; standaard geen) en bij de tekst `embedding_fp32` (standaard uit). Op hun standaard maken
+ze precies dezelfde aanroepen in dezelfde volgorde als zonder, dus dezelfde automatische namen en
+dezelfde bytes. `omzet()` kent alleen `per_token`; de opdrachtregel geen van alle.
 """
 
 from __future__ import annotations
@@ -52,7 +72,7 @@ from pathlib import Path
 import numpy as np
 
 from app.analyse import lock, onnxw
-from app.analyse.onnxw import FLOAT, INT8, INT64, Graph, Model
+from app.analyse.onnxw import FLOAT, INT8, INT64, UINT8, Graph, Model
 from app.analyse.tokenizer import LENGTE, Tokenizer, TokenizerFout
 from app.analyse.worker.omzetten import (
     BEELD,
@@ -79,8 +99,11 @@ from app.analyse.worker.omzetten import (
 from app.analyse.worker.omzetten.safetensors import FLOATS, Safetensors
 
 # Van de omzetter; staat in meta.json. Omhoog als dezelfde bron andere bytes geeft. 2: het gewicht
-# van een Linear met |q| ≤ 64 (Q_MAX), CI op 7569d48.
-VERSIE = 2
+# van een Linear met |q| ≤ 64 (Q_MAX), CI op 7569d48. 3: elke Linear per token (MatMulInteger met
+# nulpunt 128) in plaats van DynamicQuantizeMatMul, CI op 011bf2d.
+VERSIE = 3
+# De vorm van 2 (per tensor) blijft als optie (per_token=False), met precies de bytes van toen
+VERSIE_PER_TENSOR = 2
 MAX_JSON = 1_000_000  # config.json en preprocessor_config.json zijn een paar kB
 # tokenizer_config.json noemt soms elk toegevoegd token (bij Gemma 3 ±1,2 MB); de echte grootte
 # staat in models.lock
@@ -399,13 +422,24 @@ def controleer_tokenizer_config(doc: dict, tok: Tokenizer) -> dict:
 
 # --- int8 --------------------------------------------------------------------------------------
 
-# De grootste |q| van een gewicht van een Linear. DynamicQuantizeMatMul maakt van de invoer uint8
-# (0..255). Op een x86-CPU zonder VNNI rekent onnxruntime met vpmaddubsw: die telt twee buren
+# De grootste |q| van een gewicht van een Linear. De invoer van de matmul in gehele getallen is
+# uint8 (0..255): per token (MatMulInteger, nulpunt 128) en ook per tensor (DynamicQuantizeMatMul,
+# VERSIE 2). Op een x86-CPU zonder VNNI rekent onnxruntime met vpmaddubsw: die telt twee buren
 # a·b + a'·b' langs K op in int16, en wat daar niet in past wordt 32.767 of −32.768. Met |q| tot
 # 127 kan zo'n paar 255·127·2 = 64.770 zijn: een fout antwoord. Met 64 is het hooguit
 # 255·64·2 = 32.640, op elke CPU. onnxruntime doet het zelf zo met reduce_range (int8 −64..64).
 # Het kost één bit van het gewicht.
 Q_MAX = 64
+# per_token (MatMulInteger met uint8 tot 255) moet op elke CPU kloppen: daar dus nooit meer dan 64.
+PER_TOKEN_Q_MAX = 64
+# Wat meta.json (sinds VERSIE 3) onder `int8` over de omzetting zegt; met per_token=False (VERSIE 2)
+# ontbreekt die sleutel, zoals toen
+INT8_META = {
+    "linear": "MatMulInteger",
+    "invoer": "uint8 per rij (token): a = max|x|/127, nulpunt 128",
+    "gewicht": f"int8 per kolom: s = max|kolom|/{Q_MAX}, |q| <= {Q_MAX}",
+    "embedding": "int8 per rij: s = max|rij|/127, |q| <= 127",
+}
 
 
 def _eindig(a: np.ndarray, naam: str) -> None:
@@ -413,14 +447,17 @@ def _eindig(a: np.ndarray, naam: str) -> None:
         raise OmzetFout(f"model.safetensors: {naam} bevat NaN of oneindig")
 
 
-def per_kolom(wt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def per_kolom(wt: np.ndarray, q_max: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """W (in × uit) naar int8 met een schaal per kolom: q = rint(w / s), s = max |kolom| / Q_MAX.
     Dus |q| ≤ Q_MAX, en elke kolom haalt Q_MAX, behalve een kolom van nullen: die krijgt schaal 1
-    (q is daar 0)."""
-    s = (np.abs(wt).max(axis=0).astype(np.float64) / Q_MAX).astype(np.float32)
+    (q is daar 0). q_max in plaats van Q_MAX alleen voor het rapport van BZ4 (de fout van het
+    gewicht met 127; in een graaf alleen per tensor, en alleen op een CPU met VNNI); None is Q_MAX
+    zoals die bij de aanroep is."""
+    top = Q_MAX if q_max is None else q_max
+    s = (np.abs(wt).max(axis=0).astype(np.float64) / top).astype(np.float32)
     s[s == 0] = 1.0
     q = np.rint(wt.astype(np.float64) / s.astype(np.float64)[None, :])
-    return np.clip(q, -Q_MAX, Q_MAX).astype(np.int8), s
+    return np.clip(q, -top, top).astype(np.int8), s
 
 
 def per_rij(w: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -450,13 +487,58 @@ def _linear(prefix: str) -> Stuk:
 
 
 class Bouwer:
-    """Bouwt één graaf; elke initializer van een gewicht is een callable (lui gelezen)."""
+    """Bouwt één graaf; elke initializer van een gewicht is een callable (lui gelezen).
 
-    def __init__(self, st: Safetensors, naam: str, *, int8: bool) -> None:
+    Op hun standaard geven de opties de omzetting van VERSIE; anders zijn ze alleen voor het
+    rapport van BZ4 (zie de moduletekst). Een Linear heet zoals in de grafen:
+    `<toren>.encoder.layers.<i>.self_attn.qkv`, `….out_proj`, `….mlp.fc1`, `….mlp.fc2`,
+    `vision_model.head.attention.q`, `….kv`, `….out_proj`, `vision_model.head.mlp.fc1`, `….fc2`
+    en `text_model.head`.
+
+    - fp32_als(label): die Linear in fp32 (MatMul en Add), ook in een int8-graaf;
+    - per_token (standaard aan, sinds VERSIE 3): de invoer per rij naar uint8, symmetrisch:
+      a = max |x| / 127 per rij, u = rint(x / a) + 128 (1..255), MatMulInteger met nulpunt 128
+      (een per rij weigert onnxruntime), dan × a × s + b. Een rij hangt zo niet af van de andere
+      items. Met |q| ≤ 64 is een paar van vpmaddubsw hooguit 255·64·2 = 32.640: het past in
+      int16, ook zonder VNNI. Uit: DynamicQuantizeMatMul (uint8 met één schaal voor de hele
+      invoer, dus over alle items van de batch), de vorm van VERSIE 2, met precies zijn bytes;
+    - glad: per label een factor per invoerkanaal (machten van 2): x / f en de rijen van Wᵀ × f.
+      Met machten van 2 is dat exact; daarna kwantiseert per_kolom het gladde gewicht;
+    - q_max: de grootste |q| van het gewicht van een Linear (None: Q_MAX); met per_token hooguit
+      PER_TOKEN_Q_MAX (64), anders een ValueError (meer kan alleen per tensor);
+    - meet: een lijst. Per Linear komt erin ("invoer", label, naam, n_in) (niet als de invoer een
+      constante is: de probe van de MAP-kop), per laag ("rest", "<toren>.<i>", naam): de residu na
+      die laag. `meet_uitvoer` maakt van elke naam een uitvoer van de graaf.
+    """
+
+    def __init__(
+        self,
+        st: Safetensors,
+        naam: str,
+        *,
+        int8: bool,
+        fp32_als: Callable[[str], bool] | None = None,
+        per_token: bool = True,
+        glad: dict[str, np.ndarray] | None = None,
+        q_max: int | None = None,
+        meet: list | None = None,
+    ) -> None:
+        top = Q_MAX if q_max is None else q_max
+        if per_token and top > PER_TOKEN_Q_MAX:
+            # 255·q·2 moet in int16 passen (zie Q_MAX); meer kan alleen per tensor (per_token=False)
+            raise ValueError(f"per_token met q_max {top}: hooguit {PER_TOKEN_Q_MAX}")
         self.st = st
         self.g = Graph(naam)
         self.int8 = int8
         self._schalen: dict[str, np.ndarray] = {}
+        self.fp32_als = fp32_als
+        self.per_token = per_token
+        self.glad = dict(glad or {})
+        self.q_max = q_max
+        self.meet = meet
+        self._meet_van = len(meet) if meet is not None else 0
+        self._vast: set[str] = set()  # de namen van tensor(): constanten, geen invoer
+        self._constanten: dict[float, str] = {}
 
     # constanten
     def f32(self, waarde: float | list[float], dims: list[int] | None = None) -> str:
@@ -481,6 +563,7 @@ class Bouwer:
             return np.ascontiguousarray(a.reshape(dims))
 
         label = naam if rijen is None else f"{naam}[{rijen[0]}:{rijen[1]}]"
+        self._vast.add(label)
         return self.g.initializer(label, FLOAT, dims, data)
 
     def _wt(self, stukken: list[Stuk]) -> np.ndarray:
@@ -499,6 +582,12 @@ class Bouwer:
             delen.append(b[s.van : s.tot])
         return np.ascontiguousarray(np.concatenate(delen))
 
+    def _gewicht(self, stukken: list[Stuk], label: str) -> np.ndarray:
+        """Wᵀ, met de rijen × de factoren van glad als die er voor dit label zijn (exact)."""
+        wt = self._wt(stukken)
+        f = self.glad.get(label)
+        return wt if f is None else wt * f[:, None]
+
     def linear(self, x: str, stukken: list[Stuk], label: str) -> str:
         """y = x · Wᵀ + b, met de rijen van de stukken naast elkaar als kolommen."""
         n_in = self.st.info(stukken[0].gewicht).vorm[1]
@@ -506,24 +595,70 @@ class Bouwer:
         for s in stukken:
             rijen = self.st.info(s.gewicht).vorm[0]
             n_uit += (s.tot if s.tot is not None else rijen) - (s.van or 0)
+        if self.meet is not None and x not in self._vast:
+            self.meet.append(("invoer", label, x, n_in))
         bias = self.g.initializer(f"{label}.b", FLOAT, [n_uit], lambda: self._bias(stukken))
-        if not self.int8:
-            w = self.g.initializer(f"{label}.w", FLOAT, [n_in, n_uit], lambda: self._wt(stukken))
+        if label in self.glad:
+            f = np.asarray(self.glad[label], dtype=np.float32)
+            if f.shape != (n_in,) or not (np.isfinite(f) & (f > 0)).all():
+                raise OmzetFout(f"glad: {label} vraagt {n_in} factoren > 0")
+            if not (np.frexp(f)[0] == 0.5).all():
+                raise OmzetFout(f"glad: de factoren van {label} zijn niet elk een macht van 2")
+            self.glad[label] = f
+            terug = self.g.initializer(f"{label}.glad", FLOAT, [n_in], (1.0 / f).astype(np.float32))
+            x = self.g.op("Mul", [x, terug])
+        if not self.int8 or (self.fp32_als is not None and self.fp32_als(label)):
+            w = self.g.initializer(
+                f"{label}.w", FLOAT, [n_in, n_uit], lambda: self._gewicht(stukken, label)
+            )
             return self.g.op("Add", [self.g.op("MatMul", [x, w]), bias])
 
         def q8() -> np.ndarray:
-            q, s = per_kolom(self._wt(stukken))
+            q, s = per_kolom(self._gewicht(stukken, label), self.q_max)
             self._schalen[label] = s
             return q
 
         def schaal() -> np.ndarray:
             s = self._schalen.pop(label, None)
-            return s if s is not None else per_kolom(self._wt(stukken))[1]
+            return s if s is not None else per_kolom(self._gewicht(stukken, label), self.q_max)[1]
 
         q = self.g.initializer(f"{label}.w8", INT8, [n_in, n_uit], q8)
         s = self.g.initializer(f"{label}.s", FLOAT, [n_uit], schaal)
+        if self.per_token:
+            return self._per_token(x, q, s, bias, label)
         z = self.g.initializer(f"{label}.z", INT8, [n_uit], bytes(n_uit))
         return self.g.op("DynamicQuantizeMatMul", [x, q, s, z, bias], domain=onnxw.MS_DOMAIN)
+
+    def _c(self, waarde: float) -> str:
+        """Een fp32-constante, één keer per graaf (alleen voor per_token; een graaf per tensor
+        maakt ze niet, en houdt zo de bytes van VERSIE 2)."""
+        if waarde not in self._constanten:
+            self._constanten[waarde] = self.f32(waarde)
+        return self._constanten[waarde]
+
+    def _per_token(self, x: str, q: str, s: str, bias: str, label: str) -> str:
+        """De invoer per rij symmetrisch naar uint8 (nulpunt 128), MatMulInteger in int32, dan de
+        schaal van de rij en die van de kolom (zie de klassetekst)."""
+        g = self.g
+        m = g.op("ReduceMax", [g.op("Abs", [x])], axes=[-1], keepdims=1)  # max |x| per rij
+        a = g.op("Max", [g.op("Div", [m, self._c(127.0)]), self._c(1e-30)])  # schaal per rij
+        u = g.op("Add", [g.op("Round", [g.op("Div", [x, a])]), self._c(128.0)])  # 1..255
+        u = g.op("Cast", [g.op("Clip", [u, self._c(0.0), self._c(255.0)])], to=UINT8)
+        nul = g.initializer(f"{label}.nul", UINT8, [], bytes([128]))
+        acc = g.op("MatMulInteger", [u, q, nul])  # int32
+        y = g.op("Mul", [g.op("Mul", [g.op("Cast", [acc], to=FLOAT), a]), s])
+        return g.op("Add", [y, bias])
+
+    def meet_uitvoer(self) -> None:
+        """Elke naam die deze Bouwer in meet zette, als uitvoer van de graaf (vorm onbekend), na
+        de gewone uitvoer; elke naam één keer."""
+        if self.meet is None:
+            return
+        gezien: set[str] = set()
+        for _soort, _label, naam, *_ in self.meet[self._meet_van :]:
+            if naam not in gezien:
+                gezien.add(naam)
+                self.g.output(naam, FLOAT, None)
 
     def layernorm(self, x: str, prefix: str, eps: float) -> str:
         w, b = self.tensor(f"{prefix}.weight"), self.tensor(f"{prefix}.bias")
@@ -569,7 +704,10 @@ class Bouwer:
         o = self.linear(o, [_linear(f"{p}.self_attn.out_proj")], f"{p}.self_attn.out_proj")
         x = g.op("Add", [x, o])
         h = self.layernorm(x, f"{p}.layer_norm2", t.eps)
-        return g.op("Add", [x, self.mlp(h, f"{p}.mlp", t.gelu)])
+        uit = g.op("Add", [x, self.mlp(h, f"{p}.mlp", t.gelu)])
+        if self.meet is not None:
+            self.meet.append(("rest", f"{t.naam}.{i}", uit))
+        return uit
 
     def normaliseer(self, x: str, uit: str) -> str:
         g = self.g
@@ -578,8 +716,30 @@ class Bouwer:
         return g.op("Div", [x, lengte], outputs=uit)
 
 
-def beeld_graaf(st: Safetensors, v: Vorm, *, int8: bool) -> Graph:
-    b = Bouwer(st, "siglip2_beeld", int8=int8)
+def beeld_graaf(
+    st: Safetensors,
+    v: Vorm,
+    *,
+    int8: bool,
+    fp32_als: Callable[[str], bool] | None = None,
+    per_token: bool = True,
+    glad: dict[str, np.ndarray] | None = None,
+    q_max: int | None = None,
+    meet: list | None = None,
+) -> Graph:
+    """De graaf van het beeld. De opties na int8 zijn die van Bouwer (op hun standaard de
+    omzetting van VERSIE; anders alleen voor het rapport van BZ4); met meet komen de gemeten
+    waarden als extra uitvoer na `beeld`."""
+    b = Bouwer(
+        st,
+        "siglip2_beeld",
+        int8=int8,
+        fp32_als=fp32_als,
+        per_token=per_token,
+        glad=glad,
+        q_max=q_max,
+        meet=meet,
+    )
     g, t = b.g, v.beeld
     e, s, p = t.breedte, v.beeldgrootte, v.patch
     x = g.input(INVOER_BEELD, FLOAT, ["n", v.kanalen, s, s])
@@ -604,16 +764,39 @@ def beeld_graaf(st: Safetensors, v: Vorm, *, int8: bool) -> Graph:
     o = g.op("Gather", [o, b.i64([0], dims=[])], axis=1)
     b.normaliseer(o, UIT_BEELD)
     g.output(UIT_BEELD, FLOAT, ["n", e])
+    b.meet_uitvoer()
     return g
 
 
-def tekst_graaf(st: Safetensors, v: Vorm, *, int8: bool) -> Graph:
-    b = Bouwer(st, "siglip2_tekst", int8=int8)
+def tekst_graaf(
+    st: Safetensors,
+    v: Vorm,
+    *,
+    int8: bool,
+    fp32_als: Callable[[str], bool] | None = None,
+    per_token: bool = True,
+    glad: dict[str, np.ndarray] | None = None,
+    q_max: int | None = None,
+    meet: list | None = None,
+    embedding_fp32: bool = False,
+) -> Graph:
+    """De graaf van de tekst; de opties als bij beeld_graaf, en embedding_fp32: de embedding van
+    de tokens in fp32, ook in een int8-graaf (rapport van BZ4)."""
+    b = Bouwer(
+        st,
+        "siglip2_tekst",
+        int8=int8,
+        fp32_als=fp32_als,
+        per_token=per_token,
+        glad=glad,
+        q_max=q_max,
+        meet=meet,
+    )
     g, t = b.g, v.tekst
     e = t.breedte
     ids = g.input(INVOER_TEKST, INT64, ["n", LENGTE])
     naam = "text_model.embeddings.token_embedding.weight"
-    if int8:
+    if int8 and not embedding_fp32:
         q8, s = _embedding_int8(st, naam, v.woorden, e)
         tabel = g.initializer(f"{naam}.w8", INT8, [v.woorden, e], q8.rijen)
         schalen = g.initializer(f"{naam}.s", FLOAT, [v.woorden, 1], s)
@@ -630,6 +813,7 @@ def tekst_graaf(st: Safetensors, v: Vorm, *, int8: bool) -> Graph:
     h = b.linear(h, [_linear("text_model.head")], "text_model.head")
     b.normaliseer(h, UIT_TEKST)
     g.output(UIT_TEKST, FLOAT, ["n", v.projectie])
+    b.meet_uitvoer()
     return g
 
 
@@ -720,15 +904,18 @@ def omzet(
     *,
     fp32: bool = False,
     melden: Callable[[str], None] | None = None,
+    per_token: bool = True,
 ) -> list[Uitkomst]:
     """Zet de vijf bronbestanden in `bron` om naar `uit` (die leeg moet zijn). Geeft de
-    uitvoer met sha256 en grootte, in vaste volgorde. Bij een fout blijft `uit` leeg."""
+    uitvoer met sha256 en grootte, in vaste volgorde. Bij een fout blijft `uit` leeg.
+    per_token=False geeft de bestanden van VERSIE 2 (per tensor), byte voor byte; alleen voor het
+    rapport van BZ4 en de test daarvan, niet op de opdrachtregel."""
     bron, uit = Path(bron), Path(uit)
     melden = melden or (lambda _tekst: None)
     _uitmap(uit)
     gemaakt: list[Path] = []
     try:
-        return _omzet(bron, uit, fp32=fp32, melden=melden, gemaakt=gemaakt)
+        return _omzet(bron, uit, fp32=fp32, melden=melden, gemaakt=gemaakt, per_token=per_token)
     except BaseException:
         for pad in gemaakt:
             pad.unlink(missing_ok=True)
@@ -737,7 +924,7 @@ def omzet(
         raise
 
 
-def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
+def _omzet(bron, uit, *, fp32, melden, gemaakt, per_token) -> list[Uitkomst]:
     bronnen = _bronnen(bron)
     melden("bronnen nagerekend")
     vorm = lees_config(_json(bron / CONFIG))
@@ -767,8 +954,8 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
         uitkomsten.append(_schrijf_model(uit / naam, maak()))
         melden(f"{naam} geschreven")
 
-    model(BEELD, lambda: beeld_graaf(st, vorm, int8=True))
-    model(TEKST, lambda: tekst_graaf(st, vorm, int8=True))
+    model(BEELD, lambda: beeld_graaf(st, vorm, int8=True, per_token=per_token))
+    model(TEKST, lambda: tekst_graaf(st, vorm, int8=True, per_token=per_token))
     if fp32:
         model(BEELD_FP32, lambda: beeld_graaf(st, vorm, int8=False))
         model(TEKST_FP32, lambda: tekst_graaf(st, vorm, int8=False))
@@ -779,7 +966,7 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
     uitkomsten.append(_schrijf(uit / LICENTIE, licentie.read_bytes()))
     meta = {
         "formaat": 1,
-        "omzetter": VERSIE,
+        "omzetter": VERSIE if per_token else VERSIE_PER_TENSOR,
         "model": MAP,
         "dim": vorm.projectie,
         "logit_scale": float(schaal[0]),
@@ -806,6 +993,8 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt) -> list[Uitkomst]:
             if u.naam in UITVOER
         },
     }
+    if per_token:  # VERSIE 2 had deze sleutel niet (en houdt zo zijn bytes)
+        meta["int8"] = dict(INT8_META)
     tekst = json.dumps(meta, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
     gemaakt.append(uit / META)
     uitkomsten.append(_schrijf(uit / META, tekst.encode()))

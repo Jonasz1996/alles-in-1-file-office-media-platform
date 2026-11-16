@@ -2,7 +2,7 @@
 
 De echte bronnen (huggingface.co, Wikimedia Commons) zijn vanuit de sandbox dicht; de job draait
 alleen in CI. Hier staat vast wat de stappen doen, met een HTTP-server op 127.0.0.1 die doet
-alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
+alsof hij Hugging Face, de API van Commons, thumb.wikimedia.org en upload.wikimedia.org is:
 
 - bron zonder regels in models.lock: de commit via de API, de vijf bestanden op die commit, een
   voorstel en code 3; met regels: streng (een andere sha256 of grootte is rood, en er blijft
@@ -12,17 +12,21 @@ alsof hij Hugging Face, de API van Commons en upload.wikimedia.org is:
   (voor BZ4) zonder grens op maxrss, maar met dezelfde vijf bestanden;
 - set: 120 foto's volgens Keuze 83 uit de gestructureerde gegevens, zonder mens, alleen CC0 of
   publiek domein, alleen JPEG, elk als thumbnail van DUIM_BREEDTE (1280 px) die groot genoeg is
-  voor de kwaliteitstest; beeld.tsv streng nagekeken, en met beeld.tsv alleen halen wat in set/
-  ontbreekt of niet klopt; een fout zegt hoe ver set kwam en of hij een thumbnail of een
-  origineel ophaalde;
+  voor de kwaliteitstest, op thumb.wikimedia.org (zoals de API hem sinds T427465 geeft; CI op
+  45bb926) of nog op de oude plek op upload; elke foto gevraagd als JPEG (Accept) en
+  nagekeken op de eerste bytes; beeld.tsv streng nagekeken, en met beeld.tsv alleen halen wat in
+  set/ ontbreekt of niet klopt; een fout zegt hoe ver set kwam en of hij een thumbnail of een
+  origineel ophaalde, en een tekort waarom de kandidaten afvielen;
 - het netwerk: een pauze per dienst van Commons (de API PAUZE_API_S, 8 s, ook voor elke nieuwe
-  poging; upload PAUZE_S), Retry-After altijd gevolgd (te lang, niet te lezen of buiten het
-  budget: meteen stoppen), van upload gemiddeld hooguit BANDBREEDTE, en bij een opgegeven 429 of
-  5xx de laatste Retry-After en de reden uit het antwoord in de fout (de titel, de eerste <p> of
-  de eerste regel tekst; nooit "Wikimedia Error"); de fout en de regel van set zeggen ook hoeveel
-  vragen de API en upload kregen en hoe vaak het antwoord 429 was;
+  poging; thumb en upload elk PAUZE_S), Retry-After altijd gevolgd (te lang, niet te lezen of
+  buiten het budget: meteen stoppen), van thumb en upload gemiddeld hooguit BANDBREEDTE, en bij
+  een opgegeven 429 of 5xx de laatste Retry-After en de reden uit het antwoord in de fout (de
+  titel, de eerste <p> of de eerste regel tekst; nooit "Wikimedia Error"); de fout en de regel
+  van set zeggen ook hoeveel vragen de API, thumb en upload kregen en hoe vaak het antwoord 429
+  was; een omleiding van Commons alleen naar een host van Commons;
 - elke vraag heeft een algemene User-Agent, zonder persoon, e-mail of repository; alleen met
-  BEELD_CONTACT (standaard uit, streng nagekeken) een contact, en dat staat nooit in het log.
+  BEELD_CONTACT (standaard uit, streng nagekeken) een contact, alleen naar Commons (ook na een
+  omleiding), en dat staat nooit in het log.
 """
 
 from __future__ import annotations
@@ -35,11 +39,13 @@ import importlib.util
 import itertools
 import json
 import random
+import re
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -66,13 +72,19 @@ bm = _laad()
 
 class Nep:
     """Een server met vaste antwoorden per pad (zonder query), plus een eigen handler voor de API
-    van Commons. vragen: (pad met query, User-Agent) van elke vraag; tijden: time.monotonic() bij
-    elke vraag (de nepklok van een test, als die er is); codes: de status van elk antwoord."""
+    van Commons. vragen: (pad met query, User-Agent) van elke vraag; accept: de kopregel Accept
+    van elke vraag (None zonder); tijden: time.monotonic() bij elke vraag (de nepklok van een test,
+    als die er is); codes: de status van elk antwoord. webp: per pad de bytes die de nep op een
+    200 geeft als de Accept om image/webp vraagt, zoals thumb.wikimedia.org (zie
+    bm.DUIM_BREEDTE: dezelfde URL, het formaat naar de Accept, geen Vary); anders die van
+    paden."""
 
     def __init__(self) -> None:
         # (status, body) of (status, body, extra kopregels)
         self.paden: dict[str, list[tuple]] = {}
+        self.webp: dict[str, bytes] = {}
         self.vragen: list[tuple[str, str]] = []
+        self.accept: list[str | None] = []
         self.tijden: list[float] = []
         self.codes: list[int] = []
         self.commons = None
@@ -82,6 +94,7 @@ class Nep:
             def do_GET(self):  # noqa: N802
                 nep.tijden.append(time.monotonic())
                 nep.vragen.append((self.path, self.headers.get("User-Agent", "")))
+                nep.accept.append(self.headers.get("Accept"))
                 pad = urllib.parse.urlsplit(self.path).path
                 extra: list[tuple[str, str]] = []
                 if pad == "/w/api.php" and nep.commons is not None:
@@ -103,6 +116,9 @@ class Nep:
                         status, body, *kop = rij[0] if len(rij) == 1 else rij.pop(0)
                         for naam, waarde in kop[0].items() if kop else ():
                             extra.append((naam, waarde))
+                        webp = "image/webp" in (self.headers.get("Accept") or "")
+                        if status == 200 and webp and pad in nep.webp:
+                            body = nep.webp[pad]
                 nep.codes.append(status)
                 self.send_response(status)
                 for naam, waarde in extra:
@@ -134,6 +150,9 @@ def nep(monkeypatch):
     monkeypatch.setattr(bm, "HF", n.url)
     monkeypatch.setattr(bm, "COMMONS", f"{n.url}/w/api.php")
     monkeypatch.setattr(bm, "UPLOAD", f"{n.url}/upload/")
+    # thumb.wikimedia.org (bm.THUMB, sinds 45bb926): raising=False, zodat ook de tool van vóór
+    # THUMB tegen deze tests draait (de terugdraaitest in x3a.md)
+    monkeypatch.setattr(bm, "THUMB", f"{n.url}/duim/", raising=False)
     monkeypatch.setattr(bm, "NASA", f"{n.url}/nasa/")
     monkeypatch.setattr(bm.time, "sleep", lambda s: None)
     # Elke test begint zonder pauze en zonder rem van een vorige test: hier slaapt niets, dus
@@ -149,11 +168,40 @@ def nep(monkeypatch):
     n.sluit()
 
 
+@pytest.fixture
+def elders(nep):
+    """Een tweede server: een host buiten Commons (localhost; de nep van Commons is 127.0.0.1).
+    Wat hij krijgt, staat in zijn vragen."""
+    n = Nep()
+    n.url = n.url.replace("127.0.0.1", "localhost")
+    yield n
+    n.sluit()
+
+
+# Een contact zoals ci.yml het meestuurt (de link naar het repository)
+CONTACT = "https://github.com/Eigenaar-1/een_repo.met-punten"
+# Het begin van elke JPEG van de nep: bm.JPEG_BEGIN en de rest van een APP0-marker
+JPEG = b"\xff\xd8\xff\xe0"
+
+
+def _webp(n: int) -> bytes:
+    """n bytes WebP: RIFF, de lengte en WEBP, zoals thumb.wikimedia.org op Accept: image/webp."""
+    return b"RIFF" + (n - 8).to_bytes(4, "little") + b"WEBPVP8 " + bytes(n - 16)
+
+
 @pytest.fixture(autouse=True)
 def _zonder_contact(monkeypatch):
     """Elke test begint zonder BEELD_CONTACT: niet uit de omgeving, niet van een vorige test."""
     monkeypatch.delenv("BEELD_CONTACT", raising=False)
     monkeypatch.setattr(bm, "_contact", None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _zonder_lijst(monkeypatch, tmp_path):
+    """Elke test begint zonder beeld_niet.tsv: niet die van de repository (die heeft echte bronnen
+    van Commons, geen van de nep). Een test die een lijst wil, schrijft hem naar bm.NIET.
+    raising=False: ook de tool van vóór de lijst draait tegen deze tests (de terugdraaitest)."""
+    monkeypatch.setattr(bm, "NIET", tmp_path / "lijst" / "beeld_niet.tsv", raising=False)
 
 
 @pytest.fixture
@@ -178,11 +226,11 @@ def _ua_algemeen(nep: Nep) -> None:
 
 def _verkeer(nep: Nep, *, van: int = 0, begin: float = 0.0, contact: str = "nee") -> str:
     """Wat de fout en de regel van set over het verkeer met Commons horen te zeggen
-    (Voortgang.verkeer), uit wat de nep zelf zag vanaf nep.vragen[van]: per dienst elke vraag (ook
-    een die 429 kreeg), hoe vaak het antwoord 429 of 5xx was, en na hoeveel seconden (vanaf begin,
-    op de klok van de test) de eerste 429 kwam."""
+    (Voortgang.verkeer), uit wat de nep zelf zag vanaf nep.vragen[van]: per dienst (de API, thumb
+    en upload, in die volgorde) elke vraag (ook een die 429 kreeg), hoe vaak het antwoord 429 of
+    5xx was, en na hoeveel seconden (vanaf begin, op de klok van de test) de eerste 429 kwam."""
     delen = []
-    for dienst, voor in (("API", "/w/api.php"), ("upload", "/upload/")):
+    for dienst, voor in (("API", "/w/api.php"), ("thumb", "/duim/"), ("upload", "/upload/")):
         rij = [
             (t, c)
             for (p, _), t, c in zip(
@@ -280,9 +328,40 @@ def test_bereik_meldt_elke_host(nep, werk, monkeypatch):
     assert _kort(werk) == [
         "BZ1 huggingface.co: bereikbaar (HTTP 200)",
         "BZ1 commons.wikimedia.org: niet bereikbaar (ConnectionRefusedError)",
+        "BZ1 thumb.wikimedia.org: bereikbaar (HTTP 404)",
         "BZ1 upload.wikimedia.org: bereikbaar (HTTP 404)",
         "BZ1 images-assets.nasa.gov: bereikbaar (HTTP 404)",
     ]
+    _ua_algemeen(nep)
+
+
+def test_bereik_meldt_thumb_ook_als_de_wortel_omleidt(nep, elders, werk):
+    """CI op 45bb926: de thumbnails staan op thumb.wikimedia.org (zie bm.THUMB), en BZ1 noemde
+    die host niet. Nu wel, met een regel die iets zegt, ook als de wortel omleidt: naar een host
+    van Commons volgt hij, en de regel zegt waarheen en wat daar het antwoord was; naar een andere
+    host volgt hij niet (_Omleiding), en dat zegt de regel ook, zonder vraag daarheen."""
+    nep.zet(f"/api/models/{bm.REPO}", b"{}")
+    nep.zet("/w/api.php", b"{}")
+    nep.paden["/duim/"] = [(301, b"", {"Location": f"{nep.url}/"})]
+    nep.zet("/", b"<title>Wikimedia Commons</title>")
+    assert bm.bereik(werk) == 0
+    assert (
+        _kort(werk)[2]
+        == "BZ1 thumb.wikimedia.org: bereikbaar (HTTP 301 naar 127.0.0.1, daar HTTP 200)"
+    )
+    nep.paden["/duim/"] = [(302, b"", {"Location": f"{elders.url}/"})]
+    werk2 = bm.Werk(werk.map.parent / "werk2")
+    assert bm.bereik(werk2) == 0
+    assert _kort(werk2) == [
+        "BZ1 huggingface.co: bereikbaar (HTTP 200)",
+        "BZ1 commons.wikimedia.org: bereikbaar (HTTP 200)",
+        "BZ1 thumb.wikimedia.org: bereikbaar (HTTP 302 naar localhost, niet gevolgd (van Commons "
+        "alleen naar https op commons.wikimedia.org, thumb.wikimedia.org of "
+        "upload.wikimedia.org))",
+        "BZ1 upload.wikimedia.org: bereikbaar (HTTP 404)",
+        "BZ1 images-assets.nasa.gov: bereikbaar (HTTP 404)",
+    ]
+    assert elders.vragen == []
     _ua_algemeen(nep)
 
 
@@ -608,8 +687,8 @@ def test_te_lang_of_buiten_het_budget_stopt_meteen(nep, tmp_path, monkeypatch):
 def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
     """CI op 3148c2f: met één vraag per seconde gaf de API van Commons al vóór de eerste foto
     steeds 429 (Retry-After 50). Nu nooit twee vragen aan de API binnen PAUZE_API_S (8 s), aan
-    upload binnen PAUZE_S; elk op zijn eigen klok, en elke vraag telt. Andere hosts (Hugging
-    Face) wachten niet en tellen niet."""
+    thumb en aan upload binnen PAUZE_S (thumb sinds 45bb926: zie bm.THUMB); elk op zijn eigen
+    klok, en elke vraag telt. Andere hosts (Hugging Face) wachten niet en tellen niet."""
     klok = [1000.0]
     slapen: list[float] = []
 
@@ -622,17 +701,22 @@ def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
     monkeypatch.setattr(bm, "_vorige", {})
     monkeypatch.setattr(bm, "COMMONS", "https://commons.example/w/api.php")
     monkeypatch.setattr(bm, "UPLOAD", "https://upload.example/")
+    monkeypatch.setattr(bm, "THUMB", "https://thumb.example/", raising=False)
     bm._pauze("https://commons.example/w/api.php?a=1")
     bm._pauze("https://commons.example/w/api.php?a=2")
     klok[0] += 0.25
     bm._pauze("https://commons.example/w/api.php?a=3")
     bm._pauze("https://upload.example/x.jpg")  # upload: een eigen beurt, geen 8 s
     bm._pauze("https://upload.example/y.jpg")
+    bm._pauze("https://thumb.example/thumb/a/1280px-a.jpg")  # thumb: ook een eigen beurt
+    bm._pauze("https://thumb.example/thumb/b/1280px-b.jpg")
     bm._pauze("https://huggingface.co/x")
-    assert slapen == [8.0, 7.75, 1.0]
+    assert slapen == [8.0, 7.75, 1.0, 1.0]
     assert bm.PAUZE_API_S == 8.0 and bm.PAUZE_S == 1.0
     assert bm._tellers["API"].vragen == 3 and bm._tellers["upload"].vragen == 2
-    assert set(bm._tellers) == {"API", "upload"}
+    assert bm._tellers["thumb"].vragen == 2
+    assert set(bm._tellers) == {"API", "thumb", "upload"}
+    assert bm.DIENSTEN == ("API", "thumb", "upload")
 
 
 def test_elke_poging_aan_de_api_wacht_pauze_api_s(nep, monkeypatch):
@@ -673,7 +757,8 @@ def test_van_upload_hooguit_bandbreedte_andere_hosts_niet(nep, tmp_path, monkeyp
     Robot_policy) staan van media samen hooguit 25 Mbps toe, gemeten over stukken van 10 s; een
     origineel kwam zonder grens in een fractie van een seconde binnen. Van upload nu gemiddeld
     hooguit BANDBREEDTE, per download en over downloads samen, en een pauze spaart geen tegoed
-    op. Hugging Face en andere hosts wachten niet."""
+    op; van thumb.wikimedia.org (de thumbnails sinds 45bb926) net zo. Hugging Face en andere
+    hosts wachten niet."""
     klok = [1000.0]
     slapen: list[float] = []
 
@@ -705,6 +790,12 @@ def test_van_upload_hooguit_bandbreedte_andere_hosts_niet(nep, tmp_path, monkeyp
     na_pauze = klok[0]
     bm.haal(f"{bm.UPLOAD}a.jpg", tmp_path / "a2", max_bytes=len(groot))
     assert len(groot) <= bm.BANDBREEDTE * (klok[0] - na_pauze) * (1 + 1e-9)
+    # thumb.wikimedia.org net zo
+    nep.zet("/duim/thumb/c.jpg/1280px-c.jpg", groot)
+    van_thumb = klok[0]
+    url = f"{bm.THUMB}thumb/c.jpg/1280px-c.jpg"
+    assert bm.haal(url, tmp_path / "c", max_bytes=len(groot))[1] == len(groot)
+    assert len(groot) <= bm.BANDBREEDTE * (klok[0] - van_thumb) * (1 + 1e-9)
     # Hugging Face (en elke andere host): geen pauze en geen rem
     nep.zet(f"/{bm.REPO}/resolve/{COMMIT}/model.safetensors", groot)
     slapen.clear()
@@ -854,6 +945,350 @@ def test_de_uitleg_is_de_titel_of_de_eerste_regel_met_tekst(nep, tmp_path, body,
     assert str(fout.value) == f"kat-1.jpg: HTTP 429 (Retry-After 1; {antwoord})"
     assert "10.0.0.1" not in str(fout.value) and "{" not in str(fout.value)
     assert "Wikimedia Error" not in str(fout.value)
+
+
+# --- omleidingen --------------------------------------------------------------------------------
+
+ALLEEN_COMMONS = (
+    "van Commons alleen naar https op commons.wikimedia.org, thumb.wikimedia.org of "
+    "upload.wikimedia.org"
+)
+
+
+def test_een_omleiding_van_commons_naar_elders_volgt_hij_nooit(nep, elders, tmp_path):
+    """urllib volgt elke omleiding, ook naar een andere host, en neemt de kopregels mee: met
+    BEELD_CONTACT ging het contact dan mee naar die host, en de eigenaar gaf alleen toestemming
+    voor Wikimedia. Nu volgt _Omleiding een omleiding van een vraag aan Commons (de API, thumb of
+    upload) alleen naar https op een host van Commons; elke andere is een fout met de code en de
+    host (nooit de hele URL), zonder een vraag daarheen, zonder nieuwe poging, en zonder iets op
+    schijf."""
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    elders.zet("/x.jpg", JPEG + b"van elders")
+    elders.zet("/w/api.php", b"{}")
+    nep.paden["/duim/thumb/1.jpg/1280px-1.jpg"] = [
+        (302, b"", {"Location": f"{elders.url}/x.jpg?wie=ci"})
+    ]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(
+            f"{bm.THUMB}thumb/1.jpg/1280px-1.jpg", tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True
+        )
+    assert str(fout.value) == f"kat-1.jpg: HTTP 302 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    # de API net zo
+    nep.paden["/w/api.php"] = [(301, b"", {"Location": f"{elders.url}/w/api.php?action=query"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.json_van(f"{bm.COMMONS}?action=query")
+    assert str(fout.value) == f"127.0.0.1: HTTP 301 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    # upload, en een host die geen gewone hostnaam is: "een onbekende host", nooit de URL
+    nep.paden["/upload/2.jpg"] = [(307, b"", {"Location": "https://x_y.example/2.jpg?wie=ci"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(f"{bm.UPLOAD}2.jpg", tmp_path / "kat-2.jpg", max_bytes=99, jpeg=True)
+    assert str(fout.value) == (
+        f"kat-2.jpg: HTTP 307 naar een onbekende host, niet gevolgd ({ALLEEN_COMMONS})"
+    )
+    # dezelfde host en poort als Commons, maar een ander schema: ook niet
+    https = nep.url.replace("http://", "https://")
+    nep.paden["/upload/3.jpg"] = [(301, b"", {"Location": f"{https}/upload/3.jpg"})]
+    with pytest.raises(bm.Fout, match=r"^kat-3\.jpg: HTTP 301 naar 127\.0\.0\.1, niet gevolgd"):
+        bm.haal(f"{bm.UPLOAD}3.jpg", tmp_path / "kat-3.jpg", max_bytes=99, jpeg=True)
+    # nooit een vraag elders, elke vraag aan Commons één keer (geen nieuwe poging) en met het
+    # contact, en niets op schijf
+    assert elders.vragen == []
+    assert [p for p, _ in nep.vragen] == [
+        "/duim/thumb/1.jpg/1280px-1.jpg",
+        "/w/api.php?action=query",
+        "/upload/2.jpg",
+        "/upload/3.jpg",
+    ]
+    assert all(ua == met for _, ua in nep.vragen)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_omleidingen_alleen_naar_https_op_de_hosts_van_commons():
+    """Met de echte URL's (zonder de nep): de drie hosts van Commons, alle drie over https op
+    poort 443; http naar dezelfde host, een andere poort of een andere host valt erbuiten."""
+    assert bm.COMMONS.startswith("https://commons.wikimedia.org/")
+    assert bm.THUMB == "https://thumb.wikimedia.org/"
+    assert bm.UPLOAD == "https://upload.wikimedia.org/"
+    assert bm._commons_hosts() == {
+        ("https", "commons.wikimedia.org", 443),
+        ("https", "thumb.wikimedia.org", 443),
+        ("https", "upload.wikimedia.org", 443),
+    }
+    for url in (
+        "http://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg",
+        "https://thumb.wikimedia.org:8443/x",
+        "https://wikimedia.org.example/x",
+        "https://maps.wikimedia.org/x",
+        "https://[::1/x",
+    ):
+        assert bm._oorsprong(url) not in bm._commons_hosts(), url
+
+
+def test_een_omleiding_binnen_commons_volgt_hij_met_pauze_en_telling(nep, tmp_path, monkeypatch):
+    """De oude URL's van thumbnails op upload werken nog; Wikimedia wil ze "eventually" met een
+    301 naar thumb.wikimedia.org sturen (zie bm.THUMB). Zo'n omleiding volgt de tool: de nieuwe
+    vraag krijgt de User-Agent voor de nieuwe URL (met contact: naar thumb wel), Accept gaat mee,
+    hij wacht de pauze van thumb (PAUZE_S na de vorige vraag daar) en telt bij thumb. Een
+    omleiding naar commons.wikimedia.org buiten de API (zo antwoordt thumb.wikimedia.org op het pad
+    van een origineel) volgt hij ook, maar zonder contact en zonder pauze of telling; daar komt
+    geen JPEG, dus een fout, en niets op schijf."""
+    klok, _ = _nepklok(monkeypatch)
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    duim = JPEG + b"de thumbnail"
+    nep.zet("/duim/thumb/a/ab/F.jpg/1280px-F.jpg", duim)
+    nep.zet("/duim/thumb/a/ab/G.jpg/1280px-G.jpg", duim)
+    nep.paden["/upload/thumb/a/ab/G.jpg/1280px-G.jpg"] = [
+        (301, b"", {"Location": f"{bm.THUMB}thumb/a/ab/G.jpg/1280px-G.jpg"})
+    ]
+    f = bm.haal(
+        f"{bm.THUMB}thumb/a/ab/F.jpg/1280px-F.jpg", tmp_path / "boot-1.jpg", max_bytes=99, jpeg=True
+    )
+    g = bm.haal(
+        f"{bm.UPLOAD}thumb/a/ab/G.jpg/1280px-G.jpg",
+        tmp_path / "boot-2.jpg",
+        max_bytes=99,
+        jpeg=True,
+    )
+    assert f == g == (_sha(duim), len(duim))
+    assert [p for p, _ in nep.vragen] == [
+        "/duim/thumb/a/ab/F.jpg/1280px-F.jpg",
+        "/upload/thumb/a/ab/G.jpg/1280px-G.jpg",
+        "/duim/thumb/a/ab/G.jpg/1280px-G.jpg",
+    ]
+    assert [ua for _, ua in nep.vragen] == [met] * 3
+    assert nep.accept == ["image/jpeg"] * 3
+    # upload had een eigen beurt; de omleiding naar thumb wachtte PAUZE_S na F
+    assert nep.tijden[1] < nep.tijden[0] + bm.PAUZE_S
+    assert round(nep.tijden[2] - nep.tijden[0], 6) >= bm.PAUZE_S
+    assert (bm._tellers["thumb"].vragen, bm._tellers["upload"].vragen) == (2, 1)
+    # het pad van een origineel op thumb: een 301 naar commons.wikimedia.org
+    nep.paden["/duim/wikipedia/commons/a/ab/H.jpg"] = [(301, b"", {"Location": f"{nep.url}/"})]
+    nep.zet("/", b"<!DOCTYPE html><title>Wikimedia Commons</title>")
+    voor = klok[0]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(
+            f"{bm.THUMB}wikipedia/commons/a/ab/H.jpg",
+            tmp_path / "boot-3.jpg",
+            max_bytes=999,
+            jpeg=True,
+        )
+    assert str(fout.value) == "boot-3.jpg: geen JPEG"
+    assert nep.vragen[-1] == ("/", bm.UA)  # buiten de API: geen dienst, dus zonder contact
+    assert nep.tijden[-1] == nep.tijden[-2] >= voor
+    assert bm._tellers["thumb"].vragen == 3 and "API" not in bm._tellers
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["boot-1.jpg", "boot-2.jpg"]
+
+
+def test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact(nep, elders, tmp_path):
+    """Hugging Face stuurt een download door naar zijn CDN (een andere host): dat blijft werken,
+    zonder contact (dat gaat alleen naar Commons, ook na een omleiding), zonder Accept, en zonder
+    pauze of telling."""
+    bm._zet_contact(CONTACT)
+    data = b"het model"
+    pad = f"/{bm.REPO}/resolve/{COMMIT}/model.safetensors"
+    nep.paden[pad] = [(302, b"", {"Location": f"{elders.url}/cdn/model.safetensors?x=1"})]
+    elders.zet("/cdn/model.safetensors", data)
+    uit = bm.haal(f"{bm.HF}{pad}", tmp_path / "m", max_bytes=99, sha256=_sha(data))
+    assert uit == (_sha(data), len(data))
+    assert nep.vragen == [(pad, bm.UA)]
+    assert elders.vragen == [("/cdn/model.safetensors?x=1", bm.UA)]
+    assert nep.accept == elders.accept == [None]
+    assert bm._tellers == {}
+
+
+def test_een_keten_via_commons_buiten_een_dienst_naar_elders_volgt_hij_niet(nep, elders, tmp_path):
+    """De bewaker van _Omleiding kijkt naar waar de vraag begon, niet naar de vorige stap. Thumb
+    leidt om naar commons.wikimedia.org buiten de API (een host van Commons, maar geen dienst: zo
+    antwoordt thumb.wikimedia.org op het pad van een origineel), en die weer naar een andere host:
+    die tweede omleiding volgt hij niet. Gaf de nieuwe vraag niet mee waar hij begon, dan leek de
+    tweede stap een vraag die buiten Commons begon, en ging er wel een vraag (met de foto erachter)
+    naar die host (de review van de reparatie, R1)."""
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    elders.zet("/x.jpg", JPEG + b"van elders")
+    nep.paden["/duim/thumb/K.jpg/1280px-K.jpg"] = [(301, b"", {"Location": f"{nep.url}/omweg"})]
+    nep.paden["/omweg"] = [(302, b"", {"Location": f"{elders.url}/x.jpg?wie=ci"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(
+            f"{bm.THUMB}thumb/K.jpg/1280px-K.jpg", tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True
+        )
+    assert str(fout.value) == f"kat-1.jpg: HTTP 302 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    # de API net zo
+    nep.paden["/w/api.php"] = [(301, b"", {"Location": f"{nep.url}/omweg"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.json_van(f"{bm.COMMONS}?action=query")
+    assert str(fout.value) == f"127.0.0.1: HTTP 302 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    assert elders.vragen == []
+    # de omweg is geen dienst: zonder contact, en elke vraag één keer (geen nieuwe poging)
+    assert nep.vragen == [
+        ("/duim/thumb/K.jpg/1280px-K.jpg", met),
+        ("/omweg", bm.UA),
+        ("/w/api.php?action=query", met),
+        ("/omweg", bm.UA),
+    ]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_na_een_omleiding_telt_en_remt_de_host_die_antwoordde(nep, tmp_path, monkeypatch):
+    """De 301 van een oude URL op upload naar thumb (zie bm.THUMB), en dan een 429 van thumb. Die
+    429 telt bij thumb, niet bij upload: de tellers in de fout zeggen welke host weigert. De bytes
+    tellen in de rem (BANDBREEDTE) van thumb, de host die ze gaf, niet in die van upload. Accept
+    gaat mee bij elke stap en elke poging. Thumb staat hier op localhost en upload op 127.0.0.1
+    (dezelfde nep), zodat de rem per host te zien is (de review van de reparatie, R3 en R4)."""
+    _, slapen = _nepklok(monkeypatch)
+    poort = nep.url.rsplit(":", 1)[1]
+    monkeypatch.setattr(bm, "THUMB", f"http://localhost:{poort}/duim/")
+    duim = JPEG + bytes(5000)
+    oud, nieuw = "/upload/thumb/a/ab/G.jpg/1280px-G.jpg", "/duim/thumb/a/ab/G.jpg/1280px-G.jpg"
+    nep.paden[oud] = [(301, b"", {"Location": f"{bm.THUMB}thumb/a/ab/G.jpg/1280px-G.jpg"})]
+    nep.paden[nieuw] = [(429, b"", {"Retry-After": "3"}), (200, duim)]
+    uit = bm.haal(
+        f"{bm.UPLOAD}thumb/a/ab/G.jpg/1280px-G.jpg",
+        tmp_path / "boot-1.jpg",
+        max_bytes=9999,
+        jpeg=True,
+    )
+    assert uit == (_sha(duim), len(duim))
+    assert [p for p, _ in nep.vragen] == [oud, nieuw, oud, nieuw]
+    assert nep.codes == [301, 429, 301, 200]
+    assert nep.accept == ["image/jpeg"] * 4
+    thumb, upload = bm._tellers["thumb"], bm._tellers["upload"]
+    assert (thumb.vragen, thumb.n429, thumb.n5xx) == (2, 1, 0)
+    assert (upload.vragen, upload.n429, upload.n5xx) == (2, 0, 0)
+    # de rem: alleen die van thumb (localhost), met precies de bytes van de thumbnail
+    assert set(bm._klaar) == {"localhost"}
+    assert slapen[-1] == pytest.approx(len(duim) / bm.BANDBREEDTE)
+
+
+def test_de_dienst_leest_de_host_zoals_de_bewaker():
+    """_Omleiding laat een omleiding door naar een host van Commons zoals urlsplit hem leest: in
+    kleine letters, en met poort 443 ook als die er staat. _dienst las startswith op de hele URL:
+    https://THUMB.wikimedia.org/… en https://thumb.wikimedia.org:443/… kwamen door de bewaker,
+    maar zonder pauze, telling, rem en contact (de review van de reparatie, R5). Nu leest _dienst
+    de oorsprong net zo, met de echte URL's: elke dienst is een host van Commons, en het enige wat
+    de bewaker doorlaat zonder dienst te zijn, is commons.wikimedia.org buiten de API."""
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    for url, dienst in (
+        ("https://commons.wikimedia.org/w/api.php?action=query", "API"),
+        ("https://COMMONS.Wikimedia.org:443/w/api.php?action=query", "API"),
+        ("https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg", "thumb"),
+        ("https://THUMB.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg", "thumb"),
+        ("https://thumb.wikimedia.org:443/x", "thumb"),
+        ("https://Upload.Wikimedia.Org/wikipedia/commons/a/ab/F.jpg", "upload"),
+        ("https://upload.wikimedia.org:443/x", "upload"),
+        ("https://commons.wikimedia.org/wiki/Main_Page", None),
+        ("https://Commons.wikimedia.org/", None),
+        ("http://thumb.wikimedia.org/x", None),
+        ("https://thumb.wikimedia.org:8443/x", None),
+        ("https://maps.wikimedia.org/x", None),
+        ("https://thumb.wikimedia.org.example/x", None),
+        ("https://[::1/x", None),
+        ("https://huggingface.co/x", None),
+    ):
+        assert bm._dienst(url) == dienst, url
+        assert bm._user_agent(url) == (met if dienst else bm.UA), url
+        door = bm._oorsprong(url) in bm._commons_hosts()
+        assert door == (dienst is not None or bm._hostnaam(url) == "commons.wikimedia.org"), url
+
+
+def test_een_omleiding_naar_thumb_in_hoofdletters_wacht_telt_en_remt(nep, tmp_path, monkeypatch):
+    """Van de nep: upload leidt om naar thumb met de host in hoofdletters (LOCALHOST; thumb staat
+    op localhost). Die stap is thumb: met het contact, PAUZE_S na de vorige vraag aan thumb,
+    geteld bij thumb, en de bytes in de rem van thumb (de review van de reparatie, R5)."""
+    klok, _ = _nepklok(monkeypatch)
+    poort = nep.url.rsplit(":", 1)[1]
+    monkeypatch.setattr(bm, "THUMB", f"http://localhost:{poort}/duim/")
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    duim = JPEG + b"de thumbnail"
+    nep.zet("/duim/thumb/F.jpg/1280px-F.jpg", duim)
+    nep.zet("/duim/thumb/G.jpg/1280px-G.jpg", duim)
+    nep.paden["/upload/thumb/G.jpg/1280px-G.jpg"] = [
+        (301, b"", {"Location": f"http://LOCALHOST:{poort}/duim/thumb/G.jpg/1280px-G.jpg"})
+    ]
+    bm.haal(f"{bm.THUMB}thumb/F.jpg/1280px-F.jpg", tmp_path / "a-1.jpg", max_bytes=99, jpeg=True)
+    bm._klaar.clear()
+    bm.haal(f"{bm.UPLOAD}thumb/G.jpg/1280px-G.jpg", tmp_path / "a-2.jpg", max_bytes=99, jpeg=True)
+    assert [p for p, _ in nep.vragen] == [
+        "/duim/thumb/F.jpg/1280px-F.jpg",
+        "/upload/thumb/G.jpg/1280px-G.jpg",
+        "/duim/thumb/G.jpg/1280px-G.jpg",
+    ]
+    assert [ua for _, ua in nep.vragen] == [met] * 3
+    assert round(nep.tijden[2] - nep.tijden[0], 6) >= bm.PAUZE_S
+    assert (bm._tellers["thumb"].vragen, bm._tellers["upload"].vragen) == (2, 1)
+    assert set(bm._klaar) == {"localhost"} and bm._klaar["localhost"] == pytest.approx(klok[0])
+
+
+# --- de JPEG ------------------------------------------------------------------------------------
+
+
+def test_haal_met_jpeg_vraagt_jpeg_en_kijkt_de_eerste_bytes_na(nep, tmp_path):
+    """thumb.wikimedia.org geeft op dezelfde URL WebP of JPEG, naar de Accept (zie
+    bm.DUIM_BREEDTE), en een cache die de Vary mist, kan WebP geven op een vraag om JPEG. haal met
+    jpeg (de foto's van de set) vraagt Accept: image/jpeg en kijkt de eerste bytes na: anders een
+    Fout die zegt wat er kwam, zodra hij 12 bytes heeft (niet de hele download), en niets op
+    schijf. Zonder jpeg (Hugging Face, de bron): geen Accept en geen controle."""
+    assert bm.ACCEPT == "image/jpeg" and bm.JPEG_BEGIN == b"\xff\xd8\xff"
+    goed = JPEG + b"een foto"
+    nep.zet("/duim/thumb/goed.jpg/1280px-goed.jpg", goed)
+    nep.webp["/duim/thumb/goed.jpg/1280px-goed.jpg"] = _webp(64)
+    url = f"{bm.THUMB}thumb/goed.jpg/1280px-goed.jpg"
+    assert bm.haal(url, tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True) == (_sha(goed), len(goed))
+    assert nep.accept == ["image/jpeg"]
+    # de nep geeft wel WebP met de Accept van een browser (zoals thumb.wikimedia.org)
+    vraag = urllib.request.Request(url, headers={"Accept": "image/avif,image/webp,*/*"})
+    with urllib.request.urlopen(vraag, timeout=30) as antwoord:
+        assert antwoord.read()[8:12] == b"WEBP"
+    # een cache die de Vary mist: WebP, wat de Accept ook zegt; groot, en toch na één stuk gestopt
+    groot = _webp(3 << 20)
+    nep.zet("/duim/thumb/webp.jpg/1280px-webp.jpg", groot)
+    voor = bm._opgehaald
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(
+            f"{bm.THUMB}thumb/webp.jpg/1280px-webp.jpg",
+            tmp_path / "kat-2.jpg",
+            max_bytes=4 << 20,
+            jpeg=True,
+        )
+    assert str(fout.value) == "kat-2.jpg: WebP in plaats van JPEG"
+    assert 12 <= bm._opgehaald - voor <= 1 << 20
+    # iets anders (een HTML-pagina), en korter dan 12 bytes (na de download nagekeken)
+    for naam, body in (("html", b"<!DOCTYPE html><html><body>"), ("gif", b"GIF89a")):
+        nep.zet(f"/upload/{naam}.jpg", body)
+        with pytest.raises(bm.Fout) as fout:
+            bm.haal(f"{bm.UPLOAD}{naam}.jpg", tmp_path / f"{naam}-1.jpg", max_bytes=99, jpeg=True)
+        assert str(fout.value) == f"{naam}-1.jpg: geen JPEG"
+    # een JPEG van maar vier bytes mag (de controle is alleen het begin)
+    nep.zet("/upload/klein.jpg", JPEG)
+    assert (
+        bm.haal(f"{bm.UPLOAD}klein.jpg", tmp_path / "klein-1.jpg", max_bytes=99, jpeg=True)[1] == 4
+    )
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["kat-1.jpg", "klein-1.jpg"]
+    # zonder jpeg: geen Accept, en de bytes zijn wat ze zijn
+    n = len(nep.accept)
+    assert bm.haal(f"{bm.UPLOAD}gif.jpg", tmp_path / "g", max_bytes=99)[1] == 6
+    assert nep.accept[n:] == [None]
+
+
+def test_elke_nieuwe_poging_van_een_foto_vraagt_weer_jpeg(nep, tmp_path, monkeypatch):
+    """Accept: image/jpeg gaat mee met elke poging van een download van de set, ook met een nieuwe
+    poging na een 503 of een 429: anders kon juist de poging die slaagt WebP krijgen (zie
+    bm.DUIM_BREEDTE), of de bytes van een andere vorm dan die van de sha256 in beeld.tsv (de
+    review van de reparatie, R2)."""
+    _nepklok(monkeypatch)
+    duim = JPEG + b"de thumbnail"
+    pad = "/duim/thumb/L.jpg/1280px-L.jpg"
+    nep.paden[pad] = [(503, b""), (429, b"", {"Retry-After": "3"}), (200, duim)]
+    url = f"{bm.THUMB}thumb/L.jpg/1280px-L.jpg"
+    assert bm.haal(url, tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True) == (_sha(duim), len(duim))
+    assert nep.vragen == [(pad, bm.UA)] * 3 and nep.codes == [503, 429, 200]
+    assert nep.accept == ["image/jpeg"] * 3
+    thumb = bm._tellers["thumb"]
+    assert (thumb.vragen, thumb.n429, thumb.n5xx) == (3, 1, 1)
 
 
 # --- vergelijk ---------------------------------------------------------------------------------
@@ -1011,11 +1446,14 @@ class NepCommons:
     """De API van Commons met een eigen verzameling bestanden. De zoekmachine kijkt alleen naar
     de positieve P180's: wat er verder niet mag (een mens, geen JPEG, een andere licentie, te
     klein), moet de tool zelf weggooien. Met iiurlwidth geeft imageinfo ook een thumbnail, zoals
-    MediaWiki: van een breder origineel een eigen bestand onder /upload/thumb/ (duim), van een
-    origineel dat niet breder is het origineel zelf als thumburl, en dan zijn thumbwidth en
-    thumbheight de maten van het origineel (MediaWiki, ApiQueryImageInfo: "T25834 - If the URLs
-    are the same, we haven't resized it"). weg: vragen aan de API waarop de nep 404 zegt; druk:
-    (status, body, kopregels) als de API die vraag weigert (429 of 5xx), anders None."""
+    MediaWiki: van een breder origineel een eigen bestand op thumb.wikimedia.org (de nep: /duim/,
+    bm.THUMB; zo geeft de API hem sinds T427465, CI op 45bb926), behalve van de foto's van alleen
+    een boot: die nog op de oude plek, /upload/thumb/ (oud); van een origineel dat niet breder is
+    het origineel zelf als thumburl, en dan zijn thumbwidth en thumbheight de maten van het
+    origineel (MediaWiki, ApiQueryImageInfo: "T25834 - If the URLs are the same, we haven't
+    resized it"). Elk bestand begint als een JPEG; van elke thumbnail op /duim/ geeft de nep WebP
+    als de Accept erom vraagt (de fixture commons). weg: vragen aan de API waarop de nep 404 zegt;
+    druk: (status, body, kopregels) als de API die vraag weigert (429 of 5xx), anders None."""
 
     def __init__(self, url: str, seed: int = 83) -> None:
         self.url = url
@@ -1024,17 +1462,23 @@ class NepCommons:
         self.duim: dict[int, bytes] = {}  # de thumbnails van DUIM_BREEDTE breed
         self.weg = lambda q: False
         self.druk = lambda q: None
+        self.tl_later: set[int] = set()  # bestanden waarvan de sjablonen pas na tlcontinue komen
         rnd = random.Random(seed)
         pid = 1000
 
         def maak(p180: set[str], **anders) -> None:
             nonlocal pid
             pid += 1
-            data = rnd.randbytes(rnd.randint(200, 900))
+            data = JPEG + rnd.randbytes(rnd.randint(200, 900))
             d = {
                 "P180": set(p180),
                 "P275": {"Q6938433"},
                 "P6216": set(),
+                "P31": set(),
+                "P7482": set(),
+                "prominent": set(),  # de P180's met rang preferred
+                "eigen": set(),  # P6243, P195, P217: alleen of er een uitspraak is
+                "sjablonen": set(),
                 "mime": "image/jpeg",
                 "breedte": 1600,
                 "hoogte": 1200,
@@ -1044,7 +1488,7 @@ class NepCommons:
             self.bestanden[pid] = d
             self.inhoud[pid] = data
             if d["breedte"] > bm.DUIM_BREEDTE:
-                self.duim[pid] = rnd.randbytes(rnd.randint(8_000, 12_000))
+                self.duim[pid] = JPEG + rnd.randbytes(rnd.randint(8_000, 12_000))
 
         cat = bm.CATEGORIEEN
         for a, b in bm.combinaties():
@@ -1068,6 +1512,8 @@ class NepCommons:
             maak({q, bm.MENS})
             for _ in range(6):
                 maak({q}, P275=set(), P6216={"Q19652"})
+        # de thumbnails van boot nog op upload (de oude URL's werken nog; zie bm.THUMB)
+        self.oud = {i for i, d in self.bestanden.items() if d["P180"] == {cat["boot"]}}
 
     def _zoek(self, q: dict) -> dict:
         wil = set()
@@ -1087,8 +1533,10 @@ class NepCommons:
             return None
         if q.get("list") == "search":
             return self._zoek(q)
-        if q.get("prop") == "imageinfo":
+        props = q.get("prop", "").split("|")
+        if "imageinfo" in props:
             pages = []
+            doc: dict = {}
             for i in map(int, q["pageids"].split("|")):
                 d = self.bestanden[i]
                 info = {
@@ -1108,24 +1556,49 @@ class NepCommons:
                     else:
                         info["thumburl"] = info["url"]
                         info["thumbwidth"], info["thumbheight"] = d["breedte"], d["hoogte"]
-                pages.append({"pageid": i, "imageinfo": [info]})
-            return {"query": {"pages": pages}}
+                pagina = {"pageid": i, "imageinfo": [info]}
+                # prop=templates: alleen de gevraagde (tltemplates), zoals MediaWiki; van een
+                # bestand in self.tl_later komen ze pas na tlcontinue
+                if "templates" in props:
+                    if i in self.tl_later:
+                        doc["continue"] = {"tlcontinue": f"{i}|10|Artwork", "continue": "||"}
+                    else:
+                        wil = set(q.get("tltemplates", "").split("|"))
+                        pagina["templates"] = [
+                            {"ns": 10, "title": t} for t in sorted(d["sjablonen"] & wil)
+                        ]
+                pages.append(pagina)
+            doc["query"] = {"pages": pages}
+            return doc
         if q.get("action") == "wbgetentities":
             ent = {}
             for m in q["ids"].split("|"):
                 d = self.bestanden[int(m[1:])]
                 st = {}
-                for p in ("P180", "P275", "P6216"):
+                for p in ("P180", "P275", "P6216", "P31", "P7482"):
                     st[p] = [
-                        {"mainsnak": {"snaktype": "value", "datavalue": {"value": {"id": v}}}}
+                        {
+                            "mainsnak": {"snaktype": "value", "datavalue": {"value": {"id": v}}},
+                            "rank": "preferred" if v in d["prominent"] else "normal",
+                        }
                         for v in sorted(d[p])
+                    ]
+                for p in sorted(d["eigen"]):
+                    waarde = "SK-A-1" if p == "P217" else {"id": "Q190804"}
+                    st[p] = [
+                        {
+                            "mainsnak": {"snaktype": "value", "datavalue": {"value": waarde}},
+                            "rank": "normal",
+                        }
                     ]
                 ent[m] = {"id": m, "statements": st}
             return {"entities": ent}
         return {"error": "onbekend"}
 
     def duim_url(self, i: int, w: int = 1280) -> str:
-        return f"{self.url}/upload/thumb/{i}.jpg/{w}px-{i}.jpg"
+        """De thumburl zoals de API hem geeft: op thumb (/duim/), van boot nog op upload."""
+        host = "upload" if i in self.oud else "duim"
+        return f"{self.url}/{host}/thumb/{i}.jpg/{w}px-{i}.jpg"
 
     def gehaald(self, i: int) -> tuple[str, bytes]:
         """Wat set van bestand i hoort op te halen: de thumbnail, of het origineel als dat niet
@@ -1142,7 +1615,10 @@ def commons(nep):
     for i, data in c.inhoud.items():
         nep.zet(f"/upload/{i}.jpg", data)
     for i, data in c.duim.items():
-        nep.zet(urllib.parse.urlsplit(c.duim_url(i)).path, data)
+        pad = urllib.parse.urlsplit(c.duim_url(i)).path
+        nep.zet(pad, data)
+        if pad.startswith("/duim/"):
+            nep.webp[pad] = _webp(len(data))
     return c
 
 
@@ -1155,7 +1631,8 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
     stap stopte na ±30 minuten). Nu vraagt details de thumbnail van DUIM_BREEDTE (iiurlwidth), en
     haalt set van elke foto die thumbnail (url, bytes en sha256 in beeld.tsv), of het origineel
     als dat niet breder is; nooit een groot origineel. De bron blijft de pagina van het
-    origineel."""
+    origineel. De thumbnails komen van thumb.wikimedia.org (CI op 45bb926), die van boot nog van
+    de oude plek op upload; elke download als JPEG (Accept)."""
     monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
     assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
     fotos = bm.lees_set(werk.voorstel_set.read_text())
@@ -1181,8 +1658,9 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
         if "prop=imageinfo" in p
     ]
     assert info and all(q["iiurlwidth"] == "1280" for q in info)
-    # van upload alleen thumbnails van 1280, en het ene origineel dat niet breder is (fiets-1);
-    # het grote origineel van fiets-2 (meer dan MAX_FOTO) kwam als thumbnail
+    # alleen thumbnails van 1280 (van thumb, en van boot nog van upload), en van upload het ene
+    # origineel dat niet breder is (fiets-1); het grote origineel van fiets-2 (meer dan MAX_FOTO)
+    # kwam als thumbnail
     per_sleutel = {f.sleutel: f for f in fotos}
     smal = per_url[per_sleutel["fiets-1"].url]
     assert commons.bestanden[smal]["breedte"] == 1000 and smal not in commons.duim
@@ -1190,11 +1668,16 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
     groot = per_url[per_sleutel["fiets-2"].url]
     assert commons.bestanden[groot]["bytes"] > bm.MAX_FOTO
     assert per_sleutel["fiets-2"].url == commons.duim_url(groot)
-    upload = [urllib.parse.urlsplit(p).path for p, _ in nep.vragen if p.startswith("/upload/")]
-    assert len(upload) == 120
+    paden = [urllib.parse.urlsplit(p).path for p, _ in nep.vragen]
+    duim = [p for p in paden if p.startswith("/duim/")]
+    upload = [p for p in paden if p.startswith("/upload/")]
+    assert len(duim) == 115 and len(upload) == 5
     assert upload.count(f"/upload/{smal}.jpg") == 1
+    assert all(p.startswith("/duim/thumb/") for p in duim)
     assert all(p.startswith("/upload/thumb/") for p in upload if p != f"/upload/{smal}.jpg")
-    assert all(p.split("/")[-1].startswith("1280px-") for p in upload if "/thumb/" in p)
+    assert all(p.split("/")[-1].startswith("1280px-") for p in duim + upload if "/thumb/" in p)
+    oud = [f.sleutel for f in fotos if f.url.startswith(f"{nep.url}/upload/thumb/")]
+    assert oud == ["boot-1", "boot-2", "boot-3", "boot-4"]
     # de panorama (thumbnail 1280 x 213) is te laag voor 1024.webp en 256.webp
     assert not any(commons.bestanden[per_url[f.url]]["breedte"] == 6000 for f in fotos)
     sleutels = [f.sleutel for f in fotos]
@@ -1210,7 +1693,10 @@ def test_set_zonder_beeld_tsv_stelt_120_fotos_voor(nep, commons, werk, tmp_path,
     # _kandidaten)
     samen = sum(f.bytes for f in fotos)
     assert bm._opgehaald == samen
-    verkeer = "API: 90 vragen, 0 keer 429; upload: 120 vragen, 0 keer 429; contact: nee"
+    verkeer = (
+        "API: 90 vragen, 0 keer 429; thumb: 115 vragen, 0 keer 429; upload: 5 vragen, 0 keer 429; "
+        "contact: nee"
+    )
     assert verkeer == _verkeer(nep)
     assert _kort(werk) == [
         f"BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
@@ -1233,7 +1719,7 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path, monkeypatch):
     assert _kort(werk2) == [
         "BZ4 set: 120 foto's kloppen met beeld.tsv (0 uit de cache, 120 van Commons, "
         f"1 als origineel; {_mb(samen)} in 0 s; "
-        "API: 0 vragen; upload: 120 vragen, 0 keer 429; contact: nee)"
+        "API: 0 vragen; thumb: 115 vragen, 0 keer 429; upload: 5 vragen, 0 keer 429; contact: nee)"
     ]
     regels = set_pad.read_text().splitlines()
     i = next(n for n, r in enumerate(regels) if r.startswith("kat-2\t"))
@@ -1243,6 +1729,55 @@ def test_set_met_beeld_tsv_is_streng(nep, commons, werk, tmp_path, monkeypatch):
     set_pad.write_text("\n".join(regels) + "\n")
     with pytest.raises(bm.Fout, match="kat-2.jpg: sha256"):
         bm.set_(bm.Werk(tmp_path / "werk3"), set_pad)
+
+
+def test_ci_op_45bb926_de_thumbnails_staan_op_thumb_wikimedia_org(nep, commons, werk, tmp_path):
+    """CI op 45bb926 (run 43787944528): de API gaf 630 antwoorden zonder 429, maar het voorstel
+    nam niets: "maar 0 bruikbare foto's voor <x> (400 kandidaten bekeken)" voor alle 24 en "FOUT
+    set: Commons: 30 tekort(en) ... (0 van 120 foto's opgehaald, 0,0 MB; ...)". De thumburl van
+    imageinfo staat sinds T427465 op thumb.wikimedia.org, en _duim nam alleen een thumbnail op
+    upload. De nep geeft de thumburl nu zo (op /duim/, bm.THUMB); de tool neemt hem, met de URL
+    precies zoals de API hem gaf, en de oude URL's op upload (boot) ook nog."""
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    gaf = {commons.gehaald(i)[0] for i in commons.bestanden}
+    assert len(fotos) == 120 and all(f.url in gaf for f in fotos)
+    op = [("thumb" if f.url.startswith(bm.THUMB) else "upload") for f in fotos]
+    assert op.count("thumb") == 115 and op.count("upload") == 5
+    assert not any("tekort" in r or "bruikbare" in r for r in _kort(werk))
+
+
+def test_de_set_vraagt_elke_foto_als_jpeg(nep, commons, werk, tmp_path, monkeypatch):
+    """thumb.wikimedia.org kiest het formaat op dezelfde URL naar de Accept (WebP met image/webp;
+    zie bm.DUIM_BREEDTE), en de sha256 in beeld.tsv hoort bij vaste bytes. Elke download van de set
+    vraagt daarom Accept: image/jpeg, in een voorstel en met beeld.tsv; de API niet. Een cache die
+    de Vary mist en toch WebP geeft, is een fout met de sleutel, en die foto staat niet in set/."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    assert bm.set_(werk, tmp_path / "geen.tsv") == bm.VOORSTEL
+    set_pad = tmp_path / "beeld.tsv"
+    set_pad.write_text(werk.voorstel_set.read_text())
+    assert bm.set_(bm.Werk(tmp_path / "werk2"), set_pad) == 0
+    downloads = 0
+    for (pad, _), accept in zip(nep.vragen, nep.accept, strict=True):
+        if pad.startswith(("/duim/", "/upload/")):
+            downloads += 1
+            assert accept == "image/jpeg", pad
+        else:
+            assert accept is None, pad
+    assert downloads == 240
+    assert all(p.read_bytes().startswith(JPEG) for p in werk.set.iterdir())
+    # een cache die WebP geeft op de vraag om JPEG
+    fotos = bm.lees_set(set_pad.read_text())
+    pad = urllib.parse.urlsplit(fotos[0].url).path
+    assert pad.startswith("/duim/")
+    nep.paden[pad] = [(200, nep.webp[pad])]
+    werk3 = bm.Werk(tmp_path / "werk3")
+    with pytest.raises(bm.Fout) as fout:
+        bm.set_(werk3, set_pad)
+    assert str(fout.value).startswith(
+        "auto+sneeuw.jpg: WebP in plaats van JPEG (bij foto 1 van 120, een thumbnail van 1280 px, "
+    )
+    assert list(werk3.set.iterdir()) == []
 
 
 def test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt(nep, commons, werk, tmp_path, monkeypatch):
@@ -1287,7 +1822,7 @@ def test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt(nep, commons, werk, tmp
     assert _kort(werk2) == [
         "BZ4 set: 120 foto's kloppen met beeld.tsv (116 uit de cache, 4 van Commons, "
         f"0 als origineel; {_mb(samen)} in 0 s; "
-        "API: 0 vragen; upload: 4 vragen, 0 keer 429; contact: nee)"
+        "API: 0 vragen; thumb: 3 vragen, 0 keer 429; upload: 1 vraag, 0 keer 429; contact: nee)"
     ]
 
 
@@ -1327,12 +1862,16 @@ def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, common
         f" ({len(gehaald)} van 120 foto's opgehaald, {mb}; {_verkeer(nep)})"
     )
     regels = _kort(werk)
-    assert [r.split(" (")[0] for r in regels[:3]] == [
-        "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw",
-        "BZ4 set: Commons: maar 2 bruikbare foto's voor eten",
-        "BZ4 set: Commons: maar 4 bruikbare foto's voor gitaar",
+    # met waarom de kandidaten afvielen (CI op 45bb926 zei dat niet): de nep geeft elk bestand
+    # voor beide licenties, dus elk twee keer
+    assert regels[:3] == [
+        "BZ4 set: Commons: geen bruikbare foto voor kat+sneeuw (2 kandidaten bekeken; afgevallen: "
+        "2 mens erop)",
+        "BZ4 set: Commons: maar 2 bruikbare foto's voor eten (12 kandidaten bekeken; afgevallen: "
+        "2 al gekozen, 2 geen image/jpeg, 2 licentie, 2 te groot, 2 om een andere reden)",
+        "BZ4 set: Commons: maar 4 bruikbare foto's voor gitaar (anders; 12 bekeken; afgevallen: "
+        "4 al gekozen, 2 beeldt een categorie af, 2 mens erop)",
     ]
-    assert all("bekeken)" in r for r in regels[:3])
     # berg+sneeuw staat al in de vragen; van de rest heeft de nep alleen zonsondergang+strand
     # (één bestand, ook al geeft de nep het voor beide licenties)
     assert regels[3:] == [
@@ -1341,6 +1880,48 @@ def test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld(nep, common
         "BZ4 reserve boot+strand: 0 bruikbare foto's (eerste pagina per licentie)",
         "BZ4 reserve hond+sneeuw: 0 bruikbare foto's (eerste pagina per licentie)",
         "BZ4 reserve hond+bos: 0 bruikbare foto's (eerste pagina per licentie)",
+    ]
+
+
+def test_een_tekort_zegt_waarom_de_kandidaten_afvielen(nep, commons, werk, tmp_path, monkeypatch):
+    """CI op 45bb926: "maar 0 bruikbare foto's voor strand (400 kandidaten bekeken)" zei niet
+    waarom. Nu staan de redenen erbij (_afgevallen: de vier vaakste, de rest samen), ook bij de
+    reserves. Hier de toestand van 45bb926 van de andere kant: de tool verwacht de thumbnails op
+    https://thumb.wikimedia.org/, de API (de nep) geeft ze elders (127.0.0.1): elke thumbnail
+    valt af als "thumbnail op een andere host", met de host maar nooit de URL. De oude URL's op
+    upload (boot) en het smalle origineel (fiets-1) komen nog door."""
+    monkeypatch.setattr(bm, "THUMB", "https://thumb.wikimedia.org/", raising=False)
+    with pytest.raises(bm.Fout, match=r"^Commons: 29 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    regels = _kort(werk)
+    elders = "thumbnail op een andere host (127.0.0.1)"
+    assert regels[0] == (
+        "BZ4 set: Commons: geen bruikbare foto voor auto+sneeuw (4 kandidaten bekeken; afgevallen: "
+        f"2 mens erop, 2 {elders})"
+    )
+    assert (
+        "BZ4 set: Commons: maar 0 bruikbare foto's voor auto (24 kandidaten bekeken; afgevallen: "
+        f"14 {elders}, 2 geen image/jpeg, 2 licentie, 2 mens erop, 4 om een andere reden)"
+    ) in regels
+    assert (
+        "BZ4 set: Commons: maar 1 bruikbare foto's voor fiets (26 kandidaten bekeken; afgevallen: "
+        f"16 {elders}, 2 geen image/jpeg, 2 licentie, 2 te groot, 3 om een andere reden)"
+    ) in regels
+    assert (
+        "BZ4 set: Commons: maar 0 bruikbare foto's voor bloem (anders; 16 bekeken; afgevallen: "
+        f"14 {elders}, 2 mens erop)"
+    ) in regels
+    assert (
+        "BZ4 reserve zonsondergang+strand: 0 bruikbare foto's (eerste pagina per licentie; "
+        f"afgevallen: 1 {elders})"
+    ) in regels
+    tekorten = [r for r in regels if r.startswith("BZ4 set: Commons: ")]
+    assert len(tekorten) == 29 and not any(" voor boot (" in r for r in tekorten)
+    assert all("; afgevallen: " in r for r in tekorten)
+    assert not any(nep.url in r or "/duim/" in r for r in regels)
+    assert sorted(p.name for p in werk.set.iterdir()) == [
+        *(f"boot-{i}.jpg" for i in range(1, 6)),
+        "fiets-1.jpg",
     ]
 
 
@@ -1394,7 +1975,8 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
     assert _kort(werk)[0] == (
         "BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's in het verslag "
         f"(1 als origineel; {_mb(samen)} in {sum(slapen):.0f} s; "
-        "API: 90 vragen, 0 keer 429; upload: 120 vragen, 0 keer 429; contact: nee)"
+        "API: 90 vragen, 0 keer 429; thumb: 115 vragen, 0 keer 429; upload: 5 vragen, 0 keer 429; "
+        "contact: nee)"
     )
     assert sum(slapen) >= samen / bm.BANDBREEDTE
     assert sum(slapen) >= 89 * bm.PAUZE_API_S  # 90 vragen aan de API, 8 s ertussen
@@ -1412,7 +1994,9 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
         f"(bij foto 37 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald; "
         f"{_verkeer(nep, van=van)})"
     )
-    assert "; upload: 37 vragen, 0 keer 429; contact: nee)" in str(fout.value)
+    assert "; thumb: 36 vragen, 0 keer 429; upload: 1 vraag, 0 keer 429; contact: nee)" in str(
+        fout.value
+    )
     assert len(list(werk2.set.iterdir())) == 36
     nep.zet(pad, (werk.set / f"{fotos[36].sleutel}.jpg").read_bytes())  # de 37e is er weer
     # een voorstel dat op het ene smalle origineel (fiets-1) de 429 van Wikimedia krijgt, met een
@@ -1431,21 +2015,24 @@ def test_een_set_die_misgaat_zegt_hoe_ver_hij_kwam(nep, commons, werk, tmp_path,
         f"(bij foto {k + 1} van 120, een origineel, {_mb(voor)} opgehaald; "
         f"{_verkeer(nep, van=van, begin=begin)})"
     )
-    assert f"; upload: {k + 1} vragen, 1 keer 429, eerste 429 na " in str(fout.value)
+    assert f"; thumb: {k} vragen, 0 keer 429; upload: 1 vraag, 1 keer 429, eerste 429 na " in str(
+        fout.value
+    )
     nep.zet(origineel, (werk.set / "fiets-1.jpg").read_bytes())
     # streng: Wikimedia maakte de 50e thumbnail opnieuw, met andere bytes van dezelfde lengte
+    # (nog steeds een JPEG: de eerste vier bytes blijven)
     set_pad = tmp_path / "beeld.tsv"
     set_pad.write_text(werk.voorstel_set.read_text())
     pad = urllib.parse.urlsplit(fotos[49].url).path
     oud = (werk.set / f"{fotos[49].sleutel}.jpg").read_bytes()
-    nep.paden[pad] = [(200, bytes(b ^ 0xFF for b in oud))]
+    nep.paden[pad] = [(200, oud[:4] + bytes(b ^ 0xFF for b in oud[4:]))]
     with pytest.raises(bm.Fout) as fout:
         bm.set_(bm.Werk(tmp_path / "werk3"), set_pad)
     voor = sum(f.bytes for f in fotos[:50])
     assert str(fout.value).startswith(f"{fotos[49].sleutel}.jpg: sha256 ")
     assert str(fout.value).endswith(
         f" (bij foto 50 van 120, een thumbnail van 1280 px, {_mb(voor)} opgehaald; "
-        "API: 0 vragen; upload: 50 vragen, 0 keer 429; contact: nee)"
+        "API: 0 vragen; thumb: 49 vragen, 0 keer 429; upload: 1 vraag, 0 keer 429; contact: nee)"
     )
     assert fotos[49].sha256 in str(fout.value)
 
@@ -1491,8 +2078,8 @@ def test_een_voorstel_vraagt_de_api_hooguit_8_keer_per_minuut(
     assert _per_minuut(tijden) <= 8
     assert bm._gewacht == 10 * 5.0
     verkeer = (
-        "API: 100 vragen, 10 keer 429, eerste 429 na 16 s; upload: 120 vragen, 0 keer 429; "
-        "contact: nee"
+        "API: 100 vragen, 10 keer 429, eerste 429 na 16 s; thumb: 115 vragen, 0 keer 429; "
+        "upload: 5 vragen, 0 keer 429; contact: nee"
     )
     assert verkeer == _verkeer(nep, begin=1000.0)
     assert _kort(werk)[0].endswith(f" in {sum(slapen):.0f} s; {verkeer})")
@@ -1524,7 +2111,7 @@ def test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout(
         "127.0.0.1: HTTP 429 (Retry-After 50; 50 s wachten past niet in wat er over is van "
         "WACHT_TOTAAL_S (0 van 900 s), dus meteen gestopt; antwoord: You are making too many "
         f"requests to the API.) (bij foto 7 van 120, {mb} opgehaald; API: 38 vragen, 19 keer "
-        "429, eerste 429 na 8 s; upload: 6 vragen, 0 keer 429; contact: nee)"
+        "429, eerste 429 na 8 s; thumb: 6 vragen, 0 keer 429; upload: 0 vragen; contact: nee)"
     )
     assert str(fout.value).endswith(f"; {_verkeer(nep, begin=1000.0)})")
     tijden = _api_tijden(nep)
@@ -1560,7 +2147,7 @@ def test_een_5xx_telt_apart_en_een_tweede_set_telt_vanaf_zijn_eigen_begin(
     assert _kortste(_api_tijden(nep)) >= bm.PAUZE_API_S
     verkeer = (
         "API: 93 vragen, 1 keer 429, 2 keer 5xx, eerste 429 na 64 s; "
-        "upload: 121 vragen, 0 keer 429, 1 keer 5xx; contact: nee"
+        "thumb: 116 vragen, 0 keer 429, 1 keer 5xx; upload: 5 vragen, 0 keer 429; contact: nee"
     )
     assert verkeer == _verkeer(nep, begin=1000.0)
     assert _kort(werk)[0].endswith(f" in {sum(slapen):.0f} s; {verkeer})")
@@ -1579,8 +2166,8 @@ def test_een_5xx_telt_apart_en_een_tweede_set_telt_vanaf_zijn_eigen_begin(
     assert begin < tijden[0] == laatste + bm.PAUZE_API_S and tijden[3] == tijden[0] + 24.0
     assert round(tijden[3] - begin) == 28
     assert tweede == (
-        "API: 91 vragen, 1 keer 429, eerste 429 na 28 s; upload: 120 vragen, 0 keer 429; "
-        "contact: nee"
+        "API: 91 vragen, 1 keer 429, eerste 429 na 28 s; thumb: 115 vragen, 0 keer 429; "
+        "upload: 5 vragen, 0 keer 429; contact: nee"
     )
     assert _kort(werk2)[0].endswith(f" in {sum(slapen) - voor:.0f} s; {tweede})")
     api = bm._tellers["API"]
@@ -1619,12 +2206,13 @@ def test_zonder_beeld_contact_gaat_er_geen_contact_mee(
     _ua_algemeen(nep)
     uit = capsys.readouterr().out
     assert (
-        "BZ4 set: de API van Commons hooguit één vraag per 8 s, upload één per 1 s; contact: nee\n"
+        "BZ4 set: de API van Commons hooguit één vraag per 8 s, thumb één per 1 s, upload één per "
+        "1 s; contact: nee\n"
     ) in uit
     mb = _mb(sum(p.stat().st_size for p in werk.set.iterdir()))
     assert _kort(werk) == [
         f"FOUT set: 127.0.0.1: HTTP 404 (bij foto 3 van 120, {mb} opgehaald; "
-        "API: 7 vragen, 0 keer 429; upload: 2 vragen, 0 keer 429; contact: nee)"
+        "API: 7 vragen, 0 keer 429; thumb: 2 vragen, 0 keer 429; upload: 0 vragen; contact: nee)"
     ]
     tijden = _api_tijden(nep)
     assert _kortste(tijden) == bm.PAUZE_API_S
@@ -1647,8 +2235,9 @@ def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     nep, commons, werk, tmp_path, monkeypatch, capsys, contact
 ):
     """Met een BEELD_CONTACT die klopt: de User-Agent in de vorm van de richtlijn van Wikimedia
-    ("naam/versie (contact) ..."), maar alleen naar Commons (de API en upload), nooit naar Hugging
-    Face of een andere host; de API dan op PAUZE_S (de grens met contact is 200 per minuut). Het
+    ("naam/versie (contact) ..."), maar alleen naar Commons (de API, thumb en upload), nooit naar
+    Hugging Face of een andere host; de API dan op PAUZE_S (de grens met contact is 200 per
+    minuut). Het
     contact staat nergens in het log, niet in kort.txt en niet in een ander bestand van de
     werkmap: alleen "contact: ja"."""
     assert len(GELDIG[-1]) == bm.MAX_CONTACT == 200
@@ -1661,7 +2250,7 @@ def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     assert met == bm.UA_MET_CONTACT.format(contact=contact)
     anders = 0
     for pad, ua in nep.vragen:
-        if pad.startswith(("/w/api.php", "/upload/")):
+        if pad.startswith(("/w/api.php", "/duim/", "/upload/")):
             assert ua == met, pad
         else:
             assert ua == bm.UA, pad
@@ -1671,10 +2260,11 @@ def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     assert _kortste(tijden) == bm.PAUZE_S
     uit, fout = capsys.readouterr()
     assert (
-        "BZ4 set: de API van Commons hooguit één vraag per 1 s, upload één per 1 s; contact: ja\n"
+        "BZ4 set: de API van Commons hooguit één vraag per 1 s, thumb één per 1 s, upload één per "
+        "1 s; contact: ja\n"
     ) in uit
     assert _kort(werk)[-1].endswith(
-        "; API: 7 vragen, 0 keer 429; upload: 2 vragen, 0 keer 429; contact: ja)"
+        "; API: 7 vragen, 0 keer 429; thumb: 2 vragen, 0 keer 429; upload: 0 vragen; contact: ja)"
     )
     teksten = [uit, fout] + [
         p.read_text(encoding="utf-8", errors="replace")
@@ -1740,7 +2330,7 @@ def test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log
     assert _kort(werk) == [
         "FOUT set: 127.0.0.1: HTTP 429 (Retry-After 1000; langer dan MAX_WACHT_S (600 s), dus "
         f"meteen gestopt; antwoord: {regel}) (bij foto 1 van 120, 0,0 MB opgehaald; API: 1 vraag, "
-        "1 keer 429, eerste 429 na 0 s; upload: 0 vragen; contact: ja)"
+        "1 keer 429, eerste 429 na 0 s; thumb: 0 vragen; upload: 0 vragen; contact: ja)"
     ]
     uit, fout = capsys.readouterr()
     teksten = [uit, fout] + [
@@ -1822,6 +2412,8 @@ def _vervang(regels, sleutel, kolom, waarde):
     return uit
 
 
+THUMB_ECHT = "https://thumb.wikimedia.org/"
+UPLOAD_ECHT = "https://upload.wikimedia.org/"
 KAPOTTE_SET = {
     "andere kop": (lambda r: ["sleutel\turl", *r[1:]], "eerste regel"),
     "veld te weinig": (lambda r: [*r[:5], r[5].rsplit("\t", 1)[0], *r[6:]], "6 velden"),
@@ -1833,12 +2425,35 @@ KAPOTTE_SET = {
     "sha256 kort": (lambda r: _vervang(r, "kat-1", "sha256", "abc"), "sha256"),
     "bytes 0": (lambda r: _vervang(r, "kat-1", "bytes", "0"), "bytes"),
     "te groot": (lambda r: _vervang(r, "kat-1", "bytes", str(bm.MAX_FOTO + 1)), "groter"),
-    "url elders": (lambda r: _vervang(r, "kat-1", "url", "https://elders.example/x.jpg"), "url"),
+    "url elders": (
+        lambda r: _vervang(r, "kat-1", "url", "https://elders.example/x.jpg"),
+        rf"regel \d+: url hoort bij {THUMB_ECHT} of {UPLOAD_ECHT}",
+    ),
+    "thumbnail over http": (
+        lambda r: _vervang(
+            r,
+            "kat-1",
+            "url",
+            "http://thumb.wikimedia.org/wikipedia/commons/thumb/a/F1.jpg/1280px-F1.jpg",
+        ),
+        r"regel \d+: url hoort bij",
+    ),
     "thumbnail van 1024": (
         lambda r: _vervang(
             r, "kat-1", "url", f"{bm.UPLOAD}wikipedia/commons/thumb/a/ab/F1.jpg/1024px-F1.jpg"
         ),
-        "thumbnail, maar niet 1280 px",
+        r"regel \d+: url is een thumbnail, maar niet 1280 px",
+    ),
+    "thumbnail van 1024 op thumb": (
+        lambda r: _vervang(
+            r, "kat-1", "url", f"{THUMB_ECHT}wikipedia/commons/thumb/a/ab/F1.jpg/1024px-F1.jpg"
+        ),
+        r"regel \d+: url is een thumbnail, maar niet 1280 px",
+    ),
+    # het pad van een origineel op thumb.wikimedia.org geeft een 301 naar commons.wikimedia.org
+    "origineel op thumb": (
+        lambda r: _vervang(r, "kat-1", "url", f"{THUMB_ECHT}wikipedia/commons/a/ab/F1.jpg"),
+        rf"regel \d+: url op {THUMB_ECHT} is geen thumbnail; een origineel hoort bij {UPLOAD_ECHT}",
     ),
     "bron elders": (lambda r: _vervang(r, "kat-1", "bron", "https://elders.example/"), "bron"),
     "sleutel past niet": (lambda r: _vervang(r, "kat-1", "categorieen", "hond"), "past niet"),
@@ -1879,10 +2494,14 @@ def test_een_geldige_set_komt_door_de_controle():
         "https://commons.wikimedia.org/wiki/File:F1.jpg",
     )
     assert bm.lees_set("# opmerking\n" + "\n".join(_geldige_set())) == fotos
-    # een thumbnail van 1280 breed mag (zoals set hem voorstelt)
-    duim = f"{bm.UPLOAD}wikipedia/commons/thumb/a/ab/F7.jpg/1280px-F7.jpg"
-    fotos = bm.lees_set("\n".join(_vervang(_geldige_set(), "kat-1", "url", duim)) + "\n")
-    assert next(f for f in fotos if f.sleutel == "kat-1").url == duim
+    # een thumbnail van 1280 breed mag (zoals set hem voorstelt): op thumb.wikimedia.org (zoals
+    # de API hem sinds T427465 geeft), en de oude vorm op upload
+    for duim in (
+        f"{THUMB_ECHT}wikipedia/commons/thumb/a/ab/F7.jpg/1280px-F7.jpg",
+        f"{bm.UPLOAD}wikipedia/commons/thumb/a/ab/F7.jpg/1280px-F7.jpg",
+    ):
+        fotos = bm.lees_set("\n".join(_vervang(_geldige_set(), "kat-1", "url", duim)) + "\n")
+        assert next(f for f in fotos if f.sleutel == "kat-1").url == duim
 
 
 @pytest.mark.parametrize("geval", sorted(KAPOTTE_SET))
@@ -1919,8 +2538,11 @@ def _foto(**anders) -> dict:
 
 
 SMAL = "https://upload.wikimedia.org/wikipedia/commons/a/ab/F.jpg"  # het origineel zelf
+# zo geeft de API de thumbnail sinds T427465 (zie bm.THUMB)
+DUIM_THUMB = "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg"
 GOEDE_FOTOS = {
     "gewoon": ({}, (DUIM, None)),
+    "op thumb.wikimedia.org": ({"duim": DUIM_THUMB}, (DUIM_THUMB, None)),
     "liggend, korte kant 320": (
         {"breedte": 4000, "hoogte": 1000, "duim_hoogte": 320},
         (DUIM, None),
@@ -1941,6 +2563,27 @@ GOEDE_FOTOS = {
 }
 SLECHTE_FOTOS = {
     "liggend, korte kant 319": {"breedte": 4013, "hoogte": 1000, "duim_hoogte": 319},
+    "origineel op thumb als thumburl": {
+        "breedte": 1000,
+        "hoogte": 800,
+        "duim": "https://thumb.wikimedia.org/wikipedia/commons/a/ab/F.jpg",
+    },
+    "origineel zelf op thumb": {
+        "url": "https://thumb.wikimedia.org/wikipedia/commons/a/ab/F.jpg",
+        "duim": "https://thumb.wikimedia.org/wikipedia/commons/a/ab/F.jpg",
+        "breedte": 1000,
+        "hoogte": 800,
+    },
+    "thumbnail op een vreemde host": {
+        "duim": "https://ci:geheim@vreemd.example:8443/thumb/a/ab/F.jpg/1280px-F.jpg?x=1"
+    },
+    "thumbnail op een host met een liggend streepje": {
+        "duim": "https://x_y.example/thumb/a/ab/F.jpg/1280px-F.jpg"
+    },
+    "thumbnail op een te lange host": {
+        "duim": f"https://{'a' * 60}.example/thumb/a/ab/F.jpg/1280px-F.jpg"
+    },
+    "geen bestandspagina": {"bron": "https://elders.example/wiki/File:F.jpg"},
     "staand, 1280 x 5121": {"breedte": 1600, "hoogte": 6402, "duim_hoogte": 5121},
     "smal origineel groter dan MAX_FOTO": {
         "breedte": 1000,
@@ -1978,9 +2621,75 @@ def test_de_thumbnail_van_een_goede_foto(geval):
 @pytest.mark.parametrize("geval", sorted(SLECHTE_FOTOS))
 def test_een_foto_zonder_goede_thumbnail_valt_af(geval):
     """Wat de set niet neemt: de controles op het origineel (licentie, JPEG, geen mens,
-    MIN_ZIJDE, MAX_PIXELS), en een thumbnail die niet van upload komt, niet de vaste maat heeft,
-    te klein is voor 1024.webp en 256.webp, of een origineel groter dan MAX_FOTO."""
+    MIN_ZIJDE, MAX_PIXELS), en een thumbnail die niet van thumb of upload komt, niet de vaste maat
+    heeft, te klein is voor 1024.webp en 256.webp, of een origineel groter dan MAX_FOTO; een
+    origineel alleen op upload."""
     assert not bm._bruikbaar(_foto(**SLECHTE_FOTOS[geval]))
+
+
+ELDERS = "thumbnail op een andere host"
+REDEN = {
+    "liggend, korte kant 319": "te langgerekt",
+    "staand, 1280 x 5121": "te langgerekt",
+    "smal origineel groter dan MAX_FOTO": "te groot",
+    "breed origineel als thumburl": "geen thumbnail van 1280 px",
+    "thumbnail elders": f"{ELDERS} (elders.example)",
+    "thumbnail op een vreemde host": f"{ELDERS} (vreemd.example)",
+    "thumbnail op een host met een liggend streepje": f"{ELDERS} (een onbekende host)",
+    "thumbnail op een te lange host": f"{ELDERS} (een onbekende host)",
+    "thumbnail 1024 breed": "geen thumbnail van 1280 px",
+    "thumbwidth 1024": "geen thumbnail van 1280 px",
+    "url van 1280 buiten /thumb/": "geen thumbnail van 1280 px",
+    "origineel op thumb als thumburl": "geen thumbnail van 1280 px",
+    "origineel zelf op thumb": "origineel niet op upload",
+    "geen thumbnail": "geen thumbnail van 1280 px",
+    "spatie in de url": "onleesbare gegevens",
+    "geen thumbheight": "onleesbare gegevens",
+    "geen bestandspagina": "geen bestandspagina",
+    "korte kant origineel onder MIN_ZIJDE": "te klein",
+    "meer dan MAX_PIXELS": "te groot",
+    "geen JPEG": "geen image/jpeg",
+    "met een mens": "mens erop",
+    "CC BY": "licentie",
+}
+
+
+@pytest.mark.parametrize("geval", sorted(SLECHTE_FOTOS))
+def test_waarom_een_foto_afvalt(geval):
+    """De reden (_waarom) is er een uit een vaste reeks (REDENEN); bij een thumbnail op een andere
+    host met de host erbij, als het een gewone hostnaam is van hooguit 64 tekens (anders "een
+    onbekende host"), nooit de URL (die kan van alles bevatten). Een goede foto heeft geen reden."""
+    reden = bm._waarom(_foto(**SLECHTE_FOTOS[geval]))
+    assert reden == REDEN[geval]
+    assert reden.split(" (")[0] in bm.REDENEN
+    assert "://" not in reden and "geheim" not in reden and "8443" not in reden
+    assert sorted(REDEN) == sorted(SLECHTE_FOTOS)
+    assert all(bm._waarom(_foto(**anders)) is None for anders, _ in GOEDE_FOTOS.values())
+
+
+def test_afgevallen_noemt_de_vier_vaakste_redenen():
+    """De regel van een tekort noemt hooguit MAX_REDENEN (4) redenen, de vaakste eerst en bij
+    een gelijk aantal op de tekst (dus elke run in dezelfde volgorde), en de rest samen."""
+    assert bm.MAX_REDENEN == 4
+    assert bm._afgevallen({}) == ""
+    assert bm._afgevallen({"te klein": 1}) == "; afgevallen: 1 te klein"
+    redenen = {
+        "te klein": 2,
+        "licentie": 2,
+        "mens erop": 5,
+        "geen image/jpeg": 2,
+        "te groot": 1,
+        "al gekozen": 2,
+    }
+    verwacht = (
+        "; afgevallen: 5 mens erop, 2 al gekozen, 2 geen image/jpeg, 2 licentie, "
+        "3 om een andere reden"
+    )
+    assert bm._afgevallen(redenen) == verwacht
+    assert bm._afgevallen(dict(reversed(list(redenen.items())))) == verwacht
+    assert bm._afgevallen({"te klein": 3, "licentie": 3, "te groot": 3, "mens erop": 3}) == (
+        "; afgevallen: 3 licentie, 3 mens erop, 3 te groot, 3 te klein"
+    )
 
 
 def test_de_maat_van_de_thumbnail():
@@ -2019,3 +2728,546 @@ def test_main_zet_een_fout_om_in_een_zin_en_code_1(werk, tmp_path):
     assert _kort(werk) == [
         "FOUT bron: models.lock regel 1: 2 velden, verwacht sha256 bytes naam url"
     ]
+
+
+# --- de set strenger: eerste keus en beeld_niet.tsv (x3a.md, "De set strenger") ---------------
+
+
+def _goede_katten(commons) -> list[int]:
+    """De zes bruikbare bestanden van alleen kat (CC0, JPEG, 1600 breed), op pageid: zonder
+    voorkeur worden de eerste vier kat-1 tot en met kat-4 (de combinatie kat+sneeuw telt al
+    voor kat)."""
+    kat = bm.CATEGORIEEN["kat"]
+    goed = [
+        i
+        for i, d in sorted(commons.bestanden.items())
+        if d["P180"] == {kat}
+        and d["mime"] == "image/jpeg"
+        and d["breedte"] == 1600
+        and d["bytes"] <= bm.MAX_FOTO
+        and d["P275"] == {"Q6938433"}
+    ]
+    assert len(goed) == 6
+    return goed
+
+
+def _bron(i: int) -> str:
+    return f"https://commons.wikimedia.org/wiki/File:Nep_{i}.jpg"
+
+
+def _per_sleutel(werk) -> dict[str, int]:
+    """Per sleutel van het voorstel het bestand van de nep (uit de bron)."""
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    return {f.sleutel: int(f.bron.rsplit("_", 1)[1].removesuffix(".jpg")) for f in fotos}
+
+
+def _log(capsys, begin: str) -> list[str]:
+    return [r for r in capsys.readouterr().out.splitlines() if r.startswith(begin)]
+
+
+def _api_soorten(nep) -> dict[str, int]:
+    """Hoeveel vragen aan de API van elke soort: zoek, imageinfo (met of zonder sjablonen),
+    wbgetentities, of iets anders."""
+    uit: dict[str, int] = {}
+    for p, _ in nep.vragen:
+        if not p.startswith("/w/api.php"):
+            continue
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(p).query))
+        soort = q.get("list") or q.get("prop") or q.get("action") or "?"
+        uit[soort] = uit.get(soort, 0) + 1
+    return uit
+
+
+def test_de_eerste_keus_gaat_voor_op_dezelfde_pagina(
+    nep, commons, werk, tmp_path, monkeypatch, capsys
+):
+    """Het voorstel op 3a9b07d nam schilderijen, museumvoorwerpen en foto's van mensen zonder
+    P180 = mens, gewoon in de volgorde van Commons. Nu is een kandidaat met een teken van een
+    kunstwerk (P6243 en het sjabloon Artwork) of een persoon (P180 man) tweede keus, en neemt kat
+    de vier van de eerste keus op dezelfde pagina; binnen de eerste keus eerst prominent (P180
+    met rang preferred), dan eigen werk (P7482). Geen vraag meer dan vroeger: 90, en de sjablonen
+    komen mee in de vraag om imageinfo."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    g = _goede_katten(commons)
+    kat = bm.CATEGORIEEN["kat"]
+    commons.bestanden[g[0]]["eigen"] = {"P6243"}
+    commons.bestanden[g[0]]["sjablonen"] = {"Template:Artwork"}
+    commons.bestanden[g[1]]["P180"] = {kat, "Q8441"}
+    commons.bestanden[g[4]]["P7482"] = {bm.EIGEN_WERK}
+    commons.bestanden[g[5]]["prominent"] = {kat}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == [g[5], g[4], g[2], g[3]]
+    assert not {g[0], g[1]} & set(sleutels.values())
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 0 tweede keus (12 kandidaten bekeken op 1 pagina; geen "
+        "eerste keus: 1 kunstwerk, 1 persoon)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-1: eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk nee, prominent ja, P180 1"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-2: eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk ja, prominent nee, P180 1"
+    ) in uit
+    # geen tweede keus nodig: het blok is hetzelfde als vroeger, en geen vraag erbij
+    assert not any("tweede keus (" in r for r in _kort(werk))
+    assert _verkeer(nep).startswith("API: 90 vragen, 0 keer 429; ")
+    assert _api_soorten(nep) == {"search": 30, "imageinfo|templates": 30, "wbgetentities": 30}
+    info = [
+        dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(p).query))
+        for p, _ in nep.vragen
+        if "prop=imageinfo" in p
+    ]
+    assert all(q["tltemplates"] == "|".join(bm.SJABLONEN) for q in info)
+
+
+def test_zonder_genoeg_eerste_keus_vult_de_tweede_keus_aan(
+    nep, commons, werk, tmp_path, monkeypatch, capsys
+):
+    """Geen tekort door de voorkeur: kat heeft op de eerste pagina maar één eerste keus. Dan leest
+    hij de volgende pagina (de andere licentie: 3 vragen erbij, nooit meer pagina's dan vroeger),
+    en vult daarna aan met de tweede keus van alles wat hij las, prominent eerst. Het log zegt
+    hoeveel tweede keus en waarom (zoals "afgevallen"), het blok één regel."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    g = _goede_katten(commons)
+    kat = bm.CATEGORIEEN["kat"]
+    b = commons.bestanden
+    b[g[0]]["eigen"] = {"P6243"}
+    b[g[0]]["sjablonen"] = {"Template:Artwork"}
+    b[g[1]]["eigen"] = {"P195"}
+    b[g[2]]["P31"] = {"Q3305213"}  # schilderij
+    b[g[3]]["sjablonen"] = {"Template:Personality rights"}
+    b[g[4]]["eigen"] = {"P217"}
+    b[g[4]]["prominent"] = {kat}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == [g[5], g[4], g[0], g[1]]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 3 tweede keus (24 kandidaten bekeken op 2 pagina's; geen "
+        "eerste keus: 2 collectie, 2 kunstwerk, 1 persoon)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-2: tweede keus; kunstwerk nee, collectie ja (P217), persoon nee, "
+        "eigen werk nee, prominent ja, P180 1"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-3: tweede keus; kunstwerk ja (P6243, Artwork), collectie nee, "
+        "persoon nee, eigen werk nee, prominent nee, P180 1"
+    ) in uit
+    regels = _kort(werk)
+    assert regels[0] == (
+        "BZ4 set: 3 tweede keus (kat 3); de eerste keus was op; het bewijs per foto staat in het "
+        "log"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert _verkeer(nep).startswith("API: 93 vragen, 0 keer 429; ")
+
+
+def test_sjablonen_die_niet_in_een_keer_komen_maken_de_pagina_tweede_keus(
+    nep, commons, werk, tmp_path, capsys
+):
+    """Geeft de API de sjablonen niet in één keer (tlcontinue), dan zijn ze voor die pagina
+    onbekend en is geen kandidaat daarvan eerste keus (dicht bij twijfel). Nooit een tekort: de
+    tweede keus vult aan, en het bewijs zegt waarom."""
+    g = _goede_katten(commons)
+    commons.tl_later = {g[0]}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == g[:4]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 4 tweede keus (24 kandidaten bekeken op 2 pagina's; geen "
+        "eerste keus: 6 sjablonen onvolledig)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-1: tweede keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk nee, prominent nee, P180 1, sjablonen onvolledig"
+    ) in uit
+    assert _kort(werk)[0].startswith("BZ4 set: 4 tweede keus (kat 4); ")
+
+
+def test_het_bewijs_staat_alleen_in_het_log(nep, commons, werk, tmp_path, capsys):
+    """Per gekozen foto één regel bewijs, in de volgorde van het voorstel, alleen in het log: niet
+    in het blok, en beeld.tsv houdt zijn 7 kolommen. Alleen de sleutel en de tekens, nooit een
+    URL. Per zoekopdracht één regel (6 combinaties, 12 categorieën, 12 andere)."""
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    uit = capsys.readouterr().out.splitlines()
+    bewijs = [r for r in uit if r.startswith("BZ4 set: bewijs ")]
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    assert [r.split(":")[1].removeprefix(" bewijs ") for r in bewijs] == [f.sleutel for f in fotos]
+    assert all(r.split(": ", 2)[2].startswith("eerste keus; kunstwerk nee, ") for r in bewijs)
+    assert not any("http" in r or "Nep_" in r for r in bewijs)
+    assert not any("bewijs" in r or "tweede keus" in r for r in _kort(werk))
+    kop = [r for r in werk.voorstel_set.read_text().splitlines() if not r.startswith("#")][0]
+    assert kop.split("\t") == list(bm.KOLOMMEN) and len(bm.KOLOMMEN) == 7
+    per_vraag = [r for r in uit if re.fullmatch(r"BZ4 set: [a-z+-]+: \d+ van \d+ gekozen, .*", r)]
+    assert len(per_vraag) == 30
+    assert all(", 0 tweede keus (" in r for r in per_vraag)
+    # kat+sneeuw: de eerste kandidaat heeft een mens, de tweede is goed
+    assert per_vraag[4] == (
+        "BZ4 set: kat+sneeuw: 1 van 1 gekozen, 0 tweede keus (2 kandidaten bekeken op 1 pagina)"
+    )
+
+
+@pytest.mark.parametrize("k", [4, 6])
+def test_de_eerste_keus_maakt_over_zoekopdrachten_heen_geen_tekort(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, k
+):
+    """De review (S1): de eerste keus is er per zoekopdracht, niet over de set heen. Alle goede
+    foto's van alleen hond zijn tweede keus (P195), en k goede katten beelden ook een hond af. Dan
+    neemt hond die katten als eerste keus, en had kat er vroeger genoeg maar nu te weinig. Bij een
+    tekort kiest het voorstel opnieuw in de volgorde van Commons (zoals vroeger, met de lijst), en
+    houdt het de keuze met de minste tekorten: hier geen. Geen vraag aan de API erbij (de pagina's
+    van de eerste ronde), en van wat de eerste ronde al ophaalde geen tweede download."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    cat = bm.CATEGORIEEN
+    b = commons.bestanden
+    katten = _goede_katten(commons)
+    honden = [
+        i
+        for i, d in sorted(b.items())
+        if d["P180"] == {cat["hond"]}
+        and d["mime"] == "image/jpeg"
+        and d["breedte"] == 1600
+        and d["bytes"] <= bm.MAX_FOTO
+        and d["P275"] == {"Q6938433"}
+    ]
+    assert len(honden) == 6
+    for i in honden:
+        b[i]["eigen"] = {"P195"}
+    for i in katten[:k]:
+        b[i]["P180"] = {cat["kat"], cat["hond"]}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"hond-{n}"] for n in range(1, 5)] == honden[:4]
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == katten[:4]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 2 van 4 gekozen, 0 tweede keus (24 kandidaten bekeken op 2 pagina's)"
+    ) in uit
+    assert (
+        "BZ4 set: volgorde van Commons, hond: 4 van 4 gekozen, 4 tweede keus (10 kandidaten "
+        "bekeken op 1 pagina; tweede keus: 4 collectie)"
+    ) in uit
+    regels = _kort(werk)
+    assert regels[0] == (
+        "BZ4 set: de eerste keus gaf 1 tekort, de volgorde van Commons geen: dit voorstel volgt "
+        "de volgorde van Commons, met 4 tweede keus (hond 4); het bewijs per foto staat in het "
+        "log, na deze regel"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert not [r for r in regels if "Commons:" in r or "de eerste keus was op" in r]
+    # het bewijs na de regel is dat van het voorstel, in zijn volgorde
+    na = uit[uit.index(regels[0]) :]
+    bewijs = [r.split(":")[1].removeprefix(" bewijs ") for r in na if "set: bewijs " in r]
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    assert bewijs == [f.sleutel for f in fotos]
+    # de pagina's van de eerste ronde: geen vraag erbij (zoals de reviewer zag: 93)
+    assert _verkeer(nep).startswith("API: 93 vragen, 0 keer 429; ")
+    # elke foto één keer opgehaald; op de plek van het voorstel staat precies zijn bestand
+    gehaald = [p for p, _ in nep.vragen if not p.startswith("/w/api.php")]
+    assert len(gehaald) == len(set(gehaald)) == 118 + 4
+    assert sorted(p.name for p in werk.set.iterdir()) == sorted(f"{f.sleutel}.jpg" for f in fotos)
+    for f in fotos:
+        assert _sha((werk.set / f"{f.sleutel}.jpg").read_bytes()) == f.sha256, f.sleutel
+    for n, i in enumerate(katten[:4], 1):
+        assert (werk.set / f"kat-{n}.jpg").read_bytes() == commons.gehaald(i)[1]
+
+
+def test_bij_evenveel_tekorten_houdt_het_voorstel_de_eerste_keus(
+    nep, commons, werk, tmp_path, capsys
+):
+    """De review (S1): ook in de volgorde van Commons hebben kat+sneeuw, eten en gitaar te weinig
+    (_tekort). Dan houdt het voorstel de eerste keus: het blok is hetzelfde als zonder de tweede
+    ronde (test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld), en alleen het log
+    zegt wat de volgorde van Commons gaf."""
+    _tekort(commons)
+    with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: de volgorde van Commons gaf 3 tekorten: het voorstel houdt de eerste keus" in uit
+    )
+    assert (
+        "BZ4 set: volgorde van Commons, kat+sneeuw: 0 van 1 gekozen, 0 tweede keus (2 kandidaten "
+        "bekeken op 2 pagina's)"
+    ) in uit
+    assert not [r for r in _kort(werk) if "volgorde van Commons" in r]
+    assert not (werk.set / ".eerste-keus").exists()
+
+
+TWEEDE_KEUS = {
+    "niets": ({}, None),
+    "een foto (P31 Q125191)": ({"P31": {"Q125191"}}, None),
+    "P6243": ({"aanwezig": {"P6243"}}, "kunstwerk"),
+    "P31 schilderij": ({"P31": {"Q3305213"}}, "kunstwerk"),
+    "Art Photo": ({"sjablonen": {"Template:Art Photo"}}, "kunstwerk"),
+    "P195": ({"aanwezig": {"P195"}}, "collectie"),
+    "P217": ({"aanwezig": {"P217"}}, "collectie"),
+    "P180 vrouw": ({"P180": {bm.CATEGORIEEN["kat"], "Q467"}}, "persoon"),
+    "Personality rights": ({"sjablonen": {"Template:Personality rights"}}, "persoon"),
+    "sjablonen onvolledig": ({"sjablonen_heel": False}, "sjablonen onvolledig"),
+    "kunstwerk voor persoon": (
+        {"aanwezig": {"P195"}, "sjablonen": {"Template:Artwork"}, "P180": {"Q8441"}},
+        "kunstwerk",
+    ),
+}
+
+
+@pytest.mark.parametrize("geval", sorted(TWEEDE_KEUS))
+def test_waarom_een_kandidaat_tweede_keus_is(geval):
+    """_tweede_keus: de eerste reden uit TWEEDE_KEUS die geldt, of None (eerste keus). Een
+    kandidaat zonder de nieuwe velden (zoals _foto) is eerste keus."""
+    anders, reden = TWEEDE_KEUS[geval]
+    assert bm._tweede_keus(_foto(**anders)) == reden
+    assert reden is None or reden in bm.TWEEDE_KEUS
+
+
+def test_de_voorkeur_binnen_een_keus():
+    """Eerst meer qids van de zoekopdracht prominent, dan eigen werk; verder blijft de volgorde."""
+    kat, sneeuw = bm.CATEGORIEEN["kat"], bm.CATEGORIEEN["sneeuw"]
+    beide = _foto(P180_prominent={kat, sneeuw})
+    een = _foto(P180_prominent={kat}, P7482={bm.EIGEN_WERK})
+    eigen = _foto(P7482={bm.EIGEN_WERK})
+    gewoon = _foto()
+    rij = [gewoon, eigen, een, beide]
+    assert sorted(rij, key=lambda d: bm._voorkeur(d, (kat, sneeuw))) == [beide, een, eigen, gewoon]
+    assert bm._bewijs(een, (kat, sneeuw), True) == (
+        "eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen werk ja, prominent 1 van "
+        "2, P180 1"
+    )
+
+
+# --- beeld_niet.tsv -----------------------------------------------------------------------------
+
+
+def _lijst(*rijen: tuple[str, str, str]) -> str:
+    regels = ["# een opmerking", "bron\treden\tgezien", *("\t".join(r) for r in rijen)]
+    return "\n".join(regels) + "\n"
+
+
+def test_een_goede_lijst_komt_door_de_controle(tmp_path):
+    tekst = _lijst(
+        (_bron(7), "persoon", "stad-5 op 3a9b07d"),
+        ("https://commons.wikimedia.org/wiki/File:R%C3%A4v_1881.jpg", "kunstwerk", "kat+sneeuw"),
+    )
+    niet = bm.lees_niet(tekst + "\n# nog een opmerking\n")
+    assert list(niet) == [
+        "https://commons.wikimedia.org/wiki/File:Nep_7.jpg",
+        ("https://commons.wikimedia.org/wiki/File:Räv_1881.jpg"),
+    ]
+    eerste = niet["https://commons.wikimedia.org/wiki/File:Nep_7.jpg"]
+    assert eerste == bm.Niet(_bron(7), "persoon", "stad-5 op 3a9b07d", 3)
+    # een ontbrekend bestand is een lege lijst: alles als vroeger
+    assert bm.lees_niet(None) == {}
+    assert bm._lees_niet_pad(tmp_path / "geen.tsv") is None
+    pad = tmp_path / "beeld_niet.tsv"
+    pad.write_text(tekst)
+    assert bm._lees_niet_pad(pad) == bm.lees_niet(tekst)
+    pad.write_bytes(b"bron\treden\tgezien\n\xff\n")
+    with pytest.raises(bm.Fout, match="^beeld_niet.tsv: geen UTF-8$"):
+        bm._lees_niet_pad(pad)
+
+
+GOED = (_bron(7), "persoon", "stad-5 op 3a9b07d")
+KAPOTTE_LIJST = {
+    "geen kop": ("# alleen een opmerking\n", "beeld_niet.tsv: de eerste regel hoort bron"),
+    "andere kop": ("bron\treden\n", "regel 1: de eerste regel hoort bron reden gezien"),
+    "veld te weinig": (_lijst(GOED[:2]), "regel 3: 2 velden, verwacht 3"),
+    "veld te veel": (_lijst((*GOED, "x")), "regel 3: 4 velden, verwacht 3"),
+    "bron van elders": (
+        _lijst(("https://example.org/wiki/File:F.jpg", *GOED[1:])),
+        "regel 3: bron hoort een bestandspagina van Commons",
+    ),
+    "bron zonder bestand": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "bron met spatie": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:Twee woorden.jpg", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "bron niet in ASCII": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:Räv.jpg", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "onbekende reden": (
+        _lijst((GOED[0], "lelijk", GOED[2])),
+        "regel 3: reden 'lelijk'; alleen persoon, kunstwerk, niet-zichtbaar, toont-categorie",
+    ),
+    "reden met hoofdletter": (_lijst((GOED[0], "Persoon", GOED[2])), "regel 3: reden"),
+    "gezien leeg": (_lijst((*GOED[:2], "")), "regel 3: gezien hoort een korte tekst"),
+    "gezien alleen spaties": (_lijst((*GOED[:2], "   ")), "regel 3: gezien"),
+    "gezien te lang": (_lijst((*GOED[:2], "x" * 81)), "regel 3: gezien"),
+    "dubbele bron": (_lijst(GOED, GOED), r"regel 4: die bron staat er al \(regel 3\)"),
+    "dubbel in een andere vorm": (
+        _lijst(GOED, (GOED[0].replace("Nep_7", "Nep%5F7"), "kunstwerk", "kat-1")),
+        r"regel 4: die bron staat er al \(regel 3\)",
+    ),
+}
+
+
+@pytest.mark.parametrize("geval", sorted(KAPOTTE_LIJST))
+def test_een_lijst_die_niet_klopt(geval):
+    """lees_niet is streng zoals lees_set: een fout met het regelnummer in het bestand
+    (commentaar telt mee, zoals in een editor)."""
+    tekst, fout = KAPOTTE_LIJST[geval]
+    with pytest.raises(bm.Fout, match=fout):
+        bm.lees_niet(tekst)
+
+
+def test_een_voorstel_neemt_nooit_een_foto_uit_de_lijst(nep, commons, werk, tmp_path):
+    """De eerste kat (zonder lijst kat-1) staat in beeld_niet.tsv, in een andere vorm van de bron
+    (_ als %5F): het voorstel slaat hem over en de volgende in dezelfde volgorde krijgt de plek.
+    Het blok zegt hoeveel foto's op de lijst staan en hoeveel daarvan langskwamen."""
+    g = _goede_katten(commons)
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(
+        _lijst(
+            (_bron(g[0]).replace(f"Nep_{g[0]}", f"Nep%5F{g[0]}"), "persoon", "kat-1 op 3a9b07d"),
+            ("https://commons.wikimedia.org/wiki/File:Elders.jpg", "niet-zichtbaar", "bos-1"),
+        )
+    )
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == g[1:5]
+    assert g[0] not in sleutels.values()
+    regels = _kort(werk)
+    assert (
+        regels[0] == "BZ4 set: beeld_niet.tsv: 2 foto's op de lijst, als kandidaat overgeslagen: 1"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert _verkeer(nep).startswith("API: 90 vragen, ")
+
+
+def test_een_tekort_noemt_de_lijst_als_reden(nep, commons, werk, tmp_path):
+    """Staan alle zes goede katten op de lijst, dan is er een tekort voor kat, en de regel zegt
+    dat ze uitgesloten zijn (zoals elke reden van afvallen)."""
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst(*((_bron(i), "persoon", f"kat {i}") for i in _goede_katten(commons))))
+    with pytest.raises(bm.Fout, match=r"^Commons: 1 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    assert _kort(werk) == [
+        "BZ4 set: beeld_niet.tsv: 6 foto's op de lijst, als kandidaat overgeslagen: 6",
+        "BZ4 set: Commons: maar 1 bruikbare foto's voor kat (24 kandidaten bekeken; afgevallen: "
+        "12 uitgesloten (beeld_niet.tsv), 2 al gekozen, 2 geen image/jpeg, 2 licentie, 6 om een "
+        "andere reden)",
+    ]
+
+
+def test_de_reserves_slaan_de_lijst_over(nep, commons, werk, tmp_path):
+    """De enige reserve van de nep (zonsondergang+strand) staat op de lijst: hij telt niet, met
+    de reden in de regel van de reserve."""
+    _tekort(commons)
+    cat = bm.CATEGORIEEN
+    (paar,) = [
+        i
+        for i, d in commons.bestanden.items()
+        if d["P180"] == {cat["strand"], cat["zonsondergang"]}
+    ]
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst((_bron(paar), "niet-zichtbaar", "strand-1")))
+    with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    regels = _kort(werk)
+    assert regels[0] == "BZ4 set: beeld_niet.tsv: 1 foto op de lijst, als kandidaat overgeslagen: 1"
+    assert (
+        "BZ4 reserve zonsondergang+strand: 0 bruikbare foto's (eerste pagina per licentie; "
+        "afgevallen: 1 uitgesloten (beeld_niet.tsv))"
+    ) in regels
+    assert sum(r.startswith("BZ4 reserve ") for r in regels) == 5
+
+
+def test_met_beeld_tsv_is_een_foto_uit_de_lijst_een_fout(nep, commons, werk, tmp_path):
+    """Een foto uit beeld_niet.tsv kan nooit vast in beeld.tsv staan: de fout noemt de regel in
+    beide bestanden en de reden, en er wordt niets opgehaald. Ook via main, met --niet."""
+    assert bm.set_(werk, tmp_path / "geen.tsv") == bm.VOORSTEL
+    set_pad = tmp_path / "beeld.tsv"
+    set_pad.write_text(werk.voorstel_set.read_text())
+    fotos = bm.lees_set(set_pad.read_text())
+    i = next(n for n, f in enumerate(fotos) if f.sleutel == "kat-2")
+    lijst = tmp_path / "beeld_niet.tsv"
+    lijst.write_text(_lijst((fotos[i].bron, "kunstwerk", "kat-2 op 3a9b07d")))
+    vragen = len(nep.vragen)
+    werk2 = bm.Werk(tmp_path / "werk2")
+    fout = (
+        f"beeld.tsv: regel {i + 2} (kat-2) staat in beeld_niet.tsv regel 3 (kunstwerk); zet er "
+        "een andere foto voor in de plaats (runbook analyse, stap 4)"
+    )
+    with pytest.raises(bm.Fout) as e:
+        bm.set_(werk2, set_pad, niet_pad=lijst)
+    assert str(e.value) == fout
+    assert len(nep.vragen) == vragen and not werk2.set.exists()
+    werk3 = bm.Werk(tmp_path / "werk3")
+    argv = ["set", "--werk", str(werk3.map), "--set", str(set_pad), "--niet", str(lijst)]
+    assert bm.main(argv) == 1
+    assert _kort(werk3) == [f"FOUT set: {fout}"]
+    # zonder de lijst (de standaard, hier leeg) komt dezelfde set gewoon door
+    assert bm.set_(werk3, set_pad) == 0
+
+
+def test_een_lijst_die_niet_klopt_stopt_set_voor_de_eerste_vraag(nep, commons, werk, tmp_path):
+    lijst = tmp_path / "beeld_niet.tsv"
+    lijst.write_text(_lijst((GOED[0], "mooi", GOED[2])))
+    argv = ["set", "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")]
+    assert bm.main([*argv, "--niet", str(lijst)]) == 1
+    assert _kort(werk) == [
+        "FOUT set: beeld_niet.tsv regel 3: reden 'mooi'; alleen persoon, kunstwerk, "
+        "niet-zichtbaar, toont-categorie"
+    ]
+    assert not nep.vragen
+
+
+def test_zonder_lijst_is_het_voorstel_als_vroeger(nep, commons, werk, tmp_path):
+    """Een lijst zonder regels geeft hetzelfde voorstel als geen lijst; alleen het blok heeft
+    dan een regel erbij. Zonder het bestand is het blok zoals vroeger."""
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    assert not any("beeld_niet.tsv" in r for r in _kort(werk))
+    leeg = tmp_path / "leeg.tsv"
+    leeg.write_text(_lijst())
+    werk2 = bm.Werk(tmp_path / "werk2")
+    assert bm.set_(werk2, tmp_path / "beeld.tsv", niet_pad=leeg) == bm.VOORSTEL
+    assert werk2.voorstel_set.read_text() == werk.voorstel_set.read_text()
+    assert (
+        _kort(werk2)[0]
+        == "BZ4 set: beeld_niet.tsv: 0 foto's op de lijst, als kandidaat overgeslagen: 0"
+    )
+    assert len(_kort(werk2)) == len(_kort(werk)) + 1
+
+
+def test_het_voorstel_zelf_gaat_nog_eens_langs_de_lijst(nep, commons, werk, tmp_path, monkeypatch):
+    """De review (N6): stel_voor slaat een foto van de lijst al over; set_ kijkt het voorstel
+    daarna nog eens na (_niet_in_set), voor het geval stel_voor er toch een doorlaat. Met een
+    _op_lijst die nooit iets ziet, is dat de fout, en ligt er geen voorstel."""
+    g = _goede_katten(commons)
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst((_bron(g[0]), "persoon", "kat-1 op 3a9b07d")))
+    monkeypatch.setattr(bm, "_op_lijst", lambda _d, _niet: False)
+    with pytest.raises(
+        bm.Fout,
+        match=r"^voorstel-beeld\.tsv: regel \d+ \(kat-1\) staat in beeld_niet\.tsv regel 3 "
+        r"\(persoon\); zet er een andere foto voor in de plaats",
+    ):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    assert not werk.voorstel_set.exists()
+
+
+def test_een_opgegeven_lijst_die_er_niet_is_is_een_fout(nep, commons, werk, tmp_path):
+    """De review (N7): alleen de standaard (NIET) mag ontbreken. Een --niet die er niet is (een
+    tikfout) is een fout vóór de eerste vraag, geen stille "geen lijst". Zonder --niet en zonder
+    het bestand (_zonder_lijst) gaat set gewoon."""
+    weg = tmp_path / "beeld_niet.tsv"
+    argv = ["set", "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")]
+    assert bm.main([*argv, "--niet", str(weg)]) == 1
+    assert _kort(werk) == [f"FOUT set: beeld_niet.tsv: {weg} is er niet (--niet)"]
+    assert not nep.vragen
+    with pytest.raises(bm.Fout, match=r"is er niet \(--niet\)$"):
+        bm.set_(werk, tmp_path / "geen.tsv", niet_pad=weg)
+    assert not nep.vragen and not bm.NIET.exists()
+    werk2 = bm.Werk(tmp_path / "werk2")
+    assert bm.main(["set", "--werk", str(werk2.map), "--set", str(tmp_path / "geen.tsv")]) == 3
+    assert not any("beeld_niet.tsv" in r for r in _kort(werk2))

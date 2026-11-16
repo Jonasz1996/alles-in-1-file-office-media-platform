@@ -80,7 +80,9 @@ of vreemde invoer, geen tekst in een fout, kapotte en te grote bestanden, en BZ7
   - int8 zoals Keuze 73: elke Linear `DynamicQuantizeMatMul` met int8-gewichten, een schaal per
     kolom en nulpunt 0; q, k en v van een laag in één MatMul; de embedding van de tekst in int8 met
     een schaal per rij (Gather, Cast, Mul); de Conv van de patches blijft fp32 [CI op `7569d48`:
-    het gewicht van een Linear nu met |q| ≤ 64, de embedding met 127; zie daar];
+    het gewicht van een Linear nu met |q| ≤ 64, de embedding met 127; zie daar] [CI op `011bf2d`:
+    sinds `VERSIE` 3 is elke Linear `MatMulInteger` met de invoer in uint8 per rij (per token); zie
+    daar];
   - elke initializer is een callable: er staat één gewicht tegelijk in het geheugen, de embedding
     in blokken van 4.096 rijen;
   - uitvoer: `beeld.int8.onnx`, `tekst.int8.onnx`, `tokenizer.bin`, `meta.json` (`logit_scale`,
@@ -816,6 +818,7 @@ per core, verwachting 750–870 [berekend, K2-04]) heeft weinig ruimte.
   leest beide int8-grafen met de eigen lezer van het protobuf: elk gewicht dat B is van een
   `DynamicQuantizeMatMul` heeft |q| ≤ 64, en het enige andere int8-gewicht is de embedding.
   `test_meta_json` eist nu `omzetter` 2 (`bouw.VERSIE`): dezelfde bron geeft andere int8-bytes.
+  [Sinds CI op `011bf2d` 3: per token.]
 
 Teruggezet naar `Q_MAX = 127` (hier, met VNNI): vijf tests rood.
 `test_dynamic_quantize_matmul[True]` en `[False]` (q haalt 127, niet 64; onnxruntime zelf rekent
@@ -860,7 +863,9 @@ De nieuwe pins (BZ2):
 | `afc9dd55d41c59d10c9e2aa3c275f6f6a8a144e4c24c7c652ba20406c0b1003f` | 284307578 | `siglip2-b32-256/tekst.int8.onnx` |
 | `cc84a88be5c2dfb27a8bca85389ba6baaa5cf152f43dceef13a3ecd2a51830e6` | 2135 | `siglip2-b32-256/meta.json` |
 
-Ze gaan, zoals de andere regels van SigLIP, pas met X3b in `models.lock` (uitrol F3).
+Ze gaan, zoals de andere regels van SigLIP, pas met X3b in `models.lock` (uitrol F3). [CI op
+`011bf2d`: deze drie zijn van `VERSIE` 2 (per tensor) en gelden met `VERSIE` 3 (per token) niet
+meer; de nieuwe komen uit de eerste run na `011bf2d`.]
 
 **De bandbreedte was niet de oorzaak.** Van upload.wikimedia.org kwam gemiddeld hooguit
 `BANDBREEDTE` (20 Mbps, onder de 25 Mbps van de robotregels), één vraag tegelijk, met `PAUZE_S`
@@ -1229,3 +1234,1026 @@ e-mailadres als waarde). `test_met_beeld_contact_alleen_naar_commons_en_nooit_in
 een vijfde geval in de vorm die `ci.yml` meestuurt (`https://github.com/<eigenaar>/<repo>`, met
 punt, liggend streepje en underscore). Uitzetten staat in het runbook
 ([analyse.md](../runbooks/analyse.md), "Een contact in de User-Agent").
+
+## CI op 45bb926
+
+`beeld-model` op `45bb926` (run 43787944528), de eerste run met de link naar het repository als
+contact (zie "Het contact aan"):
+
+| Stap | Uitkomst |
+|---|---|
+| BZ1 | huggingface.co, commons.wikimedia.org en upload.wikimedia.org HTTP 200; images-assets.nasa.gov HTTP 403. **Goed** |
+| BZ2 | twee omzettingen (8,1 en 7,5 s, maxrss 354 MiB) met dezelfde sha256 voor alle vijf bestanden; de omzetting met `--fp32` (18,8 s, 1607 MiB) ook. **Goed** |
+| BZ3, BZ6 en BZ7 | **goed**; BZ6 beeld int8 op één core 2609 foto's per minuut (poort ≥ 500), een vraag p95 19,5 ms (≤ 250 ms) |
+| BZ4 | niet gerekend: `set` (een voorstel, zonder `beeld.tsv`) liep van 01:45:53 tot 01:56:26 en stopte op "FOUT set: Commons: 30 tekort(en) voor de set; zie de regels BZ4 set hierboven (0 van 120 foto's opgehaald, 0,0 MB; API: 630 vragen, 0 keer 429; upload: 0 vragen; contact: ja)". **Rood** |
+
+**Niet de API: het voorstel nam niets.** Met contact vroeg `set` de API 630 keer in 10,5 minuten,
+één keer per seconde, en kreeg geen enkele 429: het tempo van "Het contact aan" hield. Maar van
+de kandidaten nam hij er geen: "geen bruikbare foto" voor alle 6 combinaties (5 tot 106
+kandidaten bekeken), "maar 0 bruikbare foto's" voor alle 12 categorieën (400 kandidaten bekeken,
+eten 294) en alle 12 andere onderwerpen (400; klok 272, gitaar 279, insect 377), en 0 voor alle 5
+reserves. Dus 30 tekorten, en niets opgehaald ("upload: 0 vragen"). Dezelfde keuze vond op
+`9ebf298` nog alle 120, toen als originelen. Sindsdien vraagt `details` de thumbnail van 1280 px
+(iiurlwidth), en nam `_duim` alleen een thumbnail op `UPLOAD` (zie "CI op 9ebf298"); op `3148c2f`
+kwam de keuze niet zover (de 429 van de API). Dit was dus de eerste run waarin `_duim` echte
+antwoorden zag. Waarom elke kandidaat afviel, zei het log niet: alleen hoeveel er bekeken waren.
+
+**Waarom, uit de tweede hand.** Wikimedia haalde de cache van de thumbnails uit het
+upload-cluster naar een eigen host, thumb.wikimedia.org: phabricator
+[T427465](https://phabricator.wikimedia.org/T427465), "Move thumbnail caching from upload cluster
+to text", uitgerold vanaf 2026-08-19 en "everywhere" sinds 2026-09-07. Het pad blijft hetzelfde
+(`/wikipedia/commons/thumb/<a>/<ab>/<naam>/<breedte>px-<naam>`), alleen de host verandert, en
+MediaWiki geeft die host nu in de thumburl van imageinfo
+([fuzheado/Wikipedia-AI-Skills, PR #26](https://github.com/fuzheado/Wikipedia-AI-Skills/pull/26),
+2026-09-03). De oude URL's op upload werken nog; een 301 naar thumb.wikimedia.org komt
+"eventually". De originelen blijven op upload; het pad van een origineel op thumb.wikimedia.org
+geeft een 301 naar https://commons.wikimedia.org/. Een verslag op dev.to ("Wikimedia thumbnails
+now: thumb.wikimedia.org, a fixed list of widths, and WebP only for some clients", nagekeken op
+2026-11-14) zegt verder: thumb.wikimedia.org geeft alleen de vaste maten (op een andere HTTP
+400); hij kiest het formaat op dezelfde URL (`.jpg`) naar de Accept van de vraag (met
+`image/webp,*/*`, en met de Accept van Chrome, WebP; zonder Accept, met `image/jpeg` of met
+`image/avif,*/*` JPEG), en het antwoord in WebP heeft geen `Vary`; met 1 s tussen twee vragen gaf
+hij geen 429. Al deze bronnen zijn uit de tweede hand: de sandbox komt niet bij Wikimedia, en
+niets ervan is hier nagemeten. Dat de thumburl in run 43787944528 op thumb.wikimedia.org stond,
+zegt het log ook niet; het is de verklaring die past bij alle 30 tekorten tegelijk (elke
+zoekopdracht, beide licenties, ook de reserves, terwijl de API zonder fout antwoordde). De
+volgende run zegt het: de regel van een tekort noemt nu de redenen (punt 5).
+
+Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
+`api/tests/analyse/test_beeld_tools.py`):
+
+1. **Thumbnails van thumb.wikimedia.org (`THUMB`).** `_duim` neemt een thumbnail van 1280 px op
+   `THUMB` of `UPLOAD` (het pad van `_is_duim`, thumbwidth 1280); geeft MediaWiki het origineel
+   zelf als thumburl (een origineel dat niet breder is), dan alleen op `UPLOAD`. Het voorstel
+   schrijft de URL in `beeld.tsv` precies zoals de API hem gaf, dus meestal op
+   thumb.wikimedia.org; de kolom bron blijft de bestandspagina. `lees_set` neemt een thumbnail van
+   1280 px op thumb of upload en een origineel alleen op upload; anders een fout met het
+   regelnummer: "url hoort bij https://thumb.wikimedia.org/ of https://upload.wikimedia.org/",
+   "url is een thumbnail, maar niet 1280 px" of "url op https://thumb.wikimedia.org/ is geen
+   thumbnail; een origineel hoort bij https://upload.wikimedia.org/". De nep van Commons in de
+   tests geeft de thumburl nu op zijn eigen thumb (`/duim/`), behalve voor vier foto's van boot
+   (de oude vorm, op upload). Tests: `test_ci_op_45bb926_de_thumbnails_staan_op_thumb_wikimedia_org`
+   (nieuw: een voorstel zonder tekort, 115 van de 120 op thumb en 5 op upload, elke URL precies
+   zoals de nep hem gaf), `test_de_thumbnail_van_een_goede_foto` (een geval "op
+   thumb.wikimedia.org" erbij), `test_een_foto_zonder_goede_thumbnail_valt_af` (6 gevallen erbij:
+   het origineel op thumb als thumburl en als url, een thumbnail op een vreemde host, op een host
+   met een liggend streepje en op een te lange host, en geen bestandspagina),
+   `test_een_geldige_set_komt_door_de_controle` (beide vormen van een thumbnail) en
+   `test_een_set_die_niet_klopt` (3 gevallen erbij: een thumbnail over http, een van 1024 px op
+   thumb, een origineel op thumb).
+2. **Een eigen dienst `thumb`.** Naast de API en upload is thumb.wikimedia.org een dienst van
+   Commons (`DIENSTEN`: API, thumb, upload): hooguit één vraag per `PAUZE_S` (1 s; het verslag op
+   dev.to zag bij 1 s geen 429), gemiddeld hooguit `BANDBREEDTE` (de rem is nu per host: thumb
+   en upload elk hun eigen), elke vraag geteld, en met `BEELD_CONTACT` het contact in de
+   User-Agent. Het verkeer in de regel van een goede set en in de fout van `set` heeft drie
+   diensten, altijd in die volgorde: "API: 90 vragen, 0 keer 429; thumb: 115 vragen, 0 keer 429;
+   upload: 5 vragen, 0 keer 429; contact: nee"; een dienst zonder vragen als "upload: 0 vragen",
+   één vraag als "1 vraag". De regel aan het begin van `set`: "BZ4 set: de API van Commons
+   hooguit één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja". Tests:
+   `test_tussen_twee_vragen_aan_commons_zit_een_pauze` (thumb erbij: 1 s, een eigen klok),
+   `test_van_upload_hooguit_bandbreedte_andere_hosts_niet` (thumb net zo) en elke test met het
+   verkeer in de regel of de fout (de nep telt `/duim/` als thumb).
+3. **Altijd JPEG.** Elke download van de set (een voorstel en met `beeld.tsv`) vraagt `Accept:
+   image/jpeg`, en `haal` kijkt de eerste bytes na (`FF D8 FF`). Is het iets anders, dan stopt
+   hij zodra hij 12 bytes heeft, met een fout met de sleutel: "kat-2.jpg: WebP in plaats van
+   JPEG" (RIFF … WEBP) of "kat-2.jpg: geen JPEG", en niets op schijf. Zonder dat zou een cache
+   die de `Vary` mist, de sha256 in `beeld.tsv` aan WebP kunnen binden, of WebP in de
+   kwaliteitstest zetten. De downloads van Hugging Face en de bron blijven zoals ze waren: geen
+   Accept en geen controle. Tests: `test_haal_met_jpeg_vraagt_jpeg_en_kijkt_de_eerste_bytes_na`
+   (nieuw: de nep geeft WebP op de Accept van een browser, zoals thumb.wikimedia.org; WebP op een
+   vraag om JPEG: een WebP van 3 MiB stopt na het eerste stuk, hooguit 1 MiB; HTML en een GIF van
+   6 bytes zijn "geen JPEG"; een JPEG van 4 bytes mag) en
+   `test_de_set_vraagt_elke_foto_als_jpeg` (nieuw: 240 downloads in een voorstel en een strenge
+   set, alle met `image/jpeg`, de API zonder; een cache die WebP geeft is "auto+sneeuw.jpg: WebP
+   in plaats van JPEG (bij foto 1 van 120, …" en `set/` blijft leeg). In
+   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` houdt de opnieuw gemaakte thumbnail de
+   eerste vier bytes van een JPEG.
+4. **Omleidingen.** urllib volgt elke omleiding, ook naar een andere host, en neemt de
+   kopregels mee: met `BEELD_CONTACT` zou het contact dan meegaan naar die host, en de eigenaar
+   gaf alleen toestemming voor Wikimedia. Nu gaat elke vraag door `_opener` met `_Omleiding`:
+   - begon de vraag bij een dienst van Commons (de API, thumb of upload), dan volgt hij alleen een
+     omleiding naar https op commons.wikimedia.org, thumb.wikimedia.org of upload.wikimedia.org
+     (poort 443). Elke andere is een fout zonder vraag daarheen en zonder nieuwe poging: "HTTP 302
+     naar localhost, niet gevolgd (van Commons alleen naar https op commons.wikimedia.org,
+     thumb.wikimedia.org of upload.wikimedia.org)", met alleen de host (nooit de URL), en "een
+     onbekende host" als het geen gewone hostnaam is;
+   - de User-Agent komt per stap opnieuw van `_user_agent`, voor de nieuwe URL: het contact gaat
+     alleen naar een dienst van Commons. Accept gaat mee;
+   - de pauze en de telling, zo besloten: elke stap naar een dienst van Commons is een vraag als
+     elke andere. Hij wacht eerst `_pauze` van die dienst en telt bij die dienst (een 301 van
+     upload naar thumb telt één vraag bij upload en één bij thumb, en wacht de pauze van thumb).
+     Een stap naar een andere URL (commons.wikimedia.org buiten de API, zoals de 301 van het pad
+     van een origineel op thumb) wacht niet, telt niet en krijgt geen contact. Een 429 of 5xx na
+     een omleiding telt bij de dienst die hem gaf. De rem (`BANDBREEDTE`) geldt voor de host
+     die de bytes gaf;
+   - een vraag die elders begon (Hugging Face, dat naar zijn CDN omleidt) volgt hij zoals
+     urllib, zonder contact, pauze of telling.
+
+   Tests: `test_een_omleiding_van_commons_naar_elders_volgt_hij_nooit` (nieuw: thumb, de API en
+   upload elk naar elders, ook naar dezelfde host en poort over een ander schema; nooit een vraag
+   aan de tweede server, elke vraag één keer, niets op schijf),
+   `test_omleidingen_alleen_naar_https_op_de_hosts_van_commons` (nieuw: de echte hosts; http, een
+   andere poort, een andere host en een kapotte URL vallen erbuiten),
+   `test_een_omleiding_binnen_commons_volgt_hij_met_pauze_en_telling` (nieuw: de 301 van een oude
+   URL op upload naar thumb, met contact, Accept, de pauze van thumb en de telling; de 301 van een
+   origineel op thumb naar commons.wikimedia.org zonder contact, pauze of telling, en daar "geen
+   JPEG") en `test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact` (nieuw).
+5. **Waarom een kandidaat afviel.** `_waarom` geeft van elke kandidaat die de set niet neemt de
+   eerste reden uit een vaste reeks (`REDENEN`): geen image/jpeg, origineel niet op upload, geen
+   bestandspagina, te klein, te groot, mens erop, licentie, geen thumbnail van 1280 px,
+   thumbnail op een andere host, te langgerekt, onleesbare gegevens, en in de keuze zelf al
+   gekozen en (bij een ander onderwerp) beeldt een categorie af. Bij "thumbnail op een andere
+   host" staat de host erbij als het een gewone hostnaam is van hooguit 64 tekens (letters,
+   cijfers, liggende streepjes en punten), anders "een onbekende host"; nooit de URL. De regel
+   van een tekort en die van een reserve noemen de vier vaakste redenen met hun aantal, de
+   meeste eerst en bij een gelijk aantal op de tekst (dus elke run in dezelfde volgorde), en de
+   rest samen: "BZ4 set: Commons: maar 0 bruikbare foto's voor auto (24 kandidaten bekeken;
+   afgevallen: 14 thumbnail op een andere host (127.0.0.1), 2 geen image/jpeg, 2 licentie, 2 mens
+   erop, 4 om een andere reden)", "BZ4 reserve zonsondergang+strand: 0 bruikbare foto's (eerste
+   pagina per licentie; afgevallen: 1 thumbnail op een andere host (127.0.0.1))". Bij een reserve
+   telt elke kandidaat één keer en telt "al gekozen" niet. Op `45bb926` had de regel zo
+   "afgevallen: … thumbnail op een andere host (thumb.wikimedia.org)" gezegd. Tests:
+   `test_een_tekort_zegt_waarom_de_kandidaten_afvielen` (nieuw: de toestand van `45bb926` van de
+   andere kant, de tool verwacht thumb.wikimedia.org en de nep geeft de thumbnails elders; 29
+   tekorten, elk met redenen, precies voor auto+sneeuw, auto, fiets, bloem en een reserve, en
+   geen URL in het log), `test_waarom_een_foto_afvalt` (nieuw: de reden van elk geval van
+   `test_een_foto_zonder_goede_thumbnail_valt_af`, uit `REDENEN`, zonder URL, wachtwoord of poort),
+   `test_afgevallen_noemt_de_vier_vaakste_redenen` (nieuw) en
+   `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (de redenen van kat+sneeuw,
+   eten en gitaar precies).
+6. **BZ1 noemt thumb.wikimedia.org**, na commons.wikimedia.org: de wortel
+   `https://thumb.wikimedia.org/`. Leidt een host om, dan zegt de regel waarheen en wat daar het
+   antwoord was (bijvoorbeeld "BZ1 thumb.wikimedia.org: bereikbaar (HTTP 301 naar
+   commons.wikimedia.org, daar HTTP 200)"), of dat de tool hem niet volgde ("bereikbaar (HTTP 302
+   naar …, niet gevolgd (…))"); wat de wortel van thumb.wikimedia.org antwoordt, is hier niet
+   bekend. Test:
+   `test_bereik_meldt_thumb_ook_als_de_wortel_omleidt` (nieuw: beide, en geen vraag aan de andere
+   host).
+
+Wat niet veranderde: de zoekvragen, de keuze, `PAUZE_API_S`, `PAUZE_S`, `BANDBREEDTE`,
+`MAX_WACHT_S`, `WACHT_TOTAAL_S`, de User-Agent, `BEELD_CONTACT` in `ci.yml` (alleen op `BZ1 bereik
+per host` en `BZ4 de 120 foto's`; de opmerkingen in `ci.yml` noemen geen hosts die nu niet meer
+kloppen, dus `ci.yml` is niet aangeraakt) en `test_beeld_ci.py`.
+
+Teruggedraaid getest (de `beeld_model.py` van `45bb926` terug, de nieuwe tests ongewijzigd; daarna
+de nieuwe weer terug, met `cmp` en `git status` nagekeken): in `test_beeld_tools.py` 58 rood en 100
+groen. Rood:
+- de 22 gevallen van `test_waarom_een_foto_afvalt` en
+  `test_afgevallen_noemt_de_vier_vaakste_redenen` (de oude gaf geen reden);
+- 8 tests van `set` op "Commons: 29 tekort(en) … (6 van 120 foto's opgehaald, …)", want de oude
+  `_duim` nam geen thumbnail op de thumb van de nep, met
+  `test_ci_op_45bb926_de_thumbnails_staan_op_thumb_wikimedia_org` voorop; om dezelfde reden
+  `test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen` (6 in plaats van 116),
+  `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` en
+  `test_een_tekort_zegt_waarom_de_kandidaten_afvielen` (een tekort zonder "afgevallen: …");
+- 5 van `lees_set`: `test_een_geldige_set_komt_door_de_controle` ("regel 17: url hoort bij
+  https://upload.wikimedia.org/"), 3 gevallen van `test_een_set_die_niet_klopt` (de oude tekst) en
+  `test_de_thumbnail_van_een_goede_foto` "op thumb.wikimedia.org";
+- 11 met thumb in een regel: de regel aan het begin van `set` in de 2 gevallen van
+  `test_zonder_beeld_contact_gaat_er_geen_contact_mee` en de 5 van
+  `test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log`, het verkeer zonder "thumb: …"
+  in `test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout` en in de 3 gevallen van
+  `test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log`;
+- de 2 tests van BZ1; de pauze van thumb ("[8.0, 7.75, 1.0]": de vraag aan thumb zonder pauze) en
+  zijn rem (3,2 MB van thumb zonder wachten);
+- de 4 nieuwe tests van de omleidingen en van `haal` met `jpeg`.
+
+27 daarvan stopten op een naam of argument dat de oude tool niet had (`_waarom` 22 keer,
+`MAX_REDENEN`, `THUMB`, `ACCEPT`, en 2 keer `jpeg`). Groen op de oude tool, terecht:
+`test_een_foto_zonder_goede_thumbnail_valt_af` (de oude nam die gevallen ook niet) en
+`test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact` (urllib deed dat al). Met alleen de
+nieuwe namen erbij in de oude tool (`THUMB`, `ACCEPT`, `JPEG_BEGIN`, `ALLEEN_COMMONS`,
+`MAX_HOSTNAAM`, `MAX_REDENEN`, `GEEN_DUIM`, `ANDERE_HOST`, `REDENEN`, en `DIENSTEN` met thumb, waar
+de oude `("API", "upload")` had): 55 rood en 103 groen. Groen werden alleen de 3 gevallen van
+`test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log`: de oude `verkeer`
+loopt over `DIENSTEN` en zei nu "thumb: 0 vragen", en het contact hield hij al uit het log. De 55
+blijven rood om de goede reden: 28 op een bewering over gedrag (geen thumbnail op thumb, de oude
+regels, geen pauze of rem voor thumb), 3 op het argument `jpeg` van `haal` en 24 op een functie die
+er niet was (`_waarom` 22 keer, `_afgevallen`, `_commons_hosts`). Met de nieuwe tool:
+`test_beeld_tools.py` 158 groen (met `test_beeld_ci.py` 167), `tests/analyse` 442 groen.
+
+### De review van de reparatie
+
+Eén review van `d9a6f1c`, acht bevindingen. Elke bevinding eerst zelf nagekeken: de vier over
+tests met de mutant van de reviewer op de tool, R5 met een directe aanroep, de drie over tekst in
+de documenten zelf. Ze klopten alle acht. R1 tot en met R4 vonden een gat in de tests, niet in de
+code; R5 was een fout in de code (zonder lek). Per bevinding met code een test die zonder de code
+faalt.
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) |
+|---|---|---|---|
+| R1 (should) | De bewaker van `_Omleiding` neemt mee waar de vraag begon (`begin`), zodat een keten van thumb via commons.wikimedia.org buiten de API (een host van Commons, maar geen dienst) naar een andere host bij de tweede omleiding stopt. Geen test had zo'n keten: met `begin = req.full_url` (mutant M7) bleven alle tests groen, en ging er een vraag naar die andere host | Alleen een test; de code klopte | `test_een_keten_via_commons_buiten_een_dienst_naar_elders_volgt_hij_niet` (nieuw): thumb geeft een 301 naar `/omweg` op de host van de nep, die een 302 naar de tweede server; de API net zo. Precies "kat-1.jpg: HTTP 302 naar localhost, niet gevolgd (…)", geen vraag aan de tweede server, de omweg zonder contact, niets op schijf. Rood op M7 ("DID NOT RAISE") |
+| R2 (should) | Dat `Accept: image/jpeg` ook bij een nieuwe poging meegaat (na een 503 of 429), testte niets; alleen de eerste poging en een omleiding. Met Accept alleen bij de eerste poging (M27) bleven alle tests groen | Alleen een test | `test_elke_nieuwe_poging_van_een_foto_vraagt_weer_jpeg` (nieuw): thumb zegt 503, dan 429 (Retry-After 3), dan 200, op de nepklok; drie keer `image/jpeg`, en thumb telt 3 vragen, 1 keer 429 en 1 keer 5xx. Rood op M27 (`['image/jpeg', None, None]`) |
+| R3 (should) | Een 429 of 5xx na een gevolgde omleiding telt bij de dienst die hem gaf (`e.geturl()`), maar geen test keek ernaar: met de URL van het begin (M8) bleven alle tests groen, en stond een 429 van thumb bij upload in de fout | Alleen een test | `test_na_een_omleiding_telt_en_remt_de_host_die_antwoordde` (nieuw): upload geeft een 301 naar thumb, thumb een 429 en dan 200; thumb 2 vragen en 1 keer 429, upload 2 vragen en 0 keer 429, Accept bij alle vier. Rood op M8 (`(2, 0, 0) == (2, 1, 0)`) |
+| R4 (nit) | De rem (`BANDBREEDTE`) rekent de bytes bij de host die ze gaf (`antwoord.geturl()`); met de URL van het begin (M9) bleven alle tests groen. In de nep staan thumb en upload op dezelfde host (127.0.0.1), dus het voorstel van de review (de host van thumb in `_klaar`) zag daar geen verschil | Alleen een test, met thumb op localhost en upload op 127.0.0.1 (dezelfde nep) | Dezelfde test als R3: na de download staat alleen `localhost` in `_klaar`, en de laatste slaap is precies de grootte van de thumbnail gedeeld door `BANDBREEDTE`. Rood op M9 (`{'127.0.0.1'} == {'localhost'}`), ook de tweede test van R5 |
+| R5 (nit) | De bewaker leest de host met urlsplit (kleine letters, poort 443 ook als die er staat), `_dienst` met startswith op de hele URL. Een omleiding naar `https://THUMB.wikimedia.org/…` of `https://thumb.wikimedia.org:443/…` kwam door de bewaker, maar als geen dienst: zonder pauze, telling, rem en contact, terwijl de docstring van `_Omleiding` en het runbook zeggen dat een stap naar een dienst wacht en telt. Nagekeken: `_dienst` gaf `None` en `_user_agent` de User-Agent zonder contact. Geen lek: het contact bleef weg | `_dienst` leest de oorsprong nu met `_oorsprong`, net als de bewaker, en daarna het begin van het pad. Zo is elke dienst een host van Commons, en is het enige wat de bewaker doorlaat zonder dienst te zijn commons.wikimedia.org buiten de API. Het contact gaat zo ook mee naar `https://THUMB.wikimedia.org/…`: dezelfde host, binnen de toestemming. `_duim` en `lees_set` blijven streng op de URL zoals de API hem geeft | `test_de_dienst_leest_de_host_zoals_de_bewaker` (nieuw, met de echte URL's: hoofdletters en `:443` bij de API, thumb en upload; http, een andere poort, een andere host en een kapotte URL zijn geen dienst) en `test_een_omleiding_naar_thumb_in_hoofdletters_wacht_telt_en_remt` (nieuw: upload geeft een 301 naar `LOCALHOST`, en die stap heeft het contact, wacht `PAUZE_S`, telt en remt bij thumb). Met de oude `_dienst` beide rood (`None == 'API'`; de stap zonder contact) |
+| R6 (should) | Stap 4 van het runbook zei dat de URL in `voorstel-beeld.tsv` op upload.wikimedia.org staat. Nu staat hij meestal op thumb.wikimedia.org, zoals de API hem gaf; wie stap 4 volgde, vond goede regels fout | Stap 4: de URL zoals de API hem gaf, op thumb.wikimedia.org of in de oude vorm op upload.wikimedia.org (`…/thumb/…/1280px-…`); een origineel dat niet breder is, op upload.wikimedia.org | geen (tekst) |
+| R7 (nit) | Het runbook raadde aan `THUMB` aan te passen als bijna alle kandidaten "thumbnail op een andere host" zeggen, zonder te zeggen dat `THUMB` ook het contact krijgt en een toegestaan doel van omleidingen is. De toestemming van Jonas geldt alleen voor Wikimedia | Erbij: alleen naar een host van Wikimedia (`*.wikimedia.org`); een andere host vraagt eerst toestemming van Jonas. Net zo in de opmerking bij `THUMB` in `beeld_model.py` | geen (tekst) |
+| R8 (nit) | De rij BZ1 in de tabel van het bouwontwerp noemde huggingface.co, upload.wikimedia.org en images-assets.nasa.gov; `bereik` vraagt ook commons.wikimedia.org (al sinds `b820fdd`) en nu thumb.wikimedia.org | Een noot in die rij, zoals de andere noten in het bouwontwerp (de vraag zelf blijft staan): de vijf hosts van `bereik` | geen (tekst) |
+
+Een omleiding naar een dienst van Commons blijft een vraag als elke andere (punt 4 hierboven): na
+R5 geldt dat ook als de host in hoofdletters of met `:443` komt.
+
+Teruggedraaid getest (per bevinding de code die de test vastlegt op de tool gezet, met een kopie
+van de goede tool ernaast; daarna die kopie terug, met `cmp` en `git status` nagekeken),
+`test_beeld_tools.py` met de 5 nieuwe tests: M7 1 rood en 162 groen; M27 2 rood (de tests van R2
+en R3) en 161 groen; M8 1 rood en 162 groen; M9 2 rood (de test van R3 en R4 en de tweede van R5)
+en 161 groen; de oude `_dienst` (startswith) 2 rood (de twee van R5) en 161 groen. Elk rood om de
+reden in de tabel. Met de nieuwe tool: `test_beeld_tools.py` 163 groen (met `test_beeld_ci.py`
+172), `tests/analyse` 447 groen; ruff schoon. `ci.yml` en `test_beeld_ci.py` zijn niet
+veranderd.
+
+### Open na 45bb926
+
+- **Of thumb.wikimedia.org de 120 geeft**, zegt de volgende run van `beeld-model` (`tools/beeld`
+  is een pad van de job). Dat de thumburl daar staat, is uit de tweede hand; staat hij ergens
+  anders, dan zegt de regel van elk tekort nu waar ("thumbnail op een andere host (…)").
+- **Of 1 s en `BANDBREEDTE` genoeg zijn voor thumb**, met 115 thumbnails na elkaar: het verslag
+  op dev.to zag bij 1 s geen 429, maar met hoeveel vragen staat er niet. Een 429 daar zegt de
+  fout nu met "thumb: … keer 429".
+- **WebP.** Of thumb.wikimedia.org of een cache ooit WebP geeft op een vraag om JPEG, is niet
+  gezien; gebeurt het, dan is `set` rood op die foto ("WebP in plaats van JPEG"), nooit stil.
+- **De 301 van upload naar thumb** ("eventually") volgt de tool, met de pauze en de telling van
+  thumb. Een `beeld.tsv` met oude URL's op upload blijft dan werken; de sha256 hoort bij de
+  bytes, niet bij de host.
+- **Of thumbnails de 429 van upload voorkomen** (zie "Open na 9ebf298") is niet meer de vraag:
+  de thumbnails komen nu van een andere host. Upload geeft alleen nog de originelen die niet
+  breder zijn dan 1280 px.
+- **Hoe lang BZ4 duurt** (de kwaliteitspoort in int8 en fp32) is nog nooit gemeten.
+
+## CI op 3a9b07d
+
+`beeld-model` op `3a9b07d` (run 43816803103, job 133130593723), de eerste run waarin BZ4 rekende:
+`set` gaf de 120 foto's (een voorstel), de job duurde 299,5 s. BZ2, BZ3 en BZ6 goed; BZ4 rood op
+drie poorten. Uit het log:
+
+```
+BZ4 nl: precisie@5 0.442 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 int8 tegen fp32: precisie@5 0.442 tegen 0.692, zakt 0.250 (poort ≤ 0.05) — FOUT
+BZ4 meer zoals deze: 0.258 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 engels (rapport): precisie@5 0.833
+BZ4 MIN_TEKST (rapport): kans goed p5 0.0, niet goed p95 0.0002
+BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 0.557, anders p95 0.7832
+BZ6 beeld int8 op 1 core(s): 22.0 ms per foto uit 256.webp, 2726 per minuut (poort ≥ 500) — goed
+BZ6 vraag (tokenizer + tekst int8): p50 16.0 ms, p95 16.2 ms (voorwaarde ≤ 250 ms), eerste 17.6 ms, met laden 464 ms; maxrss 844 MiB — goed
+```
+
+Wat daaruit volgt, en wat niet:
+
+- **Het verlies zit in de int8-knopen.** De int8-bestanden zijn precies de pins (beeld
+  `96c602da`, tekst `afc9dd55`, meta `cc84a88b`), en de fp32-grafen uit dezelfde bron en dezelfde
+  omzetter halen 0,692. Bron, structuur, voorbewerking, tokenizer (BZ3) en pooling kloppen dus.
+  [Die pins zijn van `VERSIE` 2 en gelden met `VERSIE` 3 niet meer; zie "CI op 011bf2d".]
+- **Breed, niet twee slechte woorden.** int8 heeft 53 van de 120 treffers, fp32 83. "kat" (5 naar
+  1) en "poes" (5 naar 0) zijn er 9 van de 30; de andere 21 liggen verspreid, ongeveer één per
+  vraag. Combinaties 5/6, op plek 1, 4, 3, 58, 10 en 2.
+- **Welke toren het verlies draagt, zegt deze run niet.** Engels 0,833 heeft geen getal in fp32,
+  "meer zoals deze" en MIN_FOTO evenmin. MIN_TEKST p5 0,0 is voor SigLIP gewoon (de bias is sterk
+  negatief) en geen bewijs tegen de tekstkant. De set zelf drukt ook fp32 (34 rijen zijn objecten
+  uit het Met, 10 daarvan in een categorie, en er zijn verkeerd gelabelde rijen); dat is werk aan
+  de set (`beeld_niet.tsv`), niet aan int8.
+
+### De analyse
+
+Elke Linear van beide torens (53 in `beeld`, 49 in `tekst`) is een `DynamicQuantizeMatMul`:
+onnxruntime kwantiseert de invoer per aanroep naar uint8 met **één schaal voor de hele tensor**,
+in BZ4 16 items × 64 tokens × alle kanalen. Eén grote waarde ergens in die tensor maakt de stap
+grof voor alle andere. De patch-Conv, de LayerNorms, softmax en GELU zijn fp32; de token-embedding
+is int8 per rij (127) zonder integer-matmul. Proeven in de sandbox, met de echte omzetter
+(onnxruntime 1.31.1, numpy 2.5.4; een CPU met AVX512-VNNI, dus tijden alleen onderling):
+
+| Proef | Wat | Uitkomst |
+|---|---|---|
+| E1 | één `DynamicQuantizeMatMul` 768→3072 | Een item alleen 1,8 % fout; één waarde van 300 in een buur uit de batch: 34,5 %. Een invoer zoals die van fc2 met twee neuronen van 100 op token 0: 62 % van de andere tokens valt op het nulpunt |
+| E3 | waar de fout vandaan komt | Gewichten met \|q\| ≤ 64 1,53 %, met 127 0,77 %; activaties per tensor 1,12 %, per token 0,77 %. `MatMulInteger` weigert een nulpunt per rij, dus per token is symmetrisch, met één nulpunt 128. Met 300 in item 3 is de fout van item 0 34,6 % zoals nu en 1,7 % per token. Per token kost ±17 ms per foto en per vraag |
+| E4 | welke uitschieter wat herstelt | Per token herstelt een uitschieter op één token (0,35 naar 0,008), niet op één kanaal (0,23); glad (SmoothQuant, α 0,5) herstelt het kanaal (0,04). Samen dekken ze beide |
+| E5 | gewichten in 8 bit via uint8 met nulpunt 128 | Fout 1,93 naar 1,41 %, maar 9× trager: valt af |
+| E6 | het kleine model van de tests | Blind voor uitschieters (Gaussische gewichten): één neuron van laag 0 × 30 geeft cos 0,986, × 100 0,885. Hetzelfde beeld alleen of naast een dambord: cos 0,99978, dus een vector hangt af van zijn buren in de batch |
+
+Q_MAX 64 kost echt iets (de fout per Linear twee keer zo groot), maar 1 tot 2 % per Linear
+verklaart geen 0,25; fouten van 10 tot 50 % in een paar Linears wel. Volgorde van de verklaringen:
+de activaties per tensor met uitschieters (de waarschijnlijkste); de koppeling in de batch (BZ4
+rekent vragen per 16, `embed_text` één, en een opgeslagen vector hangt af van welke foto's in zijn
+batch zaten); Q_MAX 64; de twee koppen; Nederlands als versterker; de embedding en een fout in de
+omzetter zijn onwaarschijnlijk.
+
+### Wat er gebouwd is: alleen meten
+
+Niets hiervan verandert een poort, een pin of de bytes van de omzetter.
+
+- **Haken in `bouw.py`** (`100d999`), alle uit: `Bouwer(..., fp32_als=, per_token=, glad=,
+  q_max=, meet=)`, `per_kolom(wt, q_max)` en in `tekst_graaf` `embedding_fp32`. `omzet()`,
+  `siglip.py`, de CLI en `VERSIE` bleven gelijk. Dat de bytes gelijk bleven, legt
+  `test_zonder_opties_dezelfde_bytes_als_voor_de_opties` vast met de sha256 van alle zeven
+  bestanden van het kleine model, uitgerekend vóór de haken (`86b4cf8`), en
+  `test_varianten_uit_dezelfde_bytes` met de opties expliciet op hun standaard. [Tot `VERSIE` 3:
+  sinds CI op `011bf2d` (`87e2af2`) heet de eerste `test_de_standaard_geeft_de_bytes_van_v3` en
+  pint hij de bytes van `VERSIE` 3; de sha256 van vóór de haken bewijst nu
+  `test_per_tensor_geeft_byte_voor_byte_de_bestanden_van_v2`, met `per_token=False`.]
+- **Rapportregels in BZ4** (`46898d9`): `_rapport_int8` in `test_beeld_kwaliteit.py`, binnen
+  try/except, met de grafen die BZ4 al laadt; de uitkomst in `bz4.json` onder `int8_rapport`. De
+  asserts zijn niet veranderd.
+- **De module `test_beeld_int8_lagen.py`** (marker `beeld_echt`, `e7a4fa3`): de CPU, de fout van
+  de gewichten, een probe van de invoer van elke Linear, de afwijking per laag en de varianten;
+  geen assert op een getal, alleen dat `bz4r.json` er is. Met `test_beeld_int8_klein.py` (35 tests
+  in de sandbox: elke haak, elke variant op het kleine model, en het rapport van begin tot eind);
+  `api-analyse` telt nu 253 tests en 16 gedeselecteerd (na de review 268; "De review" hieronder).
+- **Een eigen stap in `beeld-model`** (`5c7980b`): `BZ4 rapport int8 per laag en varianten (geen
+  poort)`, na BZ6 en vóór de uitslag, met `continue-on-error: true` en `timeout-minutes: 15`, zonder
+  netwerk (de bron en de set van eerder in de job). De uitslag leest hem niet.
+
+Op het kleine model met de haken (de grootste |verschil| tussen alleen en in een batch, en naast
+een vreemde buur): per token **0 voor beide torens**, zoals nu 0,0079 en 0,0045 (beeld) en 0,0055
+en 0,0051 (tekst). E6 met een neuron × 100, cos tegen fp32 (alleen / in de batch):
+
+| Variant | Alleen | Batch | Alleen tegen batch |
+|---|---|---|---|
+| zoals nu | 0,885 | 0,856 | 0,068 |
+| per token | 0,868 | 0,868 | 0 |
+| per token + glad | 0,863 | 0,863 | 0 |
+| fc2 van laag 0 in fp32 | 0,9956 | 0,9955 | 0,018 |
+
+Per token haalt de batch eruit, maar herstelt een kanaal-uitschieter niet; fp32 op die ene Linear
+wel. Glad wint hier niets, omdat E6 de invoer én het gewicht van hetzelfde kanaal × 100 zet: glad
+verdeelt de last tussen die twee, en beide zijn even groot.
+
+### Wat de volgende run meet
+
+In de stap BZ4 (`kort.txt`, `bz4.json` onder `int8_rapport`):
+
+- `BZ4 torens (rapport)`: precisie@5 met de tekst in int8 en de beelden in fp32, en omgekeerd;
+- `BZ4 fp32 (rapport)`: engels, meer zoals deze, MIN_FOTO, MIN_TEKST en de plekken van de
+  combinaties in fp32;
+- `BZ4 cos int8 tegen fp32 (rapport)`: p5, mediaan en de laagste vraag en foto;
+- `BZ4 één per keer (rapport)`: de vragen en de foto's elk alleen, zoals `embed_text` en de worker;
+- `BZ4 buren uit dezelfde batch (rapport)`: welk deel van de top 4 uit de eigen batch van 16 kwam,
+  tegen toeval;
+- `BZ4 nl per vraag` en `BZ4 en per vraag (rapport)`: per vraag int8, fp32 en de twee wissels.
+
+In de nieuwe stap (`bz4r.txt`, `bz4r.json`): `BZ4 cpu (rapport)` (model, VNNI), `BZ4 gewicht int8
+<toren> (rapport)`, `BZ4 invoer <toren> (rapport; …)` (de drie slechtste Linears: max/rms, token en
+kanaal, en de fout per tensor in de batch, per tensor alleen, per token en per token na glad),
+`BZ4 afwijking per laag <toren> (rapport)` en `BZ4 variant <naam> (rapport)` voor per token, fc2
+fp32, kop fp32, per token + kop fp32, mlp fp32, aandacht fp32, de eerste en laatste vier lagen in
+fp32, per token + glad (geijkt op synthetische foto's en vaste zinnen, nooit op de set), Q_MAX 127
+(alleen met VNNI) en embedding fp32. Elke variant meet één plek: fc2, mlp en aandacht alleen in de
+lagen van de encoder, de koppen (de MAP-kop van het beeld en de kop van de tekst) alleen in kop
+fp32 (sinds de review, S3). Na 8 minuten zegt een variant `overgeslagen: tijd`. Verwacht: 4 tot
+5,5 minuten erbij.
+
+### Zo lees je de uitkomst
+
+| Wat je ziet | Wat het betekent | Daarna |
+|---|---|---|
+| tekst fp32 + beeld int8 ≥ 0,64 en tekst int8 + beeld fp32 ≈ 0,44 | De teksttoren draagt het verlies | Alleen `tekst` herstellen |
+| Andersom | De beeldtoren draagt het | Alleen `beeld` herstellen |
+| meer zoals deze in fp32 onder 0,5 | De set begrenst die poort; geen herstel van int8 haalt 0,7 | Werk aan de set, niet aan int8 |
+| één per keer wijkt meer dan 0,02 af van de batch, of de buren uit de eigen batch liggen ver boven toeval | De koppeling in de batch telt | Per token, en beslissen of BZ4 vragen meet zoals de dienst |
+| Een Linear met max/rms ≥ 50 en een fout per tensor ≥ 0,1, per token klein | Uitschieters op tokens | Per token |
+| Ook per token hoog, na glad laag | Uitschieters op kanalen | Glad, of fp32 voor die Linears |
+| De afwijking per laag springt bij laag k | Een laag met uitschieters | fp32 of glad bij laag k |
+| Een variant zakt ≤ 0,05 | Een kandidaat | De goedkoopste nemen |
+| Niets behalve alles in fp32 helpt | Onverwacht | Een fout zoeken: losse int8-Linears in de fp32-graaf zetten |
+
+### Open na 3a9b07d
+
+- ~~**Het herstel zelf** komt na die run. Elk herstel verandert de bytes van `beeld.int8.onnx` en/of
+  `tekst.int8.onnx`: `VERSIE` 2 naar 3, nieuwe pins, en de tabel met nieuwe pins in "CI op
+  9ebf298" is dan oud. Factoren voor glad horen dan in een vastgelegde tabel bij de sha256 van de
+  bron, niet uit een numpy-forward in de omzetter.~~ [Gedaan na CI op `011bf2d`: per token,
+  `VERSIE` 3 (`87e2af2`); de pins van "CI op 9ebf298" gelden niet meer. Glad is niet gekozen, dus
+  geen factoren.]
+- **Of BZ4 vragen één voor één meet** zoals `embed_text`, is een keuze voor Keuze 83, nooit stil.
+- ~~**Hoe lang de varianten op de runner duren**, is niet bekend; de tijdgrens van 8 minuten en de
+  15 minuten van de stap begrenzen het rapport, en `timeout-minutes` van de job telt die 15
+  minuten mee (105 sinds de review, N1; eerder 90, en dat paste niet).~~ [CI op `011bf2d`: de
+  stap `bz4r` duurde 169,7 s, met alle varianten; geen `overgeslagen: tijd`.]
+
+### De set strenger
+
+Het voorstel op 3a9b07d (run 43816803103) haalde de kwaliteitspoort niet. De review van dat
+voorstel zag alleen de titels van de bestandspagina's (de foto's zelf zijn vanaf hier niet te
+zien), en vond bij 64 van de 120 foto's ten minste één van drie dingen: (a) waarschijnlijk een
+herkenbaar mens, zonder P180 = mens (15, en 6 misschien); (b) een kunstwerk of museumvoorwerp in
+plaats van een foto van het onderwerp (41, waarvan 34 bestanden van het Metropolitan Museum: 10 bij
+de categorieën, 24 bij `anders-*`); (c) de categorie, bij `anders-*` het onderwerp, waarschijnlijk
+niet het onderwerp (37, en 16 misschien). Drie van de zes vaste foto's van de combinaties zijn
+schilderijen (`berg+sneeuw`, `kat+sneeuw`, `bos+berg`), en de poort van de combinaties haalde
+precies 5 van 6. Dit pakket maakt de set strenger zonder een poort of test lager te zetten, en
+zonder een nieuwe harde regel die een tekort kan geven (een tekort maakt `set` rood, en dan draait
+BZ4 niet).
+
+**Eerste en tweede keus** (`tools/beeld/beeld_model.py`: `_tweede_keus`, `_voorkeur`,
+`stel_voor`). Een bruikbare kandidaat (dezelfde regels als vroeger) is tweede keus als zijn
+gegevens een van deze tekens hebben, in deze volgorde:
+
+- kunstwerk: een uitspraak op P6243 (digital representation of), een P31 uit `KUNSTWERK_P31`
+  (schilderij, tekening, prent, beeldhouwwerk, kunstwerk, beeldend kunstwerk, ansichtkaart), of
+  het sjabloon Artwork of Art Photo (de uploads van musea);
+- collectie: een uitspraak op P195 (collection) of P217 (inventory number);
+- persoon (naast P180 = mens, dat nog altijd afvalt): een P180 uit `PERSOON_P180` (persoon, man,
+  vrouw, kind, portret, muzikant, …) of het sjabloon Personality rights;
+- sjablonen onvolledig: de API gaf de sjablonen van de pagina niet in één keer (`tlcontinue`).
+
+Per zoekopdracht neemt het voorstel eerst de eerste keus, pagina na pagina. Pas als die op is,
+na alle pagina's tot het uiterste van vroeger (2 licenties × `max_pagina` 4), vult hij aan met de
+tweede keus van alle pagina's die hij las. Binnen elke keus eerst een kandidaat waarop de
+categorie van de zoekopdracht prominent is (P180 met rang preferred; bij een combinatie: hoeveel
+van de twee), dan eigen werk (P7482 = Q66458942), en verder de volgorde van Commons. Per
+zoekopdracht komt er geen tekort bij: wat vroeger genoeg was, is nu ook genoeg, en de regel van een
+tekort is dezelfde. Over zoekopdrachten heen kon dat wel (de review, S1): een eerste keus van de
+ene zoekopdracht kan een volgende een foto afnemen die die vroeger had. Geeft de eerste keus een
+tekort, dan kiest `stel_voor` daarom opnieuw in de volgorde van Commons, zoals vroeger (maar met
+`beeld_niet.tsv`), en volgt die keuze als ze minder tekorten geeft ("De review"). De
+tekens komen uit vragen die de tool al deed: de sjablonen in dezelfde vraag als imageinfo
+(`prop=imageinfo|templates`, met `tltemplates` alleen die drie sjablonen), de rang en de andere
+uitspraken uit wbgetentities. Geen nieuwe host, geen vraag erbij per pagina.
+
+De ids in `KUNSTWERK_P31` en `PERSOON_P180` komen uit het geheugen en zijn niet nagekeken:
+www.wikidata.org is vanaf hier niet te bereiken, en is geen host van de tool. Een verkeerd id maakt
+de voorkeur alleen zwakker (hooguit een foto met dat id tweede keus); het sluit nooit iets uit.
+
+**`api/tests/analyse/sets/beeld_niet.tsv`**: de foto's die een voorstel nooit neemt, met `bron`
+(de bestandspagina zoals in het voorstel, vergeleken zonder procentcodering en met `_` voor een
+spatie), `reden` (`persoon`, `kunstwerk`, `niet-zichtbaar` of `toont-categorie`) en `gezien`
+(waar een mens de foto zag). `lees_niet` is streng, net als `lees_set`: de kop, een bestandspagina
+van Commons in afdrukbare ASCII, een van de vier redenen, `gezien` van 1 tot 80 tekens, geen
+dubbele bron; een fout noemt de regel. `set` leest de lijst vóór de eerste vraag aan Commons. Een
+voorstel slaat een kandidaat van de lijst over, ook als tweede keus en als reserve (de reden
+`uitgesloten (beeld_niet.tsv)`, ook in de regel van een tekort); de volgende in dezelfde volgorde
+krijgt de plek. Met `beeld.tsv` is een foto van de lijst een fout. Zonder het bestand doet de tool
+wat hij deed. Het voorstel blijft een vaste functie van de antwoorden van Commons,
+`beeld_vragen.tsv`, `beeld_niet.tsv` en de code. Stap 4 van het runbook (analyse) gaat nu zo:
+een foto die niet klopt op de lijst zetten, pushen, het volgende voorstel nakijken.
+
+De eerste lijst heeft 49 foto's uit het voorstel op 3a9b07d, volgens één vaste regel op de
+review: `persoon` alleen (a) ja; `niet-zichtbaar` (c) ja of waarschijnlijk (misschien telt
+nergens):
+
+| reden | aantal | regel |
+|---|---|---|
+| `persoon` | 13 | (a) ja |
+| `niet-zichtbaar` | 33 | anders: (c) ja of waarschijnlijk |
+| `toont-categorie` | 3 | anders: een `anders-*` die een categorie laat zien (`anders-brug-3`, `anders-brug-4`, `anders-trein-5`) |
+| `kunstwerk` | 0 | een (b) zonder (a) of (c) is werk voor de eerste keus, als zijn pagina het zegt |
+
+Geen combinatie. 27 van de 41 (b) staan er toch op, om (a), (c) of een categorie. Alleen de titel
+was te zien: wie een foto van de lijst ziet die wel klopt, haalt die regel weg.
+
+**In het log en in `kort.txt`** (runbook analyse, "De job `beeld-model`"): alleen in het log per
+zoekopdracht hoeveel tweede keus en waarom, en per gekozen foto het bewijs (`BZ4 set: bewijs
+<sleutel>: …`); in het blok `=== kort ===` één regel als er tweede keus was, en één over de lijst.
+Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons, het contact, een
+vector of pixels; de regels veranderen geen uitslag.
+
+**Wat het kost.** Per pagina van 50 nog altijd 3 vragen aan de API (zoek, imageinfo met de
+sjablonen, wbgetentities). Heeft een zoekopdracht genoeg eerste keus op de pagina's die hij
+vroeger ook las, dan is het aantal vragen hetzelfde: met de nep van de tests 90 (30 × 3), als
+vroeger. Vroeger las hij soms een pagina meer (die kwam binnen voordat de lus zag dat hij klaar
+was); dat is weg. Is de eerste keus op, dan kost elke pagina erbij 3 vragen, tot hooguit 24 per
+zoekopdracht en 750 samen met de reserves: hetzelfde uiterste als vroeger, dus de opmerking bij
+`timeout-minutes` van de job in `ci.yml` blijft kloppen (sinds de review 105 minuten, met de stap
+van het rapport erbij; N1). Kiest het voorstel na een tekort opnieuw in de volgorde van Commons,
+dan leest het de pagina's die al binnen waren uit het geheugen, en een volgende alleen als die
+keuze hem nodig heeft, nooit voorbij het uiterste per zoekopdracht; volgt het die keuze, dan
+haalt het daarna nog de thumbnails die de eerste ronde niet had (hooguit 120). Met contact (de CI, 1 s per vraag) is
+dat uiterste 12,5 minuten, zonder contact (8 s) 100. Hoeveel pagina's het echte voorstel erbij
+leest, zegt pas de volgende run (in het log: `… kandidaten bekeken op … pagina's`).
+
+**Nakijken** (niet op de lijst; in het volgende voorstel, met het bewijs uit het log):
+
+- de combinaties `berg+sneeuw` (een waaier uit de Zuidelijke Song, Met; ook (c) waarschijnlijk),
+  `kat+sneeuw` (een schilderij van Liljefors, de enige rij publiek domein) en `bos+berg` (*Heart
+  of the Andes*, Met). Zegt hun pagina dat het een kunstwerk of een stuk uit een collectie is,
+  dan zijn ze nu tweede keus, en neemt de combinatie een eerste keus als die er is; zo niet, dan
+  blijven ze. `auto+sneeuw` ("Uusikatu 47 Oulu") en `boot+zonsondergang` ("Mazandaran Province
+  04"): (c) misschien. Een combinatie op de lijst kan een tekort geven; daarom niet zonder
+  overleg;
+- (a) waarschijnlijk: `strand-1` (badgasten) en `hond-1` (een sledehondenrace);
+- (b) zonder (a) of (c): `stad-3`, `bos-2`, `bos-4`, `eten-5`, `anders-paard-1`,
+  `anders-paard-3`, `anders-vliegtuig-5`, `anders-boek-1`, `anders-boek-5`, `anders-klok-5`,
+  `anders-stoel-4`. Zegt het log bij zo'n foto `eerste keus; kunstwerk nee, collectie nee`, dan
+  hoort hij op de lijst als `kunstwerk`;
+- misschien: (a) `auto-3`, `eten-1`; (c) `strand-3`, `hond-2`, `sneeuw-2`, `berg-1`, `boot-4`,
+  `anders-trein-1`, `anders-trein-4`, `anders-klok-2`;
+- een categorie op de foto zonder het label (`sneeuw-3`, `boot-1`, `boot-3`, `boot-4`,
+  `zonsondergang-5`) is geen reden van de lijst; dat blijft ruis in de metingen.
+
+**Tests.** `test_beeld_tools.py`, met de nep van Commons (die nu ook P31, P7482, de rang van P180,
+P6243, P195, P217 en de sjablonen kent): de eerste keus gaat voor op dezelfde pagina (90 vragen,
+30 per soort); zonder genoeg eerste keus vult de tweede aan (93 vragen); sjablonen die niet in
+één keer komen; het bewijs alleen in het log (120 regels bewijs en 30 per zoekopdracht); waarom een
+kandidaat tweede keus is (11 gevallen); de voorkeur binnen een keus; een goede lijst en 15
+kapotte; een voorstel neemt nooit een foto van de lijst, ook de reserves niet; een tekort noemt
+de lijst; met `beeld.tsv` is een foto van de lijst een fout; een kapotte lijst stopt `set` vóór
+de eerste vraag; zonder lijst het voorstel als vroeger. `test_beeld_sets.py`: de lijst in het
+repo komt door `lees_niet`, heeft alleen de vier redenen en geen combinatie, en met `beeld.tsv`
+geen foto daarvan.
+
+Teruggedraaid getest: met de tool van 3a9b07d op de plek van de nieuwe (daarna terug met `git
+checkout`, nagekeken met `git status`) gaven `test_beeld_tools.py` en `test_beeld_sets.py` 39
+rood en 166 groen. De 39 zijn precies de nieuwe tests: in `test_beeld_tools.py` 12 losse en de
+26 gevallen van twee tests met parameters (15 en 11), en `test_beeld_niet_tsv_klopt`; de
+bestaande bleven groen. In het pakket zelf, vóór samenvoegen: met de nieuwe
+tool 205 groen, `tests/analyse` 486 groen; ruff schoon. `tests_analyse`, `ci.yml` en
+`test_beeld_ci.py` zijn niet veranderd, en de pins van de omzetter niet geraakt.
+
+### Open na de set strenger
+
+- ~~**De paden van de job.** `tests/analyse/sets/beeld_niet.tsv` hoort in `paden` van de poort van
+  `beeld-model` in `ci.yml` (bij `beeld_vragen.tsv`) en in `PADEN` van `test_beeld_ci.py`, zodat
+  een push die alleen de lijst verandert de job draait; dat doet het pakket dat `ci.yml` nu
+  heeft (int8). Tot dan: `beeld-model: ja` in de tekst van de PR.~~ [Samengevoegd met het
+  rapport van int8: het pad staat in `paden` (`5c7980b`, vanuit `api`, net als
+  `beeld_vragen.tsv`) en in `PADEN`; `test_beeld_ci.py` eist nu ook dat de lijst bestaat. De
+  poort uit `ci.yml`, met de hand gedraaid op een kloon: een push die alleen `beeld_niet.tsv`
+  verandert geeft `draaien=ja` ("gewijzigd: api/tests/analyse/sets/beeld_niet.tsv"), een die
+  alleen de docs verandert `draaien=nee`, en zonder dat pad in `paden` ook de lijst `nee`.]
+- **Of de eerste keus genoeg vangt**, en hoeveel pagina's erbij, zegt pas het volgende voorstel:
+  hoeveel van de 34 bestanden van het Met P195, P217, P6243 of het sjabloon Artwork hebben, is
+  vanaf hier niet na te kijken.
+- **De ids** van `KUNSTWERK_P31` en `PERSOON_P180` (hierboven).
+
+### De review
+
+De review van dit werk (de set strenger en het rapport van int8, samen op `2358b43`) gaf vier
+punten die moesten (S1 tot S4) en zeven kleine (N1 tot N7). Elk is eerst nagekeken; geen bleek
+onjuist. Elk herstel kreeg een test die zonder dat herstel rood is.
+
+| Bevinding | Wat er gebeurde | Test |
+|---|---|---|
+| **S1** De eerste keus kon over zoekopdrachten heen een tekort geven: een eerste keus van `hond` die ook een kat afbeeldt, neemt `kat` een foto af die die vroeger had (nagespeeld: de nieuwe tool een tekort, die van 3a9b07d een voorstel). "Er komt geen tekort bij" klopte alleen per zoekopdracht | `stel_voor` (`d83b79a`): geeft de eerste keus een tekort, dan kiest hij opnieuw in de volgorde van Commons, zoals vóór de eerste keus maar met `beeld_niet.tsv`, op de pagina's die al binnen waren (een volgende alleen als die keuze hem nodig heeft, nooit voorbij het uiterste). Minder tekorten (dan meer foto's): het voorstel volgt die keuze, met één regel in het blok, en haalt alleen de foto's die de eerste ronde niet had. Bij gelijkspel blijft de eerste keus en zegt alleen het log wat de volgorde van Commons gaf. "De set strenger" en het runbook zeggen nu "per zoekopdracht" | `test_de_eerste_keus_maakt_over_zoekopdrachten_heen_geen_tekort[4, 6]` (een voorstel; `hond-1..4` en `kat-1..4` zoals vroeger; 93 vragen aan de API; elke foto één download) en `test_bij_evenveel_tekorten_houdt_het_voorstel_de_eerste_keus` |
+| **S2** Geen exacte referentie voor de keten van per_token: de mutatie `pt_plus_127` (Round + 127 in plaats van + 128) bleef groen | `test_per_token_rekent_precies_als_de_keten_in_numpy` (`947a66b`): de graaf van één Linear tegen dezelfde keten in numpy (max van \|x\| per rij / 127, Round + 128, Clip 0..255, MatMulInteger met nulpunt 128, × a × s, + bias), binnen TOL, met uitschieters, voor zes Linears van beide torens en de koppen; de constante van die Add is precies 128 | `pt_plus_127` rood (6 van 6) |
+| **S3** Niet getest dat elke variant van het rapport meet wat zijn naam zegt. Zo raakten `fc2 fp32`, `mlp fp32` en `aandacht fp32` ook de MAP-kop van het beeld (`vision_model.head.mlp.fc2`, zijn aandacht), en waren ze niet los van `kop fp32` te lezen | `lijst()` (`dbb9182`): fc2, mlp en aandacht alleen in de lagen van de encoder. `test_elke_variant_van_het_rapport_meet_wat_zijn_naam_zegt`: per variant en toren precies welke Linears fp32 zijn, MatMulInteger alleen bij per token, `.glad` alleen bij glad, de grootste \|q\| 127 alleen bij `Q_MAX 127`, de embedding in int8 behalve bij `embedding fp32`. `test_glad_komt_niet_uit_de_set`: dezelfde factoren met een set van NaN en andere vragen | de mutaties `rap_fc2_is_fc1`, `rap_kop_alleen_tekst`, `rap_variant_per_token_uit` en `rap_glad_op_de_set` rood |
+| **S4** De try's die de uitslag van BZ4 beschermen, hadden geen test (`kwal_zonder_try`, `rap_probeer_zonder_try` en `rap_variant_zonder_try` bleven groen) | `_rapport_veilig(verslag, **kw)` in `test_beeld_kwaliteit.py` (`306562c`), dat `uitkomst` aanroept | `test_een_int8_rapport_dat_faalt_is_een_regel_en_geen_uitslag` (een stub met RuntimeError: precies één regel `BZ4 int8-rapport (rapport): mislukt (RuntimeError)`, geen `int8_rapport` in `bz4.json`; zonder fout wel), `test_de_fixture_uitkomst_rekent_het_int8_rapport_alleen_veilig` (AST: `_rapport_int8` alleen in `_rapport_veilig`), `test_probeer_maakt_van_een_fout_een_regel` en `test_een_variant_die_faalt_stopt_de_rest_niet` (`_variant` faalt bij `fc2 fp32`; de rest gaat door, `bz4r.json` heeft `{"variant": "fc2 fp32", "mislukt": "RuntimeError"}`); de drie mutaties rood |
+| **N1** De opmerking bij `timeout-minutes` (90) en "houden de job binnen zijn tijd" vergaten de stap van het rapport (15 min): 60 + 15 + 15 + 15 = 105 | `timeout-minutes` van `beeld-model` 105, met de opmerking (`979db5d`); "Open na 3a9b07d" aangepast | `test_de_tijd_van_de_job_draagt_ook_het_rapport_van_int8` in `test_beeld_ci.py`: de getallen uit de opmerking, `PAUZE_API_S` en `WACHT_TOTAAL_S` uit de tool, plus de `timeout-minutes` van elke stap; met 90 rood (90 ≥ 105) |
+| **N2** "alleen ja en waarschijnlijk" klopte niet voor `persoon`, dat alleen (a) ja nam | "De set strenger": `persoon` alleen (a) ja; `niet-zichtbaar` (c) ja of waarschijnlijk | (docs) |
+| **N3** "`tests_analyse`, `ci.yml` en `test_beeld_ci.py` zijn niet veranderd" en "486 groen" golden alleen vóór het samenvoegen | Ervoor: "In het pakket zelf, vóór samenvoegen" | (docs) |
+| **N4** `Verslag.zet` zette de waarde vóór `json.dumps`: één waarde die geen JSON is, bedierf elke volgende `zet` in hetzelfde verslag | Eerst de nieuwe dict en `json.dumps`, dan pas zetten en schrijven (`306562c`) | `test_een_waarde_die_geen_json_is_bederft_het_verslag_niet` |
+| **N5** `Bouwer` nam per_token met `q_max` 127 aan; per_token (MatMulInteger, uint8 tot 255) klopt alleen met \|q\| ≤ 64 op elke CPU | `PER_TOKEN_Q_MAX` 64: per_token met meer (ook via `Q_MAX`) is een `ValueError` (`947a66b`); de standaard bouwt dezelfde bytes | `test_per_token_met_een_gewicht_boven_64_is_een_fout[65, 127]` |
+| **N6** De mutatie `set_voorstel_geen_controle` (het voorstel zelf niet nog eens langs `beeld_niet.tsv`) bleef groen | Een test (`8def9f2`) | `test_het_voorstel_zelf_gaat_nog_eens_langs_de_lijst`: met `_op_lijst` uit vangt de controle van het voorstel het (`… staat in beeld_niet.tsv regel 3 (persoon); …`), en er is geen voorstel |
+| **N7** Een opgegeven `--niet` die er niet is, betekende stil "geen lijst" | `set_`: een opgegeven pad dat geen bestand is, is een fout (`8def9f2`); zonder `--niet` mag de standaardlijst ontbreken, zoals vroeger. Runbook: `FOUT set: beeld_niet.tsv: … is er niet (--niet)` | `test_een_opgegeven_lijst_die_er_niet_is_is_een_fout` (code 1, één regel, geen vraag aan Commons) |
+
+Teruggedraaid getest: alleen dat herstel ongedaan (de omgekeerde diff van de code van die commit;
+voor een herstel dat alleen een test is, de mutatie van de review), de test rood; dan terug
+(`git checkout` of de kopie), de test groen, en `git status` zoals ervoor.
+
+| Herstel | Ongedaan | Rood | Weer groen |
+|---|---|---|---|
+| S1 | `d83b79a`, `tools/beeld/beeld_model.py` | 3 | 3 |
+| S2 | `pt_plus_127` in `bouw.py` | 6 | 6 |
+| N5 | `947a66b`, `bouw.py` | 2 | 2 |
+| S3, de namen | `dbb9182`, `test_beeld_int8_lagen.py` | 1 | 1 |
+| S3, glad | `rap_glad_op_de_set` | 1 | 1 |
+| S4, het int8-rapport | `306562c`, `test_beeld_kwaliteit.py` | 2 | 2 |
+| S4, zonder try | `kwal_zonder_try` (nu in `_rapport_veilig`) | 1 | 1 |
+| S4, probeer | `rap_probeer_zonder_try` | 1 | 1 |
+| S4, een variant | `rap_variant_zonder_try` | 1 | 1 |
+| N4 | `306562c`, `beeld_echt.py` | 1 | 1 |
+| N1 | `979db5d`, `ci.yml` | 1 | 1 |
+| N6 | `set_voorstel_geen_controle` | 1 | 1 |
+| N7 | `8def9f2`, `tools/beeld/beeld_model.py` | 1 | 1 |
+
+De telling van `api-analyse`: `ANALYSE_TESTS` 268 (253 en de 15 nieuwe van
+`test_beeld_int8_klein.py`), `ANALYSE_DESELECTED` 16. Geen poort en geen test lager, geen
+afhankelijkheid, host of action erbij; de bytes van de omzetter met de standaardopties zijn
+dezelfde (pins beeld `96c602da`, tekst `afc9dd55`, meta `cc84a88b`). [Tot `VERSIE` 3: sinds CI
+op `011bf2d` is per token de standaard en gelden die pins niet meer.]
+
+## CI op 011bf2d
+
+`beeld-model` op `011bf2d`, de eerste run met de set strenger en met de eigen stap van het rapport
+(uit het log van de job; een run-id staat daar niet in). BZ1 (de vijf hosts bereikbaar), BZ3, BZ6
+en BZ7 goed. BZ2: twee omzettingen met dezelfde sha256 voor alle vijf bestanden (8,7 en 8,1 s,
+maxrss 354 MiB), ook met `--fp32`; de pins in het voorstel zijn die van "CI op 9ebf298" (`VERSIE`
+2). `set` gaf een voorstel van 120 foto's, met 1 tweede keus (`kat+sneeuw`: 5 kandidaten op 2
+pagina's, geen eerste keus; de gekozen foto is een kunstwerk) en 40 kandidaten overgeslagen door
+`beeld_niet.tsv` (49 foto's op de lijst). pytest: `bz3` 4 goed, `bz4` 3 fout en 3 goed in 30,8 s,
+`bz4r` 5 goed in 169,7 s, `bz6` 1 goed. BZ4 rood op drie poorten. Het rapport (`kort.txt` en
+`bz4r.txt`), letterlijk:
+
+```
+BZ4 set: 120 foto's uit voorstel-beeld.tsv, previews met app.render.image
+BZ4 nl: precisie@5 0.450 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 combinaties: 5/6 in de top 10 (poort ≥ 5), plekken [5, 4, 6, 7, 9, 13] — goed
+BZ4 int8 tegen fp32: precisie@5 0.450 tegen 0.692, zakt 0.242 (poort ≤ 0.05) — FOUT
+BZ4 meer zoals deze: 0.271 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 zelftest kleuren: 3/3 bovenaan — goed
+BZ4 engels (rapport): precisie@5 0.733
+BZ4 256 tegen 1024 (rapport): precisie@5 0.450 tegen 0.475; zakt 0.025 (> 0,02: X3 rekent uit 1024.webp)
+BZ4 MIN_TEKST (rapport): kans goed p5 0.0, niet goed p95 0.0002
+BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 0.5741, anders p95 0.7617
+BZ4 torens (rapport): precisie@5 nl tekst int8 + beeld fp32 0.533, tekst fp32 + beeld int8 0.583 (beide int8 0.450, beide fp32 0.692)
+BZ4 fp32 (rapport): engels 0.833 (int8 0.733), meer zoals deze 0.442 (int8 0.271), MIN_FOTO zelfde p5 0.475 anders p95 0.6441, MIN_TEKST kans goed p5 0.0 niet goed p95 0.0, combinaties 5/6 plekken [4, 1, 2, 5, 1, 12]
+BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 0.8771 mediaan 0.9464 laagste 0.8571 (poes); beeld p5 0.5912 mediaan 0.7641 laagste 0.4941 (kat+sneeuw)
+BZ4 één per keer (rapport): tekst int8 precisie@5 0.442 (in batches van 16: 0.450), cos tegen batch p5 0.9969; beeld int8 cos tegen batch p5 0.9495, meer zoals deze 0.312
+BZ4 buren uit dezelfde batch (rapport): int8 0.296, fp32 0.438 (toeval 0.126)
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: strand 3/3/3/4, zandstrand 3/3/3/1, hond 3/5/2/2, een hond 3/4/3/5, kat 2/4/3/4, poes 0/4/3/0, sneeuw 5/5/5/5, een sneeuwlandschap 5/5/5/5
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 2/3: auto 4/4/4/4, personenauto 2/3/2/4, fiets 3/3/3/4, een fiets 3/4/3/4, berg 1/3/3/1, bergen 0/0/1/0, bos 0/3/3/0, een bos 2/4/3/2
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 3/3: stad 1/2/2/1, een stad 1/3/2/2, eten 1/4/3/3, een maaltijd 1/2/2/2, boot 0/1/0/0, bootje 1/4/2/1, zonsondergang 5/5/5/5, ondergaande zon 5/5/5/5
+BZ4 en per vraag (rapport, int8/fp32): beach 3/3, dog 3/5, cat 3/4, snow 5/4, bicycle 3/4, sunset 5/5
+BZ6 beeld int8 op 1 core(s): 21.7 ms per foto uit 256.webp, 2768 per minuut (poort ≥ 500) — goed
+BZ6 vraag (tokenizer + tekst int8): p50 15.9 ms, p95 16.6 ms (voorwaarde ≤ 250 ms), eerste 18.2 ms, met laden 463 ms; maxrss 842 MiB — goed
+BZ4 cpu (rapport): Intel(R) Xeon(R) 6975P-C; vnni ja
+BZ4 gewicht int8 beeld (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0178, slechtste 0.0307 (laag 0 fc2); met 127 mediaan 0.0090
+BZ4 gewicht int8 tekst (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0161, slechtste 0.0236 (laag 0 fc2); met 127 mediaan 0.0081
+BZ4 invoer beeld (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 5 fc2 max 152 = 275× rms (token 15 patch, kanaal 1449), fout 0.321/0.320/0.014/0.016; laag 9 fc2 max 1.49e+03 = 585× rms (token 7 patch, kanaal 1038), fout 0.116/0.088/0.005/0.989; laag 6 fc2 max 20.3 = 111× rms (token 62 patch, kanaal 3019), fout 0.085/0.083/0.028/0.036
+BZ4 afwijking per laag beeld (rapport): cos int8/fp32 gemiddeld over de patches na laag 0..11: 0.99816 0.99510 0.99281 0.99119 0.98826 0.83213 0.82167 0.73239 0.66958 0.68129 0.63731 0.64800; uitvoer 0.76406
+BZ4 invoer tekst (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 1 fc2 max 10.5 = 137× rms (token 24 pad, kanaal 151), fout 0.099/0.086/0.049/0.024; laag 6 fc2 max 9.17 = 102× rms (token 19 pad, kanaal 1928), fout 0.086/0.081/0.048/0.033; laag 7 fc2 max 7.42 = 93× rms (token 12 pad, kanaal 51), fout 0.069/0.052/0.031/0.038
+BZ4 afwijking per laag tekst (rapport): cos int8/fp32 op token 63 na laag 0..11: 0.98151 0.97634 0.97022 0.95718 0.94384 0.93710 0.92865 0.92271 0.90484 0.90366 0.88842 0.86033; uitvoer 0.94603
+BZ4 variant fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 5/6, meer zoals deze 0.442, cos beeld p5 1.0000 tekst p5 1.0000; beeld 378 MB 71.1 ms per foto, tekst 1129 MB 67.2 ms per vraag
+BZ4 variant zoals nu (rapport): nl 0.450 (zakt 0.242, slechtste 0/5), engels 0.733, combinaties 5/6, meer zoals deze 0.271, cos beeld p5 0.5912 tekst p5 0.8756; beeld 103 MB 20.6 ms per foto, tekst 284 MB 18.3 ms per vraag
+BZ4 variant per token (rapport): nl 0.675 (zakt 0.017, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.450, cos beeld p5 0.9854 tekst p5 0.9980; beeld 103 MB 31.0 ms per foto, tekst 284 MB 28.0 ms per vraag
+BZ4 variant fc2 fp32 (rapport): nl 0.683 (zakt 0.008, slechtste 0/5), engels 0.867, combinaties 6/6, meer zoals deze 0.454, cos beeld p5 0.9703 tekst p5 0.9982; beeld 188 MB 36.8 ms per foto, tekst 369 MB 34.1 ms per vraag
+BZ4 variant kop fp32 (rapport): nl 0.442 (zakt 0.250, slechtste 0/5), engels 0.733, combinaties 4/6, meer zoals deze 0.271, cos beeld p5 0.5912 tekst p5 0.8756; beeld 124 MB 20.8 ms per foto, tekst 286 MB 18.1 ms per vraag
+BZ4 variant per token + kop fp32 (rapport): nl 0.675 (zakt 0.017, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.450, cos beeld p5 0.9858 tekst p5 0.9981; beeld 124 MB 32.0 ms per foto, tekst 286 MB 28.2 ms per vraag
+BZ4 variant mlp fp32 (rapport): nl 0.708 (zakt -0.017, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.433, cos beeld p5 0.9806 tekst p5 0.9983; beeld 272 MB 54.0 ms per foto, tekst 454 MB 51.1 ms per vraag
+BZ4 variant aandacht fp32 (rapport): nl 0.442 (zakt 0.250, slechtste 0/5), engels 0.733, combinaties 6/6, meer zoals deze 0.279, cos beeld p5 0.5918 tekst p5 0.8807; beeld 187 MB 37.5 ms per foto, tekst 369 MB 34.7 ms per vraag
+BZ4 variant laag 0-3 fp32 (rapport): nl 0.625 (zakt 0.067, slechtste 1/5), engels 0.767, combinaties 5/6, meer zoals deze 0.308, cos beeld p5 0.6087 tekst p5 0.9983; beeld 188 MB 37.3 ms per foto, tekst 369 MB 34.5 ms per vraag
+BZ4 variant laag 8-11 fp32 (rapport): nl 0.467 (zakt 0.225, slechtste 0/5), engels 0.767, combinaties 5/6, meer zoals deze 0.279, cos beeld p5 0.5988 tekst p5 0.8741; beeld 188 MB 36.9 ms per foto, tekst 369 MB 34.4 ms per vraag
+BZ4 variant per token + glad (rapport): nl 0.592 (zakt 0.100, slechtste 1/5), engels 0.733, combinaties 4/6, meer zoals deze 0.321, cos beeld p5 0.6122 tekst p5 0.9980; beeld 103 MB 32.5 ms per foto, tekst 284 MB 28.9 ms per vraag
+BZ4 variant Q_MAX 127 (rapport): nl 0.500 (zakt 0.192, slechtste 0/5), engels 0.733, combinaties 4/6, meer zoals deze 0.292, cos beeld p5 0.5967 tekst p5 0.8769; beeld 103 MB 20.3 ms per foto, tekst 284 MB 18.0 ms per vraag
+BZ4 variant embedding fp32 (rapport): nl 0.458 (zakt 0.233, slechtste 0/5), engels 0.733, combinaties 6/6, meer zoals deze 0.271, cos beeld p5 0.5912 tekst p5 0.8781; beeld 103 MB 20.4 ms per foto, tekst 873 MB 18.0 ms per vraag
+```
+
+### Wat het rapport zegt
+
+- **Beide torens dragen het verlies.** Tekst int8 + beeld fp32 0,533, tekst fp32 + beeld int8
+  0,583: geen van de twee haalt 0,64 (zie "Zo lees je de uitkomst"). De cos tegen fp32 (p5) is
+  0,877 voor de tekst en 0,591 voor het beeld.
+- **Uitschieters op tokens, in het beeld vanaf laag 5.** De invoer van fc2 in laag 5 heeft één
+  waarde van 275 × de rms, in laag 9 van 585 ×, elk op één token van een patch. De fout per tensor
+  is daar 0,321 en 0,116, per token 0,014 en 0,005. De cos per laag zakt van 0,988 na laag 4 naar
+  0,832 na laag 5, en naar 0,648 na laag 11. In de tekst 93 tot 137 × de rms; per token halveert
+  daar de fout ongeveer (0,099 naar 0,049).
+- **Niet de gewichten.** De fout per Linear met |q| ≤ 64 is mediaan 0,018 (beeld) en 0,016
+  (tekst), met 127 de helft; de variant `Q_MAX 127` haalt nl 0,500.
+- **Glad met de factoren van nu helpt niet.** Per token + glad haalt nl 0,592 (slechter dan per
+  token alleen), en de fout van fc2 in laag 9 van het beeld wordt na glad 0,989: de factoren,
+  geijkt op synthetische foto's, passen niet bij echte foto's.
+- **De batch.** Tekst één per keer 0,442 tegen 0,450 in batches van 16; beeld cos tegen de batch
+  p5 0,950. Buren uit de eigen batch: int8 0,296, fp32 0,438 (toeval 0,126). Ook fp32, waarin een
+  vector niet van zijn batch afhangt, ligt ver boven toeval: de foto's van één categorie staan in
+  de set bij elkaar, dus meestal in dezelfde batch. Die regel zegt hier dus niets over de koppeling.
+  Per token haalt de koppeling weg (op het kleine model 0, zie "Wat er gebouwd is: alleen meten").
+- **256 tegen 1024** zakt 0,025, boven de 0,02 van Keuze 77, met int8 per tensor. De volgende run
+  meet het met per token opnieuw.
+
+### De keuze: per token
+
+De varianten uit `bz4r.txt` naast elkaar (nl zakt tegen fp32 0,692; de poort is ≤ 0,05):
+
+| Variant | nl (zakt) | slechtste | engels | combinaties | meer zoals deze | cos p5 beeld / tekst | MB beeld / tekst | ms per foto / vraag |
+|---|---|---|---|---|---|---|---|---|
+| fp32 | 0,692 (0) | 0/5 | 0,833 | 5/6 | 0,442 | 1 / 1 | 378 / 1129 | 71,1 / 67,2 |
+| per tensor (`VERSIE` 2) | 0,450 (0,242) | 0/5 | 0,733 | 5/6 | 0,271 | 0,591 / 0,876 | 103 / 284 | 20,6 / 18,3 |
+| **per token** | **0,675 (0,017)** | 0/5 | 0,833 | 6/6 | 0,450 | 0,985 / 0,998 | 103 / 284 | 31,0 / 28,0 |
+| per token + kop fp32 | 0,675 (0,017) | 0/5 | 0,833 | 6/6 | 0,450 | 0,986 / 0,998 | 124 / 286 | 32,0 / 28,2 |
+| fc2 fp32 | 0,683 (0,008) | 0/5 | 0,867 | 6/6 | 0,454 | 0,970 / 0,998 | 188 / 369 | 36,8 / 34,1 |
+| mlp fp32 | 0,708 (−0,017) | 0/5 | 0,833 | 6/6 | 0,433 | 0,981 / 0,998 | 272 / 454 | 54,0 / 51,1 |
+| laag 0-3 fp32 | 0,625 (0,067) | 1/5 | 0,767 | 5/6 | 0,308 | 0,609 / 0,998 | 188 / 369 | 37,3 / 34,5 |
+| per token + glad | 0,592 (0,100) | 1/5 | 0,733 | 4/6 | 0,321 | 0,612 / 0,998 | 103 / 284 | 32,5 / 28,9 |
+| `Q_MAX 127` | 0,500 (0,192) | 0/5 | 0,733 | 4/6 | 0,292 | 0,597 / 0,877 | 103 / 284 | 20,3 / 18,0 |
+
+In deze run kwamen fc2, mlp en laag 0-3 in fp32 en `Q_MAX 127` nog bovenop per tensor; alleen
+de twee met "per token" in de naam bovenop per token. De andere (kop, aandacht, laag 8-11 en
+embedding in fp32, ook bovenop per tensor) halen 0,442 tot 0,467.
+
+Volgens "Zo lees je de uitkomst" is een variant die ≤ 0,05 zakt een kandidaat, en de goedkoopste
+gaat door. Dat is per token: dezelfde bestanden (103 en 284 MB), ±10 ms meer per foto en per vraag
+op één draad, in batches van 16. BZ6 eist ≥ 500 foto's per minuut op één core (≤ 120 ms per foto)
+en een vraag p95 ≤ 250 ms; per token rekent 31 ms per foto. fc2 fp32 en mlp fp32, in deze run
+bovenop per tensor, halen 0,683 en 0,708: 0,008 en 0,033 meer dan per token (0,675), maar met 85
+tot 170 MB meer per toren en 1,2 tot 1,8 × de tijd van per token, en dat is voor geen poort nodig.
+Bovenop per token zijn ze nog niet gemeten; dat doet de volgende run (`bz4r`). Een kop in fp32
+bovenop per token verandert niets.
+
+### Wat er gebouwd is
+
+- **Per token is de standaard** (`87e2af2`). `VERSIE` 3. Elke Linear van beide torens, ook de
+  MAP-kop, is `MatMulInteger`: de invoer in uint8 per rij (max |x| / 127, nulpunt 128), het gewicht
+  in int8 per kolom met |q| ≤ 64 (`PER_TOKEN_Q_MAX`), daarna × de schaal van de rij × die van de
+  kolom + bias. De embedding van de tekst blijft int8 per rij (127). `meta.json` zegt
+  `"omzetter": 3` en beschrijft de vorm onder `int8`. De vorm van `VERSIE` 2 blijft als optie
+  (`per_token=False`, ook in `omzet`), alleen voor het rapport; de opdrachtregel kent hem niet.
+  `test_per_tensor_geeft_byte_voor_byte_de_bestanden_van_v2` bewijst met de sha256 van vóór de
+  opties dat die optie de bestanden van toen geeft, `test_de_standaard_geeft_de_bytes_van_v3` pint
+  de nieuwe. Op het kleine model:
+
+  | Bestand | `VERSIE` 2 | `VERSIE` 3 |
+  |---|---|---|
+  | `beeld.int8.onnx` | `31fb8622f226cdb17523cd72a1acf10d9a63f3bb633b678fd10138aee64c57ff` | `3eb97f5fd9775f7eeaeb39a7232f219d1319de63fe0a48b57dc24544041184d2` |
+  | `tekst.int8.onnx` | `ebbb3c053be978fc8e8d5904df48729003e0c28864f2afa79744827cf14b37cb` | `81e231565cc31aba1791578de2641d1f2099434bb6d71adf9cc3b33d0a360f67` |
+  | `meta.json` | `868e9777827b22330845b27c451303756c35853caa89775b1bb99aaeb7b95763` | `93e6f02f144aaf3f470e76acb4051dbd839bfd3e4ad00d861cfe96e43a59be50` |
+
+  De fp32-grafen, `tokenizer.bin` en de licentie zijn niet veranderd. De varianten van het rapport
+  rekenen nu vanaf per token: `zoals nu` is per token, `per tensor (v2)` is de oude vorm, en fc2,
+  mlp, aandacht, kop, laag 0-3 en laag 8-11 in fp32, glad en embedding fp32 komen bovenop per token.
+  `per token`, `per token + kop fp32` en `Q_MAX 127` zijn weg (de eerste twee zijn nu de standaard
+  of voegen niets toe; `Q_MAX 127` kan niet met per token, zie N5 in "De review").
+- **Drie regels erbij in het rapport van BZ4** (`cd92837`), elk in een eigen try: een fout is één
+  regel `BZ4 <deel> (rapport): mislukt (<soort>)`, de andere delen gaan door en de poort ziet er
+  niets van. `BZ4 meer zoals deze per categorie (rapport, int8/fp32)`: per categorie het deel van
+  de top 4 en waar de foute buren het vaakst vandaan komen (de drie vaakste, een categorie of een
+  afleider zoals `anders-vogel`); `BZ4 zwakke vragen (rapport)`: elke vraag met hooguit 1 goede
+  foto in de top 5 in int8 of fp32, met de sleutels van die top 5 (hooguit 24); `BZ4 meer zoals
+  deze top 1 (rapport)`: hoe vaak de naaste buur een categorie deelt. In `bz4.json` onder
+  `int8_rapport`: `meer_zoals_per_categorie`, `zwakke_vragen` en `meer_zoals_top1`; geen lijst is
+  langer dan 24. Alleen getallen, categorieën en sleutels uit de set, nooit een vector of pixel.
+- **`api-analyse` telt 278 tests** (`2e91686`): 10 nieuwe (per tensor geeft de bytes van
+  `VERSIE` 2 1, een schaal per kolom en |q| tot 64 in beide vormen 2, de nieuwe regels met
+  nepvectoren 4, een deel dat faalt 3), 16 gedeselecteerd.
+
+Geen poort of test lager, `beeld_vragen.tsv` en `models.lock` niet veranderd, geen afhankelijkheid,
+host, model of action erbij.
+
+### Wat ook fp32 niet haalt
+
+Twee poorten haalt ook fp32 niet, en geen kwantisering verandert dat:
+
+- **Geen vraag met 0 goede foto's in de top 5.** fp32 heeft "bergen" 0/5 en "boot" 1/5; int8 en
+  beide wissels hebben bij "bergen" hooguit 1/5. Per token heeft ook een vraag met 0/5.
+- **"Meer zoals deze" ≥ 0,7.** fp32 0,442, per token 0,450; de beste variant 0,454.
+
+De poorten blijven zoals ze zijn (Keuze 83: lager alleen met een nieuwe keuze in het bouwontwerp).
+Wat er moet veranderen, is een **vraag voor de eigenaar** (Jonas): de set (welke foto's en
+categorieën), het model (B/16, Vraag 10c) of een poort. De volgorde van Keuze 83 ("Haalt het model
+de poort niet") gaat uit van een verlies door int8; hier haalt fp32 de twee poorten ook niet, en
+"Meer zoals deze", wat X3 dan alleen zou leveren, ook niet. Een noot bij Keuze 73 en Keuze 83 in
+het bouwontwerp zegt het.
+
+### Wat de volgende run meet
+
+- **BZ2:** nieuwe sha256 voor `beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` (`VERSIE` 3).
+  Die gaan, zoals de andere regels van SigLIP, pas met X3b in `models.lock`. De bronnen,
+  `tokenizer.bin` en de licentie blijven gelijk.
+- **BZ4 met per token:** verwacht nl rond 0,675 (zakt rond 0,017), combinaties 6/6, en rood op de
+  twee poorten hierboven, die ook fp32 niet haalt.
+- **BZ6 met per token:** verwacht rond 31 ms per foto (±1.900 per minuut, poort ≥ 500) en een
+  vraag ruim onder 250 ms.
+- **De drie nieuwe regels:** per categorie waar "Meer zoals deze" misgaat, de top 5 van elke
+  zwakke vraag (welke foto's het model wel kiest) en de top 1.
+- **`bz4r`:** de varianten vanaf per token (`zoals nu`), met `per tensor (v2)` ernaast; `één per
+  keer` hoort met per token cos tegen de batch rond 1 te geven, en 256 tegen 1024 meet opnieuw.
+
+### Open na 011bf2d
+
+- **De vraag voor de eigenaar** hierboven: set, model of poort. Eerst de nieuwe regels van de
+  volgende run lezen; die zeggen per categorie en per vraag waar het misgaat.
+- **De pins van `VERSIE` 3** komen uit de volgende run en gaan met X3b in `models.lock`.
+- **Glad** is niet gekozen. Komt het ooit terug, dan met factoren in een vastgelegde tabel bij de
+  sha256 van de bron (zie "Open na 3a9b07d"), geijkt op echte foto's, en met een test dat de fout
+  van fc2 in laag 9 niet stijgt.
+- **Of BZ4 vragen één voor één meet** (Keuze 83): met per token hangt een vector niet meer van zijn
+  batch af; de volgende run zegt of dat op het echte model ook zo is.
+- **De tijd van per token op een trage runner** (N6 in "De review" hieronder). Per token rekent ±1,5
+  × zo lang als per tensor (in `bz4r` op `011bf2d` 31,0 tegen 20,6 ms per foto, 28,0 tegen 18,3 ms
+  per vraag). BZ6 mat per tensor tot nu 21,7 ms (`011bf2d`), 39,8 ms (`26c49ca`) en 76,5 ms
+  (`625e946`) per foto; op de traagste runner wordt dat met per token tot ±115 ms, vlak onder de
+  120 ms van de poort (≥ 500 per minuut). De poort blijft; BZ6 van de volgende run zegt wat per
+  token op die runner kost. De tijden die x3b.md (39,8 ms per foto, van `26c49ca`) en de
+  backfill-tabel in het bouwontwerp (69–80 ms per foto, K2-04) noemen, zijn van vóór per token; X3b
+  leest ze na met die meting.
+
+### De review
+
+De review van dit werk (`87e2af2`, `cd92837`, `2e91686` en `d911bce` op `011bf2d`) gaf geen punt
+dat moest, twee die zouden moeten (ZOU 1 en ZOU 2) en zes kleine (N1 tot N6). Elk is eerst
+nagekeken; geen bleek onjuist. Van haar 37 mutaties bleven er vijf groen (K12, K13, K14, K16 en
+K17); die zijn nu alle vijf rood. ZOU 1, ZOU 2 en N1 zijn hersteld met een test die de mutatie
+van de review vangt; N2 tot N6 in de docs.
+
+| Bevinding | Wat er gebeurde | Test |
+|---|---|---|
+| **ZOU 1** De fp32-kant van de drie nieuwe delen kon stil met int8 rekenen: op het kleine model is int8 vrijwel fp32, en de tests met nepvectoren gaven beide kanten dezelfde vectoren. De top 5 van fp32 uit e8 (K12), per categorie fp32 uit e8 (K13), de top 1 van fp32 uit e8 (K14) en het aantal goede foto's per vraag van fp32 uit int8 (K16) bleven groen | Nepvectoren waarin int8 en fp32 verschillen (`af12ca2`): in fp32 ligt elke foto op de as van zijn categorie, in int8 op die van een andere; de combinaties, de afleiders en de vragen zijn in beide gelijk. Door `_rapport_int8` heen, zoals `uitkomst` het aanroept | `test_de_fp32_kant_van_de_nieuwe_delen_rekent_met_fp32`: per categorie precies `_meer_per_categorie` van e8 en van e32 (int8 overal lager, andere herkomst); 25 zwakke vragen, elk int8 ≤ 1 en fp32 ≥ 3 met een andere top 5, de eerste (`fiets`) met beide top 5; de top 1 int8 1/42 en fp32 42/42, ook de regel in kort.txt letterlijk |
+| **ZOU 2** Niets hield vectoren buiten kort.txt: een vector in de regel van de top 1 (K17) bleef groen; in `bz4.json` (K18) werd hij al gevangen | `_geen_vector` in de tests (`af12ca2`): geen regel van kort.txt heeft meer dan 40 getallen, geen getal meer dan 5 decimalen. Geijkt op de echte regels van `011bf2d`: de langste (nl per vraag 1/3) heeft er 34, de afwijking per laag 5 decimalen | `test_de_regel_tegen_vectoren_in_kort_txt` (zes regels uit het log van `011bf2d` en een zwakke vraag door; een vector, 768 getallen, 41 getallen en 6 decimalen rood), en de regel in `test_het_rapport_per_laag_en_variant_op_het_kleine_model` en `test_het_int8_rapport_van_bz4_op_het_kleine_model` |
+| **N1** De ondergrens 1e-30 van de schaal per rij had geen gedragstest; zonder (M13) vingen alleen de pins van de bytes het | Een test (`af12ca2`) | `test_per_token_een_rij_van_nullen_geeft_geen_nan`: een rij van nullen en een rij waarvan max \|x\| / 127 in fp32 nul is; x / a eindig, u 128 en de uitvoer precies de bias. Zonder de ondergrens is x / a NaN of oneindig (de uitvoer zelf blijft op x86 de bias, daarom kijkt de test ervoor) |
+| **N2** "Wat er gebouwd is: alleen meten" noemde `test_zonder_opties_dezelfde_bytes_als_voor_de_opties`, die sinds `87e2af2` anders heet | Een noot erbij: welke test nu wat bewijst | (docs) |
+| **N3** De opmerking bij `ANALYSE_TESTS` zei "zonder opties dezelfde bytes" | "de bytes van de standaard, ook met de opties expliciet op hun standaard, 2 (sinds CI op 011bf2d die van VERSIE 3)" (`52dd177`) | (docs) |
+| **N4** "fc2 fp32 wint 0,008 en mlp fp32 0,033" zei niet dat die varianten in die run bovenop per tensor kwamen | "De keuze: per token" zegt het, en dat de volgende run ze bovenop per token meet | (docs) |
+| **N5** "vier regels" in het runbook geldt alleen bij twaalf categorieën | "drie categorieën per regel, dus bij de twaalf categorieën van de set vier regels", en `1/n` in het voorbeeld | (docs) |
+| **N6** Per token kost ±1,5 × de tijd van per tensor; BZ6 haalt het ruim, maar de tijden van X3b gaan uit van per tensor | Geen code: op de runner van `011bf2d` is dat ±1.900 per minuut (poort ≥ 500). Op de traagste runner tot nu (`625e946`) wordt het tot ±115 ms per foto, vlak onder 120; een punt in "Open na 011bf2d" | (docs) |
+
+Teruggedraaid getest: de herstellen zijn alleen tests, dus ongedaan is de mutatie van de review
+(in `test_beeld_kwaliteit.py`, bij N1 in `bouw.py`); dan `test_beeld_int8_klein.py` (`-m "not
+beeld_echt"`, onder de lock), rood; dan terug met de bytes van ervoor: alle 60 groen en `git
+status` leeg.
+
+| Herstel | Ongedaan | Rood | Weer groen |
+|---|---|---|---|
+| ZOU 1, top 5 | K12 | 1 | 60 |
+| ZOU 1, per categorie | K13 | 1 | 60 |
+| ZOU 1, top 1 | K14 | 1 | 60 |
+| ZOU 1, aantal goed | K16 | 1 | 60 |
+| ZOU 2 | K17 | 2 | 60 |
+| N1 | M13 | 1 | 60 |
+
+De telling van `api-analyse`: `ANALYSE_TESTS` 281 (278 en de 3 nieuwe van
+`test_beeld_int8_klein.py`), `ANALYSE_DESELECTED` 16 (`52dd177`). Geen poort, drempel of test
+lager, `beeld_vragen.tsv` en `models.lock` niet veranderd, geen afhankelijkheid, host, model of
+action erbij; de omzetter is niet veranderd.
+
+## CI op 669f03c
+
+Twee jobs rood op `669f03c`: `API analyse` (twee varianten van één test) en `beeld-model` (de twee
+poorten van BZ4 die ook fp32 niet haalt, zie "CI op 011bf2d"). De rest groen.
+
+### API analyse: een variant die alleen met VNNI goed rekent
+
+`test_elke_variant_bouwt_en_rekent[beeld-per tensor + q_max 127]` en `[tekst-per tensor + q_max
+127]` rood (2 van de 281), letterlijk uit het log:
+
+```
+cos per item beeld = [0.9794978, 0.98845686, 0.97265358]  (eis ≥ 0.99)
+cos per item tekst = [0.99013178, 0.9907632, 0.99252191, 0.99138095, 0.98945253]
+```
+
+Dezelfde graaf was groen op de runner van `011bf2d` (toen heette de variant `q_max 127`, en per
+tensor was de standaard) en is groen in de sandbox, die VNNI heeft.
+
+**De oorzaak.** Per tensor (`DynamicQuantizeMatMul`) rekent onnxruntime op x86 zonder VNNI met de
+U8S8-kern (`vpmaddubsw`): die telt twee buren langs K op in int16. Met de invoer in uint8 (tot 255,
+nulpunt rond 128) en een gewicht tot |127| kan zo'n paar 255 × 127 × 2 = 64.770 worden, boven
+32.767, en dan verzadigt het. Daarom heeft de omzetter `Q_MAX` 64 (zie "CI op 7569d48"). De
+variant `per tensor + q_max 127` van `test_beeld_int8_klein.py` zette die grens op 127 en rekende
+daarmee; op een runner zonder VNNI kan dat niet goed gaan.
+
+**Nagerekend.** Een script (in de scratch van deze ronde, niet in de repo) bouwt dezelfde grafen
+als de test en vervangt elke `DynamicQuantizeMatMul` door dezelfde som met de paren van (even,
+oneven) langs K, op de ruwe uint8 en geknipt op int16. Dat geeft alle acht cosinussen van de CI tot
+op de 8 decimalen van het log (verschil 1e-9 tot 5e-9). Zonder knippen is het op deze host (met
+VNNI) bit voor bit gelijk aan onnxruntime, bij q_max 127 op elke node en de uitvoer. Bij q_max 64
+en 32 verzadigt geen enkel paar, en is de nabootsing met of zonder knippen bit voor bit gelijk aan
+onnxruntime. Een controle die op (a − nulpunt) knipt in plaats van op de ruwe a, verzadigt 2 paren
+in het beeld en 0 in de tekst en blijft op cos ±0,9997: de getallen van de CI vragen echt de
+verzadiging op de ruwe uint8. Met q_max 127 verzadigen in de eerste laag van het beeld 2.237 van de
+1.179.648 paren van qkv en 1.899 van fc1; in de tekst 1.801 (qkv) en 9.064 (fc1). Het log zegt niet
+welke CPU de runner had; "geen VNNI" volgt uit die exacte overeenkomst.
+
+**Het herstel** (`b83a49b`). De variant heet nu `per tensor + q_max 32`: per tensor, met een grens
+onder 64, zodat hij op elke CPU hetzelfde rekent. De test eist voor elke variant `q_max` ≤ `LINEAR`
+(64) en zegt het in de docstring. Op deze host met de nabootsing zonder VNNI en met onnxruntime
+gelijk: cos beeld laagste 0,99835, tekst laagste 0,99840 (marge ±0,008 op 0,99), 0 verzadigde
+paren. 127 komt nog alleen voor in tests van grafen die niet rekenen
+(`test_q_max_gaat_door_naar_per_kolom` en `test_per_token_met_een_gewicht_boven_64_is_een_fout`).
+De telling blijft 281 en 16: dezelfde test, een andere naam voor de variant. Geen drempel lager
+(COS 0,99 blijft), de omzetter niet veranderd.
+
+### beeld-model
+
+BZ1 (de vijf hosts bereikbaar), BZ3, BZ6 en BZ7 goed. BZ2: twee omzettingen met dezelfde sha256
+voor alle vijf bestanden (8,5 en 8,0 s, maxrss 352 MiB), ook met `--fp32` (14,8 s, 1.606 MiB). `set`
+gaf weer 120 foto's met 1 tweede keus (`kat+sneeuw`), en `beeld_niet.tsv` sloeg 49 kandidaten over.
+pytest: `bz3` 4 goed, `bz4` 2 fout en 4 goed in 34,2 s, `bz4r` 5 goed in 162,7 s, `bz6` 1 goed.
+
+**De pins van `VERSIE` 3.** Uit het voorstel van BZ2; ze gaan met X3b in `models.lock` (alleen als
+de bytes van de omzetter dan nog dezelfde zijn). De bronnen zijn niet veranderd.
+
+| Bestand | sha256 | bytes |
+|---|---|---|
+| `beeld.int8.onnx` | `ddc76fc08a1c30bd0d0b8fa997f5f8fa44c0cbe25b9f04d81859fa41cb877a5b` | 102.609.072 |
+| `tekst.int8.onnx` | `258337dbc659cfebc72850ca0ce8fdec4c50c726da35790893569eb8a10bfd1a` | 284.248.004 |
+| `tokenizer.bin` | `1516dde1739c181c24fcaef51d49e49ae26bea112490ff57799f945e7666b8ec` | 12.414.446 |
+| `meta.json` | `dfb3d153f941cd0ea549922f34c584f81730a43708539fff879e6d85a6d49af1` | 2.376 |
+| `siglip2-Apache-2.0.txt` | `0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594` | 10.174 |
+
+Het rapport (`kort.txt` en `bz4r.txt`), letterlijk:
+
+```
+BZ4 set: 120 foto's uit voorstel-beeld.tsv, previews met app.render.image
+BZ4 nl: precisie@5 0.692 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 combinaties: 6/6 in de top 10 (poort ≥ 5), plekken [4, 1, 2, 3, 1, 6] — goed
+BZ4 int8 tegen fp32: precisie@5 0.692 tegen 0.692, zakt 0.000 (poort ≤ 0.05) — goed
+BZ4 meer zoals deze: 0.475 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 zelftest kleuren: 3/3 bovenaan — goed
+BZ4 engels (rapport): precisie@5 0.833
+BZ4 256 tegen 1024 (rapport): precisie@5 0.692 tegen 0.700; zakt 0.008 (256 blijft)
+BZ4 MIN_TEKST (rapport): kans goed p5 0.0, niet goed p95 0.0
+BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 0.4757, anders p95 0.6394
+BZ4 torens (rapport): precisie@5 nl tekst int8 + beeld fp32 0.700, tekst fp32 + beeld int8 0.692 (beide int8 0.692, beide fp32 0.692)
+BZ4 fp32 (rapport): engels 0.833 (int8 0.833), meer zoals deze 0.463 (int8 0.475), MIN_FOTO zelfde p5 0.4805 anders p95 0.642, MIN_TEKST kans goed p5 0.0 niet goed p95 0.0, combinaties 6/6 plekken [4, 1, 2, 3, 1, 9]
+BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 0.9979 mediaan 0.9991 laagste 0.9972 (zandstrand); beeld p5 0.9838 mediaan 0.994 laagste 0.9667 (berg-3)
+BZ4 één per keer (rapport): tekst int8 precisie@5 0.692 (in batches van 16: 0.692), cos tegen batch p5 1.0; beeld int8 cos tegen batch p5 1.0, meer zoals deze 0.475
+BZ4 buren uit dezelfde batch (rapport): int8 0.463, fp32 0.471 (toeval 0.126)
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: strand 3/3/3/3, zandstrand 3/3/3/3, hond 5/5/5/5, een hond 3/3/3/4, kat 5/5/5/5, poes 5/5/5/5, sneeuw 5/5/5/5, een sneeuwlandschap 5/5/5/5
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 2/3: auto 3/3/3/3, personenauto 2/1/2/1, fiets 4/4/4/4, een fiets 4/4/4/4, berg 3/3/3/4, bergen 0/0/0/0, bos 4/4/4/4, een bos 4/4/4/4
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 3/3: stad 2/1/2/2, een stad 3/3/3/3, eten 4/4/4/4, een maaltijd 2/3/2/2, boot 0/1/0/0, bootje 4/4/4/4, zonsondergang 5/5/5/5, ondergaande zon 5/5/5/5
+BZ4 en per vraag (rapport, int8/fp32): beach 3/3, dog 4/4, cat 5/5, snow 4/4, bicycle 4/4, sunset 5/5
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 1/4: strand 0.417/0.458 (fout int8: zonsondergang 4, berg 3, sneeuw 3; fp32: zonsondergang 4, berg 2, boot 2) | hond 0.600/0.650 (fout int8: kat 3, anders-vogel 2, anders-paard 1; fp32: anders-vogel 3, kat 2, anders-vliegtuig 1) | kat 0.833/0.750 (fout int8: anders-paard 2, anders-vogel 2; fp32: anders-vogel 3, anders-paard 1, bos 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 2/4: sneeuw 0.583/0.556 (fout int8: anders-paard 3, stad 3, zonsondergang 2; fp32: anders-paard 4, bos 2, stad 2) | auto 0.250/0.250 (fout int8: anders-vliegtuig 3, sneeuw 3, stad 3; fp32: anders-vliegtuig 3, stad 3, fiets 2) | fiets 0.550/0.550 (fout int8: auto 2, sneeuw 2, anders-gitaar 1; fp32: auto 3, sneeuw 2, anders-paard 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 3/4: berg 0.250/0.250 (fout int8: zonsondergang 5, bos 3, anders-paard 2; fp32: zonsondergang 5, anders-paard 3, bos 3) | bos 0.400/0.400 (fout int8: zonsondergang 5, berg 3, anders-bloem 2; fp32: zonsondergang 4, berg 3, anders-bloem 2) | stad 0.500/0.458 (fout int8: auto 6, zonsondergang 3, anders-brug 1; fp32: auto 7, zonsondergang 3, anders-brug 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 4/4: eten 0.400/0.350 (fout int8: anders-bloem 5, anders-insect 2, zonsondergang 2; fp32: anders-bloem 6, anders-insect 2, zonsondergang 2) | boot 0.500/0.450 (fout int8: strand 4, anders-brug 3, anders-vliegtuig 1; fp32: strand 4, anders-brug 2, anders-vliegtuig 1) | zonsondergang 0.458/0.458 (fout int8: bos 3, strand 3, berg 2; fp32: bos 3, strand 3, anders-vogel 2)
+BZ4 zwakke vragen (rapport) 1/4: bergen (nl; int8 0/5, fp32 0/5): int8 anders-trein-5 boot-1 anders-kerk-2 hond-1 auto+sneeuw; fp32 anders-trein-5 boot-1 anders-kerk-2 hond-1 boot-2
+BZ4 zwakke vragen (rapport) 2/4: boot (nl; int8 0/5, fp32 1/5): int8 anders-stoel-1 anders-boek-5 anders-paard-1 anders-paard-4 anders-gitaar-2; fp32 anders-stoel-1 anders-boek-5 anders-paard-1 anders-gitaar-2 boot-4
+BZ4 zwakke vragen (rapport) 3/4: personenauto (nl; int8 2/5, fp32 1/5): int8 auto-1 sneeuw-2 sneeuw-3 anders-trein-5 auto+sneeuw; fp32 auto-1 sneeuw-2 zonsondergang-5 sneeuw-3 anders-trein-5
+BZ4 zwakke vragen (rapport) 4/4: stad (nl; int8 2/5, fp32 1/5): int8 anders-brug-1 stad-3 auto+sneeuw stad-2 sneeuw-2; fp32 anders-brug-1 auto+sneeuw stad-3 sneeuw-2 anders-stoel-3
+BZ4 meer zoals deze top 1 (rapport): int8 0.667 (40/60), fp32 0.667 (40/60)
+BZ6 beeld int8 op 1 core(s): 32.4 ms per foto uit 256.webp, 1852 per minuut (poort ≥ 500) — goed
+BZ6 vraag (tokenizer + tekst int8): p50 19.9 ms, p95 20.4 ms (voorwaarde ≤ 250 ms), eerste 21.5 ms, met laden 491 ms; maxrss 861 MiB — goed
+BZ4 cpu (rapport): Intel(R) Xeon(R) 6975P-C; vnni ja
+BZ4 gewicht int8 beeld (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0178, slechtste 0.0307 (laag 0 fc2); met 127 mediaan 0.0090
+BZ4 gewicht int8 tekst (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0161, slechtste 0.0236 (laag 0 fc2); met 127 mediaan 0.0081
+BZ4 invoer beeld (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 5 fc2 max 152 = 274× rms (token 15 patch, kanaal 1449), fout 0.320/0.319/0.014/0.015; laag 9 fc2 max 1.49e+03 = 605× rms (token 7 patch, kanaal 1038), fout 0.118/0.087/0.005/0.991; laag 6 fc2 max 20.3 = 111× rms (token 62 patch, kanaal 3019), fout 0.081/0.080/0.028/0.033
+BZ4 afwijking per laag beeld (rapport): cos int8/fp32 gemiddeld over de patches na laag 0..11: 0.99927 0.99815 0.99719 0.99644 0.99597 0.99571 0.99454 0.99198 0.99008 0.98884 0.98369 0.98209; uitvoer 0.99395
+BZ4 invoer tekst (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 1 fc2 max 10.5 = 137× rms (token 24 pad, kanaal 151), fout 0.099/0.086/0.049/0.024; laag 6 fc2 max 9.17 = 102× rms (token 19 pad, kanaal 1928), fout 0.086/0.081/0.048/0.033; laag 7 fc2 max 7.42 = 93× rms (token 12 pad, kanaal 51), fout 0.069/0.052/0.031/0.038
+BZ4 afwijking per laag tekst (rapport): cos int8/fp32 op token 63 na laag 0..11: 0.99656 0.99658 0.99602 0.99553 0.99561 0.99614 0.99662 0.99728 0.99731 0.99789 0.99821 0.99799; uitvoer 0.99927
+BZ4 variant fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.463, cos beeld p5 1.0000 tekst p5 1.0000; beeld 378 MB 71.0 ms per foto, tekst 1129 MB 67.6 ms per vraag
+BZ4 variant zoals nu (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.475, cos beeld p5 0.9838 tekst p5 0.9980; beeld 103 MB 30.7 ms per foto, tekst 284 MB 27.6 ms per vraag
+BZ4 variant per tensor (v2) (rapport): nl 0.450 (zakt 0.242, slechtste 0/5), engels 0.767, combinaties 6/6, meer zoals deze 0.287, cos beeld p5 0.5820 tekst p5 0.8756; beeld 103 MB 20.8 ms per foto, tekst 284 MB 18.4 ms per vraag
+BZ4 variant fc2 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.458, cos beeld p5 0.9883 tekst p5 0.9992; beeld 188 MB 43.7 ms per foto, tekst 369 MB 40.0 ms per vraag
+BZ4 variant mlp fp32 (rapport): nl 0.683 (zakt 0.008, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.463, cos beeld p5 0.9928 tekst p5 0.9993; beeld 272 MB 56.5 ms per foto, tekst 454 MB 53.9 ms per vraag
+BZ4 variant aandacht fp32 (rapport): nl 0.700 (zakt -0.008, slechtste 0/5), engels 0.867, combinaties 6/6, meer zoals deze 0.467, cos beeld p5 0.9886 tekst p5 0.9982; beeld 187 MB 43.4 ms per foto, tekst 369 MB 40.4 ms per vraag
+BZ4 variant kop fp32 (rapport): nl 0.683 (zakt 0.008, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.479, cos beeld p5 0.9845 tekst p5 0.9981; beeld 124 MB 31.1 ms per foto, tekst 286 MB 27.5 ms per vraag
+BZ4 variant laag 0-3 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.458, cos beeld p5 0.9962 tekst p5 0.9990; beeld 187 MB 44.8 ms per foto, tekst 369 MB 41.4 ms per vraag
+BZ4 variant laag 8-11 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.471, cos beeld p5 0.9837 tekst p5 0.9982; beeld 187 MB 45.5 ms per foto, tekst 369 MB 41.9 ms per vraag
+BZ4 variant per token + glad (rapport): nl 0.592 (zakt 0.100, slechtste 1/5), engels 0.667, combinaties 5/6, meer zoals deze 0.304, cos beeld p5 0.5867 tekst p5 0.9980; beeld 103 MB 32.7 ms per foto, tekst 284 MB 29.4 ms per vraag
+BZ4 variant embedding fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.475, cos beeld p5 0.9838 tekst p5 0.9985; beeld 103 MB 33.0 ms per foto, tekst 873 MB 28.9 ms per vraag
+```
+
+### Wat het rapport zegt
+
+- **Int8 is gelijk aan fp32.** Precisie@5 nl 0,692 tegen 0,692 (zakt 0,000), engels 0,833 tegen
+  0,833, combinaties 6/6, cos tegen fp32 p5 0,984 (beeld) en 0,998 (tekst). Per token (`VERSIE` 3)
+  doet wat "CI op 011bf2d" verwachtte. Eén per keer of in batches van 16 geeft hetzelfde (cos tegen
+  de batch p5 1,0): een vector hangt niet meer van zijn batch af.
+- **BZ6 ruim.** 32,4 ms per foto op één core (1.852 per minuut, poort ≥ 500), een vraag p95
+  20,4 ms. Op de traagste runner tot nu zou dat ±115 ms zijn (zie "Open na 011bf2d"); deze runner
+  was snel.
+- **256 tegen 1024** zakt 0,008, onder de 0,02 van Keuze 77: X3 rekent uit 256.webp.
+- **Geen variant haalt de twee poorten.** Bovenop per token geven fc2, mlp, aandacht, kop, laag
+  0-3, laag 8-11 en embedding in fp32 nl 0,683 tot 0,700 en "meer zoals deze" 0,458 tot 0,479;
+  elke variant heeft een vraag met 0/5. Per token + glad zakt weer (0,592). Per tensor (`VERSIE` 2)
+  geeft 0,450, zoals op `011bf2d`.
+- **De twee rode poorten zijn het model, niet de omzetting.** fp32 heeft ze ook:
+  - "bergen" 0/5 in int8 en fp32. De top 5 is in beide een trein, een boot, een kerk en een hond,
+    en daarbij in int8 een auto in de sneeuw, in fp32 nog een boot; "berg" haalt 3/5. Een vermoeden (niet gemeten): het model leest "bergen" als de stad Bergen.
+  - "boot" 0/5 in int8, 1/5 in fp32 (een stoel, een boek, paarden, een gitaar); "bootje" haalt
+    4/5. Ook een vermoeden: het model leest "boot" als het Engelse woord.
+  - "Meer zoals deze" 0,475 van de top 4 (fp32 0,463), de naaste buur klopt in 0,667. Per
+    categorie: kat 0,833 en hond 0,600 het best, berg en auto 0,250 het slechtst. Berg gaat vooral
+    naar zonsondergang (5) en bos (3), auto naar vliegtuig, sneeuw en stad (3 elk), stad naar auto
+    (6).
+
+### De vraag aan Jonas
+
+De poorten blijven zoals ze zijn (Keuze 83). Op 2026-11-16 ging een kaart naar Jonas met drie
+keuzes: **toch uitbrengen** (voorgesteld: zoeken op beeld komt in 0.8.1, standaard uit per
+gebruiker, de twee poorten worden in een nieuwe keuze ondergrenzen op wat nu gemeten is, en de
+zwakke vragen staan in de uitleg), **uitstellen** (0.8.1 brengt alleen gezichten) of **B/16 meten**
+(±3 × trager per foto, boven de 120 ms van BZ6, en niet zeker dat het de twee punten haalt). Tot
+het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze twee.
+
+### Open na 669f03c
+
+- **Het antwoord van Jonas** op de kaart hierboven.
+- **De pins van `VERSIE` 3** gaan met X3b in `models.lock`.
+- **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
+  helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
+  poort.
+- **BZ6 op een trage runner met per token** (R2 in "De controle per CPU" hieronder). Gemeten is per
+  token alleen op een Xeon 6975P-C met VNNI en AMX. Op de traagste runner tot nu (±77 ms per foto
+  met per tensor) wordt het naar schatting ±115 ms, 4 % onder de 120 ms van de poort. Vóór X3b zijn
+  tijden vastlegt, moet er een keuze liggen voor het geval dat per token daar op 115–125 ms landt.
+  Dat is een keuze over het product (Vraag 14), nooit een lagere poort.
+
+### De review
+
+Een tweede lezing van `b83a49b` gaf niets dat moest, twee punten die zouden moeten en vier kleine.
+Ze bootste los van de eerste een CPU zonder VNNI na (elk `DynamicQuantizeMatMul` en
+`MatMulInteger` met de paren geknipt op int16) en vond de getallen van de CI terug tot op ±7
+decimalen. Elke variant die de test nu draait is met en zonder VNNI bit voor bit gelijk (grootste
+paar 30.530 bij |q| 64, 15.361 bij |q| 32; de grens is 255 × 64 × 2 = 32.640), de laagste cos is
+0,998. Ook per tensor met q_max 64 en per tensor + glad met q_max 64, die ze erbij nam, zijn gelijk.
+Het nulpunt van de invoer doet er niet toe (de kern corrigeert het met kolomsommen), en K is overal
+een veelvoud van 4. CI draait alleen op x64.
+
+| Punt | Wat er gebeurde |
+|---|---|
+| **ZOU 1** Geen sectie "CI op 669f03c" in x3a.md | Deze sectie |
+| **ZOU 2** De job `api-analyse` zegt niet welke CPU de runner heeft; "geen VNNI" moest uit de getallen volgen | De stap `Cores` schrijft nu de CPU en welke van `avx512_vnni`, `avx_vnni` en `amx_int8` er zijn (of "geen"); de telling verandert niet |
+| **N1** "Elke variant die rekent houdt \|q\| ≤ 64" klopt niet voor de embedding van de tekst (127) | De docstring zegt nu "het gewicht van elke Linear", en dat de embedding 127 houdt omdat daar geen matmul in gehele getallen zit (Gather, Cast, Mul) |
+| **N2** "zoals 7569d48" noemt een commit, niet de CI-run | "zoals CI op 7569d48" |
+| **N3** De bewaking zag een impliciete `Q_MAX` niet, en gaf bij `"q_max": None` een TypeError | `top = bouw.Q_MAX` als de variant geen `q_max` zet, anders die waarde; dan `top ≤ LINEAR` |
+| **N4** (optioneel) De getallen van 669f03c vastpinnen met de nabootsing, zoals die van 7569d48 in `test_onnxw_ort.py` | Niet gedaan: dat is een test erbij en het voegt niets toe aan de juistheid; de nabootsing en haar uitkomst staan hierboven |
+
+Na de punten: `test_beeld_int8_klein.py` 60 goed, `tests_analyse` telt 281 en 16 gedeselecteerd,
+de tests die `ci.yml` lezen 246 goed, ruff en yamllint schoon.
+
+### De controle per CPU
+
+Na het herstel ging een tweede controle langs alle tests van `tests_analyse` en `beeld-model` die
+op de ene x86-runner kunnen slagen en op de andere niet. Bijna alles is veilig: geen graaf rekent
+nog met |q| boven 64, en de vergelijkingen die precies moeten kloppen zijn per constructie gelijk
+of gemeten op 0,0. Twee punten bleven over.
+
+| Punt | Wat er gebeurde |
+|---|---|
+| **R1** `test_meet_de_invoer_van_elke_linear_en_de_residu_na_elke_laag` vergelijkt de meetgraaf met de gewone graaf binnen 1e-5. In de gewone graaf voegt onnxruntime de laatste Add en LayerNorm samen (`SkipLayerNormFusion`); in de meetgraaf is de residu een uitgang en gebeurt dat niet. De invoer van de kop verschilt dan een ulp (beeld 8.621 van 12.288 waarden, tot 9,5e-7). De kop rondt per token af naar int8: twee waarden lagen dichter bij een grens dan dat verschil, en één omgeklapte afronding verandert de uitvoer tot 3,5e-3. Welke waarden dat zijn hangt aan de CPU (AVX2, AVX512, AMX) | Beide sessies van deze test draaien nu zonder `SkipLayerNormFusion` (`_sessie(..., ZONDER_FUSIE)`). Gemeten: de invoer van de kop is bit voor bit gelijk, het verschil 0,0 in beeld en tekst (was 0,0 en 5,96e-8). TOL blijft 1e-5 |
+| **R2** De job `beeld-model` zegt alleen in de stap van het rapport op welke CPU hij liep. Die stap hangt aan de set van BZ4 en mag falen; BZ6 hangt alleen aan de omzetting. Een rode BZ6 kon dus zonder CPU in het log staan | `cpu()` staat nu in `beeld_echt.py`, leest ook `amx_int8`, en de regel van BZ6 eindigt met de CPU, vnni en amx; het verslag `bz6.json` krijgt ze ook. De regel van BZ4 gebruikt dezelfde functie. Een test leest een nep-`cpuinfo` (`test_cpu_leest_naam_vnni_en_amx`). De poort zelf blijft; de marge staat in "Open na 669f03c" |
+
+CI op `ea7d372` liep API analyse op een Xeon 6975P-C met `amx_int8`, `avx512_vnni` en `avx_vnni`
+(281 goed): dat bewijst het herstel op een runner zonder VNNI niet opnieuw, de nabootsing hierboven
+wel.
+
+Na de punten: `tests_analyse` telt 282 en 16 gedeselecteerd (één test erbij), de tests die `ci.yml`
+lezen 246 goed, ruff en yamllint schoon.

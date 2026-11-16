@@ -214,7 +214,10 @@ De job haalt het echte model (`google/siglip2-base-patch32-256`, ±1,55 GB) en d
 kwaliteitsset, zet het model twee keer om en draait de poorten van Keuze 83. Hij draait alleen:
 
 - bij een push of PR die `app/analyse/worker/omzetten/`, `app/analyse/tokenizer.py`,
-  `app/analyse/onnxw.py` of `app/analyse/models.lock` verandert (`git diff --name-only`);
+  `app/analyse/onnxw.py` of `app/analyse/models.lock` verandert (`git diff --name-only`), of wat
+  de job zelf meet: `tools/beeld/`, de tests met marker `beeld_echt` en hun lijsten in
+  `api/tests/analyse/sets/` (`beeld_tokens.tsv`, `beeld_vragen.tsv`, `beeld.tsv` en
+  `beeld_niet.tsv`; de paden staan in `ci.yml`, in de stap "Moet beeld-model draaien?");
 - of als de tekst van de PR een regel `beeld-model: ja` heeft.
 
 Er is geen knop om hem met de hand te starten. Het model komt nooit uit een cache: elke run haalt
@@ -223,15 +226,27 @@ van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads
 kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt.
 De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt (zolang
 `models.lock` de regels van SigLIP mist, is hij dat altijd); nooit een halve set, want een sleutel
-bewaart maar één keer. Van upload.wikimedia.org haalt de job gemiddeld hooguit 2,5 MB/s (20 Mbps;
-de robotregels staan 25 Mbps toe), en elke foto als thumbnail van 1280 px breed, niet als origineel
-(op de originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298").
-Is het origineel niet breder dan 1280, dan is het origineel zelf de thumbnail. De API van Commons
+bewaart maar één keer. Elke foto komt als thumbnail van 1280 px breed, niet als origineel (op de
+originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298"). De
+thumbnails staan sinds september 2026 op thumb.wikimedia.org (volgens bronnen uit de tweede hand;
+de oude URL's op upload.wikimedia.org werken nog; x3a.md, "CI op 45bb926"); `beeld.tsv` heeft de
+URL zoals de API hem gaf. Is het origineel niet breder dan 1280, dan is het origineel zelf de
+thumbnail, en dat staat altijd op upload.wikimedia.org. Van thumb.wikimedia.org en van
+upload.wikimedia.org haalt de job elk gemiddeld hooguit 2,5 MB/s (20 Mbps; de robotregels staan
+25 Mbps toe). Elke foto
+vraagt hij als JPEG (`Accept: image/jpeg`: thumb.wikimedia.org geeft op dezelfde URL ook WebP), en
+hij kijkt de eerste bytes na; is het geen JPEG, dan stopt `set` met `FOUT set: <sleutel>.jpg: WebP
+in plaats van JPEG` of `…: geen JPEG`, en die foto staat niet in `set/`. Een omleiding van een
+vraag aan Commons volgt de job alleen naar https op commons.wikimedia.org, thumb.wikimedia.org of
+upload.wikimedia.org; een andere is een fout (`HTTP 302 naar <host>, niet gevolgd (…)`), en
+daarheen gaat geen vraag. De API van Commons
 (commons.wikimedia.org) krijgt hooguit één vraag per 8 s, en ook een nieuwe poging na een 429
 telt: zonder contact in de User-Agent staat Wikimedia volgens wie de grenzen citeert (september
 2026) 10 vragen per minuut per IP toe (x3a.md, "CI op 3148c2f"). Een voorstel doet ±90 tot 200
-vragen aan de API en duurt daardoor ±12 tot 27 minuten; met `beeld.tsv` vraagt `set` de API
-niets. Upload krijgt hooguit één vraag per seconde.
+vragen aan de API en duurt daardoor ±12 tot 27 minuten; is de eerste keus van een zoekopdracht op
+(zie stap 4), dan leest hij nog pagina's tot het uiterste van vroeger, 3 vragen per pagina, en
+hooguit 750 vragen samen (x3a.md, "De set strenger"). Met `beeld.tsv` vraagt `set` de API niets.
+Thumb en upload krijgen elk hooguit één vraag per seconde.
 Na een 429 of 503 vraagt de job nooit eerder opnieuw dan Retry-After zegt (seconden, ook met
 decimalen, of een HTTP-datum). Zegt die meer dan 600 s, is hij niet te lezen, of past het wachten
 niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij meteen,
@@ -241,19 +256,61 @@ log "beeld-model: draaien nee" met de reden.
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 
 - `BZ1 <host>: bereikbaar (HTTP …)` of `niet bereikbaar (…)`, voor huggingface.co,
-  commons.wikimedia.org, upload.wikimedia.org en images-assets.nasa.gov;
+  commons.wikimedia.org, thumb.wikimedia.org, upload.wikimedia.org en images-assets.nasa.gov.
+  Leidt de host om, dan staat erbij waarheen en wat daar het antwoord was (bijvoorbeeld `HTTP 301
+  naar commons.wikimedia.org, daar HTTP 200`), of dat de job hem niet volgde (`HTTP 302 naar
+  <host>, niet gevolgd (…)`);
 - `BZ2 …`: de commit; de tijd en maxrss van de twee omzettingen zoals de dienst (grens 1,5 GB),
   of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
 - `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons, … als origineel;
-  … MB in … s; API: … vragen, … keer 429; upload: … vragen, … keer 429; contact: ja)`, of het
-  voorstel (`… (… als origineel; … MB in … s; API: …)`): wat er van Commons kwam, hoeveel daarvan
-  als origineel in plaats van als thumbnail, hoe lang dat duurde, en het verkeer met Commons in
-  die stap: per dienst (de API en upload) de vragen, elke poging meegeteld, hoe vaak het antwoord
-  429 was (en `… keer 5xx` als dat er waren), na hoeveel seconden de eerste 429 kwam (`eerste 429
-  na … s`), en of de User-Agent een contact had (nooit welk). Een dienst zonder vragen staat er
-  als `upload: 0 vragen`;
+  … MB in … s; API: … vragen, … keer 429; thumb: … vragen, … keer 429; upload: … vragen, … keer
+  429; contact: ja)`, of het voorstel (`… (… als origineel; … MB in … s; API: …)`): wat er van
+  Commons kwam, hoeveel daarvan als origineel in plaats van als thumbnail, hoe lang dat duurde, en
+  het verkeer met Commons in die stap: per dienst, altijd in de volgorde API (de zoekvragen aan
+  commons.wikimedia.org), thumb (thumb.wikimedia.org: de thumbnails) en upload
+  (upload.wikimedia.org: de originelen, en thumbnails in de oude vorm), de vragen, elke poging en
+  elke gevolgde omleiding naar die dienst meegeteld, hoe vaak het antwoord 429 was (en `… keer
+  5xx` als dat er waren), na hoeveel seconden de eerste 429 kwam (`eerste 429 na … s`), en of de
+  User-Agent een contact had (nooit welk). Een dienst zonder vragen staat er als `upload: 0
+  vragen`, één vraag als `upload: 1 vraag`;
+- `BZ4 set: Commons: maar … bruikbare foto's voor <categorie> (… kandidaten bekeken; afgevallen:
+  …)`, `geen bruikbare foto voor <a>+<b> (…)` of `… voor <onderwerp> (anders; … bekeken;
+  afgevallen: …)`, en bij een tekort aan combinaties `BZ4 reserve <a>+<b>: … bruikbare foto's
+  (eerste pagina per licentie; afgevallen: …)`: een tekort, met waarom de kandidaten afvielen.
+  Hooguit de vier vaakste redenen met hun aantal, de meeste eerst (bij een gelijk aantal op de
+  tekst), en de rest als `… om een andere reden`. De redenen: `geen image/jpeg`, `origineel niet
+  op upload`, `geen bestandspagina`, `te klein`, `te groot`, `mens erop`, `licentie`, `geen
+  thumbnail van 1280 px`, `thumbnail op een andere host (<host>)`, `te langgerekt`, `onleesbare
+  gegevens`, `al gekozen`, `uitgesloten (beeld_niet.tsv)` (de bron staat in
+  `api/tests/analyse/sets/beeld_niet.tsv`; stap 4) en `beeldt een categorie af`. De host staat
+  er alleen als het een gewone hostnaam is van hooguit 64 tekens, anders `een onbekende host`;
+  nooit een URL. Zeggen
+  bijna alle kandidaten `thumbnail op een andere host`, dan geeft de API de thumbnails op een
+  host die de job niet kent: kijk in x3a.md ("CI op 45bb926") en pas `THUMB` in
+  `tools/beeld/beeld_model.py` aan, alleen naar een host van Wikimedia (`*.wikimedia.org`):
+  `THUMB` krijgt ook het contact (`BEELD_CONTACT`) en is een toegestaan doel van omleidingen. Een
+  andere host vraagt eerst toestemming van Jonas;
+- `BZ4 set: … tweede keus (<zoekopdracht> …, …); de eerste keus was op; het bewijs per foto staat
+  in het log`: alleen als een voorstel foto's van de tweede keus nam (stap 4), met per
+  zoekopdracht hoeveel;
+- `BZ4 set: de eerste keus gaf … tekorten, de volgorde van Commons …: dit voorstel volgt de
+  volgorde van Commons, met … tweede keus (…); het bewijs per foto staat in het log, na deze
+  regel`: de eerste keus gaf een tekort (een eerste keus van de ene zoekopdracht kan een volgende
+  een foto afnemen), en opnieuw kiezen in de volgorde van Commons, zoals vóór de eerste keus maar
+  met `beeld_niet.tsv`, gaf er minder. Het voorstel volgt dan die keuze; zonder tweede keus valt
+  `, met … tweede keus (…)` weg. Bij evenveel tekorten blijft de eerste keus (x3a.md, "De
+  review");
+- `BZ4 set: beeld_niet.tsv: … foto's op de lijst, als kandidaat overgeslagen: …`: alleen als die
+  lijst er is; hoeveel foto's erop staan en hoeveel daarvan het voorstel tegenkwam en oversloeg;
+- `FOUT set: beeld_niet.tsv regel …: …`: de lijst klopt niet (de kop, een bron die geen
+  bestandspagina van Commons is, een reden die niet bestaat, een lege of te lange `gezien`, een
+  dubbele bron; ook `FOUT set: beeld_niet.tsv: geen UTF-8`, en `FOUT set: beeld_niet.tsv: <pad>
+  is er niet (--niet)` als een lijst die met `--niet` is opgegeven niet bestaat; zonder `--niet`
+  mag de standaardlijst ontbreken); `set` vraagt dan niets aan Commons.
+  `FOUT set: beeld.tsv: regel … (<sleutel>) staat in beeld_niet.tsv regel …
+  (<reden>); …`: een vaste foto staat op de lijst; `set` haalt dan niets op;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
   (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
@@ -261,19 +318,77 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   afdrukbare ASCII en hooguit 160 tekens. Herhaalt het antwoord de User-Agent met
   `BEELD_CONTACT`, dan staat daar `[contact]`. Bij `set` staat erachter hoe ver hij kwam, wat hij
   ophaalde en het verkeer met Commons, bijvoorbeeld `(bij foto 37 van 120, een thumbnail van
-  1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; upload: 37 vragen, 0 keer 429;
-  contact: ja)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij weinig vragen en een
-  `eerste 429 na` van een paar seconden, dan was het budget van het IP van de runner al op voordat
-  de job begon (ander verkeer op dat IP);
+  1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; thumb: 36 vragen, 0 keer 429; upload:
+  1 vraag, 0 keer 429; contact: ja)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij
+  weinig vragen en een `eerste 429 na` van een paar seconden, dan was het budget van het IP van
+  de runner al op voordat de job begon (ander verkeer op dat IP);
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
+- `BZ4 … (rapport)`: regels zonder poort. Ze veranderen nooit een uitkomst, en mislukt er een, dan
+  zegt hij `… (rapport): mislukt (<soort>)`. Waar int8 het verlies maakt (x3a.md, "CI op
+  3a9b07d", met hoe je ze leest), uit de stap BZ4, in `bz4.json` onder `int8_rapport`:
+  - `BZ4 torens (rapport)`: precisie@5 met de tekst in int8 en de beelden in fp32, en omgekeerd;
+  - `BZ4 fp32 (rapport)`: engels, meer zoals deze, MIN_FOTO, MIN_TEKST en de plekken van de
+    combinaties, nu in fp32;
+  - `BZ4 cos int8 tegen fp32 (rapport)`, `BZ4 één per keer (rapport)` (elke vraag en foto alleen,
+    zoals de dienst) en `BZ4 buren uit dezelfde batch (rapport)` (tegen toeval);
+  - `BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: …` (drie regels) en `BZ4 en
+    per vraag (rapport, int8/fp32): …`;
+  - sinds CI op 011bf2d, elk in een eigen try (een fout is `BZ4 <deel> (rapport): mislukt
+    (<soort>)`, de andere delen gaan door): `BZ4 meer zoals deze per categorie (rapport,
+    int8/fp32) 1/n: strand …/… (fout int8: stad …, boot …, anders-brug …; fp32: …) | …`
+    (drie categorieën per regel, dus bij de twaalf categorieën van de set vier regels; per
+    categorie het deel van de top 4 in int8 en fp32, en waar de foute buren het vaakst vandaan
+    komen: een categorie, of bij een afleider de naam zoals `anders-vogel`; een combinatie telt
+    bij allebei), `BZ4 zwakke vragen (rapport) 1/n: bergen
+    (nl; int8 …/5, fp32 …/5): int8 <vijf sleutels>; fp32 <vijf sleutels>` (elke vraag in nl of
+    en met hooguit 1 goede foto in de top 5 in int8 of fp32, de zwakste eerst, met de sleutels
+    van de top 5; hooguit 24 regels en dan `nog …, niet uitgeschreven`; zonder zwakke vraag één
+    regel `geen`) en `BZ4 meer zoals deze top 1 (rapport): int8 … (…/…), fp32 …` (hoe vaak de
+    naaste buur een categorie deelt). In `bz4.json`: `meer_zoals_per_categorie`,
+    `zwakke_vragen` (`aantal` en hooguit 24 `vragen`) en `meer_zoals_top1`;
+
+  en uit de eigen stap `BZ4 rapport int8 per laag en varianten (geen poort)`, in `bz4r.json` (die
+  stap mag falen, heeft hooguit 15 minuten en de uitslag leest hem niet):
+  - `BZ4 cpu (rapport): <model>; vnni ja|nee`;
+  - `BZ4 gewicht int8 <toren> (rapport)`: de fout van de gewichten per Linear, met |q| ≤ 64 en
+    met 127;
+  - `BZ4 invoer <toren> (rapport; …)`: de drie Linears met de grootste fout per tensor, met max/rms,
+    het token en het kanaal van de max, en de fout per tensor in de batch, per tensor alleen, per
+    token en per token na glad;
+  - `BZ4 afwijking per laag <toren> (rapport)`: cos tussen int8 en fp32 na elke laag;
+  - `BZ4 variant <naam> (rapport)`: nl (en hoeveel die zakt tegen fp32), engels, combinaties, meer
+    zoals deze, cos, en de grootte en tijd van de grafen. `fp32`, `zoals nu` (wat de job omzet:
+    sinds `VERSIE` 3 per token) en `per tensor (v2)` (de vorm van `VERSIE` 2), en bovenop per
+    token: `fc2 fp32`, `mlp fp32`, `aandacht fp32`, `kop fp32`, `laag 0-3 fp32`, `laag 8-11 fp32`,
+    `per token + glad` en `embedding fp32` (sinds CI op 011bf2d; `per token`, `per token + kop
+    fp32` en `Q_MAX 127` zijn weg). Elke variant meet één plek: `fc2 fp32`, `mlp fp32` en
+    `aandacht fp32` alleen in de lagen van de encoder, de koppen alleen in `kop fp32`. Na 8
+    minuten `overgeslagen: tijd`; een variant die faalt `mislukt (<soort>)`, en de volgende gaat
+    door;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
-- per pytest-stap de laatste regel.
+- per pytest-stap de laatste regel (`bz3`, `bz4`, `bz4r`, `bz6`).
 
 Het hele verslag staat bij de run als artifact `beeld-model` (`kort.txt`, `bz3.json`, `bz4.json`,
-`bz6.json`, `bz7.json`, de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
+`bz4r.json`, `bz6.json`, `bz7.json`, de uitvoer van pytest (`bz3.txt`, `bz4.txt`, `bz4r.txt`,
+`bz6.txt`), de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
 het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van Commons hooguit
-één vraag per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar het repository als
-contact; zonder contact `… per 8 s, …; contact: nee`).
+één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar
+het repository als contact; zonder contact `… per 8 s, …; contact: nee`). Bij een voorstel ook,
+per zoekopdracht, `BZ4 set: <zoekopdracht>: … van … gekozen, … tweede keus (… kandidaten bekeken
+op … pagina's; geen eerste keus: … kunstwerk, … collectie)`: hoeveel bruikbare kandidaten er
+tweede keus waren en waarom (`kunstwerk`, `collectie`, `persoon` of `sjablonen onvolledig`, zoals
+bij een tekort), en per gekozen foto `BZ4 set: bewijs <sleutel>: eerste keus; kunstwerk nee,
+collectie nee, persoon nee, eigen werk ja, prominent ja, P180 3`: eerste of tweede keus, en waar
+elk teken uit blijkt (een eigenschap als `P6243` of `P195`, een waarde als `P31 Q3305213` of
+`P180 Q8441`, of een sjabloon als `Artwork` of `Personality rights`). `eigen werk` is P7482 = eigen
+werk; `prominent` zegt of de categorie van de zoekopdracht op P180 de rang preferred heeft (bij
+een combinatie `1 van 2` als één van de twee); `P180 …` is hoeveel dingen er volgens Commons op
+staan. Gaf de eerste keus een tekort, dan kiest `set` opnieuw in de volgorde van Commons, met
+per zoekopdracht `BZ4 set: volgorde van Commons, <zoekopdracht>: … van … gekozen, … tweede keus
+(…)`, en daarna `BZ4 set: de volgorde van Commons gaf …: het voorstel houdt de eerste keus`, of
+(als die keuze minder tekorten gaf) de regel uit het blok hierboven en het bewijs per foto van
+die keuze. Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons. Daarmee
+kijk je stap 4 sneller na.
 
 ### Een contact in de User-Agent (`BEELD_CONTACT`, in de CI aan)
 
@@ -285,7 +400,9 @@ in de User-Agent, zoals de richtlijn van Wikimedia voor de User-Agent vraagt, is
 minuut; dan vraagt de tool de API hooguit één keer per seconde.
 
 `tools/beeld/beeld_model.py` stuurt dat contact mee als de omgevingsvariabele `BEELD_CONTACT`
-gezet is, en alleen naar Commons (de API en upload; Hugging Face en andere hosts nooit).
+gezet is, en alleen naar Commons (de API, thumb.wikimedia.org en upload.wikimedia.org; Hugging Face
+en andere hosts nooit). Ook na een omleiding: de User-Agent komt per stap opnieuw, en een omleiding
+van een vraag aan Commons naar een andere host volgt de tool niet.
 
 **Zo staat het nu.** Jonas vond op 2026-11-15 goed dat de CI de link naar zijn openbare
 repository als contact naar Wikimedia stuurt, en alleen dat (geen e-mail, geen naam). Daarom
@@ -339,11 +456,38 @@ zelf nooit iets in het repo; een mens doet dat, zo:
    blok, `model.safetensors` is ±1,51 GB en `tokenizer.json` ±34,4 MB.
 4. Kijk `voorstel-beeld.tsv` door: 120 foto's (12 categorieën × 5, de 6 vaste foto's van de
    combinaties, 60 andere), elk met sleutel, categorieën, licentie (CC0 of publiek domein),
-   sha256, bytes, de URL van de thumbnail van 1280 px breed op upload.wikimedia.org
-   (`…/thumb/…/1280px-…`; van een origineel dat niet breder is: het origineel zelf) en de
-   bestandspagina van het origineel op Commons. Staat er toch een herkenbaar persoon op een foto,
-   vervang die regel door een andere foto van Commons met dezelfde sleutel-soort, categorie en
-   licentie. De URL is die van zijn thumbnail van 1280 breed: `thumburl` uit
+   sha256, bytes, de URL van de thumbnail van 1280 px breed zoals de API hem gaf (op
+   thumb.wikimedia.org, of in de oude vorm op upload.wikimedia.org: `…/thumb/…/1280px-…`; van een
+   origineel dat niet breder is: het origineel zelf, op upload.wikimedia.org) en de
+   bestandspagina van het origineel op Commons (`bron`). Open de bestandspagina's; het log zegt per
+   foto of hij eerste of tweede keus was en waar dat uit blijkt (`BZ4 set: bewijs …`, hierboven).
+   Klopt een foto niet:
+   1. zet zijn `bron` met een reden in `api/tests/analyse/sets/beeld_niet.tsv`: `persoon` (er
+      staat een herkenbaar mens op), `kunstwerk` (een schilderij, prent, tekening, beeld of
+      museumvoorwerp, terwijl de categorie het onderwerp is), `niet-zichtbaar` (de categorie, bij
+      `anders-*` het onderwerp, is niet te zien) of `toont-categorie` (een `anders-*` die toch een
+      van de twaalf categorieën laat zien), en in `gezien` de sleutel en de commit, zoals `stad-5
+      op 3a9b07d`;
+   2. commit en push. De job draait weer als `beeld_niet.tsv` verandert (x3a.md, "De set
+      strenger"), en anders met `beeld-model: ja` in de tekst van de PR;
+   3. het volgende voorstel slaat die foto's over en neemt de volgende in dezelfde volgorde, met
+      alle controles van de tool. Kijk het weer door, tot er geen foto meer fout is; dan stap 5.
+      Eén ronde is één run van de job (op 3a9b07d ±5 minuten, waarvan ±3 voor `set`).
+
+   Zet een foto alleen om een van die vier redenen op de lijst, die je aan de foto en zijn pagina
+   ziet; nooit om een score van het model of een uitkomst van BZ4 (`bz4.json` heeft geen score per
+   foto, en dat blijft zo). Een ontbrekend of verkeerd gegeven op Commons zelf rechtzetten (depicts
+   toevoegen, als prominent markeren) mag ook; het volgende voorstel leest het. Een vaste foto van
+   een combinatie (`<a>+<b>.jpg`) hoort niet op de lijst zonder overleg: daar zijn maar weinig
+   kandidaten voor, en een tekort maakt `set` rood. Welke combinaties nog nagekeken moeten worden,
+   staat in x3a.md ("De set strenger"). Vallen er foto's weg, dan schuiven de sleutels erna op
+   (`strand-3` kan `strand-2` worden); dat is geen probleem.
+
+   Alleen als het niet anders kan (een combinatie zonder andere kandidaat): vervang de regel met
+   de hand door een andere foto van Commons met dezelfde sleutel-soort, categorie en licentie.
+   Dat gaat buiten de controles van de tool om (de licentie uit de gegevens, de grootte, P180, de
+   eerste keus), dus kijk die zelf na. De URL is die van zijn thumbnail van 1280 breed:
+   `thumburl` uit
    `https://commons.wikimedia.org/w/api.php?action=query&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=1280&titles=File:<naam>`
    (een liggende foto moet dan ten minste 320 px hoog zijn). sha256 en bytes zijn die van precies
    dat bestand: haal het één keer op en reken ze uit. Een thumbnail van een andere breedte weigert
@@ -358,12 +502,20 @@ zelf nooit iets in het repo; een mens doet dat, zo:
 6. Push. De job draait dan weer (de lock is veranderd), nu streng: een andere sha256 of grootte
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
 
+Neem de regels van `beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` uit een run op een commit
+met `VERSIE` 3 (na `011bf2d`). Die van de runs ervoor (beeld `96c602da`, tekst `afc9dd55`, meta
+`cc84a88b`, `VERSIE` 2) gelden niet meer: per token geeft andere int8-bytes en een andere
+`meta.json`. De bronnen, `tokenizer.bin` en de licentie zijn niet veranderd.
+
 **Klopt een foto van `beeld.tsv` later niet meer** ("FOUT set: kat-2.jpg: sha256 …, verwacht …
 (bij foto … van 120, een thumbnail van 1280 px, …)"), dan heeft Wikimedia die thumbnail
 waarschijnlijk opnieuw gemaakt, met andere bytes. Zolang de cache in CI de eerste goede kopie
 heeft, merkt de job het niet; pas als die cache weg is. Haal de thumbnail (de URL in die regel)
 één keer op, kijk of het dezelfde foto is, en zet de nieuwe sha256 en grootte in die regel van
-`beeld.tsv`, in een eigen commit. Is het een andere foto, vervang de regel zoals in stap 4.
+`beeld.tsv`, in een eigen commit. Is het een andere foto, vervang de regel met de hand zoals aan
+het eind van stap 4. Zo ook als een vaste foto later toch fout blijkt: zet je zijn `bron` in
+`beeld_niet.tsv`, dan stopt `set` met `FOUT set: beeld.tsv: regel … (<sleutel>) staat in
+beeld_niet.tsv regel … (<reden>); …` tot die regel van `beeld.tsv` vervangen is.
 
 Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
 `models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van
@@ -388,6 +540,13 @@ job.
 Op stdout komen de regels voor `models.lock`, op stderr de voortgang, de tijd en maxrss. Code 2
 met één zin is een bron of map die niet klopt (de uitvoermap blijft leeg); code 1 is een fout in
 de omzetter.
+
+De int8-grafen hebben sinds `VERSIE` 3 (x3a.md, "CI op 011bf2d") per token: elke Linear van beide
+torens, ook de MAP-kop, is `MatMulInteger` met de invoer in uint8 per rij (max |x| / 127, nulpunt
+128) en het gewicht in int8 per kolom (|q| ≤ 64); de embedding van de tekst blijft int8 per rij.
+`meta.json` zegt `"omzetter": 3` en beschrijft dat onder `int8`. De vorm van `VERSIE` 2 (per
+tensor, `DynamicQuantizeMatMul`) is alleen nog een optie in de code (`per_token=False`), voor het
+rapport; de opdrachtregel kent hem niet.
 
 ### De stand van zoeken op beeld (`beeld-status`)
 

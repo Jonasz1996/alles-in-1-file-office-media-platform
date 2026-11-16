@@ -24,11 +24,20 @@ Alleen een rapport: de 6 vragen in het Engels; 256.webp tegen 1024.webp (zakt pr
 dan 0,02, dan rekent X3 uit 1024.webp, Keuze 77); de verdeling van de scores voor MIN_TEKST en
 MIN_FOTO (goed tegen niet goed). "Meer zoals deze": elke foto met een categorie vraagt, de foto
 zelf telt niet mee, en een buur is goed als hij een categorie met de vraag deelt.
+
+Ook alleen een rapport, sinds CI op 3a9b07d (x3a.md): waar int8 het verlies maakt (`_rapport_int8`;
+in bz4.json onder int8_rapport). Het rekent met wat de poort al heeft, binnen de try van
+`_rapport_veilig`: een fout geeft een regel `mislukt`, nooit een andere uitslag van een poort.
+Sinds CI op 011bf2d daarbij, elk in een eigen try: "Meer zoals deze" per categorie (met waar de
+foute buren vandaan komen), de zwakke vragen (hooguit 1 goede foto in de top 5, in int8 of fp32;
+met hun top 5) en hoe vaak de naaste buur uit dezelfde categorie komt.
 """
 
 from __future__ import annotations
 
+import re
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +45,7 @@ import pytest
 
 from app import render
 from tests_analyse.beeld_echt import (
+    BATCH,
     Model,
     Verslag,
     kwantielen,
@@ -57,6 +67,11 @@ MEER_TOP = 4
 PREVIEW_ZAKT = 0.02  # rapport: daarboven rekent X3 uit 1024.webp (Keuze 77)
 KLEUREN = {"rood": (255, 0, 0), "blauw": (0, 0, 255), "groen": (0, 255, 0)}
 MAX_PIXELS = 100_000_000  # settings.preview_max_pixels van de app
+# rapport (sinds CI op 011bf2d): een zwakke vraag heeft hooguit ZWAK goede foto's in de top 5
+# (int8 of fp32); van de foute buren de HERKOMST vaakste; geen lijst langer dan MAX_LIJST
+ZWAK = 1
+HERKOMST = 3
+MAX_LIJST = 24
 
 
 def _volgorde(scores: np.ndarray) -> np.ndarray:
@@ -83,6 +98,367 @@ def _meer_zoals(e: np.ndarray, cats: list[set]) -> list[float]:
         top = _volgorde(s)[:MEER_TOP]
         uit.append(sum(bool(c & cats[j]) for j in top) / MEER_TOP)
     return uit
+
+
+def _plekken(t: np.ndarray, e: np.ndarray, combi: list[dict], sleutels: list[str]) -> list[int]:
+    """Per combinatie de plek (vanaf 1) van de bedoelde foto."""
+    uit = []
+    for v, rij in zip(t, combi, strict=True):
+        doel = sleutels.index(rij["doel"])
+        uit.append(int(np.nonzero(_volgorde(e @ v) == doel)[0][0]) + 1)
+    return uit
+
+
+def _cos(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """De cosinus per rij."""
+    n = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1)
+    return np.sum(a * b, axis=1) / np.maximum(n, 1e-30)
+
+
+def _buren_uit_de_batch(e: np.ndarray, cats: list[set]) -> tuple[float, float]:
+    """Van de top MEER_TOP van "Meer zoals deze": het deel uit dezelfde batch van BATCH (zoals
+    Model.beelden ze rekent), en wat toeval zou geven (de andere foto's van die batch gedeeld door
+    alle andere foto's), over dezelfde vragende foto's."""
+    n, deel, toeval = len(cats), [], []
+    for i, c in enumerate(cats):
+        if not c:
+            continue
+        s = e @ e[i]
+        s[i] = -np.inf
+        top = _volgorde(s)[:MEER_TOP]
+        deel.append(sum(int(j) // BATCH == i // BATCH for j in top) / MEER_TOP)
+        batch = min(n, (i // BATCH + 1) * BATCH) - (i // BATCH) * BATCH
+        toeval.append((batch - 1) / (n - 1))
+    return float(np.mean(deel)), float(np.mean(toeval))
+
+
+def _herkomst(cats_j: set, sleutel: str) -> list[str]:
+    """Waar een foute buur vandaan komt: zijn categorieën (een combinatie telt bij allebei), of bij
+    een foto zonder categorie (een afleider) zijn sleutel zonder nummer: anders-vogel-3 wordt
+    anders-vogel."""
+    return sorted(cats_j) if cats_j else [re.sub(r"-\d+$", "", sleutel)]
+
+
+def _namen(nl: list[dict], cats: list[set]) -> list[str]:
+    """De categorieën in de volgorde van de vragen in het Nederlands, daarna de rest."""
+    return list(dict.fromkeys([x["categorieen"] for x in nl] + sorted(set().union(*cats))))
+
+
+def _meer_per_categorie(
+    e: np.ndarray, cats: list[set], sleutels: list[str], namen: list[str]
+) -> dict[str, dict]:
+    """Per categorie "Meer zoals deze": over de foto's met die categorie het deel van de top
+    MEER_TOP dat een categorie met de vragende foto deelt (zoals `_meer_zoals`; een combinatie
+    vraagt bij allebei), en van de foute buren de HERKOMST vaakste herkomsten met hun aantal (bij
+    gelijk aantal op naam)."""
+    tops = {}
+    for i, c in enumerate(cats):
+        if c:
+            s = e @ e[i]
+            s[i] = -np.inf
+            tops[i] = _volgorde(s)[:MEER_TOP]
+    uit = {}
+    for naam in namen:
+        vragers = [i for i in tops if naam in cats[i]]
+        if not vragers:
+            continue
+        deel, fout = [], Counter()
+        for i in vragers:
+            deel.append(sum(bool(cats[i] & cats[j]) for j in tops[i]) / MEER_TOP)
+            for j in tops[i]:
+                if not cats[i] & cats[j]:
+                    fout.update(_herkomst(cats[j], sleutels[j]))
+        vaakst = sorted(fout.items(), key=lambda kv: (-kv[1], kv[0]))[:HERKOMST]
+        uit[naam] = {
+            "n": len(vragers),
+            "deel": round(float(np.mean(deel)), 4),
+            "fout": dict(vaakst),
+        }
+    return uit
+
+
+def _top1(e: np.ndarray, cats: list[set]) -> tuple[int, int]:
+    """Van de foto's met een categorie: hoeveel hun naaste buur (zichzelf niet) een categorie met
+    ze delen, en hoeveel het er zijn."""
+    goed = n = 0
+    for i, c in enumerate(cats):
+        if not c:
+            continue
+        s = e @ e[i]
+        s[i] = -np.inf
+        goed += bool(c & cats[int(_volgorde(s)[0])])
+        n += 1
+    return goed, n
+
+
+def _top5(t: np.ndarray, e: np.ndarray, sleutels: list[str]) -> list[list[str]]:
+    """Per vraag de sleutels van de top 5."""
+    return [[sleutels[int(i)] for i in _volgorde(e @ v)[:5]] for v in t]
+
+
+def _zwakke_vragen(
+    rijen: list[dict],
+    n8: list[int],
+    n32: list[int],
+    top8: list[list[str]],
+    top32: list[list[str]],
+) -> list[dict]:
+    """De vragen met hooguit ZWAK goede foto's in de top 5, in int8 of in fp32, met hun top 5 in
+    allebei; de zwakste eerst (het minimum, dan de som; verder in de volgorde van de vragen)."""
+    zwak = [
+        {
+            "vraag": x["vraag"],
+            "soort": x["soort"],
+            "int8": a,
+            "fp32": b,
+            "top5_int8": t8,
+            "top5_fp32": t32,
+        }
+        for x, a, b, t8, t32 in zip(rijen, n8, n32, top8, top32, strict=True)
+        if min(a, b) <= ZWAK
+    ]
+    return sorted(zwak, key=lambda z: (min(z["int8"], z["fp32"]), z["int8"] + z["fp32"]))
+
+
+def _fout_tekst(fout: dict[str, int]) -> str:
+    return ", ".join(f"{k} {v}" for k, v in fout.items()) or "geen"
+
+
+def _rapport_veilig(verslag: Verslag, **kw) -> None:
+    """Het int8-rapport in het verslag; een fout wordt één regel `mislukt`, nooit een andere uitslag
+    van een poort (de review, S4; test_beeld_int8_klein.py faalt het met opzet)."""
+    try:
+        verslag.zet("int8_rapport", _rapport_int8(verslag, **kw))
+    except Exception as e:  # alleen een rapport: nooit een andere uitslag van een poort
+        verslag.kort(f"BZ4 int8-rapport (rapport): mislukt ({type(e).__name__})")
+
+
+def _rapport_int8(
+    verslag: Verslag,
+    *,
+    int8: Model,
+    fp32: Model,
+    pixels: list[np.ndarray],
+    e8: np.ndarray,
+    e32: np.ndarray,
+    t8: dict[str, np.ndarray],
+    t32: np.ndarray,
+    rijen: dict[str, list[dict]],
+    cats: list[set],
+    sleutels: list[str],
+) -> dict:
+    """Alleen een rapport (x3a.md, "CI op 3a9b07d"): welke toren het verlies van int8 draagt, wat
+    fp32 haalt bij de andere getallen, de cosinus per vraag en per foto, een vraag of foto alleen
+    tegen in een batch, en de precisie per vraag. Regels met `(rapport)`; geen vector, alleen de
+    vaste vragen en de sleutels van de set."""
+    nl, combi, en = rijen["nl"], rijen["c"], rijen["en"]
+
+    def gem(lijst) -> float:
+        return round(float(np.mean(lijst)), 4)
+
+    def p5(lijst) -> float:
+        return gem(np.asarray(lijst) / 5)
+
+    def r4(x) -> float:
+        return round(float(x), 4)
+
+    nl8, nl32 = _precisie(t8["nl"], e8, nl, cats), _precisie(t32, e32, nl, cats)
+    tekst32 = _precisie(t32, e8, nl, cats)  # tekst fp32 + beeld int8
+    beeld32 = _precisie(t8["nl"], e32, nl, cats)  # tekst int8 + beeld fp32
+    r: dict = {
+        "torens": {
+            "tekst_int8_beeld_fp32": p5(beeld32),
+            "tekst_fp32_beeld_int8": p5(tekst32),
+            "int8": p5(nl8),
+            "fp32": p5(nl32),
+        }
+    }
+    t = r["torens"]
+    verslag.kort(
+        f"BZ4 torens (rapport): precisie@5 nl tekst int8 + beeld fp32 "
+        f"{t['tekst_int8_beeld_fp32']:.3f}, tekst fp32 + beeld int8 "
+        f"{t['tekst_fp32_beeld_int8']:.3f} (beide int8 {t['int8']:.3f}, beide fp32 {t['fp32']:.3f})"
+    )
+
+    # fp32 bij de getallen die de poort alleen in int8 rekent
+    t32_en = fp32.teksten([x["vraag"] for x in en])
+    t32_c = fp32.teksten([x["vraag"] for x in combi])
+    en8, en32 = _precisie(t8["en"], e8, en, cats), _precisie(t32_en, e32, en, cats)
+    plekken32 = _plekken(t32_c, e32, combi, sleutels)
+    cos_foto = e32 @ e32.T
+    zelfde = np.array([[bool(a & b) for b in cats] for a in cats])
+    boven = ~np.eye(len(cats), dtype=bool)
+    cos_tekst = e32 @ t32.T
+    goed = np.array([[x["categorieen"] in c for x in nl] for c in cats])
+    r["fp32"] = {
+        "en": p5(en32),
+        "en_int8": p5(en8),
+        "meer_zoals_deze": gem(_meer_zoals(e32, cats)),
+        "meer_zoals_deze_int8": gem(_meer_zoals(e8, cats)),
+        "foto_cos_zelfde": kwantielen(cos_foto[zelfde & boven]),
+        "foto_cos_anders": kwantielen(cos_foto[~zelfde & boven]),
+        "tekst_kans_goed": kwantielen(fp32.kans(cos_tekst[goed])),
+        "tekst_kans_niet": kwantielen(fp32.kans(cos_tekst[~goed])),
+        "combinaties_top": sum(p <= COMBI_TOP for p in plekken32),
+        "combinaties_plekken": plekken32,
+    }
+    f = r["fp32"]
+    verslag.kort(
+        f"BZ4 fp32 (rapport): engels {f['en']:.3f} (int8 {f['en_int8']:.3f}), meer zoals deze "
+        f"{f['meer_zoals_deze']:.3f} (int8 {f['meer_zoals_deze_int8']:.3f}), MIN_FOTO zelfde p5 "
+        f"{f['foto_cos_zelfde'].get('p5')} anders p95 {f['foto_cos_anders'].get('p95')}, "
+        f"MIN_TEKST kans goed p5 {f['tekst_kans_goed'].get('p5')} niet goed p95 "
+        f"{f['tekst_kans_niet'].get('p95')}, combinaties {f['combinaties_top']}/{len(combi)} "
+        f"plekken {plekken32}"
+    )
+
+    # de cosinus van int8 met fp32, per vraag en per foto
+    ct, cb = _cos(t8["nl"], t32), _cos(e8, e32)
+    r["cos"] = {
+        "tekst_nl": kwantielen(ct),
+        "tekst_laagste": nl[int(np.argmin(ct))]["vraag"],
+        "beeld": kwantielen(cb),
+        "beeld_laagste": sleutels[int(np.argmin(cb))],
+    }
+    c = r["cos"]
+    verslag.kort(
+        f"BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 {c['tekst_nl']['p5']} mediaan "
+        f"{c['tekst_nl']['p50']} laagste {c['tekst_nl']['p0']} ({c['tekst_laagste']}); beeld p5 "
+        f"{c['beeld']['p5']} mediaan {c['beeld']['p50']} laagste {c['beeld']['p0']} "
+        f"({c['beeld_laagste']})"
+    )
+
+    # een per keer, zoals een vraag in productie (GET /search) en zonder buren in de batch
+    t_alleen = np.concatenate([int8.teksten([x["vraag"]]) for x in nl])
+    e_alleen = np.concatenate([int8.beelden([p]) for p in pixels])
+    r["een_per_keer"] = {
+        "tekst_nl": p5(_precisie(t_alleen, e8, nl, cats)),
+        "tekst_nl_batch": p5(nl8),
+        "tekst_cos_batch": kwantielen(_cos(t_alleen, t8["nl"])),
+        "beeld_cos_batch": kwantielen(_cos(e_alleen, e8)),
+        "meer_zoals_deze": gem(_meer_zoals(e_alleen, cats)),
+    }
+    a = r["een_per_keer"]
+    verslag.kort(
+        f"BZ4 één per keer (rapport): tekst int8 precisie@5 {a['tekst_nl']:.3f} (in batches van "
+        f"{BATCH}: {a['tekst_nl_batch']:.3f}), cos tegen batch p5 {a['tekst_cos_batch']['p5']}; "
+        f"beeld int8 cos tegen batch p5 {a['beeld_cos_batch']['p5']}, meer zoals deze "
+        f"{a['meer_zoals_deze']:.3f}"
+    )
+
+    b8, toeval = _buren_uit_de_batch(e8, cats)
+    b32, _ = _buren_uit_de_batch(e32, cats)
+    r["buren_uit_de_batch"] = {"int8": r4(b8), "fp32": r4(b32), "toeval": r4(toeval)}
+    verslag.kort(
+        f"BZ4 buren uit dezelfde batch (rapport): int8 {b8:.3f}, fp32 {b32:.3f} (toeval "
+        f"{toeval:.3f})"
+    )
+
+    # per vraag: int8, fp32, tekst fp32 + beeld int8, tekst int8 + beeld fp32
+    r["nl_per_vraag"] = [
+        {"vraag": x["vraag"], "int8": a8, "fp32": a32, "tekst_fp32": tf, "beeld_fp32": bf}
+        for x, a8, a32, tf, bf in zip(nl, nl8, nl32, tekst32, beeld32, strict=True)
+    ]
+    per = [
+        f"{x['vraag']} {a8}/{a32}/{tf}/{bf}"
+        for x, a8, a32, tf, bf in zip(nl, nl8, nl32, tekst32, beeld32, strict=True)
+    ]
+    delen = [per[i : i + 8] for i in range(0, len(per), 8)]
+    for i, deel in enumerate(delen, 1):
+        verslag.kort(
+            f"BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) {i}/{len(delen)}: "
+            + ", ".join(deel)
+        )
+    r["en_per_vraag"] = [
+        {"vraag": x["vraag"], "int8": a8, "fp32": a32}
+        for x, a8, a32 in zip(en, en8, en32, strict=True)
+    ]
+    verslag.kort(
+        "BZ4 en per vraag (rapport, int8/fp32): "
+        + ", ".join(f"{x['vraag']} {a8}/{a32}" for x, a8, a32 in zip(en, en8, en32, strict=True))
+    )
+
+    # Sinds CI op 011bf2d (x3a.md): waar "Meer zoals deze" en de zwakste vragen het verlies maken.
+    # Elk deel in zijn eigen try: een fout is één regel `mislukt` (en in bz4.json {"mislukt": ...}),
+    # de andere delen gaan door, en de regels komen pas als het hele deel gerekend is.
+    def deel(naam: str, sleutel: str, reken) -> None:
+        try:
+            waarde, regels = reken()
+        except Exception as e:  # alleen een rapport: nooit een andere uitslag van een poort
+            verslag.kort(f"BZ4 {naam} (rapport): mislukt ({type(e).__name__})")
+            r[sleutel] = {"mislukt": type(e).__name__}
+            return
+        r[sleutel] = waarde
+        for regel in regels:
+            verslag.kort(regel)
+
+    def per_categorie() -> tuple[dict, list[str]]:
+        namen = _namen(nl, cats)
+        m8 = _meer_per_categorie(e8, cats, sleutels, namen)
+        m32 = _meer_per_categorie(e32, cats, sleutels, namen)
+        w = {
+            naam: {
+                "n": m8[naam]["n"],
+                "int8": m8[naam]["deel"],
+                "fp32": m32[naam]["deel"],
+                "fout_int8": m8[naam]["fout"],
+                "fout_fp32": m32[naam]["fout"],
+            }
+            for naam in m8
+        }
+        per = [
+            f"{naam} {x['int8']:.3f}/{x['fp32']:.3f} (fout int8: {_fout_tekst(x['fout_int8'])}; "
+            f"fp32: {_fout_tekst(x['fout_fp32'])})"
+            for naam, x in w.items()
+        ]
+        delen = [per[i : i + 3] for i in range(0, len(per), 3)]
+        regels = [
+            f"BZ4 meer zoals deze per categorie (rapport, int8/fp32) {i}/{len(delen)}: "
+            + " | ".join(d)
+            for i, d in enumerate(delen, 1)
+        ]
+        return w, regels or ["BZ4 meer zoals deze per categorie (rapport): geen foto met categorie"]
+
+    def zwakke() -> tuple[dict, list[str]]:
+        top8 = _top5(np.concatenate([t8["nl"], t8["en"]]), e8, sleutels)
+        top32 = _top5(np.concatenate([t32, t32_en]), e32, sleutels)
+        zwak = _zwakke_vragen(nl + en, nl8 + en8, nl32 + en32, top8, top32)
+        regels = [
+            f"BZ4 zwakke vragen (rapport) {i}/{len(zwak)}: {z['vraag']} ({z['soort']}; int8 "
+            f"{z['int8']}/5, fp32 {z['fp32']}/5): int8 {' '.join(z['top5_int8'])}; fp32 "
+            f"{' '.join(z['top5_fp32'])}"
+            for i, z in enumerate(zwak[:MAX_LIJST], 1)
+        ]
+        if len(zwak) > MAX_LIJST:
+            regels.append(
+                f"BZ4 zwakke vragen (rapport): nog {len(zwak) - MAX_LIJST}, niet uitgeschreven"
+            )
+        if not zwak:
+            regels = [
+                f"BZ4 zwakke vragen (rapport): geen (elke vraag nl en en ≥ {ZWAK + 1} van 5 in "
+                "int8 en in fp32)"
+            ]
+        return {"aantal": len(zwak), "vragen": zwak[:MAX_LIJST]}, regels
+
+    def top1() -> tuple[dict, list[str]]:
+        g8, n = _top1(e8, cats)
+        g32, _ = _top1(e32, cats)
+        w = {
+            "n": n,
+            "int8_goed": g8,
+            "fp32_goed": g32,
+            "int8": r4(g8 / max(n, 1)),
+            "fp32": r4(g32 / max(n, 1)),
+        }
+        return w, [
+            f"BZ4 meer zoals deze top 1 (rapport): int8 {w['int8']:.3f} ({g8}/{n}), fp32 "
+            f"{w['fp32']:.3f} ({g32}/{n})"
+        ]
+
+    deel("meer zoals deze per categorie", "meer_zoals_per_categorie", per_categorie)
+    deel("zwakke vragen", "zwakke_vragen", zwakke)
+    deel("meer zoals deze top 1", "meer_zoals_top1", top1)
+    return r
 
 
 @pytest.fixture(scope="module")
@@ -115,7 +491,7 @@ def uitkomst() -> dict:
     e8 = int8.beelden(klein)
     e32 = fp32.beelden(klein)
     e8_groot = int8.beelden(groot)
-    del klein, groot
+    del groot  # klein houdt het rapport van int8 nog (één per keer)
 
     rijen = vragen()
     nl = [r for r in rijen if r["soort"] == "nl"]
@@ -243,6 +619,20 @@ def uitkomst() -> dict:
         f"BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 {v['foto_cos_zelfde'].get('p5')}, "
         f"anders p95 {v['foto_cos_anders'].get('p95')}"
     )
+    _rapport_veilig(
+        verslag,
+        int8=int8,
+        fp32=fp32,
+        pixels=klein,
+        e8=e8,
+        e32=e32,
+        t8=t8,
+        t32=t32,
+        rijen={"nl": nl, "c": combi, "en": en},
+        cats=cats,
+        sleutels=sleutels,
+    )
+    del klein
     return u
 
 
