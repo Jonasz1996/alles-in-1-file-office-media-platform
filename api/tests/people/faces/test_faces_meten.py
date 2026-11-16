@@ -14,6 +14,7 @@ import re
 import pytest
 from sqlalchemy import select
 
+from app.analyse import lock, monitor, wire
 from app.models import Face, Setting
 from app.people.faces import meten, register
 from tests.factories import create_user, maker
@@ -133,3 +134,29 @@ async def test_te_weinig_ja_meet_niets(settings, nep):
     )
     async with maker(settings)() as session:
         assert await session.get(Setting, meten.QUALITY) is None
+
+
+async def test_beheer_toont_de_modellen_en_grenzen_van_de_container(settings, fake):
+    """Het blok gezichten neemt de stand, de modellen (met de versie uit models.lock) en de
+    grenzen over van app.analyse.state.view, zoals het blok "Zoeken op beeld". Eerder bleef de
+    versie leeg en waren de grenzen altijd None ("zonder grenzen")."""
+    versions = {m.name: m.sha256[:12] for m in lock.load()}
+    fake.limits = wire.LimitsCaps(cpus=1.5, mem_mb=3072)
+    monitor._status = await monitor.check(settings)
+    async with maker(settings)() as session:
+        block = await register.admin_block(session)
+    assert (block.analyse, block.reason) == ("ok", None)
+    assert [(m.name, m.version, m.sha_ok) for m in block.models] == [
+        (name, versions[name], True) for name in fake.models
+    ]
+    assert (block.limits.cpus, block.limits.mem_mb) == (1.5, 3072)
+
+    gone = next(iter(fake.models))
+    fake.models[gone] = "ontbreekt"
+    fake.limits = None
+    monitor._status = await monitor.check(settings)
+    async with maker(settings)() as session:
+        block = await register.admin_block(session)
+    assert (block.analyse, block.reason) == ("models_missing", gone)
+    assert [m.sha_ok for m in block.models] == [name != gone for name in fake.models]
+    assert block.limits is None  # "zonder grenzen"

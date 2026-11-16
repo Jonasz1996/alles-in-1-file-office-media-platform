@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors, face_rows, jobs, prefs, previews
 from app.analyse import monitor
+from app.analyse import state as analyse_state
 from app.config import Settings
 from app.models import Face, FacePerson, FaceScan, Node, PhotoPref, Setting, User
 from app.people import hooks as people_hooks
@@ -40,7 +41,6 @@ from app.search import hooks as search_hooks
 from app.search.live import own_live
 from app.search.types import (
     AdminFaces,
-    AnalyseModel,
     AnalyseQuality,
     AnalyseQueue,
     CodeCount,
@@ -86,21 +86,18 @@ async def admin_block(db: AsyncSession) -> AdminFaces | None:
     if not state.running(settings):
         return None
     assert settings is not None
-    found = monitor.status()
+    # De stand, de reden, de modellen (met de versie uit models.lock) en de grenzen van de
+    # container: hetzelfde deel als het blok "Zoeken op beeld" (app.analyse.state, Z0b).
+    shown = analyse_state.view(monitor.status())
     counts = await face_rows.server_counts(db)
     done_hour = await face_rows.done_since(db, state.now() - timedelta(hours=1))
-    caps = found.caps
     found_bench = await meten.stored(db, meten.BENCH)
-    models = [
-        AnalyseModel(name=m.name, version=getattr(m, "version", ""), sha_ok=m.state == "ok")
-        for m in (caps.models if caps is not None else [])
-    ]
     return AdminFaces(
         allowed=await state.allowed(db),
-        analyse=found.state,
-        reason=found.reason,
-        models=models,
-        limits=None,
+        analyse=shown.analyse,
+        reason=shown.reason,
+        models=shown.models,
+        limits=shown.limits,
         users_on=counts["users_on"],
         queue=AnalyseQueue(
             waiting=counts["waiting"],
