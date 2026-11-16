@@ -25,6 +25,9 @@ Alleen numpy en de standaardbibliotheek; los van de omzetter geschreven (zoals s
         python -m tests_analyse.siglip_vol --uit /tmp/i2/siglip-vol-bron
 
 Op stdout per bestand de grootte; nooit de gewichten of de woorden.
+
+uit_omgeving() geeft test_geheugen_samen.py en test_beeld_perf.py een map met modellen van de
+echte vorm (een omzetting hiervan, met de echte YuNet en SFace ernaast) uit de omgeving.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import struct
 import sys
@@ -39,7 +43,9 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from tests_analyse import fake_models
 from tests_analyse.siglip_klein import (
     TOKENIZER_CONFIG,
     VOORBEWERKING,
@@ -334,6 +340,18 @@ def schrijf_bron(map_: Path, seed: int = SEED) -> dict[str, int]:
     (map_ / "preprocessor_config.json").write_text(json.dumps(VOORBEWERKING, indent=2) + "\n")
     schrijf_safetensors(map_ / "model.safetensors", seed)
     return {p.name: p.stat().st_size for p in sorted(map_.iterdir())}
+
+
+def uit_omgeving(modellen_env: str, lock_env: str) -> fake_models.Installed | None:
+    """De map (--models van de worker) en de lock (--lock) uit de omgevingsvariabelen modellen_env
+    en lock_env, voor een test die anders de nep neemt; None zonder beide. Met maar één van de twee
+    faalt de test: geen stille terugval op de nep."""
+    root, lock = os.environ.get(modellen_env), os.environ.get(lock_env)
+    if not root and not lock:
+        return None
+    if not root or not lock:
+        pytest.fail(f"{modellen_env} en {lock_env} horen samen")
+    return fake_models.Installed(Path(root), Path(lock))
 
 
 def main(argv: list[str] | None = None) -> int:

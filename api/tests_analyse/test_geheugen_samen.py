@@ -52,7 +52,7 @@ from app.analyse.wire import Child, Op
 from app.beeld import types as vt
 from app.media.worker import guard
 from tests.conftest import anyio_backend  # noqa: F401
-from tests_analyse import echt, fake_beeld, fake_models
+from tests_analyse import echt, fake_beeld, fake_models, siglip_vol
 from tests_analyse.groep_maak import invoer, maak
 
 pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
@@ -148,20 +148,9 @@ def kinderen(pid: int) -> dict[Child, int]:
     return uit
 
 
-def echte_vorm() -> fake_models.Installed | None:
-    """De map en lock van ANALYSE_GEHEUGEN_MODELLEN en ANALYSE_GEHEUGEN_LOCK, of None zonder
-    beide; met maar één van de twee faalt de test (geen stille terugval op de nep)."""
-    root, lock = os.environ.get(MODELLEN_ENV), os.environ.get(LOCK_ENV)
-    if not root and not lock:
-        return None
-    if not root or not lock:
-        pytest.fail(f"{MODELLEN_ENV} en {LOCK_ENV} horen samen")
-    return fake_models.Installed(Path(root), Path(lock))
-
-
 @pytest.fixture
 def worker(tmp_path):
-    modellen = echte_vorm()
+    modellen = siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV)
     if modellen is None:
         modellen = fake_models.install(tmp_path / "modellen")
         fake_beeld.install(modellen)
@@ -191,7 +180,7 @@ async def test_groeperen_een_volle_cache_en_herladen_tegelijk_onder_2_5_gb(worke
     vectoren(eva2, N_EVA, 2, seed=2)
     vectoren(bram, N_BRAM, 1, seed=3)
     data = groep()
-    echte = echte_vorm() is not None
+    echte = siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV) is not None
     with Meter(worker.pid) as meter:
         if echte:
             await werk_laadt_alles(s)
