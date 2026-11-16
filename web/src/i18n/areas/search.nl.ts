@@ -10,7 +10,7 @@ export default {
     hintImage: "Zoekt in je eigen foto's. Druk op Enter.",
     // Ook de beschrijving van het veld zolang het raster van X3 er niet is (I1, review R4; de
     // schakelaar staat in search/ImageHint.tsx). Dezelfde zin als beeld.later, zonder versienummer
-    imageLater: "Zoeken op beeld komt in een volgende versie.",
+    imageLater: "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.",
     submit: "Zoeken",
   },
   mode: {

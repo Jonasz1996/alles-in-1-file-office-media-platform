@@ -17,19 +17,20 @@ import type { AdminBeeld, AdminFaces, AdminSearch } from "./searchApi";
 
 // De tab "Zoeken en foto's" op /beheer (Z7, Keuze 51), met onderaan de blokken "Gezichten" (X2)
 // en "Zoeken op beeld" (X3) van Z0b (Keuze 55). Zonder X2 en X3 (faces en beeld null) houden die
-// blokken precies hun kop en "komt later", zonder getallen of andere verzonnen stand.
+// blokken precies hun kop en één zin, zonder getallen of andere verzonnen stand: sinds 0.8.1 (I2)
+// dat het uitstaat (ANALYSE=uit) en wat de beheerder kan doen, in plaats van "komt later".
 const FACES_NL =
   '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Gezichten</h3>' +
-  '<p class="muted">Gezichten herkennen komt later in fase 6.</p></section>';
+  '<p class="muted">Gezichten herkennen staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>';
 const BEELD_NL =
   '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Zoeken op beeld</h3>' +
-  '<p class="muted">Zoeken op beeld komt later in fase 6.</p></section>';
+  '<p class="muted">Zoeken op beeld staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>';
 const FACES_EN =
   '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Faces</h3>' +
-  '<p class="muted">Face recognition comes later in phase 6.</p></section>';
+  '<p class="muted">Face recognition is off on this server: the analysis is not running (ANALYSE=uit in /opt/platform/.env). To turn it on, run the install script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.</p></section>';
 const BEELD_EN =
   '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Search by image</h3>' +
-  '<p class="muted">Search by image comes later in phase 6.</p></section>';
+  '<p class="muted">Search by image is off on this server: the analysis is not running (ANALYSE=uit in /opt/platform/.env). To turn it on, run the install script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.</p></section>';
 
 // Laden: alleen de kop en "laden" (de eerste GET loopt nog)
 const LOADING_NL =
@@ -141,7 +142,7 @@ describe("de tab Zoeken en foto's met de blokken van X2 en X3 (Z0b)", () => {
     expect(SEARCH_TAB_AREAS).toEqual(["photos_faces", "beeld"]);
   });
 
-  it("nl: onder het deel van Z7 eerst Gezichten, dan Zoeken op beeld, elk alleen met komt later", () => {
+  it("nl: onder het deel van Z7 eerst Gezichten, dan Zoeken op beeld, elk alleen met de zin dat het uitstaat", () => {
     const html = view(state());
     expect(html.endsWith(FACES_NL + BEELD_NL)).toBe(true);
     expect(sections(html)).toEqual(["admin-search-title", ...PARTS, "admin-faces-title", "admin-beeld-title"]);

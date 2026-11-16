@@ -1,13 +1,16 @@
 // Zoeken op beeld (fase 6, X3; Keuze 81 en 82): de stand "Wat er op de foto staat" op /zoeken, het
 // raster, "Meer zoals deze" in het infopaneel, de schakelaar en het blok op /beheer. Het gebied is
 // van X3; Z0b zette het leeg neer (Keuze 55). Geen versienummer in een tekst: of zoeken op beeld er
-// is, zegt de server (met de analyse uit blijft alles zoals in 0.8.0).
+// is, zegt de server. Met de analyse uit zeggen notReady en later sinds 0.8.1 (I2) dat het uitstaat
+// en wat de beheerder kan doen (in 0.8.0: "komt later").
 export default {
   title: "Zoeken op beeld",
-  // Het blok op /beheer zonder stand (de analyse staat uit): zoals in 0.8.0
-  notReady: "Zoeken op beeld komt later in fase 6.",
-  // De stand beeld op /zoeken als de server zoeken op beeld niet kent (I1, S8): zonder versienummer
-  later: "Zoeken op beeld komt in een volgende versie.",
+  // Het blok op /beheer zonder stand (de analyse staat uit): wat de beheerder kan doen
+  notReady:
+    "Zoeken op beeld staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md.",
+  // De stand beeld op /zoeken als de server zoeken op beeld niet kent (I1, S8; de analyse staat
+  // uit): zonder versienummer, voor iedereen
+  later: "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.",
   grid: {
     label: "Foto's die passen bij '{q}'",
     labelLike: "Foto's die lijken op de gekozen foto",

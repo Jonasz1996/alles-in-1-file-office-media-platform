@@ -696,13 +696,20 @@ def test_zonder_analyse_ziet_niemand_iets_nieuws(
     verkeer.stil()
     expect(viewer.get_by_role("region", name="Gezichten", exact=True)).to_have_count(0)
 
-    # De beheerder: het blok van 0.8.0, zonder schakelaar of knop
+    # De beheerder: het blok van 0.8.0, zonder schakelaar of knop; de zin zegt sinds 0.8.1 (I2) dat
+    # het uitstaat en wat de beheerder kan doen
     beheer = context_as(admin).new_page()
     beheer_verkeer = Verkeer(beheer)
     beheer.goto("/beheer/zoeken")
     expect(beheer.get_by_role("heading", name="Zoeken en foto's", level=2)).to_be_visible()
     blok = beheer.locator("section[aria-labelledby=admin-faces-title]")
-    expect(blok).to_have_text("GezichtenGezichten herkennen komt later in fase 6.")
+    expect(blok).to_have_text(
+        "Gezichten"
+        "Gezichten herkennen staat uit op deze server: de analyse draait niet "
+        "(ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met "
+        "ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. "
+        "Zie docs/runbooks/analyse.md."
+    )
     expect(beheer.get_by_role("checkbox", name="Gezichtsherkenning toestaan")).to_have_count(0)
     expect(beheer.locator('[data-search^="faces"]')).to_have_count(0)
     beheer_verkeer.stil()

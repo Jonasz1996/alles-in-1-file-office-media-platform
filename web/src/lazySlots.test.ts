@@ -51,7 +51,7 @@ describe("elke plek van X2 en X3 toont niets tot zijn pakket hem vult", () => {
 });
 
 // I1 (S8): in de stand beeld op /zoeken stond niets onder de knoppen. Nu één zin, zonder
-// versienummer. X3b vult de plek met het raster; zolang de server zoeken op beeld niet kent (de
+// versienummer (sinds 0.8.1, I2: dat het uitstaat op deze server en wat de beheerder kan doen). X3b vult de plek met het raster; zolang de server zoeken op beeld niet kent (de
 // analyse staat uit: GET /photos/beeld geeft 501, de stand off) staat er precies die zin, en
 // zolang de stand er nog niet is niets (zonder DOM vraagt de plek hem niet).
 describe("de stand beeld op /zoeken met de analyse uit", () => {
@@ -61,14 +61,14 @@ describe("de stand beeld op /zoeken met de analyse uit", () => {
     resetI18nForTests("nl");
   });
 
-  it("nl: één zin dat zoeken op beeld in een volgende versie komt", async () => {
+  it("nl: één zin dat zoeken op beeld uitstaat op deze server", async () => {
     resetI18nForTests("nl");
     await loadAreas(["beeld"]);
     expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
     expect(stage(null)).toBe("wacht");
     expect(stage(OFF)).toBe("later");
     expect(renderToStaticMarkup(createElement(BeeldLater))).toBe(
-      '<p class="muted">Zoeken op beeld komt in een volgende versie.</p>',
+      '<p class="muted">Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.</p>',
     );
   });
 
@@ -77,7 +77,7 @@ describe("de stand beeld op /zoeken met de analyse uit", () => {
     await loadAreas(["beeld"]);
     expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
     const html = renderToStaticMarkup(createElement(BeeldLater));
-    expect(html).toBe('<p class="muted">Search by image is coming in a future version.</p>');
+    expect(html).toBe('<p class="muted">Search by image is off on this server (ANALYSE=uit in /opt/platform/.env). The administrator can turn it on with ANALYSE=aan.</p>');
     expect(html).not.toMatch(/\d/);
   });
 
