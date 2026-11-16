@@ -1,13 +1,72 @@
-// Gezichten op de pagina van een persoon (fase 6, van X2; Keuze 66): het blok "Misschien ook
-// Anna". Z0b zette de plek (review contract F3): PersonPage.tsx van Z6 laadt dit bestand lazy,
-// met het gebied photos_faces. Tot X2 het vult, toont het niets. Het contract: de default export
-// met PersonFacesProps, een eigen chunk.
+// Gezichten op de pagina van een persoon (fase 6, X2b; Keuze 66): het blok "Misschien ook Anna",
+// met zes uitsneden en een knop die het raster met alle voorstellen voor deze persoon opent. Z0b
+// zette de plek (review contract F3): PersonPage.tsx van Z6 laadt dit bestand lazy, met het
+// gebied photos_faces. Het contract: de default export met PersonFacesProps, een eigen chunk.
+// Zonder de analyse, met gezichten uit, of zonder voorstellen: niets (zoals 0.8.0).
+
+import { type JSX, useCallback, useEffect, useRef, useState } from "react";
+import { useCurrentUser } from "../../currentUser";
+import { useReloadOn } from "../../events";
+import { t } from "../../i18n";
+import { PEOPLE_CHANGED } from "../people/types";
+import { personFaceSuggestions } from "./api";
+import { FaceCard, FaceGrid } from "./FaceGrid";
+import { personSample } from "./logic";
+import { FACES_PAGE, type FacePage } from "./types";
+import "./faces.css";
 
 export interface PersonFacesProps {
   /** De persoon van de pagina (params.id van /fotos/personen/:id). */
   personId: string;
 }
 
-export default function PersonFaces(_: PersonFacesProps): null {
-  return null;
+export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element | null {
+  const [page, setPage] = useState<FacePage | null>(null);
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement | null>(null);
+  const who = useCurrentUser()?.id ?? "";
+
+  const load = useCallback(async () => {
+    try {
+      setPage(await personSample(who, personId));
+    } catch {
+      setPage(null); // geen voorstellen te tonen; de pagina zelf werkt door
+    }
+  }, [who, personId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useReloadOn((e) => e.type === PEOPLE_CHANGED, () => void load());
+
+  if (!page || page.faces.length === 0) return null;
+  const name = page.faces[0].suggest?.name ?? "";
+  const title = t("photos_faces.suggest.maybe", { name });
+  return (
+    <section className="person-faces" aria-labelledby="faces-misschien">
+      <h2 id="faces-misschien">{title}</h2>
+      {open ? (
+        <FaceGrid
+          title={t("photos_faces.suggest.question", { name })}
+          mode="suggest"
+          person={{ id: personId, name }}
+          load={(c) => personFaceSuggestions(personId, c, FACES_PAGE)}
+          onClose={() => {
+            setOpen(false);
+            requestAnimationFrame(() => button.current?.focus());
+          }}
+        />
+      ) : (
+        <FaceCard
+          faces={page.faces}
+          label={t("photos_faces.grid.open")}
+          open={false}
+          onOpen={() => setOpen(true)}
+          button={(el) => {
+            button.current = el;
+          }}
+        />
+      )}
+    </section>
+  );
 }
