@@ -79,7 +79,8 @@ async def test_beeld_other_uploader(client, mensen, beeld):
     """Keuze 69: Bram (beeld uit) zet een foto in de map van Eva, en een gast via een
     uploadlink: geen vector, niet in het bestand van Eva. Zet Bram beeld aan, dan telt zijn foto
     wel (de job aan zet hem terug in de rij, het bestand van Eva opnieuw); die via de link nooit.
-    Gewoon zoeken vindt ze allebei wel."""
+    Zet Bram beeld weer uit, dan is zijn foto meteen weg bij Eva, al vóór de jobs. Gewoon zoeken
+    vindt ze allebei wel."""
     (eva, eva_id), (bram, bram_id) = mensen
     fake, settings = beeld
     await aan(client, settings, eva)
@@ -117,7 +118,20 @@ async def test_beeld_other_uploader(client, mensen, beeld):
     assert await nep.row(settings, gast_sha) == ("skip", None)
     assert await nep.ids(client, eva, "groen") == [groen["id"], eigen["id"]]
     assert gast_sha not in await nep.vectors(settings)
-    del eva_id
+
+    # Bram zet beeld weer uit: zijn foto valt meteen weg bij Eva, ook nu haar bestand en de cache
+    # van 60 s hem nog hebben (Keuze 69 bij het zoeken, beeld_rows.origin_ok in _select; review
+    # golf 6, G6-4); en ook nadat de jobs het bestand van Eva opnieuw maakten.
+    ranks = len(fake.ranks)
+    oud = file_of(settings, eva_id).read_bytes()
+    await nep.beeld_aan(client, bram, "uit")
+    assert await nep.ids(client, eva, "groen") == [eigen["id"]]
+    assert len(fake.ranks) == ranks  # uit de cache, niet opnieuw gerangschikt
+    assert file_of(settings, eva_id).read_bytes() == oud
+    await nep.run_jobs(settings)
+    await nep.bestanden(settings)
+    assert file_of(settings, eva_id).read_bytes() != oud
+    assert await nep.ids(client, eva, "groen") == [eigen["id"]]
 
 
 async def test_beeld_copy_same_owner(client, mensen, beeld):
@@ -208,20 +222,28 @@ async def test_beeld_owner_change(client, mensen, beeld):
 async def test_beeld_replace(client, mensen, beeld):
     """Nieuwe inhoud voor een foto: de oude inhoud nooit meer bij deze node, ook niet zolang het
     bestand nog de oude vector heeft (het begin van de sha per rij); na de stap voor de nieuwe sha
-    en het bestand vindt "blauw" hem."""
-    (eva, _), _ = mensen
+    en het bestand vindt "blauw" hem.
+
+    De eerste zoekvraag na de nieuwe inhoud komt uit de warme cache van 60 s (geen nieuwe rank)
+    met het oude bestand: alleen het filter op het begin van de sha (§3.9) houdt de node dan weg
+    (review golf 6, G6-5)."""
+    (eva, eva_id), _ = mensen
     fake, settings = beeld
     await aan(client, settings, eva)
     node = await foto(client, eva, settings, "foto.jpg", "rood")
     oranje = await foto(client, eva, settings, "oranje.jpg", "oranje", seed=1)
     await nep.embed_all(settings)
     assert await nep.ids(client, eva, "rood") == [node["id"], oranje["id"]]
+    ranks = len(fake.ranks)
+    oud = file_of(settings, eva_id).read_bytes()
     data = nep.photo(nep.KLEUREN["blauw"], seed=9)
     r = await client.put(f"/api/v1/files/{node['id']}/content", content=data, headers=eva)
     assert r.status_code == 200, r.text
     nieuw = await nep.sha_of(settings, node["id"])
     assert nieuw != node["sha"]
     assert await nep.ids(client, eva, "rood") == [oranje["id"]]  # het oude bestand
+    assert len(fake.ranks) == ranks  # uit de cache, niet opnieuw gerangschikt
+    assert file_of(settings, eva_id).read_bytes() == oud
     await nep.bestanden(settings)
     assert await nep.ids(client, eva, "rood") == [oranje["id"]]  # nog geen vector
     nep.preview(settings, nieuw, nep.KLEUREN["blauw"])
