@@ -14,7 +14,8 @@
 //   tekst in hetzelfde raster;
 // - niets gevonden, of misschien meer zonder filter.
 // De meldingen staan in één role="status". Het raster is een role="grid" met een aria-label; elke
-// foto heeft de naam en de datum als tekst. "Meer foto's laden" haalt de volgende 48.
+// foto heeft de naam en de datum als tekst. "Meer foto's laden" haalt de volgende 48; de focus gaat
+// dan naar de eerste nieuwe foto (zoals de lijst van Z4), ook als de knop daarna wegvalt.
 //
 // Toetsenbord (Keuze 81, docs/fase-6/toetsenbord-x3.md): de pijlen naar de foto ernaast, erboven
 // of eronder; Home en End de eerste of de laatste geladen foto; Enter opent de viewer (en terug
@@ -48,6 +49,12 @@ interface Results {
   last: SearchPage;
 }
 
+/** Na "Meer foto's laden": de focus naar deze foto, in het raster van deze vraag. */
+interface Jump {
+  key: string;
+  at: number;
+}
+
 /** Een fout bij een vraag: de code voor een eigen melding, anders de tekst. */
 interface Failure {
   key: string;
@@ -65,6 +72,7 @@ export default function BeeldResults(): JSX.Element | null {
   const [results, setResults] = useState<Results | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [jump, setJump] = useState<Jump | null>(null);
   const searches = useRef(0);
 
   const state = known?.state;
@@ -106,9 +114,10 @@ export default function BeeldResults(): JSX.Element | null {
       (page) => {
         if (seq !== searches.current) return;
         setLoadingMore(false);
-        setResults((r) =>
-          r && r.key === current.key ? { ...r, hits: appendNew(r.hits, page.results), last: page } : r,
-        );
+        const merged = appendNew(current.hits, page.results);
+        setResults((r) => (r && r.key === current.key ? { ...r, hits: merged, last: page } : r));
+        // De focus naar de eerste nieuwe foto; zonder nieuwe blijft hij op de knop
+        if (merged.length > current.hits.length) setJump({ key: current.key, at: current.hits.length });
       },
       (e: unknown) => {
         if (seq !== searches.current) return;
@@ -131,7 +140,9 @@ export default function BeeldResults(): JSX.Element | null {
     <>
       <BeeldNotices list={list} />
       {failed && failed.code !== "beeld_off" && failed.code !== "beeld_no_vector" && <p role="alert">{failed.text}</p>}
-      {!blocked && hits.length > 0 && <Grid key={key} hits={hits} label={t(label.key, label.vars)} />}
+      {!blocked && hits.length > 0 && (
+        <Grid key={key} hits={hits} label={t(label.key, label.vars)} jump={jump?.key === key ? jump : null} />
+      )}
       {more && (
         <p>
           <Button onClick={loadMore} busy={loadingMore}>
@@ -175,7 +186,7 @@ export function BeeldNotices({ list }: { list: readonly Notice[] }): JSX.Element
 }
 
 /** Het raster: rijen van cellen, de cel met de focus is de enige tabstop. */
-function Grid({ hits, label }: { hits: readonly Hit[]; label: string }): JSX.Element {
+function Grid({ hits, label, jump }: { hits: readonly Hit[]; label: string; jump: Jump | null }): JSX.Element {
   const nodes = useMemo(() => hits.map((h) => h.node), [hits]);
   const previews = usePreviewRecord(nodes);
   const grid = useRef<HTMLDivElement>(null);
@@ -207,6 +218,11 @@ function Grid({ hits, label }: { hits: readonly Hit[]; label: string }): JSX.Ele
     const active = document.activeElement;
     if (!active || active === document.body) moveTo(0);
   }, [moveTo]);
+
+  // Na "Meer foto's laden": de eerste nieuwe foto
+  useEffect(() => {
+    if (jump) moveTo(jump.at);
+  }, [jump, moveTo]);
 
   const files = useMemo(() => nodes.filter((n) => n.kind === "file"), [nodes]);
   const viewIndex = viewing ? files.findIndex((n) => n.id === viewing) : -1;
