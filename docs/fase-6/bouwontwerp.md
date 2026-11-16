@@ -1827,6 +1827,11 @@ Keuze 70–85 van X3.
       [berekend: 69–80 ms per foto; gezichten 2,2–2,5 en 3,9–4,6 uur, K2-04.] Op 4 cores zou het
       een kwart zijn, maar de container heeft `cpus: 1.0`, om media en OnlyOffice te beschermen
       (B43). Zonder VNNI op de CPU van Jonas kan int8 duidelijk trager zijn (R42).
+      *Noot (I2, 2026-11-16): gemeten met de omzetting van nu (`VERSIE` 3, per token) in de job
+      `beeld-model` (BZ6, één core): 32,4 tot 35,9 ms per foto op een Xeon 6975P-C met VNNI (van
+      `669f03c` tot `e535332`), ±1.670 tot 1.850 per minuut; 82,8 ms op een AMD EPYC 7763 zonder
+      VNNI (`ffac665`), ±720 per minuut. Beide boven de poort van 500 ([x3a.md](x3a.md),
+      [x3b.md](x3b.md)). De tabel hierboven is de schatting van vóór de bouw.*
     - **Poort:** ≥ 500 foto's per minuut per core met het echte model (BZ6). Verwachting 750–870
       [berekend: K2-04].
     - **Voortgang:** `/search?mode=image` geeft `indexing: {"done": …}` over je eigen foto's, en
@@ -1899,6 +1904,10 @@ Keuze 70–85 van X3.
       | `GET /search?mode=image`, warm, niets anders actief | p95 ≤ 250 ms | hard (BZ6) |
       | hetzelfde bij 100.000 eigen foto's (in de container al ±125 ms: tekstmodel p95 ±74, scan p95 ±51 [K2-13]) | p95 ≤ 250 ms | hard (BZ6) |
       | hetzelfde terwijl `werk` vol draait | doel ≤ 300 ms | rapport |
+
+      *Noot (I2, 2026-11-16): §4.5 noemt voor zoeken op beeld p95 ≤ 250 ms, ook met `werk` vol
+      (Vraag 14). Dat is de poort die de belastingtest toetst (M13, `e2e/perf/zoek_samen.py
+      --analyse`); de 300 ms in deze tabel is alleen een doel voor het rapport.*
       | de eerste vraag na een nieuw bestand: dat is al vooraf geladen (lezen en f16 → f32 kost ±300 ms per 100.000 [gemeten, B6]) | p95 ≤ 250 ms | hard (BZ6; K2-13) |
       | alles behalve het tekstmodel (nepmodel, 55.000 echte f16-vectoren) | p95 ≤ 100 ms via HTTP | hard (`api-analyse`) |
 
@@ -3676,6 +3685,10 @@ omzetter krijgt meer tijd, omdat hij het grootste risico is (K2-12).
 | `infra/single/tests/test_install_beeld.sh`, de functies voor beeld in `install.sh` | X3 (`install.sh` is gedeeld met Z7 en X2) |
 | `docs/fase-6/x3.md`, `docs/fase-6/toetsenbord-x3.md`, het deel beeld in `docs/runbooks/analyse.md` | X3 |
 
+*Noot (I2, 2026-11-16): `x3.md` werd twee documenten, [x3a.md](x3a.md) (golf 5) en
+[x3b.md](x3b.md) (golf 6); zie x3b.md, Afwijking 12. Waar dit ontwerp `x3.md` noemt, staat het
+daar.*
+
 **Instellingen** (in de app, compose zet ze of de standaard geldt):
 
 | Variabele | Standaard | Wat |
@@ -3798,6 +3811,10 @@ omzetter krijgt meer tijd, omdat hij het grootste risico is (K2-12).
 Zoals de spike van §3.7: wat de sandbox niet kan, gebeurt in CI of op de LXC, met een uitkomst in
 `docs/fase-6/x3.md`. Een CI-job drukt aan het eind altijd een blok `=== kort ===` af, omdat de logs
 alleen de staart tonen.
+
+*Noot (I2, 2026-11-16): de uitkomsten staan in [x3a.md](x3a.md) en [x3b.md](x3b.md) ("Bewijs
+BZ1–BZ10"). BZ5 en BZ6 als geheel met modellen van de echte vorm zijn M11 en M12 in
+[metingen.md](metingen.md); BZ9 en BZ10 blijven voor de LXC.*
 
 | # | Wat | Waarom | Klaar als |
 |---|---|---|---|
@@ -4893,6 +4910,13 @@ zoals bestanden van vóór de update (Vraag 9). De sleutels in `SLEUTELS_ROOT` e
 of die komt, kiest Jonas. 0.8.1 is er nog niet: deze weg terug, het runbook `analyse.md` en
 `test_install_analyse.sh` komen pas met 0.8.1.
 
+**Notitie bij 0.8.1 (I2).** 0.8.1 is gebouwd in I2 ([integratie-2.md](integratie-2.md)). De weg
+terug naar 0.8.0 staat in `infra/single/README.md` en in de runbooks (`zoeken.md`, "Terug naar
+0.8.0 van `59e0250`"; `analyse.md` en `gezichten.md`, "Terug naar 0.8.0"), ook met de analyse
+aan; `test_install_analyse.sh` doet die stappen. De commit van 0.8.1 is
+⟦I2: de volledige commit van 0.8.1, uit de laatste push van I2⟧. Een tag `v0.8.1` is er niet; of
+die komt, kiest Jonas.
+
 ### 3.11 De container `analyse` (A0, X2a en X3a; Keuze 56–59, 68, 73, 75, 84)
 
 Nieuw in r3. A0 legt de contracten vast: de handdruk, de enum `Op` met de opdrachten van X2 én
@@ -5520,6 +5544,11 @@ het schrijven.
 | gezichten (X2), in de container | gemaakte foto's van 1024 × 768 met één gezicht | ≥ 250 foto's per minuut | ±365–420 [K2-04] |
 | beeld (X3), in de container | dezelfde foto's, uit de preview van 256 | ≥ 500 foto's per minuut | ±750–870 [K2-04] |
 
+*Noot (I2, 2026-11-16): de twee rijen van de container meet niet `zoek_backfill.py` maar elk een
+eigen test met de echte modellen: gezichten `tests_analyse/test_models_real.py` (1.043 foto's per
+minuut per core op `9228eb6`, [x2b.md](x2b.md)), beeld `test_beeld_echt_perf.py` in `beeld-model`
+(BZ6; 33,8 ms per foto op `e535332`, [x3b.md](x3b.md)).*
+
 **CPU en geheugen naast OnlyOffice en media** (`e2e/perf/zoek_samen.py`, B). Drie stappen, elk
 5 minuten:
 
@@ -5652,6 +5681,11 @@ en duurt de laatste integratie 4 dagen: 0.8.0 rond dag 41.
 gekomen, en ook geen `v0.7.1` of `v0.8.0`: de weg terug gebruikt de volledige commit van 0.7.1
 (`80d5bb8`, §3.10). Of er tags komen, kiest Jonas. 0.8.0 (11 november 2026) staat op de branch
 `claude/stappenplan-uitwerken-lu4uv3`.
+
+**Notitie bij 0.8.1 (I2).** De rij "Integratie 2" is gedaan: 0.8.1 met gezichten en zoeken op
+beeld, op ⟦I2: de datum van de laatste push van I2⟧, op dezelfde branch. Ook nu geen tag; de weg
+terug naar 0.8.0 gebruikt de volledige commit `59e0250`. Wat I2 deed en wat niet, staat in
+[integratie-2.md](integratie-2.md).
 
 **De go/no-go van X3** (aan het eind van dag 33, K2-12). Ja als de omzetter op de kleine vorm
 gelijk is aan de eigen numpy-versie (fp32 ≤ 1·10⁻⁵, int8 cosinus ≥ 0,99) en twee keer dezelfde
