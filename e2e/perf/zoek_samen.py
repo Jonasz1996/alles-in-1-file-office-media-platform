@@ -29,8 +29,37 @@ De last van §4.5 (I1; e2e/perf/zoek_foto.py):
   wachten op de pauze; wat in stap 2 niet af komt, loopt in stap 3 door. Alleen met tesseract
   (nld, eng en osd) en DejaVu Sans: --kort slaat ze anders over en zegt dat (de CI-job
   e2e-media-perf heeft alleen ffmpeg); zonder --kort stopt het script met de reden.
-- Nog niet in deze meting (0.8.1): de container analyse (gezichten en beeld, X2 en X3) en de
-  beeldvraag.
+- de container analyse (0.8.1: gezichten X2 en zoeken op beeld X3) alleen met --analyse (zie
+  onder); zonder --analyse niet in deze meting.
+
+Met --analyse <map met modellen> --analyse-lock <lock> (§4.5 stap 2 met de analyse helemaal aan)
+- de worker: de echte uit api/.venv-analyse (numpy en onnxruntime; de app blijft in api/.venv,
+  zonder), gestart zoals api/tests_analyse/echt.py (runtime.serve_argv met --local en --lock),
+  onder taskset -c 3: een eigen core, zoals cpus 1.0 in compose.analyse-limits.yaml; zijn kinderen
+  werk en zoeken erven die. De sleutel (PLATFORM_ANALYSE_WORKER_KEY) staat alleen in de omgeving
+  van de worker en van de app, zoals compose.analyse.yaml hem doorgeeft: nooit in een argv, een
+  log of het rapport, en niet in de omgeving van media-loadtest. --analyse nep: FakeAnalyseWorker
+  (A0) met de nep van gezichten en beeld, hetzelfde verloop, altijd een rapport (de CI-job
+  e2e-media-perf);
+- de foto's: 1024 × 768 met de voorbeelden van 256 en 1024 (zoek_foto.ANALYSE), vóór de
+  documenten gezaaid. Dan beeld en gezichten aan voor de admin (PATCH /me/photo-settings) en
+  wachten tot beeld klaar meldt (GET /photos/beeld: ok) en elke foto in zijn bestand staat
+  (voorbereiding): de stap embed wacht zolang de index veel open heeft (K2-07). Pas daarna de
+  documenten en de scans. De gezichten wijken voor de pauze en tijdens de belastingtest
+  (scan.must_yield, Keuze 50): hun rij staat vol, en ze lezen als media klaar is;
+- elke 5 s een beeldvraag (GET /search?mode=image, om de beurt een ander woord, zodat de cache
+  van 60 s nooit antwoordt): per stap de p95, de terugval per reden (slow, down, no_model) en bij
+  elke vraag de fase en de index (vectoren in de database, foto's in het bestand van de admin, en
+  of dat bij is). Nooit de vraag zelf in het rapport, de JSON of een log;
+- per stap de voortgang van de stap embed en van face_scan (per state) en de gevonden
+  gezichten: aan het begin, na de belastingtest en aan het eind;
+- het geheugen: elke seconde VmHWM uit /proc/<pid>/status van pid 1 van de worker en al zijn
+  nakomelingen (nooit ru_maxrss van een ouder), per proces de hoogste; de poort meet de som van
+  de hoogste per soort (pid 1, werk, zoeken), een bovengrens voor de piek samen;
+- of de container leeft: pid 1 blijft hetzelfde proces (pid en starttijd), zoeken start één
+  keer, pid 1 meldt geen kind dat de wachter van het geheugen stopte of dat crashte (zijn log),
+  en de kernel meldt geen OOM-kill (/proc/vmstat oom_kill, voor de hele machine). werk begint na
+  ANALYSE_CHILD_BATCHES opdrachten of 600 s opnieuw (wire.py): dat hoort zo en telt niet.
 
 Tijdens elke stap
 - media: `python -m app.cli media-loadtest --sessies S --duur D` tegen de draaiende app (de
@@ -66,7 +95,10 @@ index leest weer binnen 90 s na de laatste transcode; het opslaan in OnlyOffice 
 nulmeting en 0 verloren woorden (alleen als de ronde volledig liep, in beide stappen naast de
 belastingtest: iedereen open, één status 2 per document; onvolledig()). Elke poort zegt
 "gehaald", "niet gehaald" of "niet te meten"; zonder --kort telt "niet te meten" als niet gehaald
-(ook de poorten van OnlyOffice zonder --office).
+(ook de poorten van OnlyOffice zonder --office). Met --analyse komen er drie bij (oordeel_analyse;
+de poorten hierboven blijven zoals ze zijn): zoeken op beeld p95 ≤ 250 ms, warm, alleen als de
+index bij elke beeldvraag van stap 2 vol was (anders "niet te meten", ongeldig: zo meet de p95
+nooit een lege index); VmHWM van de analyse samen ≤ 2,5 GB; en de container leeft nog.
 
 Nodig: ffmpeg en ffprobe (de worker en de belastingtest); een gebouwde web-app (cd web && npm
 run build: de server serveert web/dist); voor de scans tesseract met nld, eng en osd, en DejaVu
@@ -75,6 +107,8 @@ Sans (fonts-dejavu-core); met --office docker en de echte DS (e2e/office_ds.sh s
 het script, want dan zegt OOMKilled niets) en Playwright (uv run --with playwright).
 
     cd api && uv run python ../e2e/perf/zoek_samen.py --kort
+    cd api && uv run python ../e2e/perf/zoek_samen.py --kort --analyse nep
+    cd api && uv run python ../e2e/perf/zoek_samen.py --analyse <modellen> --analyse-lock <lock>
     cd api && E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=<map>/jwt.secret \\
       uv run --with playwright python ../e2e/perf/zoek_samen.py --office
 
@@ -85,8 +119,8 @@ OnlyOffice, 300 documenten per stap, 300 foto's en (met tesseract) 20 scans. Zon
 dan staat dat onder "niet in deze meting".
 
 Aan het eind "=== kort ===" (ook in --kort-uit, voor het einde van het log in CI). In --kort is de
-uitkomst altijd 0 (een rapport); zonder --kort 1 als een poort van stap 2 niet gehaald of niet te
-meten is.
+uitkomst altijd 0 (een rapport), ook met --analyse nep; anders 1 als een poort van stap 2 niet
+gehaald of niet te meten is.
 """
 
 from __future__ import annotations
@@ -97,12 +131,17 @@ import functools
 import json
 import os
 import random
+import secrets
 import shutil
+import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import uuid
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +157,7 @@ sys.path.insert(0, str(HERE.parents[1] / "api"))  # de app en zijn testhulpen
 import zoek_backfill as zb  # noqa: E402
 import zoek_foto as zf  # noqa: E402
 
+from app.analyse import runtime  # noqa: E402
 from conftest import API_DIR, Account, Server, make_admin, percentile  # noqa: E402
 from media_harness import (  # noqa: E402
     cmdline,
@@ -244,12 +284,14 @@ def wacht_op_de_belastingtest(server: Server, admin: Account, klaar: threading.E
 
 
 def belastingtest(server: Server, sessies: int, duur: int, uit: Path) -> dict[str, Any]:
-    """app.cli media-loadtest naast de draaiende app (dezelfde omgeving); de uitkomst."""
+    """app.cli media-loadtest naast de draaiende app (dezelfde omgeving, zonder de sleutel van
+    de analyse: die hoort alleen bij de app en de worker); de uitkomst."""
+    env = {k: v for k, v in server.environment().items() if k != runtime.KEY_ENV}
     proc = subprocess.run(
         [sys.executable, "-m", "app.cli", "media-loadtest"]
         + ["--sessies", str(sessies), "--duur", str(duur), "--json", str(uit)],
         cwd=API_DIR,
-        env=server.environment(),
+        env=env,
         capture_output=True,
         text=True,
         timeout=60 * 30 + duur * 4,
@@ -507,6 +549,9 @@ class Opzet:
     url: str | None = None
     fotos: int = 0  # foto's in de map "Foto's" (dan de herbouw hash in stap 2 en 3)
     ds_host: dict[str, bool] | None = None  # docker_grenzen(), met --office
+    analyse: Analyse | None = None  # met --analyse: de worker van de container analyse
+    wachter: Wachter | None = None  # pid 1 van de analyse en zijn kinderen
+    vragen: Beeldvragen | None = None  # de beeldvraag om de 5 s
 
 
 def pauze_eraf(opzet: Opzet) -> dict[str, Any] | None:
@@ -519,6 +564,521 @@ def pauze_eraf(opzet: Opzet) -> dict[str, Any] | None:
         return None
     herbouw = herbouw_hash(opzet.server, opzet.admin)
     return {"herbouw_hash": herbouw, "fotos_te_doen": foto_stand(opzet.server).get("te_doen")}
+
+
+# --- de container analyse (--analyse; 0.8.1: gezichten X2 en zoeken op beeld X3) ---
+#
+# De worker draait naast de app als eigen proces op een eigen core, zoals de container analyse
+# naast de app op de LXC (compose.analyse-limits.yaml: cpus 1.0). Met een map met modellen de
+# echte worker uit api/.venv-analyse (numpy en onnxruntime; de app zelf blijft in api/.venv,
+# zonder), gestart zoals api/tests_analyse/echt.py: runtime.serve_argv met --local en --lock, de
+# sleutel alleen in de omgeving van de worker en van de app (PLATFORM_ANALYSE_WORKER_KEY, zoals
+# compose.analyse.yaml hem doorgeeft), nooit in een argv, een log of het rapport. Met "nep"
+# FakeAnalyseWorker van A0 met de nep van gezichten en beeld (zonder numpy): hetzelfde verloop,
+# alleen een rapport (de CI-job e2e-media-perf).
+
+NEP = "nep"
+ANALYSE_PYTHON = API_DIR / ".venv-analyse" / "bin" / "python"
+ANALYSE_CORE = 3  # de vierde core: media 0-2 (regel 14), de analyse één (cpus 1.0)
+POORT_ANALYSE = {
+    "beeld_p95_ms": 250.0,  # zoeken op beeld, warm, ook met werk vol (Vraag 14)
+    "hwm_bytes": 2_500_000_000,  # maxrss van de container analyse (BZ5): 2,5 GB
+}
+BEELD_ELKE_S = 5.0  # één beeldvraag per 5 s (§4.5, K2-07)
+VOORBEREIDING_S = 180.0  # zo lang, plus VOORBEREIDING_PER_FOTO_S per foto, wacht het script
+VOORBEREIDING_PER_FOTO_S = 0.5  # tot zoeken op beeld elke foto gezien heeft
+WORKER_START_S = 60.0
+# De beeldvragen: om de beurt een ander woord, zodat de cache van 60 s in de app
+# (beeld/cache.TTL_S) nooit antwoordt; 20 woorden om de 5 s is elk woord eens per 100 s. Nooit
+# in het rapport, de JSON of een log: daar staan alleen de tijd, de stand en de terugval
+BEELDWOORDEN = (
+    "strand", "hond", "berg", "fiets", "zee", "bos", "auto", "kat", "boot", "stad",
+    "brug", "bloem", "sneeuw", "taart", "trein", "vogel", "kerk", "huis", "paard", "markt",
+)  # fmt: skip
+# zoek_samen.nep_dienst in een eigen proces: python -I -c NEP_BOOT <e2e/perf> <socket>
+NEP_BOOT = (
+    "import sys;sys.path.insert(0,sys.argv.pop(1));import zoek_samen;"
+    "zoek_samen.nep_dienst(sys.argv[1])"
+)
+# Wat pid 1 van de analyse in zijn log zet als een kind niet zelf stopte: de wachter van het
+# geheugen (guard.Watch, SIGKILL boven de grens) of een crash (child.Kid._report)
+GESTOPT = (" gestopt: ", " stopte met code ")
+
+
+@dataclass
+class Analyse:
+    """De worker van de analyse: bron is NEP of de map met modellen (dan met lock)."""
+
+    bron: str
+    lock: Path | None
+    base: Path
+    sleutel: str = field(default_factory=lambda: secrets.token_hex(32), repr=False)
+    proc: subprocess.Popen | None = field(default=None, repr=False)
+    core: int | None = None
+
+    @property
+    def nep(self) -> bool:
+        return self.bron == NEP
+
+    @property
+    def socket(self) -> Path:
+        return self.base / "run" / "worker.sock"
+
+    @property
+    def log(self) -> Path:
+        return self.base / "worker.log"
+
+    def argv(self, core: int) -> list[str]:
+        """taskset op core, dan de worker: alles wat hij start, erft de core."""
+        if self.nep:
+            binnen = [sys.executable, "-I", "-c", NEP_BOOT, str(HERE), str(self.socket)]
+        else:
+            extra = ["--local", "--lock", str(self.lock)]
+            binnen = runtime.serve_argv(
+                self.socket, self.bron, extra=extra, python=str(ANALYSE_PYTHON)
+            )
+        return ["taskset", "-c", str(core), *binnen]
+
+    def omgeving(self) -> dict[str, str]:
+        """Alleen PATH en de sleutel (zoals echt.py); de worker haalt hem er meteen uit."""
+        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), runtime.KEY_ENV: self.sleutel}
+
+    def app_env(self, sleutels: Path) -> dict[str, str]:
+        """Zoals compose.analyse.yaml de app instelt; sleutels: de map met de sleutels van de
+        gezichten (Keuze 68: buiten de datamap, 0700)."""
+        return {
+            "PLATFORM_ANALYSE_ENABLED": "true",
+            "PLATFORM_ANALYSE_WORKER": str(self.socket),
+            runtime.KEY_ENV: self.sleutel,
+            "PLATFORM_FACES_KEYS": str(sleutels),
+        }
+
+    def start(self) -> None:
+        (self.base / "run").mkdir(parents=True, mode=0o700, exist_ok=True)
+        beschikbaar = os.sched_getaffinity(0)
+        self.core = ANALYSE_CORE if ANALYSE_CORE in beschikbaar else max(beschikbaar)
+        with open(self.log, "wb") as uit:
+            self.proc = subprocess.Popen(
+                self.argv(self.core),
+                env=self.omgeving(),
+                stdin=subprocess.DEVNULL,
+                stdout=uit,
+                stderr=uit,
+                cwd=self.base,
+            )
+        einde = time.monotonic() + WORKER_START_S
+        while not self.socket.exists():
+            if self.proc.poll() is not None or time.monotonic() > einde:
+                staart = self.log.read_text(errors="replace").splitlines()[-15:]
+                self.stop()
+                raise SystemExit(
+                    f"zoek_samen --analyse: de worker luistert niet (code {self.proc.returncode})"
+                    + "".join(f"\n  {r}" for r in staart)
+                )
+            time.sleep(0.05)
+
+    def stop(self) -> None:
+        """Alleen dit proces, via zijn PID: SIGTERM, na 15 s SIGKILL."""
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def nep_dienst(socket: str) -> None:
+    """--analyse nep, in het eigen proces van Analyse: FakeAnalyseWorker (A0) met de nep van
+    gezichten (tests/people/faces/schijven.py en de groep van faces_nep) en van beeld
+    (tests/beeld/nep.py), zonder numpy, tot SIGTERM. De sleutel uit de omgeving, zoals de echte
+    worker (runtime.KEY_ENV), en daarna meteen weg."""
+    import asyncio
+
+    from tests.analyse import faces_nep
+    from tests.analyse.fake_worker import FakeAnalyseWorker
+    from tests.beeld.nep import Nep
+    from tests.people.faces.schijven import Schijven
+
+    from app.analyse.wire import Op
+
+    nep = FakeAnalyseWorker(Path(socket), key=os.environ.pop(runtime.KEY_ENV, ""))
+    Nep(nep).install()
+    nep.on(Op.FACES, Schijven().faces)
+    nep.on(Op.GROUP, faces_nep.FacesNep().group)
+
+    async def dienst() -> None:
+        stop = asyncio.Event()
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stop.set)
+        await nep.start()
+        try:
+            await stop.wait()
+        finally:
+            await nep.stop()
+
+    asyncio.run(dienst())
+
+
+def vmhwm_kb(pid: int) -> int | None:
+    """VmHWM uit /proc/<pid>/status: de piek van dit proces sinds exec (kB). Nooit ru_maxrss
+    van een ouder: Linux geeft bij fork die van de ouder mee."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for regel in f:
+                if regel.startswith("VmHWM:"):
+                    return int(regel.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def oom_kills() -> int | None:
+    """oom_kill uit /proc/vmstat: hoe vaak de kernel sinds het starten een proces doodde omdat
+    het geheugen op was (de hele machine). Een SIGKILL van werk logt pid 1 niet (child._report:
+    die stuurt hij zelf bij cancel), dus dit ziet wat de log niet ziet."""
+    try:
+        with open("/proc/vmstat") as f:
+            for regel in f:
+                if regel.startswith("oom_kill "):
+                    return int(regel.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def oom_erbij(begin: int | None, nu: int | None) -> int | None:
+    return None if begin is None or nu is None else nu - begin
+
+
+def kind_naam(pid: int) -> str:
+    """werk of zoeken (het argument van child.py op de opdrachtregel), anders "kind"."""
+    try:
+        delen = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return "kind"
+    return next((d.decode() for d in delen if d in (b"werk", b"zoeken")), "kind")
+
+
+class Wachter:
+    """Elke seconde pid 1 van de analyse en al zijn nakomelingen: per proces (pid en starttijd)
+    de hoogste VmHWM, en of pid 1 er nog is als hetzelfde proces. De container analyse draait
+    hier op de host, dus OOMKilled van docker zegt niets: een ander of geen pid 1, een tweede
+    zoeken, een kind dat pid 1 als gestopt meldt (GESTOPT in zijn log) of een OOM-kill van de
+    kernel (oom_kills) staat ervoor in. werk begint na ANALYSE_CHILD_BATCHES opdrachten of 600 s
+    opnieuw (wire.py, zo hoort het): dat telt niet."""
+
+    def __init__(self, pid: int, log: Path | None = None) -> None:
+        self.pid = pid
+        self.log = log
+        self.start_tijd: int | None = None
+        self.weg = False
+        self.gezien: dict[tuple[int, int], tuple[str, int]] = {}  # (pid, start) → (naam, kB)
+        self.oom_begin = oom_kills()
+        self.stop = threading.Event()
+        self.draad = threading.Thread(target=self._loop, name="analyse-wachter", daemon=True)
+
+    def begin(self) -> None:
+        self.peil()
+        self.draad.start()
+
+    def _loop(self) -> None:
+        while not self.stop.wait(1.0):
+            with contextlib.suppress(Exception):  # de meting mag nooit stoppen
+                self.peil()
+
+    def peil(self, tabel: Any = None) -> None:
+        tabel = process_table() if tabel is None else tabel
+        eigen = tabel.get(self.pid)
+        if self.start_tijd is None and eigen is not None:
+            self.start_tijd = eigen[1]
+        if eigen is None or eigen[1] != self.start_tijd:
+            self.weg = True
+            return
+        for p in sorted({self.pid, *descendants([self.pid], tabel)}):
+            if p not in tabel:
+                continue
+            kb = vmhwm_kb(p)
+            if kb is None:
+                continue
+            sleutel = (p, tabel[p][1])
+            naam, oud = self.gezien.get(sleutel, ("pid1" if p == self.pid else kind_naam(p), 0))
+            self.gezien[sleutel] = (naam, max(oud, kb))
+
+    def gestopt(self) -> list[str]:
+        """De regels van pid 1 over een kind dat gestopt werd of crashte (hooguit 5)."""
+        if self.log is None:
+            return []
+        try:
+            regels = self.log.read_text(errors="replace").splitlines()
+        except OSError:
+            return []
+        return [r.strip()[:200] for r in regels if any(g in r for g in GESTOPT)][:5]
+
+    def stand(self) -> dict[str, Any]:
+        kinderen: dict[str, list[list[int]]] = {}
+        hoogste: dict[str, int] = {}
+        for (pid, start), (naam, kb) in sorted(self.gezien.items()):
+            kinderen.setdefault(naam, []).append([pid, start])
+            hoogste[naam] = max(hoogste.get(naam, 0), kb)
+        cores = None
+        with contextlib.suppress(OSError):
+            cores = sorted(os.sched_getaffinity(self.pid))
+        return {
+            "pid1": None if self.start_tijd is None else [self.pid, self.start_tijd],
+            "pid1_weg": self.weg,
+            "processen": kinderen,
+            "hwm_kb": hoogste,
+            # De som van de hoogste VmHWM per soort (pid 1, werk, zoeken): werk en zoeken leven
+            # hooguit één tegelijk per soort, dus dit is een bovengrens voor de piek samen
+            "hwm_som_bytes": sum(hoogste.values()) * 1024 if hoogste else None,
+            "gestopt": self.gestopt(),
+            "oom_kill": oom_erbij(self.oom_begin, oom_kills()),
+            "cores": cores,
+        }
+
+
+def analyse_overleefd(worker: dict[str, Any] | None) -> tuple[bool | None, str]:
+    """Leeft de container analyse nog als dezelfde processen (Wachter.stand)?"""
+    if not worker or not worker.get("pid1"):
+        return None, "de worker liep niet"
+    if worker.get("pid1_weg"):
+        return False, "pid 1 is weg of een ander proces"
+    processen = worker.get("processen") or {}
+    zoeken = len(processen.get("zoeken", []))
+    if zoeken > 1:
+        return False, f"zoeken {zoeken} keer gestart"
+    if worker.get("gestopt"):
+        return False, f"pid 1 meldt een gestopt kind: {worker['gestopt'][0]}"
+    if worker.get("oom_kill"):
+        return False, f"de kernel meldt {worker['oom_kill']} OOM-kill(s) tijdens de meting"
+    werk = len(processen.get("werk", []))
+    return True, f"pid 1 dezelfde, zoeken {zoeken} en werk {werk} keer gestart"
+
+
+def _lees(data_dir: Path, sql: str, *args: Any) -> list[tuple[Any, ...]]:
+    """Alleen lezen, naast de draaiende server; [] zolang de tabel er niet is."""
+    con = sqlite3.connect(f"file:{data_dir / 'platform.db'}?mode=ro", uri=True, timeout=10)
+    try:
+        return con.execute(sql, args).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        con.close()
+
+
+def beeld_index(data_dir: Path, eigenaar: str) -> dict[str, Any]:
+    """De index van zoeken op beeld voor eigenaar: de vectoren in de database, en in zijn
+    bestand (built_rows) en of dat bij is (gen = built_gen)."""
+    rij = _lees(
+        data_dir,
+        "SELECT gen, built_gen, built_rows FROM beeld_owner WHERE user_id = ?",
+        uuid.UUID(eigenaar).hex,
+    )
+    vectoren = _lees(data_dir, "SELECT count(*) FROM blob_embed")
+    return {
+        "vectoren": int(vectoren[0][0]) if vectoren else 0,
+        "in_bestand": int(rij[0][2]) if rij else 0,
+        "bij": bool(rij) and rij[0][0] == rij[0][1],
+    }
+
+
+def index_vol(index: dict[str, Any], fotos: int) -> bool:
+    """Elke foto staat in het bestand van de eigenaar, en het bestand is bij."""
+    return bool(fotos) and index.get("bij") is True and index.get("in_bestand", 0) >= fotos
+
+
+def analyse_voortgang(data_dir: Path) -> dict[str, Any]:
+    """De stap embed van beeld en face_scan van de gezichten per state, en de gevonden
+    gezichten (alleen tellen)."""
+
+    def per_state(sql: str) -> dict[str, int]:
+        return {state: int(n) for state, n in _lees(data_dir, sql)}
+
+    gezichten = _lees(data_dir, "SELECT count(*) FROM face")
+    return {
+        "embed": per_state("SELECT state, count(*) FROM analysis WHERE step = 'embed' GROUP BY 1"),
+        "scan": per_state("SELECT state, count(*) FROM face_scan GROUP BY 1"),
+        "gezichten": int(gezichten[0][0]) if gezichten else 0,
+    }
+
+
+class Beeldvragen:
+    """Om de BEELD_ELKE_S een beeldvraag (GET /search?mode=image, elke keer een ander woord uit
+    BEELDWOORDEN) als de admin, zolang fase gezet is. Per vraag: de fase, de tijd (ms, of None
+    als hij mislukte), de stand en de terugval van het antwoord, en de index op dat moment
+    (beeld_index, vlak voor de vraag). Nooit de vraag zelf."""
+
+    def __init__(self, server: Server, admin: Account, fotos: Callable[[], int]) -> None:
+        self.server = server
+        self.admin = admin
+        self.fotos = fotos
+        self.fase: str | None = None
+        self.vragen: list[dict[str, Any]] = []
+        self.begon = time.monotonic()
+        self.stop = threading.Event()
+        self.draad = threading.Thread(target=self._loop, name="beeldvragen", daemon=True)
+
+    def begin(self) -> None:
+        self.draad.start()
+
+    def _loop(self) -> None:
+        n = 0
+        with httpx.Client(base_url=self.server.url, trust_env=False, timeout=30) as http:
+            while not self.stop.wait(BEELD_ELKE_S):
+                fase = self.fase
+                if fase is None:
+                    continue
+                with contextlib.suppress(Exception):  # de meting mag nooit stoppen
+                    self.vragen.append(self.vraag(http, fase, BEELDWOORDEN[n % len(BEELDWOORDEN)]))
+                n += 1
+
+    def vraag(self, http: httpx.Client, fase: str, woord: str) -> dict[str, Any]:
+        index = beeld_index(self.server.data_dir, self.admin.id)
+        uit: dict[str, Any] = {"fase": fase, "t_s": round(time.monotonic() - self.begon, 1),
+                               "ms": None, "status": None, "mode": None, "terugval": None,
+                               **index, "vol": index_vol(index, self.fotos())}  # fmt: skip
+        try:
+            kop = {"Authorization": f"Bearer {self.server.token(self.admin)}"}
+            begin = time.perf_counter()
+            r = http.get(f"{API}/search", params={"q": woord, "mode": "image"}, headers=kop)
+            ms = (time.perf_counter() - begin) * 1000
+        except Exception:  # ook een token dat niet kwam: dan mislukt
+            return uit
+        uit["status"] = r.status_code
+        if r.status_code == 200:
+            pagina = r.json()
+            uit.update(ms=round(ms, 1), mode=pagina.get("mode"), terugval=pagina.get("fallback"))
+        return uit
+
+
+def beeld_samenvatting(vragen: list[dict[str, Any]]) -> dict[str, Any]:
+    """De beeldvragen van één stap: de p95 over wat lukte (met de terugval erbij: dat is wat de
+    gebruiker wacht), het aandeel terugval per reden, de mislukte, en bij hoeveel de index vol
+    was. Met de vragen zelf (zonder het woord)."""
+    gelukt = [v["ms"] for v in vragen if v.get("ms") is not None]
+    terug = Counter(v["terugval"] for v in vragen if v.get("ms") is not None and v.get("terugval"))
+    p95 = percentile(gelukt, 95)
+    return {
+        "n": len(vragen),
+        "p95_ms": None if p95 is None else round(p95, 1),
+        "mislukt": len(vragen) - len(gelukt),
+        "terugval": dict(sorted(terug.items())),
+        "terugval_deel": round(sum(terug.values()) / len(gelukt), 3) if gelukt else None,
+        "index_vol": sum(1 for v in vragen if v.get("vol")),
+        "vragen": vragen,
+    }
+
+
+def beeld_ongeldig(beeld: dict[str, Any] | None) -> str | None:
+    """Waarom de p95 van de beeldvragen in deze stap niet telt (None: hij telt): geen vraag, of
+    bij een vraag was de index niet vol (CRITIC bij M4: anders meet de p95 een lege index)."""
+    if not beeld or not beeld.get("n"):
+        return "geen beeldvraag in deze stap"
+    niet = beeld["n"] - beeld.get("index_vol", 0)
+    if niet:
+        laatste = beeld["vragen"][-1] if beeld.get("vragen") else {}
+        return (f"de index was bij {niet} van de {beeld['n']} vragen niet vol "
+                f"({laatste.get('in_bestand', 0)} foto's in het bestand)")  # fmt: skip
+    return None
+
+
+def oordeel_analyse(stap2: dict[str, Any]) -> list[tuple[str, bool | None]]:
+    """De poorten van de analyse in stap 2 (alleen met --analyse; de poorten van oordeel()
+    blijven zoals ze zijn): zoeken op beeld p95 ≤ 250 ms met de index vol, VmHWM samen ≤ 2,5 GB,
+    en de container leeft nog als dezelfde processen."""
+    ana = stap2.get("analyse") or {}
+    beeld = ana.get("beeld") or {}
+    out: list[tuple[str, bool | None]] = []
+    regel = f"zoeken op beeld p95 ≤ {POORT_ANALYSE['beeld_p95_ms']:g} ms (warm, de index vol)"
+    ongeldig = beeld_ongeldig(beeld)
+    if ongeldig:
+        out.append((f"{regel} (ongeldig: {ongeldig})", None))
+    elif beeld.get("mislukt"):
+        out.append((f"{regel} ({beeld['mislukt']} mislukt)", False))
+    else:
+        out.append((regel, beeld["p95_ms"] <= POORT_ANALYSE["beeld_p95_ms"]))
+    worker = ana.get("worker") or {}
+    som = worker.get("hwm_som_bytes")
+    regel = "de container analyse: VmHWM van pid 1, werk en zoeken samen ≤ 2,5 GB"
+    if som is None:
+        out.append((f"{regel} (niet gemeten)", None))
+    else:
+        out.append((f"{regel} ({som / 1e9:.2f} GB)", som <= POORT_ANALYSE["hwm_bytes"]))
+    ok, waarom = analyse_overleefd(worker)
+    out.append((f"de container analyse leeft nog, geen OOM-kill of crash ({waarom})", ok))
+    return out
+
+
+def voorbereiding(opzet: Opzet) -> dict[str, Any]:
+    """Na het zaaien van de foto's, met de pauze aan: beeld en gezichten aan voor de admin
+    (PATCH /me/photo-settings), en wachten tot zoeken op beeld klaar meldt (GET /photos/beeld:
+    ok) en elke foto in het bestand van de admin staat. De gezichten wijken voor de pauze
+    (scan.must_yield): hun rij staat vol als stap 2 begint. De beeldvragen lopen al (fase
+    "voorbereiding"): de eerste maakt het zoeken warm, en een vraag zet het bestand na FRESH_S
+    opnieuw. Komt beeld niet binnen de tijd klaar, dan gaat de meting door en zegt de poort
+    "ongeldig" (beeld_ongeldig)."""
+    server, admin, vragen = opzet.server, opzet.admin, opzet.vragen
+    assert vragen is not None
+    server.call(admin, "PATCH", f"{API}/me/photo-settings", json={"beeld": "aan", "faces": "aan"},
+                expect=200)  # fmt: skip
+    vragen.fase = "voorbereiding"
+    klok = time.monotonic()
+    einde = klok + VOORBEREIDING_S + VOORBEREIDING_PER_FOTO_S * opzet.fotos
+    stand: dict[str, Any] = {}
+    index: dict[str, Any] = {}
+    klaar = False
+    try:
+        while True:
+            with contextlib.suppress(httpx.HTTPError, AssertionError):
+                stand = server.call(admin, "GET", f"{API}/photos/beeld", expect=200).json()
+            index = beeld_index(server.data_dir, admin.id)
+            klaar = stand.get("state") == "ok" and index_vol(index, opzet.fotos)
+            if klaar or time.monotonic() > einde:
+                break
+            time.sleep(2.0)
+    finally:
+        vragen.fase = None
+    uit = {
+        "klaar": klaar,
+        "s": round(time.monotonic() - klok, 1),
+        "stand": stand.get("state"),
+        "fotos": opzet.fotos,
+        **index,
+        "voortgang": analyse_voortgang(server.data_dir),
+    }
+    print(f"zoek_samen: voorbereiding analyse {json.dumps(uit, ensure_ascii=False)}", flush=True)
+    return uit
+
+
+def analyse_regel(s: dict[str, Any]) -> str | None:
+    """De analyse van één stap op één regel (None zonder --analyse)."""
+    ana = s.get("analyse")
+    if not ana:
+        return None
+    v = ana.get("voortgang") or {}
+
+    def keten(soort: str, state: str) -> str:
+        n = [str((v.get(k) or {}).get(soort, {}).get(state, 0)) for k in ("voor", "na_media", "na")]
+        return f"{n[0]} → {n[1]} (na media) → {n[2]}"
+
+    na = v.get("na") or {}
+    open_ = sum((na.get("scan") or {}).get(s_, 0) for s_ in ("wait", "busy"))
+    b = ana.get("beeld") or {}
+    terug = ", ".join(f"{k} {n}" for k, n in (b.get("terugval") or {}).items()) or "geen"
+    deel = b.get("terugval_deel")
+    beeld = (f"beeld p95 {b.get('p95_ms')} ms over {b.get('n', 0)} vragen ({b.get('mislukt', 0)} "
+             f"mislukt), terugval {terug}"
+             + ("" if deel is None else f" ({deel * 100:.0f}%)")
+             + f", index vol bij {b.get('index_vol', 0)} van {b.get('n', 0)}")  # fmt: skip
+    w = ana.get("worker") or {}
+    som = w.get("hwm_som_bytes")
+    geheugen = "-" if som is None else f"{som // 2**20} MB"
+    return (f"analyse: embed klaar {keten('embed', 'done')}, gezichten gescand "
+            f"{keten('scan', 'done')} (open {open_}), {na.get('gezichten', 0)} gevonden; "
+            f"{beeld}; VmHWM samen {geheugen}, cores {cores_tekst(w.get('cores'))}, "
+            f"{analyse_overleefd(w)[1]}")  # fmt: skip
 
 
 def start(base: Path, env: dict[str, str], office: bool) -> Opzet:
@@ -613,10 +1173,16 @@ def stap(
 ) -> dict[str, Any]:
     """Eén stap: de belastingtest, met daarnaast de zoekers (en met --office de bewerkers). begin
     (de pauze eraf, de herbouw hash) gaat pas als de belastingtest loopt; wat het teruggeeft,
-    komt onder "begin" in de uitkomst."""
+    komt onder "begin" in de uitkomst. Met --analyse ook de voortgang van de analyse (embed en
+    face_scan), de beeldvragen van deze stap (fase naam) en de stand van de wachter."""
     server, admin = opzet.server, opzet.admin
     meter = Meter()
     voor = analyse_stand(server)
+    ana_voor = analyse_voortgang(server.data_dir) if opzet.analyse else None
+    n_vragen = 0
+    if opzet.vragen is not None:
+        n_vragen = len(opzet.vragen.vragen)
+        opzet.vragen.fase = naam
     fotos_voor = foto_stand(server) if opzet.fotos else None
     cores = worker_op_zijn_cores(server)
     procs_voor = processen(server)
@@ -669,6 +1235,7 @@ def stap(
     media_s = round(time.monotonic() - klok, 1)
     na_media = analyse_stand(server)
     fotos_na_media = foto_stand(server) if opzet.fotos else None
+    ana_na_media = analyse_voortgang(server.data_dir) if opzet.analyse else None
     meter.stop.set()
     for d in draden:
         d.join(timeout=35)
@@ -684,6 +1251,19 @@ def stap(
         hervat = wacht_tot_de_index_leest(server, klaar_en_open(na_media)[0])
     na = analyse_stand(server)
     fotos_na = foto_stand(server) if opzet.fotos else None
+    ana = None
+    if opzet.analyse is not None:
+        vragen: list[dict[str, Any]] = []
+        if opzet.vragen is not None:
+            opzet.vragen.fase = None
+            # een vraag die nog liep toen de fase eraf ging, telt niet mee
+            vragen = [v for v in opzet.vragen.vragen[n_vragen:] if v.get("fase") == naam]
+        ana = {
+            "voortgang": {"voor": ana_voor, "na_media": ana_na_media,
+                          "na": analyse_voortgang(server.data_dir)},
+            "beeld": beeld_samenvatting(vragen),
+            "worker": opzet.wachter.stand() if opzet.wachter is not None else None,
+        }  # fmt: skip
     fotos = None
     if fotos_voor is not None:
         fotos = {"voor": fotos_voor, "na_media": fotos_na_media, "na": fotos_na}
@@ -720,6 +1300,8 @@ def stap(
         "ds": ds,
         "office": office,
     }
+    if ana is not None:
+        uit["analyse"] = ana
     print(f"[{naam}] {json.dumps(uit, ensure_ascii=False)}", flush=True)
     return uit
 
@@ -804,6 +1386,8 @@ def kort_blok(uitkomst: dict[str, Any]) -> list[str]:
     kop = f"zoek_samen ({uitkomst['soort']}): {uitkomst['opzet']}; {uitkomst['duur_s']} s in totaal"
     regels = ["=== kort ===", kop]
     regels += [f"niet in deze meting: {wat}" for wat in uitkomst.get("overgeslagen", [])]
+    if uitkomst.get("analyse"):
+        regels.append(voorbereiding_regel(uitkomst["analyse"]))
     for s in uitkomst["stappen"]:
         # De fasen die de korte belastingtest niet draait, laten we weg: dat staat in de opzet
         media = "; ".join(r for r in s["media"]["samenvatting"] if "niet gedraaid" not in r)
@@ -817,15 +1401,29 @@ def kort_blok(uitkomst: dict[str, Any]) -> list[str]:
             f"media: {media}"
         )
         regels.append(f"{s['stap']}: {achtergrond_regel(s)}")
+        if s.get("analyse"):
+            regels.append(f"{s['stap']}: {analyse_regel(s)}")
         if s.get("office"):
             regels.append(f"{s['stap']}: OnlyOffice {json.dumps(s['office'], ensure_ascii=False)}")
         if s["fouten"]:
             regels.append(f"{s['stap']}: mislukte verzoeken {s['fouten']}")
     for regel, ok in uitkomst["poorten"]:
         regels.append(f"poort (stap achtergrond): {regel}: {woord(ok)}")
-    regels.append("uitkomst: " + ("rapport" if uitkomst["soort"] == "kort" else (
+    rapport = uitkomst.get("rapport", uitkomst["soort"] == "kort")
+    regels.append("uitkomst: " + ("rapport" if rapport else (
         "geslaagd" if uitkomst["geslaagd"] else "niet geslaagd")))  # fmt: skip
     return regels
+
+
+def voorbereiding_regel(ana: dict[str, Any]) -> str:
+    """De worker van de analyse en de voorbereiding (beeld klaar vóór stap 1) op één regel."""
+    v = ana.get("voorbereiding") or {}
+    klaar = "klaar" if v.get("klaar") else "NIET klaar (de poort van beeld is dan ongeldig)"
+    voortgang = v.get("voortgang") or {}
+    embed = voortgang.get("embed") or {}
+    return (f"analyse ({ana.get('bron')}, core {ana.get('core')}): voorbereiding {klaar} na "
+            f"{v.get('s')} s, beeld {v.get('stand')}, {v.get('in_bestand', 0)} van "
+            f"{v.get('fotos', 0)} foto's in het bestand, embed {embed}")  # fmt: skip
 
 
 def achtergrond_regel(s: dict[str, Any]) -> str:
@@ -884,25 +1482,65 @@ def zaai_stap(
     args: argparse.Namespace,
     opzet: Opzet,
     last: bool,
+    *,
+    fotos: bool = True,
 ) -> None:
     """Wat seeded() schrijft voor stap 1 (last: ook de foto's en de scans) en voor stap 3: de
     documenten in de hoofdmap. Met --office zoals op een 0.7.x met OnlyOffice: elk document dat
     DS omzet, heeft zijn PDF al (zaai office_klaar); zonder dat zette DS in elke stap, ook de
-    nulmeting, ±2.700 documenten om (docx, xlsx, pptx en rtf; I1, M7)."""
+    nulmeting, ±2.700 documenten om (docx, xlsx, pptx en rtf; I1, M7). fotos=False: de foto's
+    staan er al (--analyse: zaai_fotos ging voor, zie main)."""
     eigenaar, root = admin.id, admin.root_id or ""
     zb.zaai(data_dir, eigenaar, root, docs, office_klaar=bool(args.office))
     if not last:
         return
-    klok = time.monotonic()
-    if args.fotos:
-        teller = zf.zaai(data_dir, eigenaar, root, zf.fotos(args.fotos), zf.KLAAR)
-        opzet.fotos = teller["fotos"]
-        print(f"{teller['fotos']} foto's ({teller['met_gps']} met een plek) gemaakt "
-              f"in {time.monotonic() - klok:.1f} s", flush=True)  # fmt: skip
+    if fotos:
+        zaai_fotos(data_dir, admin, args, opzet)
     if args.scans:
         klok = time.monotonic()
         n = zf.zaai_documenten(data_dir, eigenaar, root, zf.scans(args.scans), "Scans")
         print(f"{n} scans gemaakt in {time.monotonic() - klok:.1f} s", flush=True)
+
+
+def zaai_fotos(
+    data_dir: Path, admin: Account, args: argparse.Namespace, opzet: Opzet, analyse: bool = False
+) -> None:
+    """De foto's in de map "Foto's", als al gelezen door photometa (zoek_foto.KLAAR). Met
+    analyse (--analyse): 1024 × 768 met de voorbeelden van 256 en 1024, zoals een foto van een
+    telefoon ze krijgt (render.thumbnails); de gezichten en beeld lezen het voorbeeld van 1024."""
+    if not args.fotos:
+        return
+    klok = time.monotonic()
+    rij = zf.fotos(args.fotos, formaat=zf.ANALYSE, groot=True) if analyse else zf.fotos(args.fotos)
+    teller = zf.zaai(data_dir, admin.id, admin.root_id or "", rij, zf.KLAAR)
+    opzet.fotos = teller["fotos"]
+    print(f"{teller['fotos']} foto's ({teller['met_gps']} met een plek) gemaakt "
+          f"in {time.monotonic() - klok:.1f} s", flush=True)  # fmt: skip
+
+
+def analyse_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """--analyse en --analyse-lock nakijken; de paden absoluut (de worker draait in een eigen
+    map)."""
+    if args.analyse_lock is not None and not args.analyse:
+        parser.error("--analyse-lock hoort bij --analyse <map met modellen>")
+    if not args.analyse or args.analyse == NEP:
+        if args.analyse_lock is not None:
+            parser.error("--analyse nep heeft geen --analyse-lock")
+        return
+    if args.analyse_lock is None:
+        parser.error("--analyse <map> heeft --analyse-lock <bestand> nodig (zoals models.lock)")
+    modellen = Path(args.analyse)
+    if not modellen.is_dir():
+        parser.error(f"--analyse: {modellen} is geen map")
+    if not args.analyse_lock.is_file():
+        parser.error(f"--analyse-lock: {args.analyse_lock} is geen bestand")
+    if not ANALYSE_PYTHON.is_file():
+        raise SystemExit(
+            f"zoek_samen --analyse: geen {ANALYSE_PYTHON} (numpy en onnxruntime, los van de app): "
+            "cd api && UV_PROJECT_ENVIRONMENT=.venv-analyse uv sync --frozen --extra analyse"
+        )
+    args.analyse = str(modellen.resolve())
+    args.analyse_lock = args.analyse_lock.resolve()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -919,9 +1557,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bewerkers", type=int, default=5)
     parser.add_argument("--json", type=Path, help="de uitkomst ook naar dit bestand")
     parser.add_argument("--kort-uit", type=Path, help="het blok === kort === ook naar dit bestand")
+    parser.add_argument(
+        "--analyse",
+        help="de container analyse erbij: de map met modellen (met --analyse-lock), of nep "
+        "(FakeAnalyseWorker, alleen een rapport)",
+    )
+    parser.add_argument(
+        "--analyse-lock", type=Path, help="met --analyse <map>: het lock-bestand van die modellen"
+    )
     args = parser.parse_args(argv)
     if args.kort and args.office:
         parser.error("--kort is zonder OnlyOffice")
+    analyse_args(parser, args)
     args.duur = args.duur or (60 if args.kort else 300)
     args.sessies = args.sessies or (1 if args.kort else 3)
     args.docs = args.docs or DOCS[0 if args.kort else 1]
@@ -933,6 +1580,16 @@ def main(argv: list[str] | None = None) -> int:
     gedeeld = None if args.kort else deelt_de_cores_van_de_worker()
     if gedeeld:
         overgeslagen.append(gedeeld)
+    if args.analyse == NEP:
+        overgeslagen.append(
+            "de echte analyse: --analyse nep (FakeAnalyseWorker), de tijden en het geheugen van "
+            "de nep zeggen niets over SigLIP, YuNet of SFace"
+        )
+    elif args.analyse:
+        overgeslagen.append(
+            "SFace en het groeperen van de gezichten: de testfoto's hebben geen gezichten (YuNet "
+            "leest ze wel)"
+        )
     for wat in overgeslagen:
         print(f"zoek_samen: niet in deze meting: {wat}", flush=True)
     reden = zf.scan_reden() if args.scans else None
@@ -945,9 +1602,15 @@ def main(argv: list[str] | None = None) -> int:
         args.scans = 0
 
     soort = "kort" if args.kort else ("office" if args.office else "zonder office")
+    # --analyse nep is altijd een rapport: de nep zegt niets over de tijd of het geheugen
+    rapport = bool(args.kort or args.analyse == NEP)
     opzet_tekst = f"{args.sessies} sessie(s) media, {args.duur} s per fase, {args.docs} documenten"
     opzet_tekst += " per stap" + (f", {args.bewerkers} bewerkers" if args.office else "")
     opzet_tekst += f", {args.fotos} foto's, {args.scans} scans"
+    if args.analyse == NEP:
+        opzet_tekst += ", analyse nep (FakeAnalyseWorker)"
+    elif args.analyse:
+        opzet_tekst += f", analyse echt ({Path(args.analyse).name}, core {ANALYSE_CORE})"
     # De belastingtest in de app draait fase a en b (korter dan 120 s alleen b); fase c alleen met
     # spelers buiten de app, fase d met de hand (runbook media.md). kort_blok laat die twee weg.
     opzet_tekst += "; media fase b" if args.duur < 120 else "; media fase a en b"
@@ -963,9 +1626,21 @@ def main(argv: list[str] | None = None) -> int:
     werk = base / "uit"
     werk.mkdir()
     env = {**media_env(None), "PLATFORM_MEDIA_LOADTEST": "1", "PLATFORM_SEARCH_INDEX": "aan"}
+    analyse: Analyse | None = None
+    if args.analyse:
+        analyse = Analyse(args.analyse, args.analyse_lock, base / "analyse")
+        sleutels = base / "sleutels"  # buiten de datamap, zoals /keys (Keuze 68)
+        sleutels.mkdir(mode=0o700)
+        env.update(analyse.app_env(sleutels))
+    ana_uit: dict[str, Any] | None = None
     opzet: Opzet | None = None
     stappen = []
     try:
+        if analyse is not None:
+            analyse.start()
+            assert analyse.proc is not None
+            print(f"zoek_samen: worker analyse ({'nep' if analyse.nep else 'echt'}), pid "
+                  f"{analyse.proc.pid} op core {analyse.core}", flush=True)  # fmt: skip
         opzet = start(base, env, args.office)
         server, admin = opzet.server, opzet.admin
         if opzet.office is not None:
@@ -979,11 +1654,11 @@ def main(argv: list[str] | None = None) -> int:
                         opzet.ds_host)))  # fmt: skip
 
         def met(
-            docs: list[zb.Document], extra: dict[str, str], last: bool = False
+            docs: list[zb.Document], extra: dict[str, str], last: bool = False, fotos: bool = True
         ) -> Callable[[Path], None]:
             def zaai(data_dir: Path) -> None:
                 server.extra_env.update(extra)
-                zaai_stap(data_dir, admin, docs, args, opzet, last)
+                zaai_stap(data_dir, admin, docs, args, opzet, last, fotos=fotos)
 
             return zaai
 
@@ -992,7 +1667,23 @@ def main(argv: list[str] | None = None) -> int:
         # de herstart van seeded; de backfill bij het starten zet de rijen klaar). De foto's
         # staan er als gelezen: photometa heeft niets te doen tot de herbouw van stap 2
         pauze(server, admin, True)
-        server.seeded(met(eerste, {}, last=True))
+        if analyse is not None:
+            # Met de analyse eerst alleen de foto's, en beeld klaar (voorbereiding): de stap
+            # embed wacht zolang de index veel open heeft (K2-07), dus met de documenten al in de
+            # rij kwam beeld vóór stap 2 nooit vol. Daarna pas de documenten en de scans
+            assert analyse.proc is not None
+            opzet.analyse = analyse
+            opzet.wachter = Wachter(analyse.proc.pid, analyse.log)
+            opzet.wachter.begin()
+            opzet.vragen = Beeldvragen(server, admin, lambda: opzet.fotos if opzet else 0)
+            opzet.vragen.begin()
+            server.seeded(
+                functools.partial(zaai_fotos, admin=admin, args=args, opzet=opzet, analyse=True)
+            )
+            ana_uit = {"voorbereiding": voorbereiding(opzet)}
+            server.seeded(met(eerste, {}, last=True, fotos=False))
+        else:
+            server.seeded(met(eerste, {}, last=True))
         stappen.append(stap(opzet, "pauze", args, woorden, werk, 1))
         # 2. achtergrond: dezelfde rij, de pauze eraf zodra media loopt; Defer zoals standaard
         stappen.append(stap(opzet, "achtergrond", args, woorden, werk, 2, begin=eraf))
@@ -1000,15 +1691,24 @@ def main(argv: list[str] | None = None) -> int:
         pauze(server, admin, True)
         server.seeded(met(tweede, {"PLATFORM_INDEX_DEFER_TRANSCODES": ZONDER_DEFER}))
         stappen.append(stap(opzet, "zonder_defer", args, woorden, werk, 3, begin=eraf))
+        if ana_uit is not None and opzet.wachter is not None:
+            ana_uit["worker"] = opzet.wachter.stand()
     finally:
         if opzet is not None:
+            for draad in (opzet.vragen, opzet.wachter):
+                if draad is not None:
+                    draad.stop.set()
             if opzet.office is not None:
                 opzet.office.stop()
             else:
                 opzet.server.stop()
+        if analyse is not None:
+            analyse.stop()
         shutil.rmtree(base, ignore_errors=True)
 
     poorten = oordeel(stappen[1], stappen[0])
+    if analyse is not None:
+        poorten += oordeel_analyse(stappen[1])
     gehaald = geslaagd(poorten)
     uitkomst = {
         "soort": soort,
@@ -1019,12 +1719,21 @@ def main(argv: list[str] | None = None) -> int:
         "stappen": stappen,
         "poorten": poorten,
         "geslaagd": gehaald,
+        "rapport": rapport,
         "duur_s": round(time.monotonic() - begonnen),
     }
+    if analyse is not None:
+        uitkomst["analyse"] = {
+            "bron": NEP if analyse.nep else Path(analyse.bron).name,
+            "core": analyse.core,
+            "poort": POORT_ANALYSE,
+            **(ana_uit or {}),
+        }
     out = os.environ.get("E2E_PERF_OUT")
     paden = [args.json] if args.json else []
     if out:
-        paden.append(Path(out) / "zoek-samen.json")
+        naam = "zoek-samen-analyse.json" if analyse is not None else "zoek-samen.json"
+        paden.append(Path(out) / naam)
     for pad in paden:
         pad.parent.mkdir(parents=True, exist_ok=True)
         pad.write_text(json.dumps(uitkomst, indent=2, ensure_ascii=False) + "\n")
@@ -1033,7 +1742,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.kort_uit:
         args.kort_uit.parent.mkdir(parents=True, exist_ok=True)
         args.kort_uit.write_text("\n".join(blok) + "\n")
-    return 0 if args.kort or gehaald else 1
+    return 0 if rapport or gehaald else 1
 
 
 if __name__ == "__main__":
