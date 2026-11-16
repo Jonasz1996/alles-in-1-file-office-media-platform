@@ -531,7 +531,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   paar (B56). Er staat nooit iets vooraf aangevinkt; opruimen gaat via
   de prullenbak
 
-- [ ] Gezichten en objecten met lokale modellen (bijv. InsightFace +
+- [x] Gezichten en objecten met lokale modellen (bijv. InsightFace +
   CLIP); semantisch zoeken via pgvector. Niet in 0.8.0. Personen
   benoem je in 0.8.0 met de hand (zo nodig met een kader op de foto), en
   die zijn te zoeken. Gezichten vanzelf herkennen (YuNet en SFace) is
@@ -540,6 +540,11 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   0.8.1, ~~maar kan naar een eigen fase 6b schuiven~~ (B57, B66, B68).
   [2026-11-16: het blijft in 0.8.1, standaard uit per gebruiker (Keuze 85 in
   docs/fase-6/bouwontwerp.md; Vraag 11 staat nog open).]
+  [Gebouwd in 0.8.1 (⟦I2: de datum van de laatste push van I2⟧,
+  ⟦I2: de volledige commit van 0.8.1⟧): gezichten vanzelf herkennen met YuNet en SFace, en zoeken
+  op wat er op een foto staat met SigLIP 2. Beide rekenen op de eigen server, in de container
+  analyse, en staan per gebruiker standaard uit. Personen met de hand benoemen blijft zoals in
+  0.8.0.]
 
 - [x] Herinneringen (vandaag X jaar geleden) en slimme albums.
   Herinneringen staan op `/fotos` en zijn uit te zetten op `/account`.
@@ -576,6 +581,17 @@ en B57 besloten; de rest is nog voorstel, en 0.8.0 draait op de
 standaarden van het bouwontwerp (ook Vraag 4: alleen de eigenaar ziet de
 plek van een foto).
 
+Versie 0.8.1 (⟦I2: de datum van de laatste push van I2⟧): gezichten vanzelf herkennen en zoeken op
+wat er op een foto staat. De installatie zet de container analyse standaard aan; wie
+`ANALYSE=uit` koos, houdt hem uit. Daarna zet ieder het zelf aan bij Account → Foto's. Gezichten:
+1.043 foto's per minuut op één processorkern (de grens is 250). Zoeken op beeld: een foto bekijken
+kost 33,8 ms en een vraag 22,2 ms (p95) in de automatische tests; samen met de rest van de app
+⟦I2: de p95 van zoeken op beeld uit M12⟧ (de grens is 250 ms). Sommige woorden vinden weinig
+(zoals 'bergen' en 'boot'); Jonas koos het toch uit te brengen (Keuze 85). Wat 0.8.1 brengt en de
+grenzen staan in [docs/fase-6/README.md](fase-6/README.md), de integratie in
+[docs/fase-6/integratie-2.md](fase-6/integratie-2.md). Van B49–B70 blijven alle punten behalve
+B53 en B57 een voorstel, net als B71; Vraag 4 en Vraag 8–14 staan nog open.
+
 Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
 automatisch en zoeken op wat er op een foto staat, met een kaart zonder
 tegels van buiten. Daarmee is fase 6 ±43 werkdagen (±9 weken) in plaats
@@ -586,7 +602,7 @@ niet-commercieel onderzoek), SigLIP 2 in plaats van CLIP (beter in het
 Nederlands), en de vectoren in de SQLite die er al is in plaats van
 pgvector (standalone draait op SQLite, B15). Gezichten en beeld rekenen
 in een eigen afgeschermde container, en staan per gebruiker standaard
-uit. Zoeken op beeld mag standaard 250 ms duren (Vraag 14); gewoon zoeken
+uit [0.8.1: de container zelf staat na de installatie standaard aan]. Zoeken op beeld mag standaard 250 ms duren (Vraag 14); gewoon zoeken
 houdt zijn 200 ms.
 Wie de plek van een foto ziet, heeft Jonas nog niet gekozen; tot dan
 ziet alleen de eigenaar hem. Het ontwerp, de planning en de open vragen
