@@ -320,7 +320,12 @@ async def test_p95_bij_55000_en_100000_fotos(
             _vul(dbpad, eigenaar, map_, klaar, n - klaar)
             klaar = n
             assert _bestand(settings, dbpad, eigenaar, seed=n) == n
-            await _vraag(client, eva, "rood")  # laadt het bestand in het kind zoeken
+            # Het nieuwe bestand gaat eerst in het geheugen van zoeken, zoals de job beeld.vec dat
+            # na het bouwen doet (bjobs.warm, K2-13); _bestand bouwt het hier zonder die job. Zonder
+            # dit laadde de eerste vraag 55.000 vectoren koud onder de klok van 800 ms van de app
+            # (698-892 ms op één core van de sandbox, nacontrole I2): geen pad dat de app zo kent.
+            assert await bjobs.warm(settings, eigenaar)
+            await _vraag(client, eva, "rood")  # ongemeten: de eerste vraag na het opwarmen
             naam, vragen = f"warm {n}", [f"rood {i}" for i in range(VRAGEN)]
             gemeten[naam] = [await _vraag(client, eva, q) for q in vragen]
             await tekst_van(naam, vragen)
