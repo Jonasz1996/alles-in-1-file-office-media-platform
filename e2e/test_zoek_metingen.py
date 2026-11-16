@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import json
 import sqlite3
 import sys
 from collections import Counter
@@ -1583,3 +1584,44 @@ def test_de_analyse_op_core_3_of_de_hoogste_die_er_is(monkeypatch: pytest.Monkey
     assert zs.analyse_core() == 3
     monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1})
     assert zs.analyse_core() == 1
+
+
+def test_fotos_van_640_zijn_dezelfde_bytes_als_sinds_i1() -> None:
+    """fotos() zonder formaat maakt precies de JPEG's van F.foto_gps en F.foto_zonder_gps (zoals
+    sinds I1), dus de metingen van zoek_samen en zoek_backfill zonder --analyse blijven gelijk."""
+    from tests.search import fixtures as F
+
+    plekken = zf.punten(6, 11)
+    fotos = list(zf.fotos(6, zaad=11, plekken=plekken))
+    for i, f in enumerate(fotos):
+        if i == 4:  # i % ZONDER_GPS == 4
+            assert f.data == F.foto_zonder_gps(zaad=f"11-{i}") and f.gps is None
+        else:
+            assert f.data == F.foto_gps(*plekken[i], zaad=f"11-{i}")
+        assert (f.groot, f.formaat) == (None, zf.FORMAAT)
+
+
+def test_fotos_voor_de_analyse_met_het_voorbeeld_van_1024(leeg: tuple[Path, str, str]) -> None:
+    """formaat=ANALYSE en groot: 1024 × 768 met de voorbeelden van 256 en 1024 (de kopie op de
+    helft: 512 × 384, het voorbeeld nooit groter dan het origineel), en zaai() schrijft beide met
+    de maten zoals render.thumbnails ze teruggeeft."""
+    data, eigenaar, root = leeg
+    fotos = list(zf.fotos(zf.VARIANT, zaad=23, formaat=zf.ANALYSE, groot=True))
+    for f in (fotos[0], fotos[-1]):  # de laatste is de verkleinde kopie van de vorige
+        assert f.groot is not None and f.thumb is not None
+        assert Image.open(io.BytesIO(f.data)).size == f.formaat
+        groot = Image.open(io.BytesIO(f.groot))
+        assert groot.format == "WEBP" and groot.size == f.formaat  # ≤ 1024: niet verkleind
+        assert max(Image.open(io.BytesIO(f.thumb)).size) == 256
+    assert (fotos[0].formaat, fotos[-1].formaat) == ((1024, 768), (512, 384))
+    zf.zaai(data, eigenaar, root, fotos, zf.KLAAR)
+    store = zf.BlobStore(zf.Settings(data_dir=data).blob_dir)
+    sha = hashlib.sha256(fotos[0].data).hexdigest()
+    assert (zf.previews.directory(store, sha) / "1024.webp").read_bytes() == fotos[0].groot
+    con = sqlite3.connect(data / "platform.db")
+    try:
+        (meta,) = con.execute("SELECT preview_meta FROM blob WHERE sha256 = ?", (sha,)).fetchone()
+    finally:
+        con.close()
+    meta = json.loads(meta) if isinstance(meta, str) else meta
+    assert meta == {"width": 1024, "height": 768, "sizes": [1024, 256]}
