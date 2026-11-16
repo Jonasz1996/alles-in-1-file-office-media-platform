@@ -299,10 +299,11 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
     per vraag (rapport, int8/fp32): …`;
   - sinds CI op 011bf2d, elk in een eigen try (een fout is `BZ4 <deel> (rapport): mislukt
     (<soort>)`, de andere delen gaan door): `BZ4 meer zoals deze per categorie (rapport,
-    int8/fp32) 1/4: strand …/… (fout int8: stad …, boot …, anders-brug …; fp32: …) | …`
-    (vier regels, drie categorieën per regel: het deel van de top 4 in int8 en fp32, en waar de
-    foute buren het vaakst vandaan komen: een categorie, of bij een afleider de naam zoals
-    `anders-vogel`; een combinatie telt bij allebei), `BZ4 zwakke vragen (rapport) 1/n: bergen
+    int8/fp32) 1/n: strand …/… (fout int8: stad …, boot …, anders-brug …; fp32: …) | …`
+    (drie categorieën per regel, dus bij de twaalf categorieën van de set vier regels; per
+    categorie het deel van de top 4 in int8 en fp32, en waar de foute buren het vaakst vandaan
+    komen: een categorie, of bij een afleider de naam zoals `anders-vogel`; een combinatie telt
+    bij allebei), `BZ4 zwakke vragen (rapport) 1/n: bergen
     (nl; int8 …/5, fp32 …/5): int8 <vijf sleutels>; fp32 <vijf sleutels>` (elke vraag in nl of
     en met hooguit 1 goede foto in de top 5 in int8 of fp32, de zwakste eerst, met de sleutels
     van de top 5; hooguit 24 regels en dan `nog …, niet uitgeschreven`; zonder zwakke vraag één

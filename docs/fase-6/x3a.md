@@ -1542,7 +1542,10 @@ Niets hiervan verandert een poort, een pin of de bytes van de omzetter.
   `siglip.py`, de CLI en `VERSIE` bleven gelijk. Dat de bytes gelijk bleven, legt
   `test_zonder_opties_dezelfde_bytes_als_voor_de_opties` vast met de sha256 van alle zeven
   bestanden van het kleine model, uitgerekend vóór de haken (`86b4cf8`), en
-  `test_varianten_uit_dezelfde_bytes` met de opties expliciet op hun standaard.
+  `test_varianten_uit_dezelfde_bytes` met de opties expliciet op hun standaard. [Tot `VERSIE` 3:
+  sinds CI op `011bf2d` (`87e2af2`) heet de eerste `test_de_standaard_geeft_de_bytes_van_v3` en
+  pint hij de bytes van `VERSIE` 3; de sha256 van vóór de haken bewijst nu
+  `test_per_tensor_geeft_byte_voor_byte_de_bestanden_van_v2`, met `per_token=False`.]
 - **Rapportregels in BZ4** (`46898d9`): `_rapport_int8` in `test_beeld_kwaliteit.py`, binnen
   try/except, met de grafen die BZ4 al laadt; de uitkomst in `bz4.json` onder `int8_rapport`. De
   asserts zijn niet veranderd.
@@ -1915,9 +1918,11 @@ embedding in fp32, ook bovenop per tensor) halen 0,442 tot 0,467.
 Volgens "Zo lees je de uitkomst" is een variant die ≤ 0,05 zakt een kandidaat, en de goedkoopste
 gaat door. Dat is per token: dezelfde bestanden (103 en 284 MB), ±10 ms meer per foto en per vraag
 op één draad, in batches van 16. BZ6 eist ≥ 500 foto's per minuut op één core (≤ 120 ms per foto)
-en een vraag p95 ≤ 250 ms; per token rekent 31 ms per foto. fc2 fp32 wint 0,008 en mlp fp32 0,033
-erbij, maar met 85 tot 170 MB meer per toren en 1,2 tot 1,8 × de tijd; dat is voor geen poort
-nodig. Een kop in fp32 bovenop per token verandert niets.
+en een vraag p95 ≤ 250 ms; per token rekent 31 ms per foto. fc2 fp32 en mlp fp32, in deze run
+bovenop per tensor, halen 0,683 en 0,708: 0,008 en 0,033 meer dan per token (0,675), maar met 85
+tot 170 MB meer per toren en 1,2 tot 1,8 × de tijd van per token, en dat is voor geen poort nodig.
+Bovenop per token zijn ze nog niet gemeten; dat doet de volgende run (`bz4r`). Een kop in fp32
+bovenop per token verandert niets.
 
 ### Wat er gebouwd is
 
@@ -1997,3 +2002,49 @@ het bouwontwerp zegt het.
   van fc2 in laag 9 niet stijgt.
 - **Of BZ4 vragen één voor één meet** (Keuze 83): met per token hangt een vector niet meer van zijn
   batch af; de volgende run zegt of dat op het echte model ook zo is.
+- **De tijd van per token op een trage runner** (N6 in "De review" hieronder). Per token rekent ±1,5
+  × zo lang als per tensor (in `bz4r` op `011bf2d` 31,0 tegen 20,6 ms per foto, 28,0 tegen 18,3 ms
+  per vraag). BZ6 mat per tensor tot nu 21,7 ms (`011bf2d`), 39,8 ms (`26c49ca`) en 76,5 ms
+  (`625e946`) per foto; op de traagste runner wordt dat met per token tot ±115 ms, vlak onder de
+  120 ms van de poort (≥ 500 per minuut). De poort blijft; BZ6 van de volgende run zegt wat per
+  token op die runner kost. De tijden die x3b.md (39,8 ms per foto, van `26c49ca`) en de
+  backfill-tabel in het bouwontwerp (69–80 ms per foto, K2-04) noemen, zijn van vóór per token; X3b
+  leest ze na met die meting.
+
+### De review
+
+De review van dit werk (`87e2af2`, `cd92837`, `2e91686` en `d911bce` op `011bf2d`) gaf geen punt
+dat moest, twee die zouden moeten (ZOU 1 en ZOU 2) en zes kleine (N1 tot N6). Elk is eerst
+nagekeken; geen bleek onjuist. Van haar 37 mutaties bleven er vijf groen (K12, K13, K14, K16 en
+K17); die zijn nu alle vijf rood. ZOU 1, ZOU 2 en N1 zijn hersteld met een test die de mutatie
+van de review vangt; N2 tot N6 in de docs.
+
+| Bevinding | Wat er gebeurde | Test |
+|---|---|---|
+| **ZOU 1** De fp32-kant van de drie nieuwe delen kon stil met int8 rekenen: op het kleine model is int8 vrijwel fp32, en de tests met nepvectoren gaven beide kanten dezelfde vectoren. De top 5 van fp32 uit e8 (K12), per categorie fp32 uit e8 (K13), de top 1 van fp32 uit e8 (K14) en het aantal goede foto's per vraag van fp32 uit int8 (K16) bleven groen | Nepvectoren waarin int8 en fp32 verschillen (`af12ca2`): in fp32 ligt elke foto op de as van zijn categorie, in int8 op die van een andere; de combinaties, de afleiders en de vragen zijn in beide gelijk. Door `_rapport_int8` heen, zoals `uitkomst` het aanroept | `test_de_fp32_kant_van_de_nieuwe_delen_rekent_met_fp32`: per categorie precies `_meer_per_categorie` van e8 en van e32 (int8 overal lager, andere herkomst); 25 zwakke vragen, elk int8 ≤ 1 en fp32 ≥ 3 met een andere top 5, de eerste (`fiets`) met beide top 5; de top 1 int8 1/42 en fp32 42/42, ook de regel in kort.txt letterlijk |
+| **ZOU 2** Niets hield vectoren buiten kort.txt: een vector in de regel van de top 1 (K17) bleef groen; in `bz4.json` (K18) werd hij al gevangen | `_geen_vector` in de tests (`af12ca2`): geen regel van kort.txt heeft meer dan 40 getallen, geen getal meer dan 5 decimalen. Geijkt op de echte regels van `011bf2d`: de langste (nl per vraag 1/3) heeft er 34, de afwijking per laag 5 decimalen | `test_de_regel_tegen_vectoren_in_kort_txt` (zes regels uit het log van `011bf2d` en een zwakke vraag door; een vector, 768 getallen, 41 getallen en 6 decimalen rood), en de regel in `test_het_rapport_per_laag_en_variant_op_het_kleine_model` en `test_het_int8_rapport_van_bz4_op_het_kleine_model` |
+| **N1** De ondergrens 1e-30 van de schaal per rij had geen gedragstest; zonder (M13) vingen alleen de pins van de bytes het | Een test (`af12ca2`) | `test_per_token_een_rij_van_nullen_geeft_geen_nan`: een rij van nullen en een rij waarvan max \|x\| / 127 in fp32 nul is; x / a eindig, u 128 en de uitvoer precies de bias. Zonder de ondergrens is x / a NaN of oneindig (de uitvoer zelf blijft op x86 de bias, daarom kijkt de test ervoor) |
+| **N2** "Wat er gebouwd is: alleen meten" noemde `test_zonder_opties_dezelfde_bytes_als_voor_de_opties`, die sinds `87e2af2` anders heet | Een noot erbij: welke test nu wat bewijst | (docs) |
+| **N3** De opmerking bij `ANALYSE_TESTS` zei "zonder opties dezelfde bytes" | "de bytes van de standaard, ook met de opties expliciet op hun standaard, 2 (sinds CI op 011bf2d die van VERSIE 3)" (`52dd177`) | (docs) |
+| **N4** "fc2 fp32 wint 0,008 en mlp fp32 0,033" zei niet dat die varianten in die run bovenop per tensor kwamen | "De keuze: per token" zegt het, en dat de volgende run ze bovenop per token meet | (docs) |
+| **N5** "vier regels" in het runbook geldt alleen bij twaalf categorieën | "drie categorieën per regel, dus bij de twaalf categorieën van de set vier regels", en `1/n` in het voorbeeld | (docs) |
+| **N6** Per token kost ±1,5 × de tijd van per tensor; BZ6 haalt het ruim, maar de tijden van X3b gaan uit van per tensor | Geen code: op de runner van `011bf2d` is dat ±1.900 per minuut (poort ≥ 500). Op de traagste runner tot nu (`625e946`) wordt het tot ±115 ms per foto, vlak onder 120; een punt in "Open na 011bf2d" | (docs) |
+
+Teruggedraaid getest: de herstellen zijn alleen tests, dus ongedaan is de mutatie van de review
+(in `test_beeld_kwaliteit.py`, bij N1 in `bouw.py`); dan `test_beeld_int8_klein.py` (`-m "not
+beeld_echt"`, onder de lock), rood; dan terug met de bytes van ervoor: alle 60 groen en `git
+status` leeg.
+
+| Herstel | Ongedaan | Rood | Weer groen |
+|---|---|---|---|
+| ZOU 1, top 5 | K12 | 1 | 60 |
+| ZOU 1, per categorie | K13 | 1 | 60 |
+| ZOU 1, top 1 | K14 | 1 | 60 |
+| ZOU 1, aantal goed | K16 | 1 | 60 |
+| ZOU 2 | K17 | 2 | 60 |
+| N1 | M13 | 1 | 60 |
+
+De telling van `api-analyse`: `ANALYSE_TESTS` 281 (278 en de 3 nieuwe van
+`test_beeld_int8_klein.py`), `ANALYSE_DESELECTED` 16 (`52dd177`). Geen poort, drempel of test
+lager, `beeld_vragen.tsv` en `models.lock` niet veranderd, geen afhankelijkheid, host, model of
+action erbij; de omzetter is niet veranderd.
