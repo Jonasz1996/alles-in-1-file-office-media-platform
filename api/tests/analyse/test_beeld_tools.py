@@ -2911,6 +2911,93 @@ def test_het_bewijs_staat_alleen_in_het_log(nep, commons, werk, tmp_path, capsys
     )
 
 
+@pytest.mark.parametrize("k", [4, 6])
+def test_de_eerste_keus_maakt_over_zoekopdrachten_heen_geen_tekort(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, k
+):
+    """De review (S1): de eerste keus is er per zoekopdracht, niet over de set heen. Alle goede
+    foto's van alleen hond zijn tweede keus (P195), en k goede katten beelden ook een hond af. Dan
+    neemt hond die katten als eerste keus, en had kat er vroeger genoeg maar nu te weinig. Bij een
+    tekort kiest het voorstel opnieuw in de volgorde van Commons (zoals vroeger, met de lijst), en
+    houdt het de keuze met de minste tekorten: hier geen. Geen vraag aan de API erbij (de pagina's
+    van de eerste ronde), en van wat de eerste ronde al ophaalde geen tweede download."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    cat = bm.CATEGORIEEN
+    b = commons.bestanden
+    katten = _goede_katten(commons)
+    honden = [
+        i
+        for i, d in sorted(b.items())
+        if d["P180"] == {cat["hond"]}
+        and d["mime"] == "image/jpeg"
+        and d["breedte"] == 1600
+        and d["bytes"] <= bm.MAX_FOTO
+        and d["P275"] == {"Q6938433"}
+    ]
+    assert len(honden) == 6
+    for i in honden:
+        b[i]["eigen"] = {"P195"}
+    for i in katten[:k]:
+        b[i]["P180"] = {cat["kat"], cat["hond"]}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"hond-{n}"] for n in range(1, 5)] == honden[:4]
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == katten[:4]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 2 van 4 gekozen, 0 tweede keus (24 kandidaten bekeken op 2 pagina's)"
+    ) in uit
+    assert (
+        "BZ4 set: volgorde van Commons, hond: 4 van 4 gekozen, 4 tweede keus (10 kandidaten "
+        "bekeken op 1 pagina; tweede keus: 4 collectie)"
+    ) in uit
+    regels = _kort(werk)
+    assert regels[0] == (
+        "BZ4 set: de eerste keus gaf 1 tekort, de volgorde van Commons geen: dit voorstel volgt "
+        "de volgorde van Commons, met 4 tweede keus (hond 4); het bewijs per foto staat in het "
+        "log, na deze regel"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert not [r for r in regels if "Commons:" in r or "de eerste keus was op" in r]
+    # het bewijs na de regel is dat van het voorstel, in zijn volgorde
+    na = uit[uit.index(regels[0]) :]
+    bewijs = [r.split(":")[1].removeprefix(" bewijs ") for r in na if "set: bewijs " in r]
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    assert bewijs == [f.sleutel for f in fotos]
+    # de pagina's van de eerste ronde: geen vraag erbij (zoals de reviewer zag: 93)
+    assert _verkeer(nep).startswith("API: 93 vragen, 0 keer 429; ")
+    # elke foto één keer opgehaald; op de plek van het voorstel staat precies zijn bestand
+    gehaald = [p for p, _ in nep.vragen if not p.startswith("/w/api.php")]
+    assert len(gehaald) == len(set(gehaald)) == 118 + 4
+    assert sorted(p.name for p in werk.set.iterdir()) == sorted(f"{f.sleutel}.jpg" for f in fotos)
+    for f in fotos:
+        assert _sha((werk.set / f"{f.sleutel}.jpg").read_bytes()) == f.sha256, f.sleutel
+    for n, i in enumerate(katten[:4], 1):
+        assert (werk.set / f"kat-{n}.jpg").read_bytes() == commons.gehaald(i)[1]
+
+
+def test_bij_evenveel_tekorten_houdt_het_voorstel_de_eerste_keus(
+    nep, commons, werk, tmp_path, capsys
+):
+    """De review (S1): ook in de volgorde van Commons hebben kat+sneeuw, eten en gitaar te weinig
+    (_tekort). Dan houdt het voorstel de eerste keus: het blok is hetzelfde als zonder de tweede
+    ronde (test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld), en alleen het log
+    zegt wat de volgorde van Commons gaf."""
+    _tekort(commons)
+    with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: de volgorde van Commons gaf 3 tekorten: het voorstel houdt de eerste keus" in uit
+    )
+    assert (
+        "BZ4 set: volgorde van Commons, kat+sneeuw: 0 van 1 gekozen, 0 tweede keus (2 kandidaten "
+        "bekeken op 2 pagina's)"
+    ) in uit
+    assert not [r for r in _kort(werk) if "volgorde van Commons" in r]
+    assert not (werk.set / ".eerste-keus").exists()
+
+
 TWEEDE_KEUS = {
     "niets": ({}, None),
     "een foto (P31 Q125191)": ({"P31": {"Q125191"}}, None),

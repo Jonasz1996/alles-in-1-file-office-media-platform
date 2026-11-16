@@ -59,11 +59,13 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -166,7 +168,10 @@ RESERVE_COMBIS = (
 # 3a9b07d had 34 bestanden van het Metropolitan Museum, schilderijen, prenten en foto's van mensen
 # zonder P180 = mens (set-review van run 43816803103). Geen nieuwe harde regel: een kandidaat met
 # zo'n teken is tweede keus, en vult een zoekopdracht pas aan als de eerste keus op is, zodat er
-# nooit een tekort bij komt (een tekort maakt set rood, en dan draait BZ4 niet).
+# per zoekopdracht nooit een tekort bij komt (een tekort maakt set rood, en dan draait BZ4 niet).
+# Over zoekopdrachten heen kan dat wel (een eerste keus van hond die ook een kat afbeeldt, mist
+# kat; de review, S1): geeft de eerste keus een tekort, dan kiest stel_voor opnieuw in de volgorde
+# van Commons, zoals vroeger, en houdt de keuze met de minste tekorten.
 # Alles uit gegevens die de tool al vraagt: de uitspraken uit wbgetentities en de sjablonen uit
 # dezelfde vraag als imageinfo (details).
 # - Een kunstwerk: een uitspraak op P6243 (digital representation of), een P31 uit KUNSTWERK_P31,
@@ -1606,15 +1611,18 @@ def _bewijs(d: dict, qids: tuple[str, ...], eerste: bool) -> str:
 # eerste licentie. Pas als de eerste keus op de pagina's tot dan te weinig is, leest hij de
 # volgende pagina, tot het uiterste van vroeger (2 licenties × max_pagina), en vult hij daarna aan
 # met de tweede keus van alle pagina's die hij las: elke extra pagina is 3 vragen, maar nooit een
-# pagina meer dan het uiterste, en een tekort alleen als vroeger ook. Vóór de eerste keus las hij
-# soms een pagina meer (die kwam binnen voordat de lus zag dat hij klaar was); nu niet meer. Met 6
+# pagina meer dan het uiterste. Geeft dat een tekort, dan kiest stel_voor opnieuw in de volgorde
+# van Commons (zie daar): op de pagina's die hij al las, en alleen een volgende als die keuze hem
+# nodig heeft, nooit voorbij het uiterste per zoekopdracht. Vóór de eerste keus las hij soms een
+# pagina meer (die kwam binnen voordat de lus zag dat hij klaar was); nu niet meer. Met 6
 # combinaties, 12 categorieën en 12 andere onderwerpen zijn dat minstens 30 × 3 = 90 vragen, 12
 # minuten (met contact 1,5 minuut); met tweede pagina's of tekorten meer. Hooguit 2 licenties ×
 # max_pagina (4) × 3 = 24 per zoekopdracht, 720 samen, plus de reserves alleen bij een tekort (5
 # paren, de eerste pagina per licentie: 30): 750 vragen, 100 minuten zonder contact, 12,5 met
 # contact (PAUZE_S; zo draait de CI). De 120 thumbnails (PAUZE_S en BANDBREEDTE) lopen grotendeels
-# door in de pauzes van de API. Of het past in timeout-minutes van de job beeld-model: zie de
-# opmerking daar in ci.yml
+# door in de pauzes van de API; volgt het voorstel de volgorde van Commons, dan komen daarna nog
+# de thumbnails die de eerste ronde niet had (hooguit 120). Of het past in timeout-minutes van de
+# job beeld-model: zie de opmerking daar in ci.yml
 def _paginas(qids: tuple[str, ...], *, max_pagina: int = 4):
     """Per pagina van 50 de bestanden die alle qids afbeelden, met CC0 of publiek domein, zonder
     mens, op pageid; per licentie tot max_pagina pagina's. Een pagina komt pas als de vorige op is
@@ -1714,6 +1722,29 @@ def _mb(n: int) -> str:
     return f"{n / 1e6:.1f} MB".replace(".", ",")
 
 
+@dataclass
+class _Keuze:
+    """Eén keuze van de hele set (stel_voor): de keuzes in de volgorde van het voorstel, elk
+    (pageid, d, sleutel, categorieën, bewijs); de foto's die al op hun plek staan; de tekorten;
+    per zoekopdracht hoeveel tweede keus; de bronnen uit beeld_niet.tsv die als kandidaat
+    langskwamen."""
+
+    keuzes: list[tuple[int, dict, str, tuple[str, ...], str]] = field(default_factory=list)
+    fotos: list[Foto] = field(default_factory=list)
+    tekort: list[str] = field(default_factory=list)
+    combi_tekort: bool = False
+    tweede_keus: dict[str, int] = field(default_factory=dict)
+    getroffen: set[str] = field(default_factory=set)
+
+    def maat(self) -> tuple[int, int]:
+        """Hoe slecht: het aantal tekorten, dan hoeveel foto's er minder zijn."""
+        return len(self.tekort), -len(self.keuzes)
+
+
+def _tekorten(n: int) -> str:
+    return "geen" if n == 0 else "1 tekort" if n == 1 else f"{n} tekorten"
+
+
 def stel_voor(
     werk: Werk,
     *,
@@ -1726,10 +1757,17 @@ def stel_voor(
 
     Per zoekopdracht eerst de eerste keus (_tweede_keus None), pagina voor pagina, en pas als die
     op is (tot het uiterste van _paginas) de tweede keus van alle pagina's die hij las; binnen elk
-    van de twee op _voorkeur. Zo komt er door de voorkeur nooit een tekort bij: een kandidaat die
-    vroeger bruikbaar was, is het nog. Het log (niet het blok) zegt per zoekopdracht hoeveel er
-    tweede keus waren en waarom ("geen eerste keus: ..."), en per gekozen foto het bewijs
-    (_bewijs); het blok één regel met alle tweede keus samen, als die er was.
+    van de twee op _voorkeur. Zo komt er per zoekopdracht door de voorkeur nooit een tekort bij:
+    een kandidaat die vroeger bruikbaar was, is het nog. Over zoekopdrachten heen wel: een eerste
+    keus van de ene (een foto met ook een andere categorie) kan een volgende zoekopdracht een foto
+    afnemen die die vroeger had (de review, S1). Daarom: geeft deze keuze een tekort, dan kiest hij
+    opnieuw in de volgorde van Commons, zoals vóór de eerste keus (maar met beeld_niet.tsv), op de
+    pagina's die hij al las (en verder alleen als dat moet, tot hetzelfde uiterste), en houdt hij
+    de keuze met de minste tekorten (dan de meeste foto's); bij gelijkspel de eerste keus. Wat de
+    eerste ronde al ophaalde, haalt hij dan niet opnieuw. Het log (niet het blok) zegt per
+    zoekopdracht hoeveel er tweede keus waren en waarom ("geen eerste keus: ..."), en per gekozen
+    foto het bewijs (_bewijs); het blok één regel met alle tweede keus samen, als die er was, of
+    één regel dat het voorstel de volgorde van Commons volgt.
 
     niet (beeld_niet.tsv; lees_niet): een kandidaat met een bron daaruit neemt hij nooit, ook
     niet als tweede keus of als reserve (reden UITGESLOTEN); de volgende in dezelfde volgorde
@@ -1742,174 +1780,256 @@ def stel_voor(
     combis = combis if combis is not None else combinaties()
     voortgang = voortgang or Voortgang(len(CATEGORIEEN) * PER_CATEGORIE + len(ANDERE) * PER_ANDER)
     werk.set.mkdir(exist_ok=True)
-    gekozen: list[Foto] = []
-    gebruikt: set[int] = set()
-    tekort: list[str] = []
-    combi_tekort = False
-    tweede_keus: dict[str, int] = {}  # per zoekopdracht hoeveel er tweede keus waren
     lijst = niet or {}
-    getroffen: set[str] = set()  # de bronnen uit beeld_niet.tsv die als kandidaat langskwamen
+    alle_qids = set(CATEGORIEEN.values())
+    gelezen: dict[tuple[str, ...], tuple[list, Iterator]] = {}
 
-    def uitgesloten(d: dict) -> bool:
-        if not _op_lijst(d, lijst):
-            return False
-        getroffen.add(_bron_sleutel(d["bron"]))
-        return True
+    def paginas(qids: tuple[str, ...]):
+        """_paginas(qids), maar elke pagina één keer gevraagd: een tweede ronde leest eerst wat de
+        eerste al las, en vraagt pas daarna de volgende (tot hetzelfde uiterste)."""
+        al, rest = gelezen.setdefault(qids, ([], _paginas(qids)))
+        i = 0
+        while True:
+            if i == len(al):
+                pagina = next(rest, None)
+                if pagina is None:
+                    return
+                al.append(pagina)
+            yield al[i]
+            i += 1
 
-    def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...], bewijs: str) -> None:
+    def haal(d: dict, sleutel: str, cats: tuple[str, ...], bewijs: str) -> Foto:
         doel = werk.set / f"{sleutel}.jpg"
         url, grootte = _duim(d)
         sha, n = voortgang.haal(url, doel, max_bytes=MAX_FOTO, grootte=grootte)
-        gekozen.append(Foto(sleutel, cats, _licentie(d), sha, n, url, d["bron"]))
-        gebruikt.add(pageid)
-        voortgang.klaar = len(gekozen)
         # Alleen in het log: niet in het blok, en niet in beeld.tsv (die houdt zijn 7 kolommen)
         print(f"BZ4 set: bewijs {sleutel}: {bewijs}", flush=True)
+        return Foto(sleutel, cats, _licentie(d), sha, n, url, d["bron"])
 
     def cats_van(d: dict, hoofd: tuple[str, ...]) -> tuple[str, ...]:
         rest = [c for c, q in CATEGORIEEN.items() if q in d["P180"] and c not in hoofd]
         return (*hoofd, *rest)
 
-    alle_qids = set(CATEGORIEEN.values())
+    def kies(gelaagd: bool) -> _Keuze:
+        """De hele set. gelaagd: eerst de eerste keus, en elke foto meteen ophalen. Anders de
+        volgorde van Commons zoals vóór de eerste keus (met beeld_niet.tsv), zonder iets op te
+        halen: alleen de keuzes (zie over)."""
+        k = _Keuze()
+        gebruikt: set[int] = set()
+        voor = "" if gelaagd else "volgorde van Commons, "  # in het log
 
-    def afval(pageid: int, d: dict, redenen: dict[str, int], *, anders: bool = False) -> bool:
-        """Valt deze kandidaat af? Zo ja, dan telt zijn reden (REDENEN) in redenen."""
-        if pageid in gebruikt:
-            reden = "al gekozen"
-        elif uitgesloten(d):
-            reden = UITGESLOTEN
-        else:
-            reden = _waarom(d)
-            if reden is None and anders and d["P180"] & alle_qids:
-                reden = "beeldt een categorie af"
-        if reden is None:
-            return False
-        redenen[reden] = redenen.get(reden, 0) + 1
-        return True
+        def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...], bewijs: str) -> None:
+            k.keuzes.append((pageid, d, sleutel, cats, bewijs))
+            gebruikt.add(pageid)
+            if gelaagd:
+                k.fotos.append(haal(d, sleutel, cats, bewijs))
+                voortgang.klaar = len(k.fotos)
 
-    def zoek_en_neem(naam: str, qids: tuple[str, ...], nodig: int, plaats, *, anders=False):
-        """Tot nodig foto's voor één zoekopdracht (naam in het log), elk meteen opgehaald;
-        plaats(nr, d) geeft de sleutel en de categorieën van de nr-de. Geeft (genomen, bekeken,
-        redenen): de kandidaten die het voorstel bekeek en waarom ze afvielen (REDENEN), voor de
-        regel van een tekort.
+        def afval(pageid: int, d: dict, redenen: dict[str, int], *, anders: bool = False) -> bool:
+            """Valt deze kandidaat af? Zo ja, dan telt zijn reden (REDENEN) in redenen."""
+            if pageid in gebruikt:
+                reden = "al gekozen"
+            elif _op_lijst(d, lijst):
+                k.getroffen.add(_bron_sleutel(d["bron"]))
+                reden = UITGESLOTEN
+            else:
+                reden = _waarom(d)
+                if reden is None and anders and d["P180"] & alle_qids:
+                    reden = "beeldt een categorie af"
+            if reden is None:
+                return False
+            redenen[reden] = redenen.get(reden, 0) + 1
+            return True
 
-        Een kandidaat van de tweede keus die op een volgende pagina terugkomt (onder de andere
-        licentie), telt daar als "al gekozen": bij een tekort neemt hij hem altijd, zoals vroeger
-        bij de eerste keer."""
-        genomen = gezien = paginas = n_tweede = 0
-        redenen: dict[str, int] = {}
-        geen_eerste: dict[str, int] = {}  # waarom, per kandidaat van de tweede keus
-        tweede: list[tuple[int, dict]] = []
-        in_tweede: set[int] = set()
+        def zoek_en_neem(naam: str, qids: tuple[str, ...], nodig: int, plaats, *, anders=False):
+            """Tot nodig foto's voor één zoekopdracht (naam in het log); plaats(nr, d) geeft de
+            sleutel en de categorieën van de nr-de. Geeft (genomen, bekeken, redenen): de
+            kandidaten die het voorstel bekeek en waarom ze afvielen (REDENEN), voor de regel van
+            een tekort.
 
-        def neem_uit(rij: list[tuple[int, dict]], eerste: bool) -> None:
-            nonlocal genomen, n_tweede
-            rij.sort(key=lambda r: _voorkeur(r[1], qids))
-            for pageid, d in rij[: nodig - genomen]:
-                genomen += 1
-                n_tweede += not eerste
-                sleutel, cats = plaats(genomen, d)
-                neem(pageid, d, sleutel, cats, _bewijs(d, qids, eerste))
+            Een kandidaat van de tweede keus die op een volgende pagina terugkomt (onder de
+            andere licentie), telt daar als "al gekozen": bij een tekort neemt hij hem altijd,
+            zoals vroeger bij de eerste keer."""
+            genomen = gezien = n_paginas = n_tweede = 0
+            redenen: dict[str, int] = {}
+            geen_eerste: dict[str, int] = {}  # waarom, per kandidaat van de tweede keus
+            tweede: list[tuple[int, dict]] = []
+            in_tweede: set[int] = set()
 
-        if nodig <= 0:
-            return 0, 0, redenen
-        for pagina in _paginas(qids):
-            paginas += 1
-            eerste: list[tuple[int, dict]] = []
-            for pageid, d in pagina:
-                gezien += 1
-                if pageid in in_tweede:
-                    redenen["al gekozen"] = redenen.get("al gekozen", 0) + 1
-                    continue
-                if afval(pageid, d, redenen, anders=anders):
-                    continue
-                reden = _tweede_keus(d)
-                if reden is None:
-                    eerste.append((pageid, d))
+            def neem_uit(rij: list[tuple[int, dict]], eerste: bool) -> None:
+                nonlocal genomen, n_tweede
+                rij.sort(key=lambda r: _voorkeur(r[1], qids))
+                for pageid, d in rij[: nodig - genomen]:
+                    genomen += 1
+                    n_tweede += not eerste
+                    sleutel, cats = plaats(genomen, d)
+                    neem(pageid, d, sleutel, cats, _bewijs(d, qids, eerste))
+
+            if nodig <= 0:
+                return 0, 0, redenen
+            for pagina in paginas(qids):
+                n_paginas += 1
+                eerste: list[tuple[int, dict]] = []
+                for pageid, d in pagina:
+                    if not gelaagd and genomen >= nodig:
+                        break
+                    gezien += 1
+                    if pageid in in_tweede:
+                        redenen["al gekozen"] = redenen.get("al gekozen", 0) + 1
+                        continue
+                    if afval(pageid, d, redenen, anders=anders):
+                        continue
+                    reden = _tweede_keus(d)
+                    if not gelaagd:
+                        # de volgorde van Commons: de eerste bruikbare, eerste of tweede keus
+                        if reden is not None:
+                            geen_eerste[reden] = geen_eerste.get(reden, 0) + 1
+                        neem_uit([(pageid, d)], reden is None)
+                    elif reden is None:
+                        eerste.append((pageid, d))
+                    else:
+                        tweede.append((pageid, d))
+                        in_tweede.add(pageid)
+                        geen_eerste[reden] = geen_eerste.get(reden, 0) + 1
+                neem_uit(eerste, True)
+                if genomen >= nodig:
+                    break
+            else:
+                neem_uit(tweede, False)
+            if n_tweede:
+                k.tweede_keus[naam] = n_tweede
+            # Alleen in het log: per zoekopdracht hoeveel tweede keus, en waarom de bruikbare
+            # kandidaten op de gelezen pagina's geen eerste keus waren (in de volgorde van
+            # Commons: waarom de gekozen tweede keus waren)
+            op = f"{n_paginas} pagina" if n_paginas == 1 else f"{n_paginas} pagina's"
+            waarom = _afgevallen(geen_eerste, "geen eerste keus" if gelaagd else "tweede keus")
+            print(
+                f"BZ4 set: {voor}{naam}: {genomen} van {nodig} gekozen, {n_tweede} tweede keus "
+                f"({gezien} kandidaten bekeken op {op}{waarom})",
+                flush=True,
+            )
+            return genomen, gezien, redenen
+
+        hoofd_telt = dict.fromkeys(CATEGORIEEN, 0)
+        for a, b in combis:
+
+            def combi(_nr: int, d: dict, a=a, b=b) -> tuple[str, tuple[str, ...]]:
+                return f"{a}+{b}", cats_van(d, (a, b))
+
+            genomen, gezien, redenen = zoek_en_neem(
+                f"{a}+{b}", (CATEGORIEEN[a], CATEGORIEEN[b]), 1, combi
+            )
+            if genomen:
+                hoofd_telt[a] += 1
+            else:
+                k.combi_tekort = True
+                k.tekort.append(
+                    f"geen bruikbare foto voor {a}+{b} "
+                    f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
+                )
+        for naam, qid in CATEGORIEEN.items():
+
+            def categorie(nr: int, d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
+                return f"{naam}-{nr}", cats_van(d, (naam,))
+
+            genomen, gezien, redenen = zoek_en_neem(
+                naam, (qid,), PER_CATEGORIE - hoofd_telt[naam], categorie
+            )
+            hoofd_telt[naam] += genomen
+            if hoofd_telt[naam] < PER_CATEGORIE:
+                n = hoofd_telt[naam]
+                k.tekort.append(
+                    f"maar {n} bruikbare foto's voor {naam} "
+                    f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
+                )
+        for naam, qid in ANDERE.items():
+
+            def ander(nr: int, _d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
+                return f"anders-{naam}-{nr}", ()
+
+            nr, gezien, redenen = zoek_en_neem(
+                f"anders-{naam}", (qid,), PER_ANDER, ander, anders=True
+            )
+            if nr < PER_ANDER:
+                k.tekort.append(
+                    f"maar {nr} bruikbare foto's voor {naam} "
+                    f"(anders; {gezien} bekeken{_afgevallen(redenen)})"
+                )
+        return k
+
+    def over(eerst: _Keuze, gewoon: _Keuze) -> None:
+        """De foto's van gewoon op hun plek, met het bewijs in het log: wat eerst al ophaalde,
+        verplaatst hij (geen tweede download van hetzelfde bestand), de rest haalt hij op; wat
+        eerst ophaalde en gewoon niet neemt, verdwijnt."""
+        tijdelijk = werk.set / ".eerste-keus"
+        shutil.rmtree(tijdelijk, ignore_errors=True)
+        tijdelijk.mkdir()
+        try:
+            oud: dict[int, Foto] = {}
+            for (pageid, *_), f in zip(eerst.keuzes, eerst.fotos, strict=True):
+                (werk.set / f"{f.sleutel}.jpg").replace(tijdelijk / f"{pageid}.jpg")
+                oud[pageid] = f
+            voortgang.klaar = 0
+            for pageid, d, sleutel, cats, bewijs in gewoon.keuzes:
+                if pageid in oud:
+                    (tijdelijk / f"{pageid}.jpg").replace(werk.set / f"{sleutel}.jpg")
+                    f = oud[pageid]
+                    gewoon.fotos.append(
+                        Foto(sleutel, cats, f.licentie, f.sha256, f.bytes, f.url, f.bron)
+                    )
+                    print(f"BZ4 set: bewijs {sleutel}: {bewijs}", flush=True)
                 else:
-                    tweede.append((pageid, d))
-                    in_tweede.add(pageid)
-                    geen_eerste[reden] = geen_eerste.get(reden, 0) + 1
-            neem_uit(eerste, True)
-            if genomen >= nodig:
-                break
+                    gewoon.fotos.append(haal(d, sleutel, cats, bewijs))
+                voortgang.klaar = len(gewoon.fotos)
+        finally:
+            shutil.rmtree(tijdelijk, ignore_errors=True)
+
+    uit = kies(True)
+    volgt_commons = False
+    if uit.tekort:
+        # De eerste ronde is klaar: een fout in de tweede (een vraag aan de API) zegt hoeveel
+        # foto's er kwamen, niet "bij foto ..."
+        voortgang.gekozen = True
+        gewoon = kies(False)
+        volgt_commons = gewoon.maat() < uit.maat()
+        if volgt_commons:
+            voortgang.gekozen = False
+            tweede = sum(gewoon.tweede_keus.values())
+            samen = ", ".join(f"{naam} {n}" for naam, n in gewoon.tweede_keus.items())
+            werk.meld(
+                f"BZ4 set: de eerste keus gaf {_tekorten(len(uit.tekort))}, de volgorde van "
+                f"Commons {_tekorten(len(gewoon.tekort))}: dit voorstel volgt de volgorde van "
+                + (f"Commons, met {tweede} tweede keus ({samen})" if tweede else "Commons")
+                + "; het bewijs per foto staat in het log, na deze regel"
+            )
+            over(uit, gewoon)
+            uit = gewoon
         else:
-            neem_uit(tweede, False)
-        if n_tweede:
-            tweede_keus[naam] = n_tweede
-        # Alleen in het log: per zoekopdracht hoeveel tweede keus, en waarom de bruikbare
-        # kandidaten op de gelezen pagina's geen eerste keus waren
-        op = f"{paginas} pagina" if paginas == 1 else f"{paginas} pagina's"
-        print(
-            f"BZ4 set: {naam}: {genomen} van {nodig} gekozen, {n_tweede} tweede keus ({gezien} "
-            f"kandidaten bekeken op {op}{_afgevallen(geen_eerste, 'geen eerste keus')})",
-            flush=True,
-        )
-        return genomen, gezien, redenen
-
-    hoofd_telt = dict.fromkeys(CATEGORIEEN, 0)
-    for a, b in combis:
-
-        def combi(_nr: int, d: dict, a=a, b=b) -> tuple[str, tuple[str, ...]]:
-            return f"{a}+{b}", cats_van(d, (a, b))
-
-        genomen, gezien, redenen = zoek_en_neem(
-            f"{a}+{b}", (CATEGORIEEN[a], CATEGORIEEN[b]), 1, combi
-        )
-        if genomen:
-            hoofd_telt[a] += 1
-        else:
-            combi_tekort = True
-            tekort.append(
-                f"geen bruikbare foto voor {a}+{b} "
-                f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
+            print(
+                f"BZ4 set: de volgorde van Commons gaf {_tekorten(len(gewoon.tekort))}: het "
+                "voorstel houdt de eerste keus",
+                flush=True,
             )
-    for naam, qid in CATEGORIEEN.items():
-
-        def categorie(nr: int, d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
-            return f"{naam}-{nr}", cats_van(d, (naam,))
-
-        genomen, gezien, redenen = zoek_en_neem(
-            naam, (qid,), PER_CATEGORIE - hoofd_telt[naam], categorie
-        )
-        hoofd_telt[naam] += genomen
-        if hoofd_telt[naam] < PER_CATEGORIE:
-            n = hoofd_telt[naam]
-            tekort.append(
-                f"maar {n} bruikbare foto's voor {naam} "
-                f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
-            )
-    for naam, qid in ANDERE.items():
-
-        def ander(nr: int, _d: dict, naam=naam) -> tuple[str, tuple[str, ...]]:
-            return f"anders-{naam}-{nr}", ()
-
-        nr, gezien, redenen = zoek_en_neem(f"anders-{naam}", (qid,), PER_ANDER, ander, anders=True)
-        if nr < PER_ANDER:
-            tekort.append(
-                f"maar {nr} bruikbare foto's voor {naam} "
-                f"(anders; {gezien} bekeken{_afgevallen(redenen)})"
-            )
-    if tweede_keus:
-        samen = ", ".join(f"{naam} {n}" for naam, n in tweede_keus.items())
+    if not volgt_commons and uit.tweede_keus:
+        samen = ", ".join(f"{naam} {n}" for naam, n in uit.tweede_keus.items())
         werk.meld(
-            f"BZ4 set: {sum(tweede_keus.values())} tweede keus ({samen}); de eerste keus was "
+            f"BZ4 set: {sum(uit.tweede_keus.values())} tweede keus ({samen}); de eerste keus was "
             "op; het bewijs per foto staat in het log"
         )
     if niet is not None:
         aantal = "1 foto" if len(lijst) == 1 else f"{len(lijst)} foto's"
         werk.meld(
             f"BZ4 set: beeld_niet.tsv: {aantal} op de lijst, als kandidaat overgeslagen: "
-            f"{len(getroffen)}"
+            f"{len(uit.getroffen)}"
         )
-    if not tekort:
-        return gekozen
+    if not uit.tekort:
+        return uit.fotos
     # De keuze is klaar: een fout vanaf hier (ook bij het tellen van de reserves) zegt hoeveel
     # foto's er kwamen, niet "bij foto ..."
     voortgang.gekozen = True
-    for t in tekort:
+    for t in uit.tekort:
         werk.meld(f"BZ4 set: Commons: {t}")
-    if combi_tekort:
+    if uit.combi_tekort:
         al = {tuple(c) for c in combis}
         for a, b in RESERVE_COMBIS:
             if (a, b) in al:
@@ -1932,7 +2052,8 @@ def stel_voor(
                 f"BZ4 reserve {a}+{b}: {len(goed)} bruikbare foto's "
                 f"(eerste pagina per licentie{_afgevallen(redenen)})"
             )
-    raise Fout(f"Commons: {len(tekort)} tekort(en) voor de set; zie de regels BZ4 set hierboven")
+    n = len(uit.tekort)
+    raise Fout(f"Commons: {n} tekort(en) voor de set; zie de regels BZ4 set hierboven")
 
 
 def set_tsv(fotos: list[Foto]) -> str:
