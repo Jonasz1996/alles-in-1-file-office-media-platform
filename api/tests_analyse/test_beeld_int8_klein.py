@@ -22,13 +22,16 @@ batch, fp32 blijft fp32); de cosinussen staan in de uitvoer (pytest -s): per tok
 niet, het is een uitschieter per kanaal. Dan de rooktest van het rapport zelf
 (test_beeld_int8_lagen.py en _rapport_int8 van test_beeld_kwaliteit.py) op dit model, en de
 regels van "CI op 011bf2d" (meer zoals deze per categorie en top 1, de zwakke vragen) met
-nepvectoren waarvan de uitkomst vastligt.
+nepvectoren waarvan de uitkomst vastligt. Van de review daarvan: de fp32-kant van die regels met
+nepvectoren waarin int8 en fp32 verschillen, geen vector in kort.txt, en een rij van nullen per
+token zonder NaN.
 """
 
 from __future__ import annotations
 
 import ast
 import json
+import re
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -276,6 +279,32 @@ def test_per_token_rekent_precies_als_de_keten_in_numpy(km, tmp_path, label):
     assert erg <= TOL, (label, erg)
 
 
+def test_per_token_een_rij_van_nullen_geeft_geen_nan(km):
+    """De review van CI op 011bf2d (N1): de schaal per rij heeft een ondergrens (1e-30). Een rij
+    van nullen, of een rij zo klein dat max |x| / 127 in fp32 nul wordt, geeft dan x / a rond 0 en
+    u = 128, dus precies de bias. Zonder ondergrens is x / a daar NaN of oneindig, en een NaN naar
+    uint8 is in C++ niet bepaald (de uitvoer is op x86 dan toevallig nog de bias: × a = 0)."""
+    label = "vision_model.encoder.layers.0.mlp.fc1"
+    b = bouw.Bouwer(km.st, "een", int8=True)  # de standaard: per token
+    n_in = km.st.info(f"{label}.weight").vorm[1]
+    y = b.linear(b.g.input("x", bouw.FLOAT, ["n", 5, n_in]), [bouw._linear(label)], label)
+    b.g.output(y, bouw.FLOAT, None)
+    (deel,) = [n.outputs[0] for n in b.g._nodes if n.op_type == "Div" and n.inputs[0] == "x"]
+    (clip,) = [n.outputs[0] for n in b.g._nodes if n.op_type == "Clip"]
+    b.g.output(deel, bouw.FLOAT, None)  # x / a
+    b.g.output(clip, bouw.FLOAT, None)  # u, vóór de cast naar uint8
+    x = np.random.default_rng(0).normal(size=(2, 5, n_in)).astype(np.float32)
+    x[0, 1] = 0  # een rij van nullen
+    x[1, 3] = 1e-45  # max |x| / 127 is in fp32 nul
+    uit, xa, u = _sessie(b.g).run(None, {"x": x})
+    bias = _w(km.w, f"{label}.bias").astype(np.float32)
+    for rij in ((0, 1), (1, 3)):
+        assert np.isfinite(xa[rij]).all() and np.abs(xa[rij]).max() < 0.5, rij
+        assert (u[rij] == 128).all(), rij
+        assert np.array_equal(uit[rij], bias), rij
+    assert np.isfinite(uit).all() and np.isfinite(xa).all()
+
+
 @pytest.mark.parametrize("q_max", [65, 127])
 def test_per_token_met_een_gewicht_boven_64_is_een_fout(km, monkeypatch, q_max):
     """De review (N5): met per_token (de standaard) past een paar van vpmaddubsw (255·q·2) alleen
@@ -490,6 +519,67 @@ def _getallen(x) -> list[int]:
     return []
 
 
+# Een getal in een regel van kort.txt: niet het nummer in een sleutel (stad-3, anders-vogel-12) of
+# in een woord; 0,02 en 1.49e+03 zijn één getal.
+GETAL = re.compile(r"(?<![\w.,+-])-?\d+(?:[.,]\d+)?(?:e[+-]?\d+)?(?![\w.])")
+# De review van CI op 011bf2d (ZOU 2): geen vector in kort.txt. Een regel heeft hooguit
+# MAX_GETALLEN getallen (de langste, nl per vraag, heeft er 34; een vector van het echte model 768,
+# van het kleine 64), en een getal hooguit MAX_DECIMALEN decimalen (de cos per laag in bz4r heeft er
+# 5; een vector met tolist() of repr meer).
+MAX_GETALLEN = 40
+MAX_DECIMALEN = 5
+
+
+def _geen_vector(regels: list[str]) -> None:
+    for regel in regels:
+        getallen = GETAL.findall(regel)
+        assert len(getallen) <= MAX_GETALLEN, (len(getallen), regel[:100])
+        decimalen = [len(m) for g in getallen for m in re.findall(r"[.,](\d+)", g.split("e")[0])]
+        assert max(decimalen, default=0) <= MAX_DECIMALEN, (max(decimalen), regel[:100])
+
+
+# Regels uit kort.txt en bz4r.txt van beeld-model op 011bf2d (x3a.md), en een zwakke vraag zoals
+# cd92837 hem schrijft
+ECHT = [
+    "BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: strand 3/3/3/4, zandstrand "
+    "3/3/3/1, hond 3/5/2/2, een hond 3/4/3/5, kat 2/4/3/4, poes 0/4/3/0, sneeuw 5/5/5/5, een "
+    "sneeuwlandschap 5/5/5/5",
+    "BZ4 invoer beeld (rapport; fout per tensor in de batch/per tensor alleen/per token/per token "
+    "na glad): laag 5 fc2 max 152 = 275× rms (token 15 patch, kanaal 1449), fout "
+    "0.321/0.320/0.014/0.016; laag 9 fc2 max 1.49e+03 = 585× rms (token 7 patch, kanaal 1038), "
+    "fout 0.116/0.088/0.005/0.989; laag 6 fc2 max 20.3 = 111× rms (token 62 patch, kanaal 3019), "
+    "fout 0.085/0.083/0.028/0.036",
+    "BZ4 afwijking per laag beeld (rapport): cos int8/fp32 gemiddeld over de patches na laag "
+    "0..11: 0.99816 0.99510 0.99281 0.99119 0.98826 0.83213 0.82167 0.73239 0.66958 0.68129 "
+    "0.63731 0.64800; uitvoer 0.76406",
+    "BZ4 256 tegen 1024 (rapport): precisie@5 0.450 tegen 0.475; zakt 0.025 (> 0,02: X3 rekent "
+    "uit 1024.webp)",
+    "BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 0.8771 mediaan 0.9464 laagste 0.8571 (poes); "
+    "beeld p5 0.5912 mediaan 0.7641 laagste 0.4941 (kat+sneeuw)",
+    "BZ4 variant mlp fp32 (rapport): nl 0.708 (zakt -0.017, slechtste 0/5), engels 0.833, "
+    "combinaties 6/6, meer zoals deze 0.433, cos beeld p5 0.9806 tekst p5 0.9983; beeld 272 MB "
+    "54.0 ms per foto, tekst 454 MB 51.1 ms per vraag",
+    "BZ4 zwakke vragen (rapport) 1/2: bergen (nl; int8 0/5, fp32 0/5): int8 stad-3 "
+    "anders-vogel-12 berg+sneeuw boot-7 bos-1; fp32 stad-3 berg-2 anders-brug-1 bos-4 eten-11",
+]
+
+
+def test_de_regel_tegen_vectoren_in_kort_txt():
+    """De review van CI op 011bf2d (ZOU 2): `_geen_vector` laat de echte regels door (de langste,
+    met 5 decimalen, met 1.49e+03, 0,02, -0.017 en sleutels als stad-3), en geen vector."""
+    assert [len(GETAL.findall(x)) for x in ECHT] == [34, 27, 13, 7, 6, 14, 6]
+    _geen_vector(ECHT)
+    v = np.random.default_rng(0).normal(size=768).astype(np.float32)
+    for fout in (
+        f"{ECHT[3]} {v[:8].tolist()}",  # acht getallen, elk met al zijn decimalen
+        "BZ4 x (rapport): " + " ".join(f"{x:.3f}" for x in v),  # 768 getallen met 3 decimalen
+        "BZ4 x (rapport): " + "/".join(str(i) for i in range(MAX_GETALLEN + 1)),
+        "BZ4 x (rapport): cos 0.123456",
+    ):
+        with pytest.raises(AssertionError):
+            _geen_vector([fout])
+
+
 def _rapport(km, tmp_path, monkeypatch, tijd_s: float) -> Rapport:
     monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
     pixels, sleutels, cats = _set()
@@ -518,6 +608,7 @@ def test_het_rapport_per_laag_en_variant_op_het_kleine_model(km, tmp_path, monke
     regels = _kort(tmp_path)
     print("\n".join(regels))
     assert not [x for x in regels if "mislukt" in x], regels
+    _geen_vector(regels)
     namen = [naam for naam, *_ in r.lijst()]
     verwacht = ["BZ4 cpu (rapport): "]
     verwacht += [f"BZ4 gewicht int8 {t} (rapport): fout per Linear" for t in ("beeld", "tekst")]
@@ -816,6 +907,7 @@ def test_het_int8_rapport_van_bz4_op_het_kleine_model(bz4_kw, tmp_path, monkeypa
         "meer_zoals_top1",
     }
     regels = _kort(tmp_path)
+    _geen_vector(regels)
     zwak = r["zwakke_vragen"]
     n_zwak = min(zwak["aantal"], 24) + (zwak["aantal"] > 24) or 1
     verwacht = [
@@ -995,3 +1087,149 @@ def test_de_zwakke_vragen_met_nepvectoren():
         },
     ]
     assert kwaliteit._zwakke_vragen(rijen, [2, 3, 5], [2, 5, 2], top8, top32) == []
+
+
+# --- de fp32-kant van de nieuwe delen (de review van CI op 011bf2d, ZOU 1) ---------------------
+
+
+class _Nep:
+    """Een model zonder onnxruntime, voor `_rapport_int8`: een vaste vector per vraag, en per foto
+    (een foto is haar nummer in de set)."""
+
+    def __init__(self, tekst: dict[str, np.ndarray], beeld: np.ndarray) -> None:
+        self.tekst, self.beeld = tekst, beeld
+
+    def teksten(self, vragen: list[str]) -> np.ndarray:
+        return np.stack([self.tekst[v] for v in vragen])
+
+    def beelden(self, pixels: list) -> np.ndarray:
+        return self.beeld[[int(p) for p in pixels]]
+
+    def kans(self, cos: np.ndarray) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-cos))
+
+
+def _as(*namen: str) -> np.ndarray:
+    """De eenheidsvector op de assen van de categorieën (NL_NAMEN); zonder categorie op de as
+    van de afleiders."""
+    v = np.zeros(len(NL_NAMEN) + 1, np.float32)
+    for naam in namen:
+        v[NL_NAMEN.index(naam)] = 1
+    if not namen:
+        v[-1] = 1
+    return v / np.linalg.norm(v)
+
+
+@pytest.fixture
+def nep_kw() -> dict:
+    """Wat `uitkomst` aan `_rapport_int8` geeft, met nepvectoren waarin int8 en fp32 in elk deel
+    verschillen. De set: de zes doelen van de combinaties, drie foto's per categorie (strand-1 tot
+    zonsondergang-3) en twee afleiders. fp32: elke foto op de as van haar categorie (een
+    combinatie ertussen), elke vraag op die van de hare. int8: dezelfde vragen, maar foto r van
+    een categorie staat r categorieën verder (strand-1 op de as van hond, strand-2 op die van kat);
+    de combinaties en de afleiders blijven."""
+    rijen = vragen()
+    soorten = {"nl": "nl", "c": "combinatie", "en": "en"}
+    per = {s: [x for x in rijen if x["soort"] == soort] for s, soort in soorten.items()}
+    sleutels = [x["doel"] for x in per["c"]]
+    cats = [set(x["categorieen"].split(",")) for x in per["c"]]
+    for r in (1, 2, 3):
+        sleutels += [f"{naam}-{r}" for naam in NL_NAMEN]
+        cats += [{naam} for naam in NL_NAMEN]
+    sleutels += ["anders-vogel-1", "anders-vogel-2"]
+    cats += [set(), set()]
+    e32 = np.stack([_as(*sorted(c)) for c in cats])
+    e8 = e32.copy()
+    for i, sleutel in enumerate(sleutels):
+        naam, _, r = sleutel.rpartition("-")
+        if naam in NL_NAMEN:
+            e8[i] = _as(NL_NAMEN[(NL_NAMEN.index(naam) + int(r)) % len(NL_NAMEN)])
+    tekst = {x["vraag"]: _as(*x["categorieen"].split(",")) for x in rijen}
+    int8, fp32 = _Nep(tekst, e8), _Nep(tekst, e32)
+    return {
+        "int8": int8,
+        "fp32": fp32,
+        "pixels": list(range(len(sleutels))),
+        "e8": e8,
+        "e32": e32,
+        "t8": {s: int8.teksten([x["vraag"] for x in rs]) for s, rs in per.items()},
+        "t32": fp32.teksten([x["vraag"] for x in per["nl"]]),
+        "rijen": per,
+        "cats": cats,
+        "sleutels": sleutels,
+    }
+
+
+def test_de_fp32_kant_van_de_nieuwe_delen_rekent_met_fp32(nep_kw, tmp_path, monkeypatch):
+    """De review van CI op 011bf2d (ZOU 1): op het kleine model is int8 bijna fp32, dus viel een
+    fp32-veld dat met e8, t8 of nl8 rekende niet op. Hier verschillen int8 en fp32 in elk deel, en
+    elk veld moet precies de uitkomst van zijn eigen kant zijn: fp32 uit e32, t32 (en de vragen in
+    het Engels van het fp32-model) en de tellingen van fp32; int8 uit e8, t8 en die van int8."""
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    kw = nep_kw
+    r = _rapport_int8(Verslag("bz4"), **kw)
+    e8, e32, cats, sleutels = kw["e8"], kw["e32"], kw["cats"], kw["sleutels"]
+    nl, en = kw["rijen"]["nl"], kw["rijen"]["en"]
+    vragen8 = np.concatenate([kw["t8"]["nl"], kw["t8"]["en"]])
+    vragen32 = np.concatenate([kw["t32"], kw["fp32"].teksten([x["vraag"] for x in en])])
+    regels = _kort(tmp_path)
+    assert not [x for x in regels if "mislukt" in x], regels
+    _geen_vector(regels)
+
+    # meer zoals deze per categorie
+    m8 = kwaliteit._meer_per_categorie(e8, cats, sleutels, NL_NAMEN)
+    m32 = kwaliteit._meer_per_categorie(e32, cats, sleutels, NL_NAMEN)
+    assert r["meer_zoals_per_categorie"] == {
+        naam: {
+            "n": m32[naam]["n"],
+            "int8": m8[naam]["deel"],
+            "fp32": m32[naam]["deel"],
+            "fout_int8": m8[naam]["fout"],
+            "fout_fp32": m32[naam]["fout"],
+        }
+        for naam in NL_NAMEN
+    }
+    for naam in NL_NAMEN:  # in elke categorie een ander getal en andere foute buren
+        assert m8[naam]["deel"] < m32[naam]["deel"], naam
+        assert m8[naam]["fout"] != m32[naam]["fout"], naam
+
+    # de zwakke vragen: de tellingen en de top 5 van elke kant
+    n8 = kwaliteit._precisie(vragen8, e8, nl + en, cats)
+    n32 = kwaliteit._precisie(vragen32, e32, nl + en, cats)
+    top8 = kwaliteit._top5(vragen8, e8, sleutels)
+    top32 = kwaliteit._top5(vragen32, e32, sleutels)
+    zwak = kwaliteit._zwakke_vragen(nl + en, n8, n32, top8, top32)
+    assert r["zwakke_vragen"] == {"aantal": len(zwak), "vragen": zwak[:24]}
+    assert len(zwak) == 25  # alle vragen behalve sneeuw, een sneeuwlandschap, berg, bergen, snow
+    for z in zwak:
+        assert z["int8"] <= 1 < 3 <= z["fp32"] and z["top5_int8"] != z["top5_fp32"], z
+    # fiets: in fp32 de drie fietsen en dan de set op volgorde; in int8 staan auto-1, sneeuw-2 en
+    # kat-3 op de as van fiets
+    assert zwak[0] == {
+        "vraag": "fiets",
+        "soort": "nl",
+        "int8": 0,
+        "fp32": 3,
+        "top5_int8": ["auto-1", "sneeuw-2", "kat-3", "auto+sneeuw", "hond+strand"],
+        "top5_fp32": ["fiets-1", "fiets-2", "fiets-3", "auto+sneeuw", "hond+strand"],
+    }
+    per_vraag = {x["vraag"]: x for x in r["nl_per_vraag"] + r["en_per_vraag"]}
+    for z in r["zwakke_vragen"]["vragen"]:  # dezelfde tellingen als het rapport per vraag
+        assert (z["int8"], z["fp32"]) == (
+            per_vraag[z["vraag"]]["int8"],
+            per_vraag[z["vraag"]]["fp32"],
+        )
+
+    # top 1: in fp32 is de naaste buur altijd een foto van dezelfde categorie (42 van 42); in int8
+    # alleen bij hond+strand (strand-1 staat op de as van hond)
+    assert kwaliteit._top1(e8, cats) == (1, 42) and kwaliteit._top1(e32, cats) == (42, 42)
+    assert r["meer_zoals_top1"] == {
+        "n": 42,
+        "int8_goed": 1,
+        "fp32_goed": 42,
+        "int8": round(1 / 42, 4),
+        "fp32": 1.0,
+    }
+    assert (
+        regels[-1] == "BZ4 meer zoals deze top 1 (rapport): int8 0.024 (1/42), fp32 1.000 (42/42)"
+    )
