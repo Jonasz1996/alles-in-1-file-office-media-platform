@@ -178,7 +178,10 @@ De job haalt het echte model (`google/siglip2-base-patch32-256`, ±1,55 GB) en d
 kwaliteitsset, zet het model twee keer om en draait de poorten van Keuze 83. Hij draait alleen:
 
 - bij een push of PR die `app/analyse/worker/omzetten/`, `app/analyse/tokenizer.py`,
-  `app/analyse/onnxw.py` of `app/analyse/models.lock` verandert (`git diff --name-only`);
+  `app/analyse/onnxw.py` of `app/analyse/models.lock` verandert (`git diff --name-only`), of wat
+  de job zelf meet: `tools/beeld/`, de tests met marker `beeld_echt` en hun lijsten in
+  `api/tests/analyse/sets/` (`beeld_tokens.tsv`, `beeld_vragen.tsv`, `beeld.tsv` en
+  `beeld_niet.tsv`; de paden staan in `ci.yml`, in de stap "Moet beeld-model draaien?");
 - of als de tekst van de PR een regel `beeld-model: ja` heeft.
 
 Er is geen knop om hem met de hand te starten. Het model komt nooit uit een cache: elke run haalt

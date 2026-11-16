@@ -1531,21 +1531,21 @@ omzetter zijn onwaarschijnlijk.
 
 Niets hiervan verandert een poort, een pin of de bytes van de omzetter.
 
-- **Haken in `bouw.py`** (`df61042`), alle uit: `Bouwer(..., fp32_als=, per_token=, glad=,
+- **Haken in `bouw.py`** (`100d999`), alle uit: `Bouwer(..., fp32_als=, per_token=, glad=,
   q_max=, meet=)`, `per_kolom(wt, q_max)` en in `tekst_graaf` `embedding_fp32`. `omzet()`,
   `siglip.py`, de CLI en `VERSIE` bleven gelijk. Dat de bytes gelijk bleven, legt
   `test_zonder_opties_dezelfde_bytes_als_voor_de_opties` vast met de sha256 van alle zeven
-  bestanden van het kleine model, uitgerekend vóór de haken (`f007837`), en
+  bestanden van het kleine model, uitgerekend vóór de haken (`86b4cf8`), en
   `test_varianten_uit_dezelfde_bytes` met de opties expliciet op hun standaard.
-- **Rapportregels in BZ4** (`e595153`): `_rapport_int8` in `test_beeld_kwaliteit.py`, binnen
+- **Rapportregels in BZ4** (`46898d9`): `_rapport_int8` in `test_beeld_kwaliteit.py`, binnen
   try/except, met de grafen die BZ4 al laadt; de uitkomst in `bz4.json` onder `int8_rapport`. De
   asserts zijn niet veranderd.
-- **De module `test_beeld_int8_lagen.py`** (marker `beeld_echt`, `5e9a7b1`): de CPU, de fout van
+- **De module `test_beeld_int8_lagen.py`** (marker `beeld_echt`, `e7a4fa3`): de CPU, de fout van
   de gewichten, een probe van de invoer van elke Linear, de afwijking per laag en de varianten;
   geen assert op een getal, alleen dat `bz4r.json` er is. Met `test_beeld_int8_klein.py` (35 tests
   in de sandbox: elke haak, elke variant op het kleine model, en het rapport van begin tot eind);
   `api-analyse` telt nu 253 tests en 16 gedeselecteerd.
-- **Een eigen stap in `beeld-model`** (`b2cdac7`): `BZ4 rapport int8 per laag en varianten (geen
+- **Een eigen stap in `beeld-model`** (`5c7980b`): `BZ4 rapport int8 per laag en varianten (geen
   poort)`, na BZ6 en vóór de uitslag, met `continue-on-error: true` en `timeout-minutes: 15`, zonder
   netwerk (de bron en de set van eerder in de job). De uitslag leest hem niet.
 
@@ -1732,10 +1732,15 @@ tool 205 groen, `tests/analyse` 486 groen; ruff schoon. `tests_analyse`, `ci.yml
 
 ### Open na de set strenger
 
-- **De paden van de job.** `tests/analyse/sets/beeld_niet.tsv` hoort in `paden` van de poort van
+- ~~**De paden van de job.** `tests/analyse/sets/beeld_niet.tsv` hoort in `paden` van de poort van
   `beeld-model` in `ci.yml` (bij `beeld_vragen.tsv`) en in `PADEN` van `test_beeld_ci.py`, zodat
   een push die alleen de lijst verandert de job draait; dat doet het pakket dat `ci.yml` nu
-  heeft (int8). Tot dan: `beeld-model: ja` in de tekst van de PR.
+  heeft (int8). Tot dan: `beeld-model: ja` in de tekst van de PR.~~ [Samengevoegd met het
+  rapport van int8: het pad staat in `paden` (`5c7980b`, vanuit `api`, net als
+  `beeld_vragen.tsv`) en in `PADEN`; `test_beeld_ci.py` eist nu ook dat de lijst bestaat. De
+  poort uit `ci.yml`, met de hand gedraaid op een kloon: een push die alleen `beeld_niet.tsv`
+  verandert geeft `draaien=ja` ("gewijzigd: api/tests/analyse/sets/beeld_niet.tsv"), een die
+  alleen de docs verandert `draaien=nee`, en zonder dat pad in `paden` ook de lijst `nee`.]
 - **Of de eerste keus genoeg vangt**, en hoeveel pagina's erbij, zegt pas het volgende voorstel:
   hoeveel van de 34 bestanden van het Met P195, P217, P6243 of het sjabloon Artwork hebben, is
   vanaf hier niet na te kijken.

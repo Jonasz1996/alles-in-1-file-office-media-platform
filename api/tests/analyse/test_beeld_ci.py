@@ -51,12 +51,12 @@ PADEN = [
     "tests/analyse/sets/beeld_vragen.tsv",
     "tests/analyse/sets/beeld.tsv",
     "tests_analyse/test_beeld_int8_lagen.py",
-    # de lijst van wat niet in de set mag (een ander pakket maakt hem)
+    # de lijst van wat een voorstel nooit neemt (x3a.md, "De set strenger"): een push die alleen
+    # die lijst verandert, draait de job ook
     "tests/analyse/sets/beeld_niet.tsv",
 ]
-# Paden die nog niet hoeven te bestaan: beeld.tsv komt met de vaste set van X3b, beeld_niet.tsv
-# met de lijst van wat niet in de set mag
-LATER = ("/beeld.tsv", "/beeld_niet.tsv")
+# Paden die nog niet hoeven te bestaan: beeld.tsv komt met de vaste set van X3b
+LATER = ("/beeld.tsv",)
 
 
 def _stappen() -> list[dict]:
