@@ -301,7 +301,7 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
 
 ## Open
 
-1. **De bronregels in `models.lock` en X2.** Twee dingen van X2a lezen elke regel van
+1. ~~**De bronregels in `models.lock` en X2.**~~ Twee dingen van X2a lezen elke regel van
    `models.lock`:
    - ~~`modellen_ophalen` in `install.sh` haalt elke regel met een URL. Met de bronregels erin haalt
      een installatie met `ANALYSE=aan` ook de 1,51 GB van `model.safetensors`, en houdt die, ook
@@ -321,6 +321,7 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    samenvoeging. Review golf 5, uitrol F3: het deel van `install.sh` is gedaan; caps blijft open
    voor X3b, en `beeld_model.py uitslag` zegt nu dat de regels pas samen met X3b in
    `models.lock` horen.]
+   [Golf 6: caps telt nooit een bron en een regel in `siglip2-b32-256/` pas als die map er is (`caps.py`, `counted`, X3b; `test_lock_siglip.py`), en de pins kwamen met de stap `BEELD` (`0a90be0`).]
 2. **De pins**: na de eerste run zet een mens de regels uit `voorstel-models.lock` in
    `app/analyse/models.lock` en `voorstel-beeld.tsv` als `api/tests/analyse/sets/beeld.tsv` (zie
    de runbook). In dezelfde commit krijgt `test_models_lock.py::test_de_twee_modellen_van_gezichten`
@@ -328,12 +329,14 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    `beeld-model` groen zijn; dat is de go/no-go.
 3. **`MIN_TEKST` en `MIN_FOTO`**: BZ4 geeft de verdeling van de kansen (`bz4.json`); X3b zet de
    grenzen in een test.
-4. **De voorbewerking in de worker** (X3b) moet `meta.json` volgen zoals `beeld_echt.voorbewerk`:
+4. ~~**De voorbewerking in de worker** (X3b) moet `meta.json` volgen zoals `beeld_echt.voorbewerk`:
    RGB, resize naar (breedte, hoogte) met de resample van Pillow uit `meta.json`, × schaal,
-   (x − gemiddelde) / std, NCHW.
+   (x − gemiddelde) / std, NCHW.~~
+   [Golf 6: `test_beeld_echt_hulp.py::test_de_worker_voorbewerkt_zoals_voorbewerk` (`210f665`): dezelfde float32, byte voor byte.]
 5. **`padding_side`** (zie Afwijkingen): bewezen door BZ4, niet door een test hier.
-6. **BZ1 kan zeggen dat de runner niet bij huggingface.co of Commons komt.** Dan gaat BZ2–BZ6 naar
-   de LXC (`beeld-kwaliteit`, `beeld-bench`, trust-on-first-use; R41). Die commando's zijn van X3b.
+6. ~~**BZ1 kan zeggen dat de runner niet bij huggingface.co of Commons komt.** Dan gaat BZ2–BZ6 naar
+   de LXC (`beeld-kwaliteit`, `beeld-bench`, trust-on-first-use; R41). Die commando's zijn van X3b.~~
+   [Golf 6: BZ1 kwam er op `26c49ca` bij beide (CI op 26c49ca), en `beeld-kwaliteit` en `beeld-bench` zijn gebouwd (X3b, `app/beeld/cli.py`).]
 7. ~~**De job `api-analyse`** is van X2a; de tests in `tests_analyse` van X3a (ook
    `test_beeld_omzetten.py`, de go/no-go deel 1) draaien in CI pas als die job er is.~~ [Golf 5:
    de job is er en telt de 81 van X3a mee (188 en 11, `ac6950c`); in CI na de push.]
@@ -471,8 +474,9 @@ hier wat X3a raakt, langs "Voor de samenvoeging met X2a". Niets gepusht, geen ta
 ### Open na de samenvoeging
 
 - Open 1–6 en 8 blijven staan; Open 7 is gedaan, Open 9 voor de kleine vorm.
-- **De pins en X3b horen samen** (Open 1 en 2): wat er gebeurt als de tien regels zonder X3b in
-  `models.lock` komen, staat in x2a.md onder "Open na de samenvoeging".
+- ~~**De pins en X3b horen samen** (Open 1 en 2): wat er gebeurt als de tien regels zonder X3b in
+  `models.lock` komen, staat in x2a.md onder "Open na de samenvoeging".~~
+  [Golf 6: ze staan er samen (`0a90be0`); of de pins nog kloppen, is x3b.md Open 2.]
 - Alleen in CI, na de push: `beeld-model` (BZ1–BZ4, BZ6, BZ7), en de tests van X3a in
   `api-analyse`.
 

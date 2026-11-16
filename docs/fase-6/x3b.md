@@ -299,3 +299,127 @@ de e2e) onder het gedeelde slot en `taskset -c 0-2`.
 | eindketen 3: `slim.sh` | `4e286b9` | stap 1: 1.308 groen (820 s); stap 3: 109 groen (222 s) |
 | eindketen 3: de e2e-set van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | `4e286b9` | 246 groen, 135 niet gekozen (892 s) |
 | eindketen 3: `e2e/test_zoek_beeld.py` | `4e286b9` | 8 groen (35 s) |
+
+## De samenvoeging (golf 6)
+
+Samengevoegd op 16 november 2026 op `claude/stappenplan-uitwerken-lu4uv3` (vanaf `45bb926`):
+eerst `wip/golf6-x3b` (`aa21e37`), dan `wip/golf6-x2b` (`dcafcea`), beide met `--no-ff`
+(bouwontwerp §2.0 en G5-C4: X3b eerst, de tweede houdt beide regels). Niets gepusht, geen tag; de
+versie blijft 0.8.0. Wat X2b raakt, staat in "De samenvoeging (golf 6)" in [x2b.md](x2b.md).
+
+**De conflicten**, alle met beide kanten:
+
+- `aa21e37`: alleen `ANALYSE_TESTS` in `ci.yml` (de lead zette er sinds `625e946` 5 bij, X3b 24);
+- `dcafcea`: `server.BUILT` en `child.handlers()` (`group` naast `embed_image` in `werk`;
+  `embed_text`, `rank` en `forget` in `zoeken`), met de nieuwe exacte lijsten in
+  `test_analyse_kinderen.py`, `test_worker_sandbox.py`, `test_analyse_monitor.py` en
+  `test_analyse_contract_real.py`; `tests_analyse/echt.py` kent `group` en `rank` als lange
+  opdrachten, en met beide gebouwd staat het scenario `zoeken_naast_werk` in de lijst van de
+  echte worker; `ANALYSE_STUBS` in `cli.py` is leeg; het runbook van de analyse met "Wat er nog
+  niet is" van beide.
+
+**Wat de samenvoeging erbij deed:**
+
+| Commit | Wat |
+|---|---|
+| `dcd6bc1` | met de analyse uit geven de routes van gezichten `501 not_built("X2")` zoals in 0.8.0 (X2b gaf `409 faces_unavailable`); `api/tests/uit080/`: een wandeling langs elke route van 0.8.0 |
+| `8cc9027` | `tests/people/faces/test_faces_naast_beeld.py`: gezichten en beeld om de beurt in de rij `analyse` en het kind `werk` |
+| `a98f5c4` | `e2e/test_uit080.py`: met de analyse uit elke pagina zoals met de web van 0.8.0 |
+| `c1b2939` | BZ5 met de nepmodellen (`tests_analyse/test_geheugen_samen.py`), en `Cache.get` laat het oude bestand los vóór het laden |
+| `210f665` | de voorbewerking van de worker is die van `beeld_echt.voorbewerk` (x3a.md, Open 4) |
+| `df8d56b` | `ANALYSE_TESTS` 262; `infra/single/README.md` noemt beide schakelaars (Open 7); het runbook zegt Account → Foto's |
+
+**Gezichten en beeld samen.** Allebei werken in de rij `analyse`, en `faces`, `group` en
+`embed_image` gaan naar hetzelfde kind `werk`. `test_faces_naast_beeld.py` draait één nep-worker
+met de nep van gezichten en die van beeld, één eigenaar met allebei aan, en pakt de jobs één voor
+één zoals de Runner (`jobs.claim`, de vroegste `run_after` eerst):
+
+- `test_om_de_beurt_en_niemand_verhongert`: zolang allebei werk hebben, wisselen een batch van
+  gezichten en een batch van beeld elkaar af (in de rij en in de opdrachten aan `werk`); na elke
+  `faces` meteen `group` (de suggest van die batch); de `full` aan het eind wacht hooguit op de
+  ene batch van beeld die al klaarstond, en houdt beeld niet tegen; alles klaar, geen fout;
+- `test_werk_bezig_wijkt_zonder_fout`: met `werk` bezig wijken `faces.scan`, `faces.group` en
+  de pomp van beeld met `Defer(DEFER_BUSY)`: terug in de rij na 30 s, zonder poging, zonder
+  fout, de foto's weer op `wait` zonder poging; daarna komt alles klaar.
+
+Er hoefde niets aan de code te veranderen: `jobs.claim` neemt de oudste `run_after`, en zowel
+`faces.scan` als de pomp zet zijn volgende batch als een nieuwe job achteraan (`jobs.chain`, met
+`run_after` nu).
+
+**`/beheer` en Account.** `SearchTab.tsx` toont de blokken Gezichten en Zoeken op beeld onder
+elkaar, `PhotoSettingsBlock.tsx` de twee schakelaars; dat zijn de plekken van Z0b, en ze botsten
+niet. Bewijs: `searchTab.test.ts`, `facesBlock.test.ts`, `beeld.test.ts` en de e2e
+`test_zoek_gezichten.py` en `test_zoek_beeld.py` op de samengevoegde boom (Gedraaid hieronder).
+
+**Met de analyse uit, de hele boom.** Twee wandelingen, elk tegen een opname op de code van 0.8.0
+(`3fca440`):
+
+- `api/tests/uit080/test_wandeling.py`: elke route van 0.8.0 (291 met hun methoden, behalve de
+  stroom `/events`) als niemand, Eva, de gast Gijs en de beheerder Jonas, tegen
+  `antwoorden_080.json`. Elk antwoord gelijk; dezelfde jobs (geen in de rij `analyse`), dezelfde
+  Setting, dezelfde bestanden onder de datamap, dezelfde rijen in de tabellen van 0.8.0, en in die
+  van 0011 en 0012 alleen wat de triggers van A0 bijhouden (`beeld_owner` 1, `node_origin` 2).
+  Vóór `dcd6bc1` vond hij precies twintig antwoorden anders: de routes van gezichten.
+- `e2e/test_uit080.py`: voor dezelfde vier elke pagina van de web (elke tab van `/beheer`,
+  `/zoeken` ook in de stand beeld, de viewer met het infopaneel), de toegankelijkheidsboom, de
+  titel, het pad en de gevraagde routes, tegen `e2e/uit080_web.json` (114 pagina's, opgenomen met
+  de web van 0.8.0). Bomen en titels gelijk; de routes op precies `ERBIJ` na: `GET
+  /photos/beeld` (`501`, de stub van 0.8.0) en `GET /me/photo-settings` (`200`), allebei routes
+  van 0.8.0 met hun antwoord van 0.8.0, die niets tonen. De opname hangt aan de vorm van
+  `aria_snapshot` van Playwright 1.65.2 (Open na de samenvoeging).
+
+**BZ5, het geheugen met alles tegelijk** (Open 3). `tests_analyse/test_geheugen_samen.py` start
+de echte worker (pid 1, `werk` en `zoeken`, met `RLIMIT_DATA` en de wachter per kind) met de
+nepmodellen, en doet tegelijk: in `werk` een groepsronde (`full`) van 60.000 open plus 6.000
+bevestigde gezichten; in `zoeken` de cache vol (Eva 100.000 foto's en Bram 36.000: 418,9 van de
+419,4 MB) en, midden in die ronde, een nieuw bestand van Eva met 100.000 foto's dat `zoeken`
+herlaadt en doorzoekt. Gemeten: `VmHWM` van elk proces, en elke 20 ms de som van `VmRSS`.
+
+| | vóór `c1b2939` | na `c1b2939` (twee runs) |
+|---|---|---|
+| pid 1 | 36 MB | 36 MB |
+| `werk` (grens `RLIMIT_DATA` 1 GiB) | 277 MB | 277 MB |
+| `zoeken` (grens 1,5 GiB) | 801 MB | 506–507 MB |
+| som van de maxrss | 1.114 MB | 819–820 MB |
+| de hoogste som tegelijk | 982 MB | 792–793 MB |
+| met wat de echte modellen meer kosten (§3.11: `werk` +224 +165 MB, `zoeken` +340 +100 MB) | 1.943 MB | 1.648–1.649 MB |
+
+De poort: maxrss ≤ 2,5 GB voor de container, elk kind met de echte modellen erbij onder zijn
+`RLIMIT_DATA`, `zoeken` hooguit de cache plus 200 MB, geen kind vervangen, geen opdracht mislukt.
+Gehaald, ±33 s.
+
+De meting vond een fout: `Cache.get` hield de oude matrix van Eva vast via de lokale `found` tot
+na het laden van het nieuwe bestand (100.000 × 768 × 4 B = 307 MB dubbel). Nu laat `get` hem los
+vóór het laden, zoals de opmerking erboven al zei;
+`test_beeld_cache.py::test_herladen_laat_het_oude_bestand_los_voor_het_laden` toetst het met een
+`weakref` (zonder de wijziging rood: `[True] == [False]`).
+
+Wat alleen CI of de LXC meet: het echte SigLIP 2 (tekst en beeld) en YuNet en SFace samen in één
+container, en de piek van de cgroup (`memory.peak` onder `mem_limit: 3g`). De optelsom hierboven
+gebruikt de getallen van §3.11 (B6), geen meting met de echte modellen.
+
+**Open, per punt:**
+
+- Open 3 (BZ5): gemeten met de nepmodellen, onder de poort; met de echte modellen en de cgroup
+  blijft het voor CI of de LXC.
+- Open 7 (`infra/single/README.md`): gedaan; de zin "doet de app er nog niets mee" was al weg
+  (X2b), en de README noemt nu beide schakelaars (`df8d56b`).
+- x3a.md Open 4 (de voorbewerking): `test_beeld_echt_hulp.py::test_de_worker_voorbewerkt_zoals_voorbewerk`
+  zet `ops/beeld.preprocess` naast `beeld_echt.voorbewerk` met `meta.json` in de vorm van
+  `bouw.py`, op een beeld dat niet vierkant is: dezelfde float32, byte voor byte (`210f665`).
+- De telling van `api-analyse`: 262 en 11 (`--collect-only`: 273, waarvan 11 `beeld_echt`).
+  Erbij sinds de som van beide (258, die op deze boom 259 was door `zoeken_naast_werk`): BZ5, het
+  herladen en de voorbewerking.
+- Open 1, 2, 4, 5, 6 en 8 blijven staan. Geen contract van A0 of Z0b veranderd, geen migratie,
+  geen pakket, geen nieuwe action; de pins van SigLIP zijn niet aangeraakt.
+
+### Open na de samenvoeging
+
+- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (262 en 11, met BZ5),
+  `e2e` (met `test_uit080.py`), `analyse-image` en `beeld-model` (BZ4 streng, Open 1 en 2).
+- **`e2e/test_uit080.py` hangt aan de vorm van `aria_snapshot`.** De opname is gemaakt met
+  Playwright 1.65.2; de job `e2e` haalt Playwright met `uv run --with playwright`, zonder versie.
+  Verandert een nieuwe Playwright de vorm van de boom, dan wordt de test rood op elke pagina. Dan
+  opnieuw opnemen met de web van 0.8.0 (`3fca440`; de test zegt hoe), niet de vergelijking
+  losser maken.
+- **BZ5 met de echte modellen** en `memory.peak` van de cgroup: CI (`analyse-image`) of de LXC.

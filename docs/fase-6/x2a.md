@@ -275,12 +275,14 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    Dockerfile zonder de web-stap en zonder apt).
 2. ~~**De telling na het samenvoegen met X3a** (`ANALYSE_TESTS`, `ANALYSE_DESELECTED` in `ci.yml`).~~
    [Golf 5: 188 en 11 (`ac6950c`); zie De samenvoeging (golf 5).]
-3. **X2b**: de keten in de app, `group` (ops en `test_worker_group.py`, `test_group_perf.py`),
+3. ~~**X2b**: de keten in de app, `group` (ops en `test_worker_group.py`, `test_group_perf.py`),
    privacy en versleuteling, de API, de web, `/beheer`, `analyse-bench` (nu een stub) en
-   `analyse-kwaliteit`, `e2e/test_zoek_gezichten_echt.py` in `analyse-image`, `df` op `DATA_ROOT`
-   (K2-19), het runbook `gezichten.md` en de README over wat er bewaard wordt.
-4. **X3**: `BEELD` in `.env`, de handlers van `zoeken`, `caps.beeld`, de omzetter. [Golf 5: de
+   `analyse-kwaliteit`, `e2e/test_zoek_gezichten_echt.py` in `analyse-image`,~~ `df` op `DATA_ROOT`
+   (K2-19), ~~het runbook `gezichten.md` en de README over wat er bewaard wordt.~~
+   [Golf 6: gebouwd door X2b ([x2b.md](x2b.md)); `df` voor gezichten blijft open, x2b.md Open 7.]
+4. ~~**X3**: `BEELD` in `.env`, de handlers van `zoeken`, `caps.beeld`, de omzetter.~~ [Golf 5: de
    omzetter is er (X3a) en draait via de dienst `analyse-omzetten`; de rest blijft van X3b.]
+   [Golf 6: de rest gebouwd door X3b ([x3b.md](x3b.md)).]
 5. **De kleurvolgorde** (BGR naar YuNet, RGB naar SFace) ligt vast in laag 2; welke de juiste is,
    beslist laag 4 (Vraag 8: standaard op de LXC).
 6. De standaarden van de vragen blijven staan (Vraag 8 nee, 10 (a), 11 uit, 12b nee, 13 twee
@@ -430,7 +432,7 @@ langs "Wat X3a nodig heeft":
 ### Open na de samenvoeging
 
 - Open 1 en 3–8 hierboven blijven staan; Open 2 is gedaan, Open 4 deels (de omzetter).
-- **De pins van SigLIP in `models.lock` horen bij X3b** (x3a.md, Open 1 en 2). Komen de tien
+- ~~**De pins van SigLIP in `models.lock` horen bij X3b**~~ (x3a.md, Open 1 en 2). Komen de tien
   regels erin zonder de functies voor beeld in `install.sh`, dan: ~~haalt `install.sh` met
   `ANALYSE=aan` ook de 1,51 GB van de bron, en houdt die;~~ zegt `caps` `ontbreekt` voor de vijf
   uitkomsten (niemand maakt ze), dus de stand `models_missing` (gezichten kunnen door, `/beheer`
@@ -442,6 +444,7 @@ langs "Wat X3a nodig heeft":
   laag 3 en `test_analyse_container.sh` slaan de regels onder `siglip2-b32-256/` over, dus geen
   1,51 GB en geen melding over een bron; de stand `models_missing` en de rode `analyse-image`
   blijven, en `beeld_model.py uitslag` zegt nu de regels pas samen met X3b te zetten.]
+  [Golf 6: de pins staan er met X3b (`0a90be0`), samen met de stap `BEELD` in `install.sh`, en caps telt nooit een bron en een regel in `siglip2-b32-256/` pas als die map er is (`caps.py`, `counted`): zonder beeld `ok` met de twee modellen van gezichten (`test_lock_siglip.py::test_zonder_de_map_van_siglip_is_de_stand_ok`); `analyse-image` in CI na de push.]
 - Alleen in CI, na de push: `api-analyse` (188 en 11, de licenties met opencv_zoo), `analyse-image`
   (het echte image, met de omzetter via de dienst) en `beeld-model`.
 
@@ -511,9 +514,10 @@ deed.
 
 - De punten onder "Open na de samenvoeging" blijven staan; bij de pins is doorgestreept wat
   sinds uitrol F3 niet meer klopt.
-- **Golf 6: `server.py` en `child.py` zijn hotspots** (G5-C4). X3b en X2b zetten er allebei
+- ~~**Golf 6: `server.py` en `child.py` zijn hotspots** (G5-C4). X3b en X2b zetten er allebei
   regels in; samenvoegen X3b, dan X2b. `test_built_en_de_handlers_van_de_kinderen_zijn_gelijk`
-  krijgt dan de nieuwe exacte lijsten.
+  krijgt dan de nieuwe exacte lijsten.~~
+  [Golf 6: zo samengevoegd (`aa21e37`, `dcafcea`), met de regels van beide en de nieuwe exacte lijsten; x3b.md, De samenvoeging (golf 6).]
 - **Alleen in CI, na de push:** `api-analyse` (209 en 11; na de nacontrole 211 en 11),
   `analyse-image` (met de nieuwe controles: pid 1 uit `python-tekst`, `PR_GET_DUMPABLE` 0 vanaf de exec, de regels van SigLIP
   overgeslagen) en `beeld-model`.

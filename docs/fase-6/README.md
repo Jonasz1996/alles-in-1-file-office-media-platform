@@ -504,5 +504,7 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
   (X2a, [x2a.md](x2a.md)), en de tokenizer en de omzetter van het beeldmodel SigLIP 2 (X3a,
   [x3a.md](x3a.md)). Voor jou is er nog niets te zien: zonder `ANALYSE=aan` doet `install.sh`
   precies wat 0.8.0 deed, en de app doet nog niets met de container.
-- **Nog niet:** X2b (gezichten in de app) en X3b (zoeken op beeld in de app). Die horen bij 0.8.1;
-  zoeken op beeld kan naar een fase 6b schuiven. Zie [Wat komt in 0.8.1](#wat-komt-in-081).
+- **Golf 6** (16 november): gezichten in de app (X2b, [x2b.md](x2b.md)) en zoeken op beeld in de
+  app (X3b, [x3b.md](x3b.md)) zijn gebouwd en samengevoegd. Nog niet: de integratie I2 en 0.8.1;
+  zoeken op beeld kan nog naar een fase 6b schuiven. Voor jou is er nog niets te zien: zonder
+  `ANALYSE=aan` doet het platform wat 0.8.0 deed. Zie [Wat komt in 0.8.1](#wat-komt-in-081).

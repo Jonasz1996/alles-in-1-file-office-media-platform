@@ -361,3 +361,53 @@ korte namen van de modellen verwachtte (`sface`, `yunet`); `/admin/search` geeft
 van `models.lock` (`face_detection_yunet_2026may.onnx` …). De test leest die namen nu uit
 `models.lock` (`modellen_van_gezichten`); daarna 1 passed in 7,94 s. De stand-in is daarna
 gewist; het image zelf bouwt alleen CI.
+
+## De samenvoeging (golf 6)
+
+Samengevoegd op 16 november 2026 op `claude/stappenplan-uitwerken-lu4uv3`: eerst X3b
+(`aa21e37`), dan X2b (`dcafcea`), beide met `--no-ff`. De conflicten, wat de samenvoeging erbij
+deed, BZ5 en de twee wandelingen met de analyse uit staan in "De samenvoeging (golf 6)" in
+[x3b.md](x3b.md); hier wat X2b raakt. Niets gepusht; de versie blijft 0.8.0.
+
+**Afwijking van Vormen 1: met de analyse uit `501`, niet `409`** (`dcd6bc1`). De FEITEN van golf
+6 zeggen dat met de analyse uit elke route van 0.8.0 antwoordt zoals in 0.8.0. De routes van
+gezichten bestonden in 0.8.0 als stubs van Z0b met `501 not_built("X2")`; X2b gaf er `409
+faces_unavailable`. De wandeling langs elke route (`api/tests/uit080/test_wandeling.py`, als
+niemand, Eva, de gast Gijs en de beheerder Jonas, tegen een opname op `3fca440`) vond precies die
+twintig antwoorden anders. Nu, in `_running` van `routers/people_faces.py`:
+
+- de analyse uit (`analyse_on` niet waar): `501 not_built("X2")`, na de inlog, ook voor een gast,
+  zoals 0.8.0;
+- de analyse aan maar geen map `PLATFORM_FACES_KEYS`: `409 faces_unavailable` (zoals Vormen 1);
+- gezichten draaien: `403 guest` voor een gast, `409 faces_off` als de eigenaar ze uit heeft.
+
+`test_faces_off.py`, `test_api_stubs.py` en `e2e/test_zoek_gezichten.py` kregen het nieuwe
+exacte antwoord. `PATCH /me/photo-settings` met `faces: "aan"` geeft met de analyse uit nog
+steeds `409 faces_unavailable`: dat was in 0.8.0 ook zo (Z0b, `check_switch`). Wat hierboven
+"De nieuwe routes geven dan `409 faces_unavailable`" en de rij van `test_faces_off.py` in Klaar
+als zeggen, geldt dus alleen met de analyse aan zonder sleutels.
+
+**Gezichten naast beeld.** In de rij `analyse` en het kind `werk` wisselen gezichten en beeld
+elkaar af, en met `werk` bezig wijken `faces.scan` en `faces.group` met `Defer(DEFER_BUSY)`
+zonder poging of fout: `tests/people/faces/test_faces_naast_beeld.py` (`8cc9027`; x3b.md).
+De groepsronde van 60.000 plus 6.000 in `werk` naast een volle cache en een herlaadactie in
+`zoeken` (BZ5): `werk` 277 MB maxrss met de nepmodellen, met de modellen van gezichten en het
+beeldmodel erbij (§3.11) 666 MB, onder de 1 GiB van `RLIMIT_DATA`
+(`tests_analyse/test_geheugen_samen.py`; x3b.md).
+
+**Open, per punt:**
+
+- Open 9 (samenvoegen met X3b): gedaan. `ANALYSE_TESTS` is 262 en `ANALYSE_DESELECTED` 11
+  (`df8d56b`, nageteld met `--collect-only`); het runbook van de analyse heeft "Wat er nog niet
+  is" van beide; `infra/single/README.md` noemt beide schakelaars; `server.BUILT` en
+  `child.handlers()` hebben de regels van beide (`dcafcea`), met de nieuwe exacte lijsten.
+- x2a.md Open 3 (wat X2b moest bouwen): gebouwd, op `df` na (Open 7 hieronder).
+- Open 1 (CI), 2 (de zin bij persoon wissen, I2), 3 (`/over`, I2), 4 (de kwaliteit op de LXC),
+  5 (§4.5 met X2 aan, I2), 6 (`analyse-bench` op de LXC), 7 (`df` voor de vectoren van
+  gezichten, I2), 8 en 10 blijven staan.
+
+### Open na de samenvoeging
+
+- **Alleen in CI, na de push:** `api` (met `tests/uit080` en `test_faces_naast_beeld.py`),
+  `api-analyse` (262 en 11), `zoek-perf`, `e2e` (met `test_uit080.py`) en `analyse-image` (de
+  echte scan, en BZ5 met de echte modellen: zie x3b.md).
