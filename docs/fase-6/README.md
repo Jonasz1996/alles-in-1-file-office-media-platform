@@ -1,15 +1,20 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **kern gebouwd, versie 0.8.0 (11 november 2026)**. De kern van fase 6 staat op de branch
-`claude/stappenplan-uitwerken-lu4uv3`: zoeken in de inhoud van je bestanden, tekst in scans en
-foto's, de kaart met plaatsen en landen, dubbele bestanden, personen, herinneringen en slimme
-albums. Gezichten automatisch herkennen en zoeken op wat er op een foto staat zitten er nog niet in
-([Wat komt in 0.8.1](#wat-komt-in-081)). Het ontwerp stelt grenzen aan de snelheid en het geheugen
-(§4.4 en §4.5 van het [bouwontwerp](bouwontwerp.md)). Daarvan zijn er in de sandbox (de machine
-waarop gebouwd is) en in CI (de automatische tests op GitHub) alle 27 gehaald die bij 0.8.0 horen,
-en ook de grens voor de grootte van het image. In CI waren met de code van 0.8.0 alle 16 jobs groen
-(run 105), en ook op de commit van 0.8.0 zelf (`3fca440`, run 106). Het laatste bewijs is je eigen
-server: [Op de LXC](#op-de-lxc).
+Status: **gebouwd, versie 0.8.1 (⟦I2: de datum van de commit van 0.8.1⟧)**. Fase 6 staat op de
+branch `claude/stappenplan-uitwerken-lu4uv3`. De kern kwam met 0.8.0 (11 november 2026): zoeken in
+de inhoud van je bestanden, tekst in scans en foto's, de kaart met plaatsen en landen, dubbele
+bestanden, personen, herinneringen en slimme albums. 0.8.1 maakt de fase af met gezichten
+automatisch herkennen en zoeken op wat er op een foto staat, allebei per gebruiker aan te zetten,
+en de pagina `/over` met de bronnen ([Wat 0.8.1 brengt](#wat-081-brengt)).
+
+Het ontwerp stelt grenzen aan de snelheid en het geheugen (§4.4 en §4.5 van het
+[bouwontwerp](bouwontwerp.md)). Daarvan zijn er in de sandbox (de machine waarop gebouwd is) en in
+CI (de automatische tests op GitHub) alle 27 gehaald die bij 0.8.0 horen, en ook de grens voor de
+grootte van het image. In CI waren met de code van 0.8.0 alle 16 jobs groen (run 105), en ook op
+de commit van 0.8.0 zelf (`3fca440`, run 106). Voor 0.8.1 waren op `e535332`, de code van golf 6,
+alle 19 jobs groen (run 43892193604). Op de commit van 0.8.1 zelf: ⟦I2: hoeveel jobs groen waren, en de run, op de commit van 0.8.1⟧. Wat de integratie van 0.8.1 naliep en mat, staat in
+[integratie-2.md](integratie-2.md). Het laatste bewijs is je eigen server:
+[Op de LXC](#op-de-lxc).
 
 Zoeken gebruikt één index in de database die er al is (SQLite met FTS5, de zoekfunctie van
 SQLite). Er komt geen nieuwe database of dienst bij. Zoeken op naam werkt meteen na de update; de
@@ -20,9 +25,17 @@ anders in de app zelf, buiten die afscherming (`/beheer` zegt welke). OCR (tekst
 beeld) draait alleen in de mediaworker, dus alleen met media aan. Het image wordt alleen ±72 MB
 groter, voor tesseract, het programma dat de tekst herkent.
 
+Gezichten en zoeken op beeld rekenen in een eigen afgeschermde container, `analyse`: zonder
+netwerk en zonder je bestanden. Sinds 0.8.1 zet het installatiescript die standaard aan
+(`ANALYSE=uit` houdt hem uit) en haalt het de modellen één keer op. Per gebruiker staat alles uit,
+tot die het zelf aanzet bij Account → Foto's. Het image is ±118–141 MB groter, voor numpy en
+onnxruntime, ook met de analyse uit.
+
 Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gezichten en beeld)
-besloten; de rest is voorstel. Vraag 4 en Vraag 8–14 heb je nog niet beantwoord. 0.8.0 draait op
-de standaarden; zo ziet alleen de eigenaar de plek van een foto (Vraag 4). Zie
+besloten; de rest is voorstel. Sinds 0.8.0 koos je één ding: zoeken op beeld toch uitbrengen
+(Keuze 85, 16 november 2026). Vraag 4 en Vraag 8–14 heb je nog niet beantwoord; 0.8.1 draait op
+de standaarden. Zo ziet alleen de eigenaar de plek van een foto (Vraag 4), en staat zoeken op beeld
+per gebruiker uit (Vraag 11). Bij 0.8.1 kwamen er drie vragen bij, elk met een standaard. Zie
 [Vragen voor Jonas](#vragen-voor-jonas).
 
 ## Klaar als
@@ -44,9 +57,18 @@ vragen zijn sneller.
   de browser, met de echte tesseract). De grens is 8 pagina's per minuut op één core. Tijdens de
   bouw haalde CI 20,5 per minuut ([x1.md](x1.md), "Klaar als"); bij de integratie
   23,2 per minuut over de mix van brieven en volle pagina's (M5).
-- **Personen zijn te benoemen en te zoeken**, in 0.8.0 met de hand: je zet een persoon op een
-  foto, zo nodig met een kader, en vindt hem terug met zoeken en met het filter Persoon. Gezichten
-  automatisch herkennen hoort bij 0.8.1.
+- **Personen zijn te benoemen en te zoeken.** Met de hand sinds 0.8.0: je zet een persoon op een
+  foto, zo nodig met een kader, en vindt hem terug met zoeken en met het filter Persoon. Sinds
+  0.8.1 stelt het platform ook zelf voor wie er op een foto staat, voor wie gezichten aanzet;
+  niets wordt vanzelf bevestigd. De scan haalde in de sandbox 1.043 foto's per minuut per core met
+  één gezicht (grens 250, op `9228eb6`; [x2b.md](x2b.md)). Hoe goed de voorstellen zijn, is niet
+  gemeten (zie [Bekende grenzen](#bekende-grenzen)).
+- **Zoeken op beeld** (0.8.1): een zin als "hond op het strand", of **Meer zoals deze** vanuit een
+  foto. In CI haalde het model de kwaliteitspoorten van Keuze 85 (op `dc5dfe5`: van de eerste vijf
+  foto's bij een Nederlandse vraag klopten er gemiddeld 0,692, poort 0,6; "Meer zoals deze" 0,475,
+  ondergrens 0,40; [x3b.md](x3b.md)). Eén foto verwerken voor de beeldindex kostte 33,8 ms op één core (grens 120 ms) en
+  het model-deel van een vraag p95 22,2 ms (op `e535332`). Het geheel onder belasting, met alles
+  aan: ⟦I2: de p95 van zoeken op beeld uit M13 (§4.5 stap 2 met de analyse, `zoek_samen --analyse`)⟧, grens 250 ms ([metingen.md](metingen.md)).
 - **De tekst uit documenten** (PDF, docx, xlsx, pptx, txt, md) is doorzoekbaar. Het lezen op de
   achtergrond moet minstens 1.000 documenten per minuut halen op één core; gemeten
   1.977 per minuut (M2).
@@ -74,11 +96,13 @@ vragen zijn sneller.
   In de stap zonder poort, waar het achtergrondwerk niet wijkt voor media, haperde een film in twee
   van de drie runs één keer, vlak na verspringen. Er was nooit meer dan ±3,6 GiB van de 15,7 GiB
   geheugen in gebruik. De vier rondes ervoor haalden het niet, drie vooral door fouten in de
-  meetopzet en één op haperen na verspringen (zie daar de Bevindingen).
+  meetopzet en één op haperen na verspringen (zie daar de Bevindingen). Met de analyse erbij
+  (0.8.1, de container `analyse` die gezichten en beelden rekent): ⟦I2: de uitkomst van M13 per regel (zoeken p95, haperen, OnlyOffice, beeld p95 en het geheugen van de analyse)⟧.
 - **Een upload wacht hooguit 1 s**, ook als de index tegelijk een tekst van 1 MB met 10 kopieën
   schrijft. De langste wachttijd was 337 ms (M6).
 
-Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md](integratie.md).
+Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md](integratie.md);
+voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
 
 ## Wat er is
 
@@ -110,6 +134,17 @@ Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md
   persoon kun je hernoemen, samenvoegen, verbergen of wissen. Zoeken en het filter **Persoon**
   vinden ze terug. Personen zijn van de eigenaar en gaan nooit mee via een publieke link
   ([z6.md](z6.md)).
+- **Gezichten** (0.8.1). Wie het aanzet bij Account → Foto's (**Gezichten herkennen in mijn
+  foto's**), krijgt op `/fotos/personen` voorstellen ("Is dit Eva?") en groepen gezichten zonder
+  naam ("Wie is dit?"); in het infopaneel van een foto staan de gezichten met hun kader. Ja maakt
+  er een persoon op de foto van, zoals met de hand. Zet je het uit, dan
+  wist het platform de gezichten en de sleutel; personen blijven ([x2b.md](x2b.md),
+  [Gezichten in detail](#gezichten-in-detail-vanaf-081)).
+- **Zoeken op beeld** (0.8.1). Wie het aanzet bij Account → Foto's (**Zoeken op beeld**), zoekt op
+  `/zoeken` (**Zoeken op** → **Wat er op de foto staat**) in zijn eigen foto's op wat erop staat,
+  en vindt vanuit een foto **Meer zoals deze** ([x3b.md](x3b.md)).
+- **`/over`** (0.8.1): de bronnen van de kaart en de modellen, met hun licentie, voor iedereen die
+  is ingelogd, ook met de analyse uit. Via Account → **Bronnen en licenties**.
 - **Herinneringen.** Op `/fotos`: "Vandaag, N jaar geleden". Een dag verbergen kan (**Deze dag
   verbergen**), en een persoon uit je herinneringen halen ook. Uit te zetten op `/account` bij
   Foto's ([z6.md](z6.md)).
@@ -124,33 +159,55 @@ Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md
 - **`/beheer` → Zoeken en foto's** (Alt+9, alleen voor de beheerder): de zoekmachine, het
   achtergrondwerk pauzeren en hervatten, hoe ver de index is, **Index herbouwen**, **Mislukte
   opnieuw**, de plek en de duplicaten opnieuw berekenen, OCR aan en uit, de plaatsnamen en de
-  Zoekbench (de snelheid van zoeken op jouw CPU). Wat je op de server doet, staat in het runbook
-  [zoeken.md](../runbooks/zoeken.md) ([z7.md](z7.md)).
+  Zoekbench (de snelheid van zoeken op jouw CPU). Sinds 0.8.1 ook de blokken **Gezichten**
+  (**Gezichtsherkenning toestaan**) en **Zoeken op beeld** (**Zet uit voor iedereen**,
+  **Beeldindex wissen**, **Opnieuw berekenen**), met hoe ver de scan is. Wat je op de server doet,
+  staat in de runbooks [zoeken.md](../runbooks/zoeken.md) ([z7.md](z7.md)),
+  [analyse.md](../runbooks/analyse.md) en [gezichten.md](../runbooks/gezichten.md).
 - **De wekelijkse controle.** Eens per week vergelijkt de app 200 willekeurige bestanden in de
   index met de database. Een verschil staat in oranje op `/beheer`, met wat je dan doet; daarna
   kijkt de app elk uur opnieuw. Herstellen blijft met de hand (het runbook, "De wekelijkse
   controle").
 
-## Wat komt in 0.8.1
+## Wat 0.8.1 brengt
 
 - **Gezichten automatisch herkennen.** Het platform stelt voor ("Is dit Eva?"); niets wordt
   vanzelf bevestigd. Per gebruiker staat het standaard uit. Het rekenen gebeurt in een eigen
-  afgeschermde container, `analyse`, zonder netwerk en zonder je bestanden. Daarvoor komen eerst
-  die container en de migraties 0011 en 0012 (een nieuwe stand van de tabellen).
-- **Zoeken op wat er op een foto staat** ("strand", "hond"). Dit staat ook gepland voor 0.8.1,
-  ~~maar het kan naar een aparte fase 6b schuiven als het uitloopt (zie [Planning](#planning))~~.
-  [16 november 2026: het blijft in 0.8.1. Je koos "Toch uitbrengen" (Keuze 85 in het
-  [bouwontwerp](bouwontwerp.md)), ook al vinden een paar woorden weinig ('bergen' en 'boot';
-  'berg' en 'bootje' wel). De uitleg bij de schakelaar zegt wat je mag verwachten.] Per gebruiker
-  standaard uit (Vraag 11; die heb je nog niet beantwoord).
-- Met de gezichten komen ook de pagina `/over` met de bronvermeldingen, en de reparatie van het
-  kader van een persoon bij een nieuwe versie van een foto (migratie 0011; zie
-  [Bekende grenzen](#bekende-grenzen)).
+  afgeschermde container, `analyse`, zonder netwerk en zonder je bestanden. De database krijgt
+  daarvoor migratie 0011 en 0012 (een nieuwe stand van de tabellen). Hoe het werkt:
+  [Gezichten in detail](#gezichten-in-detail-vanaf-081).
+- **Zoeken op wat er op een foto staat** ("strand", "hond"), en **Meer zoals deze** vanuit een
+  foto. ~~Dit staat ook gepland voor 0.8.1, maar het kan naar een aparte fase 6b schuiven als het
+  uitloopt (zie [Planning](#planning)).~~ [16 november 2026: het blijft in 0.8.1. Je koos "Toch
+  uitbrengen" (Keuze 85 in het [bouwontwerp](bouwontwerp.md)), ook al vinden een paar woorden
+  weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel). De uitleg bij de schakelaar zegt wat je mag
+  verwachten.] Per gebruiker standaard uit (Vraag 11; die heb je nog niet beantwoord).
+- **De pagina `/over`** (Account → **Bronnen en licenties**): de bronnen van de kaart (GeoNames en
+  Natural Earth) en van de modellen (YuNet, SFace en SigLIP 2), met hun licentie, en de pakketten
+  van de analyse. Voor iedereen die is ingelogd, ook een gast, en ook met de analyse uit.
+- **Het kader van een persoon** gaat weg als een foto een nieuwe versie met ander beeld krijgt; de
+  persoon blijft (migratie 0011).
 
-De knop **Zoeken op beeld** op `/fotos` en de schakelaars **Gezichten herkennen** en **Zoeken op
-beeld** op `/account` zijn er al, maar werken nog niet. Zoeken op beeld zegt dat het in een
-volgende versie komt; bij Gezichten herkennen staat "Nog niet beschikbaar op deze server". Beide
-schakelaars gaan nog niet aan.
+Wat je doet:
+
+1. **Bijwerken** met het commando uit de [README](../../README.md) ("Bijwerken naar 0.8.1"). Het
+   script zet de analyse aan, haalt de modellen één keer op (±39 MB voor gezichten, ±1,55 GB voor
+   zoeken op beeld, op je server omgezet naar ±400 MB) en start de container. Met `ANALYSE=uit`
+   blijft alles uit, met `BEELD=uit` alleen zoeken op beeld; het script onthoudt dat.
+2. **Aanzetten, per gebruiker:** Account → Foto's → **Gezichten herkennen in mijn foto's** (eerst
+   komt een uitleg) en **Zoeken op beeld**. Iedereen kiest dat zelf.
+3. **Volgen en bijsturen** op `/beheer` → **Zoeken en foto's** (Alt+9): hoe ver de scan en de
+   beeldindex zijn, en de knoppen voor iedereen (**Gezichtsherkenning toestaan**, **Zet uit voor
+   iedereen**, **Beeldindex wissen**, **Opnieuw berekenen**).
+4. **De lijst [Op de LXC](#op-de-lxc)**, met wat alleen op je eigen server te meten is.
+
+Met `ANALYSE=uit` zie je niets van gezichten en zoeken op beeld: geen schakelaars, en op
+`/beheer` en `/zoeken` alleen dat het op deze server uitstaat en hoe de beheerder het aanzet.
+Stond de analyse eerst aan, dan wist uitzetten niets: alles is er weer zodra hij weer aan staat.
+Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
+[analyse.md](../runbooks/analyse.md), "Uitzetten en weer aan"). Terug naar 0.8.0 (commit
+`59e0250`) kan, met de stappen van [infra/single/README.md](../../infra/single/README.md)
+("Terug naar 0.8.0 van `59e0250`"); de tabellen van 0.8.1 zijn daarna weg.
 
 ## Wat er verandert sinds 0.7.x
 
@@ -190,11 +247,15 @@ schakelaars gaan nog niet aan.
 | Land en Plaats op `/fotos` | hooguit 500 plaatsen, de meeste foto's eerst: wie meer plaatsen heeft, mist de kleinste en soms een land. Camera is een tekstveld. | [z6.md](z6.md), Open |
 | "Niet gelijk" op `/dubbel` | kan niet ongedaan: die groep komt niet terug. | [z5.md](z5.md), Open |
 | Herinneringen per map verbergen | kan niet in de web-app; wel een dag, of een persoon. | [z6.md](z6.md), Open |
-| Het kader van een persoon | blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Migratie 0011 zet dat recht; die staat al op de branch (A0) en hoort bij 0.8.1. | [z0b.md](z0b.md), [a0.md](a0.md) |
+| Het kader van een persoon | ~~blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Migratie 0011 zet dat recht; die staat al op de branch (A0) en hoort bij 0.8.1.~~ [0.8.1: opgelost met migratie 0011; het kader gaat weg, de persoon blijft.] | [z0b.md](z0b.md), [a0.md](a0.md) |
 | OCR | Een foto met precies dezelfde inhoud als een bestand dat er al was, krijgt zijn tekst pas bij de volgende start. "Tekst in foto's herkennen" uit wist de tekst die er is niet (een vraag hieronder). Van een PDF leest OCR hooguit 200 gescande pagina's. Met de knop **Tekst herkennen**: 20 keer per uur en 200 pagina's per dag per gebruiker. Een volle, liggende scan kost ±6 pagina's per minuut, ±160 minuten per 1.000 pagina's. | [x1.md](x1.md), Open |
 | Uploaden terwijl de index schrijft | De upload wacht hooguit ±1 s op een schijf waar het wegschrijven (`fsync`) tot ±200 ms extra kost. Op een tragere schijf langer. | [z2.md](z2.md); `api/app/dbgate.py` |
 | De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. | het runbook, "De wekelijkse controle" |
-| De bronvermelding | GeoNames en Natural Earth staan onder de kaart en in de [README](../../README.md) (Bronnen). De pagina `/over` is er nog niet. | [z3.md](z3.md), Open |
+| De bronvermelding | GeoNames en Natural Earth staan onder de kaart en in de [README](../../README.md) (Bronnen). ~~De pagina `/over` is er nog niet.~~ [0.8.1: `/over` is er, via Account → Bronnen en licenties, ook met de analyse uit.] | [z3.md](z3.md), Open |
+| Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8, standaard nee). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan op **niet gemeten, geen gereedschap** tot er een antwoord is op Vraag 8. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
+| Zoeken op beeld: zwakke woorden (0.8.1) | 'bergen' en 'boot' vinden weinig in de testset ('berg' en 'bootje' wel); "Meer zoals deze" haalde 0,475, waar het ontwerp 0,7 wilde. Zo uitgebracht met Keuze 85; de uitleg bij de schakelaar zegt het. | [x3b.md](x3b.md); Keuze 85 in het [bouwontwerp](bouwontwerp.md) |
+| Gezichten en zoeken op beeld op jouw CPU (0.8.1) | Gemeten in de sandbox en in CI, niet op jouw CPU. `analyse-bench` (gezichten) en `beeld-bench` (zoeken op beeld) meten het daar; zie [Op de LXC](#op-de-lxc). | de runbooks [gezichten.md](../runbooks/gezichten.md) en [analyse.md](../runbooks/analyse.md) |
+| Reservekopieën en gezichten (0.8.1) | De reservekopieën van het platform bevatten geen gezichten: na het terugzetten begint de scan opnieuw. De sleutels staan in `/opt/platform/sleutels/gezichten`, niet op `/tank`. | het runbook [gezichten.md](../runbooks/gezichten.md) |
 | Jouw CPU | De 200 ms is gemeten in de sandbox en in CI. De Zoekbench op `/beheer` → Zoeken en foto's toont de p95 op jouw CPU, voor "eigenaar" en "alles"; ligt een van beide boven 200 ms, dan haalt jouw CPU het niet. `/beheer` waarschuwt daar niet zelf voor. Meten doe je met `bench --los`. | het runbook, "Zoeken meten"; §4.4 van het [bouwontwerp](bouwontwerp.md), "Op de LXC" |
 
 ## Wat je koos
@@ -205,10 +266,10 @@ Dat betekent:
 - **OCR: ja.** Scans en foto's met tekst worden doorzoekbaar. Daarvoor komt tesseract in het
   image. Dat bleek ±72 MB, niet ±20 MB. Op 4 november 2026 koos je op een kaartje "Ja, erin"
   (Vraag 15).
-- **Gezichten automatisch: ja**, in fase 6 (gepland voor 0.8.1). Per gebruiker staat het
+- **Gezichten automatisch: ja**, in fase 6 (~~gepland voor~~ in 0.8.1). Per gebruiker staat het
   standaard uit.
-- **Zoeken op wat er op een foto staat** ("strand", "hond"): ja, in fase 6 (gepland voor 0.8.1;
-  ~~het kan naar een fase 6b schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]). Dat
+- **Zoeken op wat er op een foto staat** ("strand", "hond"): ja, in fase 6 (~~gepland voor~~ in
+  0.8.1; ~~het kan naar een fase 6b schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]). Dat
   volgt uit "alles"; het kaartje noemde het niet apart.
   Daarom staat het per gebruiker standaard uit (Vraag 11).
 - **De kaart: geen tegels van buiten.** Alleen landsgrenzen. Er gaat niets naar een kaartdienst.
@@ -229,7 +290,7 @@ Alles terugvinden, en meer halen uit je foto's. Uit het stappenplan:
 - herinneringen ("vandaag, N jaar geleden") en slimme albums;
 - filters op type, datum, persoon, plek, tag en bibliotheek.
 
-Wat daarvan in 0.8.0 zit en wat er gemeten is: [Klaar als](#klaar-als).
+Wat daarvan in 0.8.0 en 0.8.1 zit en wat er gemeten is: [Klaar als](#klaar-als).
 
 ## Hoe het werkt, in het kort
 
@@ -239,11 +300,11 @@ Wat daarvan in 0.8.0 zit en wat er gemeten is: [Klaar als](#klaar-als).
   bestanden van anderen.
 - Tekst lezen gebeurt in de afgeschermde mediaworker van fase 5 als media aan staat, anders in de
   app zelf (`/beheer` zegt welke). OCR draait alleen in de mediaworker, dus alleen met media aan.
-- **Gezichten** (vanaf 0.8.1) **en zoeken op beeld** (gepland voor 0.8.1; ~~het kan naar een fase
-  6b schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]) rekenen in een eigen container,
+- **Gezichten en zoeken op beeld** (sinds 0.8.1; ~~zoeken op beeld kan naar een fase 6b
+  schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]) rekenen in een eigen container,
   `analyse`. Die heeft geen netwerk en kan niet bij je
   bestanden: de app geeft hem alleen een klein voorbeeld van een foto. numpy en onnxruntime staan alleen daar; de app zelf gebruikt ze nooit.
-- **Gezichten** (vanaf 0.8.1) geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd.
+- **Gezichten** (sinds 0.8.1) geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd.
   De getallen die het platform van elk gezicht maakt (de vectoren), zijn versleuteld, met een
   sleutel per gebruiker. Zet iemand gezichten uit, dan wist het platform eerst die sleutel en dan
   de gezichten. Oude kopieën van die getallen zijn dan onleesbaar, in elke kopie waar de sleutel
@@ -253,8 +314,9 @@ Wat daarvan in 0.8.0 zit en wat er gemeten is: [Klaar als](#klaar-als).
 - Plek, personen en tekst uit een foto horen bij de eigenaar van het bestand. Nooit via een
   publieke link.
 - Bijwerken met hetzelfde `install.sh`, met eerst een reservekopie van de database. Terug naar
-  0.7.1 (commit `80d5bb8`, eerst `db-downgrade 0009`) met de stappen van het runbook
-  [zoeken.md](../runbooks/zoeken.md), "Terug naar 0.7.1".
+  0.8.0 (commit `59e0250`, eerst `db-downgrade 0010`) of naar 0.7.1 (commit `80d5bb8`, eerst
+  `db-downgrade 0009`) met de stappen van het runbook [zoeken.md](../runbooks/zoeken.md), "Terug
+  naar 0.8.0 van `59e0250`" en "Terug naar 0.7.1".
 
 ## Wat het kost
 
@@ -271,16 +333,17 @@ In 0.8.0 (gemeten, of geschat waar dat erbij staat):
 
 In 0.8.1 komt erbij, met gezichten en zoeken op beeld (gemeten in de sandbox, of berekend uit die
 metingen; [haalbaarheid.md](haalbaarheid.md)). ~~Zoeken op beeld kan naar een fase 6b schuiven; dan
-komt dat deel later.~~ [16 november 2026: zoeken op beeld blijft in 0.8.1 (Keuze 85).]
+komt dat deel later.~~ [16 november 2026: zoeken op beeld blijft in 0.8.1 (Keuze 85).] [I2: wat
+daarna in de bouw en in CI gemeten is, staat erbij; de rest blijft een schatting.]
 
 | Wat | Hoeveel |
 |---|---|
 | het image | +118–141 MB voor numpy en onnxruntime, ook als je `analyse` uitzet |
 | de modellen | ±39 MB voor gezichten en ±0,4 GB voor beeld, in `/opt/platform/modellen`; bij de installatie tijdelijk 1,55 GB extra |
 | de database | ±0,3 GB per 100.000 foto's, voor gezichten en beeld samen; plus ±0,15 GB cache voor zoeken op beeld |
-| eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core |
-| geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB |
-| zoeken op beeld | binnen 250 ms (Vraag 14) |
+| eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core (geschat). [I2: gemeten in de sandbox 1.043 foto's per minuut per core met één gezicht, op `9228eb6` ([x2b.md](x2b.md)); in CI 33,8 ms per foto voor beeld op `e535332`. Op jouw CPU: [Op de LXC](#op-de-lxc).] |
+| geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB. [I2: met modellen van de echte vorm: ⟦I2: de som van VmHWM uit M11 (BZ5, test_geheugen_samen.py), grens 2,5 GB⟧.] |
+| zoeken op beeld | binnen 250 ms (Vraag 14). [I2: onder belasting ⟦I2: de p95 van zoeken op beeld uit M13⟧.] |
 
 Je container heeft een rootdisk van 500 GB; dat past ruim. Een tragere CPU dan die van de sandbox rekent langer. `/beheer`
 laat zien hoe ver het is.
@@ -297,7 +360,8 @@ Kies je één oplevering, dan is het ±41 werkdagen. Het stappenplan gaf 3 weken
 gezichten en beeld, en zonder review per golf. Loopt het uit, dan schuift eerst zoeken met woorden
 op beeld, dan beeld helemaal (naar een fase 6b), dan de groepen "Wie is dit?" van gezichten. Geen
 privacyregel schuift. [16 november 2026: zoeken op beeld is gebouwd en blijft in 0.8.1 (Keuze
-85).]
+85).] [I2: 0.8.1 kwam in twee delen, zoals Vraag 13 met zijn standaard: 0.8.0 op 11 november en
+0.8.1 op ⟦I2: de datum van de commit van 0.8.1⟧. Niets schoof naar een fase 6b.]
 
 ## Privacy en de wet
 
@@ -316,8 +380,8 @@ privacyregel schuift. [16 november 2026: zoeken op beeld is gebouwd en blijft in
 
 ## Gezichten in detail (vanaf 0.8.1)
 
-Zo gaat het werken vanaf 0.8.1. In 0.8.0 staat het uit en zie je er niets van; ook met de nieuwste
-`install.sh` blijft het uit zolang `ANALYSE` niet op `aan` staat. Hoe het gebouwd is:
+Zo werkt het sinds 0.8.1. Het installatiescript zet de analyse standaard aan; per gebruiker
+staat het uit tot die het zelf aanzet. Met `ANALYSE=uit` zie je er niets van. Hoe het gebouwd is:
 [x2b.md](x2b.md); wat je op de server doet: het runbook [gezichten.md](../runbooks/gezichten.md).
 
 - **Wat er bewaard wordt.** Alleen voor wie het aanzet, en alleen bij de eigen foto's: per
@@ -358,7 +422,9 @@ Zo gaat het werken vanaf 0.8.1. In 0.8.0 staat het uit en zie je er niets van; o
 - **De kwaliteit is niet gemeten.** Er zijn in de bouw geen echte gezichten gebruikt (Vraag 8,
   standaard nee). De grenzen voor een voorstel (0,45) en voor een groep (0,50) zijn voorlopig;
   `app.cli analyse-kwaliteit` meet ze op je eigen LXC tegen je eigen ja en nee, en tot dan zegt
-  `/beheer` "niet gemeten". Niets wordt vanzelf bevestigd.
+  `/beheer` "niet gemeten". Niets wordt vanzelf bevestigd. Twee eisen van het ontwerp hebben
+  geen gereedschap ("≥ 95% van de portretten" en "kleurvolgorde ≥ 0,05 hoger"): die staan op
+  "niet gemeten, geen gereedschap" tot er een antwoord is op Vraag 8.
 
 ## Vragen voor Jonas
 
@@ -424,11 +490,27 @@ Nieuw bij 0.8.0, ook elk met een standaard:
   browser, of zo laten. Tot je kiest, telt de meting zoals nu ([metingen.md](metingen.md),
   Bevinding 3).
 
+Nieuw bij 0.8.1, ook elk met een standaard. Je hoeft niets te kiezen; zeg het alleen als je het
+anders wilt:
+
+- **Waar staat 0.8.1?** Standaard: **op de branch** `claude/stappenplan-uitwerken-lu4uv3`, net als
+  0.8.0, en je werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md). Anders gaat
+  het naar `main`, en dan is het weer het gewone commando.
+- **Een tag voor 0.8.1?** Standaard: **geen tag**, zoals bij 0.7.x en 0.8.0. De docs noemen de
+  volledige commit van 0.8.1 als de weg terug voor de volgende versie: ⟦I2: de volledige hash van de commit van 0.8.1⟧. Zeg je ja, dan komt `v0.8.1` op die commit.
+- **Twee eisen voor gezichten zonder gereedschap.** "Op ≥ 95% van de portretten precies het goede
+  gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere" kunnen we alleen
+  meten met een set echte gezichten, en die is er niet zolang Vraag 8 op nee staat. Standaard:
+  0.8.1 komt uit met beide op **niet gemeten, geen gereedschap**, Vraag 8 blijft open, en het
+  gereedschap komt later. Anders: Vraag 8 op ja (een openbare set gezichten in CI, met jouw akkoord
+  voor die set; ±1–2 dagen werk).
+
 ## Op de LXC
 
-Na het bijwerken naar 0.8.0. De commando's staan in het runbook
-[zoeken.md](../runbooks/zoeken.md); de uitkomst gaat in [metingen.md](metingen.md), onder "Wat
-alleen de LXC of CI kan laten zien".
+Na het bijwerken naar 0.8.1 (of 0.8.0). De commando's staan in de runbooks
+[zoeken.md](../runbooks/zoeken.md), [analyse.md](../runbooks/analyse.md) en
+[gezichten.md](../runbooks/gezichten.md); de uitkomst gaat in [metingen.md](metingen.md), onder
+"Wat alleen de LXC of CI kan laten zien". De eerste zes punten horen bij 0.8.0, de rest bij 0.8.1.
 
 - [ ] **Bijwerken:** met het commando uit de [README](../../README.md) bovenaan de repository,
   vanaf de branch (met `PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3`). Het script maakt
@@ -448,6 +530,30 @@ alleen de LXC of CI kan laten zien".
 - [ ] **De OCR-schakelaar:** het blok **OCR** zegt bij Geïnstalleerd `ja` en bij Aan `ja` (de
   standaard). Wil je tekst in je foto's laten herkennen, zet dan op `/account` bij Foto's **Tekst
   in foto's herkennen** aan, en zoek daarna een woord van een foto van een bon of een bord.
+- [ ] **0.8.1: de eindtekst.** Die zegt `Gezichten (de container analyse): aan; …` en `Zoeken op
+  beeld: het model staat klaar; …`. Staat er `Let op: …`, dan staat in het runbook
+  [analyse.md](../runbooks/analyse.md) wat de melding betekent. Op je server zet het script het
+  model voor zoeken op beeld voor het eerst echt om, in de afgeschermde container
+  `analyse-omzetten`.
+- [ ] **0.8.1: de container.** `dc exec -T platform python -m app.cli analyse-status` zegt `ok`,
+  met de modellen en de opdrachten (het runbook [analyse.md](../runbooks/analyse.md), "De stand
+  lezen").
+- [ ] **0.8.1: gezichten.** Zet bij Account → Foto's **Gezichten herkennen in mijn foto's** aan, wacht
+  tot `/beheer` → Zoeken en foto's zegt dat de scan klaar is, en kijk op `/fotos/personen` of de
+  voorstellen kloppen. Meet de snelheid op jouw CPU met `analyse-bench`, en de kwaliteit met
+  `analyse-kwaliteit` (het runbook [gezichten.md](../runbooks/gezichten.md)).
+- [ ] **0.8.1: zoeken op beeld.** Zet **Zoeken op beeld** aan, wacht tot de beeldindex klaar is,
+  en zoek op `/zoeken` een paar woorden en een **Meer zoals deze**. Meet daarna `beeld-bench`
+  (BZ9: p95 ≤ 250 ms en ≥ 500 foto's per minuut) en, als je personen hebt bevestigd,
+  `beeld-kwaliteit --personen` (BZ10); het runbook [analyse.md](../runbooks/analyse.md).
+- [ ] **0.8.1: het geheugen.** Na een paar dagen met de scan aan: `memory.peak` en `OOMKilled` van
+  `platform-analyse-1` (het runbook [analyse.md](../runbooks/analyse.md), "Het geheugen op de
+  LXC"). `OOMKilled` hoort `false`, `memory.peak` onder 2,5 GB.
+- [ ] **0.8.1: de sleutels buiten je backups**, als je dat wilt: een eigen mount point zonder
+  backup voor `/opt/platform/sleutels/gezichten` (het runbook
+  [gezichten.md](../runbooks/gezichten.md), "De map met sleutels niet in snapshots of backups").
+- [ ] **0.8.1: `/over`.** Account → **Bronnen en licenties** toont de bronnen van de kaart en de
+  modellen.
 
 ## Documenten
 
@@ -464,14 +570,21 @@ alleen de LXC of CI kan laten zien".
 - [integratie.md](integratie.md): de integratie (I1): de open punten die ze afwerkte of liet
   liggen (met de reden), de wijzigingen aan contracten, de metingen, de standaarden, de
   installatietest met de weg terug naar 0.7.1, en wat alleen CI of de LXC kan bewijzen.
-- [metingen.md](metingen.md): de metingen M1–M9 tegen de grenzen van §4.4 en §4.5, met de
-  bevindingen en de commando's om opnieuw te meten.
+- [integratie-2.md](integratie-2.md): de integratie van 0.8.1 (I2): de pakketten, de controles, de
+  metingen M10–M13, en wat alleen de LXC kan bewijzen.
+- [a0.md](a0.md), [x2a.md](x2a.md), [x2b.md](x2b.md), [x3a.md](x3a.md) en [x3b.md](x3b.md): het
+  fundament, gezichten en zoeken op beeld, per pakket; het toetsenbord in
+  [toetsenbord-x2.md](toetsenbord-x2.md).
+- [metingen.md](metingen.md): de metingen M1–M9 tegen de grenzen van §4.4 en §4.5, en M10–M13 voor
+  gezichten en beeld, met de bevindingen en de commando's om opnieuw te meten.
 - [e2e.md](e2e.md): de tests van zoeken (de markers `zoek`, `triggers`, `geo`, `zoek_perf` en
-  `ocr`), `e2e/slim.sh`, de meetscripts, de jobs in CI, en de regel dat de grens van 200 ms in
-  CI nooit ruimer wordt (C17).
+  `ocr`) en van de analyse (`analyse`, `analyse_echt`, `beeld_echt`), `e2e/slim.sh`, de
+  meetscripts, de jobs in CI, en de regel dat de grens van 200 ms in CI nooit ruimer wordt (C17).
 - Het runbook [zoeken.md](../runbooks/zoeken.md): wat Jonas op de server doet (wat het script
   doet, de reservekopie, de plaatsnamen, de stand lezen, de wekelijkse controle, de index
-  herbouwen, zoeken meten, en terug naar 0.7.1).
+  herbouwen, zoeken meten, en terug naar 0.8.0 en 0.7.1). Voor 0.8.1 ook
+  [analyse.md](../runbooks/analyse.md) (de container, zoeken op beeld) en
+  [gezichten.md](../runbooks/gezichten.md) (de gegevens, de sleutels, wissen, de wet).
 - [beslissingen](../fase-0/beslissingen.md): B49–B60 en B61–B70 voor fase 6. B53 en B57 zijn
   besloten; de rest is voorstel.
 
@@ -516,6 +629,14 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
   uitbrengen" (Keuze 85), en de uitleg bij de schakelaar zegt nu wat je mag verwachten. In CI was
   de kwaliteitspoort van zoeken op beeld met die keuze goed (run 43870814179); de job zelf bleef
   rood omdat de vaste set foto's en de regels van het model in `models.lock` daar nog ontbraken.
-  Die staan nu op de branch. Golf 6 moet nog naar GitHub; daarna zegt CI of alles groen is. Nog
+  Die staan nu op de branch. ~~Golf 6 moet nog naar GitHub; daarna zegt CI of alles groen is. Nog
   niet: de integratie I2 en 0.8.1. Voor jou is er nog niets te zien: zonder `ANALYSE=aan` doet het
-  platform wat 0.8.0 deed. Zie [Wat komt in 0.8.1](#wat-komt-in-081).
+  platform wat 0.8.0 deed.~~ [I2: golf 6 ging naar GitHub als `dc5dfe5`; daar was de job
+  `beeld-model` helemaal groen, met de stap "Uitslag" (run 43888472609). Drie tests die alleen in
+  CI draaien, gingen nog uit van de stand vóór golf 6; hersteld in `e535332`, en daar waren alle 19
+  jobs groen (run 43892193604).] Zie [Wat 0.8.1 brengt](#wat-081-brengt).
+- **De integratie van 0.8.1** (I2, [integratie-2.md](integratie-2.md)): de analyse standaard aan
+  in `install.sh` (uit blijft bewaard), `/over`, de zinnen met de analyse uit, de metingen met
+  modellen van de echte vorm en §4.5 met de analyse (M10–M13), een stap in CI die SigLIP 2 voor
+  het eerst echt omzet in `analyse-omzetten` (⟦I2: of die stap groen was, en in welke run⟧), en
+  deze teksten. 0.8.1 is de commit ⟦I2: de korte hash van de commit van 0.8.1⟧ van ⟦I2: de datum van de commit van 0.8.1⟧, met CI groen in ⟦I2: de run en het aantal groene jobs op die commit⟧.
