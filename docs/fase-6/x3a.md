@@ -1423,6 +1423,37 @@ regels, geen pauze of rem voor thumb), 3 op het argument `jpeg` van `haal` en 24
 er niet was (`_waarom` 22 keer, `_afgevallen`, `_commons_hosts`). Met de nieuwe tool:
 `test_beeld_tools.py` 158 groen (met `test_beeld_ci.py` 167), `tests/analyse` 442 groen.
 
+### De review van de reparatie
+
+Eén review van `d9a6f1c`, acht bevindingen. Elke bevinding eerst zelf nagekeken: de vier over
+tests met de mutant van de reviewer op de tool, R5 met een directe aanroep, de drie over tekst in
+de documenten zelf. Ze klopten alle acht. R1 tot en met R4 vonden een gat in de tests, niet in de
+code; R5 was een fout in de code (zonder lek). Per bevinding met code een test die zonder de code
+faalt.
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) |
+|---|---|---|---|
+| R1 (should) | De bewaker van `_Omleiding` neemt mee waar de vraag begon (`begin`), zodat een keten van thumb via commons.wikimedia.org buiten de API (een host van Commons, maar geen dienst) naar een andere host bij de tweede omleiding stopt. Geen test had zo'n keten: met `begin = req.full_url` (mutant M7) bleven alle tests groen, en ging er een vraag naar die andere host | Alleen een test; de code klopte | `test_een_keten_via_commons_buiten_een_dienst_naar_elders_volgt_hij_niet` (nieuw): thumb geeft een 301 naar `/omweg` op de host van de nep, die een 302 naar de tweede server; de API net zo. Precies "kat-1.jpg: HTTP 302 naar localhost, niet gevolgd (…)", geen vraag aan de tweede server, de omweg zonder contact, niets op schijf. Rood op M7 ("DID NOT RAISE") |
+| R2 (should) | Dat `Accept: image/jpeg` ook bij een nieuwe poging meegaat (na een 503 of 429), testte niets; alleen de eerste poging en een omleiding. Met Accept alleen bij de eerste poging (M27) bleven alle tests groen | Alleen een test | `test_elke_nieuwe_poging_van_een_foto_vraagt_weer_jpeg` (nieuw): thumb zegt 503, dan 429 (Retry-After 3), dan 200, op de nepklok; drie keer `image/jpeg`, en thumb telt 3 vragen, 1 keer 429 en 1 keer 5xx. Rood op M27 (`['image/jpeg', None, None]`) |
+| R3 (should) | Een 429 of 5xx na een gevolgde omleiding telt bij de dienst die hem gaf (`e.geturl()`), maar geen test keek ernaar: met de URL van het begin (M8) bleven alle tests groen, en stond een 429 van thumb bij upload in de fout | Alleen een test | `test_na_een_omleiding_telt_en_remt_de_host_die_antwoordde` (nieuw): upload geeft een 301 naar thumb, thumb een 429 en dan 200; thumb 2 vragen en 1 keer 429, upload 2 vragen en 0 keer 429, Accept bij alle vier. Rood op M8 (`(2, 0, 0) == (2, 1, 0)`) |
+| R4 (nit) | De rem (`BANDBREEDTE`) rekent de bytes bij de host die ze gaf (`antwoord.geturl()`); met de URL van het begin (M9) bleven alle tests groen. In de nep staan thumb en upload op dezelfde host (127.0.0.1), dus het voorstel van de review (de host van thumb in `_klaar`) zag daar geen verschil | Alleen een test, met thumb op localhost en upload op 127.0.0.1 (dezelfde nep) | Dezelfde test als R3: na de download staat alleen `localhost` in `_klaar`, en de laatste slaap is precies de grootte van de thumbnail gedeeld door `BANDBREEDTE`. Rood op M9 (`{'127.0.0.1'} == {'localhost'}`), ook de tweede test van R5 |
+| R5 (nit) | De bewaker leest de host met urlsplit (kleine letters, poort 443 ook als die er staat), `_dienst` met startswith op de hele URL. Een omleiding naar `https://THUMB.wikimedia.org/…` of `https://thumb.wikimedia.org:443/…` kwam door de bewaker, maar als geen dienst: zonder pauze, telling, rem en contact, terwijl de docstring van `_Omleiding` en het runbook zeggen dat een stap naar een dienst wacht en telt. Nagekeken: `_dienst` gaf `None` en `_user_agent` de User-Agent zonder contact. Geen lek: het contact bleef weg | `_dienst` leest de oorsprong nu met `_oorsprong`, net als de bewaker, en daarna het begin van het pad. Zo is elke dienst een host van Commons, en is het enige wat de bewaker doorlaat zonder dienst te zijn commons.wikimedia.org buiten de API. Het contact gaat zo ook mee naar `https://THUMB.wikimedia.org/…`: dezelfde host, binnen de toestemming. `_duim` en `lees_set` blijven streng op de URL zoals de API hem geeft | `test_de_dienst_leest_de_host_zoals_de_bewaker` (nieuw, met de echte URL's: hoofdletters en `:443` bij de API, thumb en upload; http, een andere poort, een andere host en een kapotte URL zijn geen dienst) en `test_een_omleiding_naar_thumb_in_hoofdletters_wacht_telt_en_remt` (nieuw: upload geeft een 301 naar `LOCALHOST`, en die stap heeft het contact, wacht `PAUZE_S`, telt en remt bij thumb). Met de oude `_dienst` beide rood (`None == 'API'`; de stap zonder contact) |
+| R6 (should) | Stap 4 van het runbook zei dat de URL in `voorstel-beeld.tsv` op upload.wikimedia.org staat. Nu staat hij meestal op thumb.wikimedia.org, zoals de API hem gaf; wie stap 4 volgde, vond goede regels fout | Stap 4: de URL zoals de API hem gaf, op thumb.wikimedia.org of in de oude vorm op upload.wikimedia.org (`…/thumb/…/1280px-…`); een origineel dat niet breder is, op upload.wikimedia.org | geen (tekst) |
+| R7 (nit) | Het runbook raadde aan `THUMB` aan te passen als bijna alle kandidaten "thumbnail op een andere host" zeggen, zonder te zeggen dat `THUMB` ook het contact krijgt en een toegestaan doel van omleidingen is. De toestemming van Jonas geldt alleen voor Wikimedia | Erbij: alleen naar een host van Wikimedia (`*.wikimedia.org`); een andere host vraagt eerst toestemming van Jonas. Net zo in de opmerking bij `THUMB` in `beeld_model.py` | geen (tekst) |
+| R8 (nit) | De rij BZ1 in de tabel van het bouwontwerp noemde huggingface.co, upload.wikimedia.org en images-assets.nasa.gov; `bereik` vraagt ook commons.wikimedia.org (al sinds `b820fdd`) en nu thumb.wikimedia.org | Een noot in die rij, zoals de andere noten in het bouwontwerp (de vraag zelf blijft staan): de vijf hosts van `bereik` | geen (tekst) |
+
+Een omleiding naar een dienst van Commons blijft een vraag als elke andere (punt 4 hierboven): na
+R5 geldt dat ook als de host in hoofdletters of met `:443` komt.
+
+Teruggedraaid getest (per bevinding de code die de test vastlegt op de tool gezet, met een kopie
+van de goede tool ernaast; daarna die kopie terug, met `cmp` en `git status` nagekeken),
+`test_beeld_tools.py` met de 5 nieuwe tests: M7 1 rood en 162 groen; M27 2 rood (de tests van R2
+en R3) en 161 groen; M8 1 rood en 162 groen; M9 2 rood (de test van R3 en R4 en de tweede van R5)
+en 161 groen; de oude `_dienst` (startswith) 2 rood (de twee van R5) en 161 groen. Elk rood om de
+reden in de tabel. Met de nieuwe tool: `test_beeld_tools.py` 163 groen (met `test_beeld_ci.py`
+172), `tests/analyse` 447 groen; ruff schoon. `ci.yml` en `test_beeld_ci.py` zijn niet
+veranderd.
+
 ### Open na 45bb926
 
 - **Of thumb.wikimedia.org de 120 geeft**, zegt de volgende run van `beeld-model` (`tools/beeld`

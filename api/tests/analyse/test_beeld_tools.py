@@ -1087,6 +1087,131 @@ def test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact(nep, elders, tmp_pa
     assert bm._tellers == {}
 
 
+def test_een_keten_via_commons_buiten_een_dienst_naar_elders_volgt_hij_niet(nep, elders, tmp_path):
+    """De bewaker van _Omleiding kijkt naar waar de vraag begon, niet naar de vorige stap. Thumb
+    leidt om naar commons.wikimedia.org buiten de API (een host van Commons, maar geen dienst: zo
+    antwoordt thumb.wikimedia.org op het pad van een origineel), en die weer naar een andere host:
+    die tweede omleiding volgt hij niet. Gaf de nieuwe vraag niet mee waar hij begon, dan leek de
+    tweede stap een vraag die buiten Commons begon, en ging er wel een vraag (met de foto erachter)
+    naar die host (de review van de reparatie, R1)."""
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    elders.zet("/x.jpg", JPEG + b"van elders")
+    nep.paden["/duim/thumb/K.jpg/1280px-K.jpg"] = [(301, b"", {"Location": f"{nep.url}/omweg"})]
+    nep.paden["/omweg"] = [(302, b"", {"Location": f"{elders.url}/x.jpg?wie=ci"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.haal(
+            f"{bm.THUMB}thumb/K.jpg/1280px-K.jpg", tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True
+        )
+    assert str(fout.value) == f"kat-1.jpg: HTTP 302 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    # de API net zo
+    nep.paden["/w/api.php"] = [(301, b"", {"Location": f"{nep.url}/omweg"})]
+    with pytest.raises(bm.Fout) as fout:
+        bm.json_van(f"{bm.COMMONS}?action=query")
+    assert str(fout.value) == f"127.0.0.1: HTTP 302 naar localhost, niet gevolgd ({ALLEEN_COMMONS})"
+    assert elders.vragen == []
+    # de omweg is geen dienst: zonder contact, en elke vraag één keer (geen nieuwe poging)
+    assert nep.vragen == [
+        ("/duim/thumb/K.jpg/1280px-K.jpg", met),
+        ("/omweg", bm.UA),
+        ("/w/api.php?action=query", met),
+        ("/omweg", bm.UA),
+    ]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_na_een_omleiding_telt_en_remt_de_host_die_antwoordde(nep, tmp_path, monkeypatch):
+    """De 301 van een oude URL op upload naar thumb (zie bm.THUMB), en dan een 429 van thumb. Die
+    429 telt bij thumb, niet bij upload: de tellers in de fout zeggen welke host weigert. De bytes
+    tellen in de rem (BANDBREEDTE) van thumb, de host die ze gaf, niet in die van upload. Accept
+    gaat mee bij elke stap en elke poging. Thumb staat hier op localhost en upload op 127.0.0.1
+    (dezelfde nep), zodat de rem per host te zien is (de review van de reparatie, R3 en R4)."""
+    _, slapen = _nepklok(monkeypatch)
+    poort = nep.url.rsplit(":", 1)[1]
+    monkeypatch.setattr(bm, "THUMB", f"http://localhost:{poort}/duim/")
+    duim = JPEG + bytes(5000)
+    oud, nieuw = "/upload/thumb/a/ab/G.jpg/1280px-G.jpg", "/duim/thumb/a/ab/G.jpg/1280px-G.jpg"
+    nep.paden[oud] = [(301, b"", {"Location": f"{bm.THUMB}thumb/a/ab/G.jpg/1280px-G.jpg"})]
+    nep.paden[nieuw] = [(429, b"", {"Retry-After": "3"}), (200, duim)]
+    uit = bm.haal(
+        f"{bm.UPLOAD}thumb/a/ab/G.jpg/1280px-G.jpg",
+        tmp_path / "boot-1.jpg",
+        max_bytes=9999,
+        jpeg=True,
+    )
+    assert uit == (_sha(duim), len(duim))
+    assert [p for p, _ in nep.vragen] == [oud, nieuw, oud, nieuw]
+    assert nep.codes == [301, 429, 301, 200]
+    assert nep.accept == ["image/jpeg"] * 4
+    thumb, upload = bm._tellers["thumb"], bm._tellers["upload"]
+    assert (thumb.vragen, thumb.n429, thumb.n5xx) == (2, 1, 0)
+    assert (upload.vragen, upload.n429, upload.n5xx) == (2, 0, 0)
+    # de rem: alleen die van thumb (localhost), met precies de bytes van de thumbnail
+    assert set(bm._klaar) == {"localhost"}
+    assert slapen[-1] == pytest.approx(len(duim) / bm.BANDBREEDTE)
+
+
+def test_de_dienst_leest_de_host_zoals_de_bewaker():
+    """_Omleiding laat een omleiding door naar een host van Commons zoals urlsplit hem leest: in
+    kleine letters, en met poort 443 ook als die er staat. _dienst las startswith op de hele URL:
+    https://THUMB.wikimedia.org/… en https://thumb.wikimedia.org:443/… kwamen door de bewaker,
+    maar zonder pauze, telling, rem en contact (de review van de reparatie, R5). Nu leest _dienst
+    de oorsprong net zo, met de echte URL's: elke dienst is een host van Commons, en het enige wat
+    de bewaker doorlaat zonder dienst te zijn, is commons.wikimedia.org buiten de API."""
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    for url, dienst in (
+        ("https://commons.wikimedia.org/w/api.php?action=query", "API"),
+        ("https://COMMONS.Wikimedia.org:443/w/api.php?action=query", "API"),
+        ("https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg", "thumb"),
+        ("https://THUMB.wikimedia.org/wikipedia/commons/thumb/a/ab/F.jpg/1280px-F.jpg", "thumb"),
+        ("https://thumb.wikimedia.org:443/x", "thumb"),
+        ("https://Upload.Wikimedia.Org/wikipedia/commons/a/ab/F.jpg", "upload"),
+        ("https://upload.wikimedia.org:443/x", "upload"),
+        ("https://commons.wikimedia.org/wiki/Main_Page", None),
+        ("https://Commons.wikimedia.org/", None),
+        ("http://thumb.wikimedia.org/x", None),
+        ("https://thumb.wikimedia.org:8443/x", None),
+        ("https://maps.wikimedia.org/x", None),
+        ("https://thumb.wikimedia.org.example/x", None),
+        ("https://[::1/x", None),
+        ("https://huggingface.co/x", None),
+    ):
+        assert bm._dienst(url) == dienst, url
+        assert bm._user_agent(url) == (met if dienst else bm.UA), url
+        door = bm._oorsprong(url) in bm._commons_hosts()
+        assert door == (dienst is not None or bm._hostnaam(url) == "commons.wikimedia.org"), url
+
+
+def test_een_omleiding_naar_thumb_in_hoofdletters_wacht_telt_en_remt(nep, tmp_path, monkeypatch):
+    """Van de nep: upload leidt om naar thumb met de host in hoofdletters (LOCALHOST; thumb staat
+    op localhost). Die stap is thumb: met het contact, PAUZE_S na de vorige vraag aan thumb,
+    geteld bij thumb, en de bytes in de rem van thumb (de review van de reparatie, R5)."""
+    klok, _ = _nepklok(monkeypatch)
+    poort = nep.url.rsplit(":", 1)[1]
+    monkeypatch.setattr(bm, "THUMB", f"http://localhost:{poort}/duim/")
+    bm._zet_contact(CONTACT)
+    met = bm.UA_MET_CONTACT.format(contact=CONTACT)
+    duim = JPEG + b"de thumbnail"
+    nep.zet("/duim/thumb/F.jpg/1280px-F.jpg", duim)
+    nep.zet("/duim/thumb/G.jpg/1280px-G.jpg", duim)
+    nep.paden["/upload/thumb/G.jpg/1280px-G.jpg"] = [
+        (301, b"", {"Location": f"http://LOCALHOST:{poort}/duim/thumb/G.jpg/1280px-G.jpg"})
+    ]
+    bm.haal(f"{bm.THUMB}thumb/F.jpg/1280px-F.jpg", tmp_path / "a-1.jpg", max_bytes=99, jpeg=True)
+    bm._klaar.clear()
+    bm.haal(f"{bm.UPLOAD}thumb/G.jpg/1280px-G.jpg", tmp_path / "a-2.jpg", max_bytes=99, jpeg=True)
+    assert [p for p, _ in nep.vragen] == [
+        "/duim/thumb/F.jpg/1280px-F.jpg",
+        "/upload/thumb/G.jpg/1280px-G.jpg",
+        "/duim/thumb/G.jpg/1280px-G.jpg",
+    ]
+    assert [ua for _, ua in nep.vragen] == [met] * 3
+    assert round(nep.tijden[2] - nep.tijden[0], 6) >= bm.PAUZE_S
+    assert (bm._tellers["thumb"].vragen, bm._tellers["upload"].vragen) == (2, 1)
+    assert set(bm._klaar) == {"localhost"} and bm._klaar["localhost"] == pytest.approx(klok[0])
+
+
 # --- de JPEG ------------------------------------------------------------------------------------
 
 
@@ -1136,6 +1261,23 @@ def test_haal_met_jpeg_vraagt_jpeg_en_kijkt_de_eerste_bytes_na(nep, tmp_path):
     n = len(nep.accept)
     assert bm.haal(f"{bm.UPLOAD}gif.jpg", tmp_path / "g", max_bytes=99)[1] == 6
     assert nep.accept[n:] == [None]
+
+
+def test_elke_nieuwe_poging_van_een_foto_vraagt_weer_jpeg(nep, tmp_path, monkeypatch):
+    """Accept: image/jpeg gaat mee met elke poging van een download van de set, ook met een nieuwe
+    poging na een 503 of een 429: anders kon juist de poging die slaagt WebP krijgen (zie
+    bm.DUIM_BREEDTE), of de bytes van een andere vorm dan die van de sha256 in beeld.tsv (de
+    review van de reparatie, R2)."""
+    _nepklok(monkeypatch)
+    duim = JPEG + b"de thumbnail"
+    pad = "/duim/thumb/L.jpg/1280px-L.jpg"
+    nep.paden[pad] = [(503, b""), (429, b"", {"Retry-After": "3"}), (200, duim)]
+    url = f"{bm.THUMB}thumb/L.jpg/1280px-L.jpg"
+    assert bm.haal(url, tmp_path / "kat-1.jpg", max_bytes=99, jpeg=True) == (_sha(duim), len(duim))
+    assert nep.vragen == [(pad, bm.UA)] * 3 and nep.codes == [503, 429, 200]
+    assert nep.accept == ["image/jpeg"] * 3
+    thumb = bm._tellers["thumb"]
+    assert (thumb.vragen, thumb.n429, thumb.n5xx) == (3, 1, 1)
 
 
 # --- vergelijk ---------------------------------------------------------------------------------

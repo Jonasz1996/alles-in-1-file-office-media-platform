@@ -3726,7 +3726,7 @@ alleen de staart tonen.
 
 | # | Wat | Waarom | Klaar als |
 |---|---|---|---|
-| BZ1 | Kan een runner bij huggingface.co, upload.wikimedia.org en images-assets.nasa.gov? | De sandbox niet (code 000) [gemeten, B3]; CI is niet aangetoond | een regel per host in `=== kort ===`. Nee: de echte stappen BZ2–BZ6 gaan naar de LXC (`beeld-kwaliteit`, `beeld-bench`) |
+| BZ1 | Kan een runner bij huggingface.co, upload.wikimedia.org en images-assets.nasa.gov? *Noot (CI op `45bb926`, 2026-11-16): `bereik` vraagt huggingface.co, commons.wikimedia.org (de API), thumb.wikimedia.org (de thumbnails sinds T427465), upload.wikimedia.org en images-assets.nasa.gov ([x3a.md](x3a.md), "CI op 45bb926").* | De sandbox niet (code 000) [gemeten, B3]; CI is niet aangetoond | een regel per host in `=== kort ===`. Nee: de echte stappen BZ2–BZ6 gaan naar de LXC (`beeld-kwaliteit`, `beeld-bench`) |
 | BZ2 | De echte omzetting: de commit en de sha256 van de vijf bronbestanden; twee keer omzetten, op twee runners; tijd en maxrss | Keuze 73 | de sha256's in `models.lock`; twee keer dezelfde uitkomst; maxrss ≤ 1,5 GB |
 | BZ3 | De tokenizer met het tokenizer.json van SigLIP 2 zelf, tegen een vaste lijst verwachte tokens in het repo; met ja op Vraag 12b ook tegen `tokenizers`. Nooit met het bestand van Gemma (K1-14, K2-14) | het algoritme is alleen bewezen met een ander bestand van dezelfde soort [B5] | 0 verschillen op de lijst in het repo; met ja op Vraag 12b ook op de 2.181 zinnen van B5 |
 | BZ4 | De kwaliteitspoort, int8 tegen fp32, de drempels `MIN_TEKST` en `MIN_FOTO`, de zelftest met drie kleuren | Keuze 83 | de poorten gehaald; de drempels in een test |

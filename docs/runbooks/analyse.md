@@ -246,7 +246,9 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   gewone hostnaam is van hooguit 64 tekens, anders `een onbekende host`; nooit een URL. Zeggen
   bijna alle kandidaten `thumbnail op een andere host`, dan geeft de API de thumbnails op een
   host die de job niet kent: kijk in x3a.md ("CI op 45bb926") en pas `THUMB` in
-  `tools/beeld/beeld_model.py` aan;
+  `tools/beeld/beeld_model.py` aan, alleen naar een host van Wikimedia (`*.wikimedia.org`):
+  `THUMB` krijgt ook het contact (`BEELD_CONTACT`) en is een toegestaan doel van omleidingen. Een
+  andere host vraagt eerst toestemming van Jonas;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
   (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
@@ -334,8 +336,9 @@ zelf nooit iets in het repo; een mens doet dat, zo:
    blok, `model.safetensors` is ±1,51 GB en `tokenizer.json` ±34,4 MB.
 4. Kijk `voorstel-beeld.tsv` door: 120 foto's (12 categorieën × 5, de 6 vaste foto's van de
    combinaties, 60 andere), elk met sleutel, categorieën, licentie (CC0 of publiek domein),
-   sha256, bytes, de URL van de thumbnail van 1280 px breed op upload.wikimedia.org
-   (`…/thumb/…/1280px-…`; van een origineel dat niet breder is: het origineel zelf) en de
+   sha256, bytes, de URL van de thumbnail van 1280 px breed zoals de API hem gaf (op
+   thumb.wikimedia.org, of in de oude vorm op upload.wikimedia.org: `…/thumb/…/1280px-…`; van een
+   origineel dat niet breder is: het origineel zelf, op upload.wikimedia.org) en de
    bestandspagina van het origineel op Commons. Staat er toch een herkenbaar persoon op een foto,
    vervang die regel door een andere foto van Commons met dezelfde sleutel-soort, categorie en
    licentie. De URL is die van zijn thumbnail van 1280 breed: `thumburl` uit

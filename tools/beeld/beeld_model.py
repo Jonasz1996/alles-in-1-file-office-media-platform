@@ -108,7 +108,10 @@ UPLOAD = "https://upload.wikimedia.org/"
 # thumb.wikimedia.org komt "eventually". De originelen blijven op upload: het pad van een origineel
 # op thumb.wikimedia.org geeft een 301 naar https://commons.wikimedia.org/. Op 45bb926 nam _duim
 # alleen een thumbnail op upload, en viel in CI elke kandidaat af (x3a.md, "CI op 45bb926"). Deze
-# bronnen zijn uit de tweede hand: de sandbox komt niet bij Wikimedia
+# bronnen zijn uit de tweede hand: de sandbox komt niet bij Wikimedia.
+# THUMB krijgt ook het contact (_dienst, _user_agent) en is een toegestaan doel van omleidingen
+# (_commons_hosts): alleen een host van Wikimedia. Een andere host vraagt eerst toestemming van de
+# eigenaar (runbook analyse.md)
 THUMB = "https://thumb.wikimedia.org/"
 # BZ1 noemt ook NASA; de set komt alleen van Commons (Vraag 12a), dus alleen de regel in het blok
 NASA = "https://images-assets.nasa.gov/"
@@ -420,13 +423,20 @@ def _dienst(url: str) -> str | None:
     """Welke dienst van Commons een url is: "API" (COMMONS; de tool vraagt commons.wikimedia.org
     niets anders), "thumb" (THUMB, thumb.wikimedia.org: de thumbnails), "upload" (UPLOAD,
     upload.wikimedia.org: de originelen, en oude URL's van thumbnails), of None voor elke andere
-    URL: een andere host, en ook commons.wikimedia.org buiten de API (alleen na een omleiding)."""
-    if url.startswith(COMMONS):
-        return "API"
-    if url.startswith(THUMB):
-        return "thumb"
-    if url.startswith(UPLOAD):
-        return "upload"
+    URL: een andere host, en ook commons.wikimedia.org buiten de API (alleen na een omleiding).
+
+    Op de oorsprong (_oorsprong: schema, host in kleine letters, poort ook als die er niet staat)
+    en het begin van het pad, zoals de bewaker van _Omleiding de host leest. Een omleiding naar
+    https://THUMB.wikimedia.org/… of https://thumb.wikimedia.org:443/… laat de bewaker door; met
+    startswith op de hele URL was dat geen dienst, en wachtte die stap niet, telde hij niet en
+    remde hij niet (de review van de reparatie, R5)."""
+    oorsprong = _oorsprong(url)
+    if oorsprong is None:
+        return None
+    pad = urllib.parse.urlsplit(url).path
+    for dienst, basis in (("API", COMMONS), ("thumb", THUMB), ("upload", UPLOAD)):
+        if oorsprong == _oorsprong(basis) and pad.startswith(urllib.parse.urlsplit(basis).path):
+            return dienst
     return None
 
 
