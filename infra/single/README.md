@@ -589,8 +589,8 @@ iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, 
 **Uit:** hetzelfde commando met `ANALYSE=uit`. Dat komt in `.env` en blijft: ook een volgende
 run zonder `ANALYSE` laat hem uit. Dan geen download en geen container meer; de modellen blijven
 in `/opt/platform/modellen` tot je die map zelf weggooit. Zet je hem uit nadat hij aan stond, dan
-zeggen de web-app en `/beheer` dat gezichten en zoeken op beeld op deze server uit staan, en hoe
-ze weer aan gaan. Terug naar 0.8.0 (hierboven) gaat ook met de analyse aan: het script van
+verdwijnen de schakelaars bij Account → Foto's, en zeggen `/beheer` en `/zoeken` dat het op deze
+server uit staat en hoe het weer aan gaat. Terug naar 0.8.0 (hierboven) gaat ook met de analyse aan: het script van
 0.8.0 haalt de container weg, en de modellen, de sleutels en `.env` blijven; weer vooruit wordt er
 niets opnieuw gehaald. Meer, ook wat elke melding betekent: `docs/runbooks/analyse.md`.
 

@@ -272,9 +272,10 @@ de bron van huggingface.co. De 120 foto's wel, zodra `beeld.tsv` er is: een cach
 van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads vragen. `set`
 kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt.
 De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt; nooit een
-halve set, want een sleutel bewaart maar één keer. Elke foto komt als thumbnail van 1280 px breed, niet als origineel (op de
-originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298"). De
-thumbnails staan sinds september 2026 op thumb.wikimedia.org (volgens bronnen uit de tweede hand;
+halve set, want een sleutel bewaart maar één keer. Elke foto komt als thumbnail van 1280 px
+breed, niet als origineel (op de originelen gaf upload.wikimedia.org een 429 met Retry-After
+600; x3a.md, "CI op 9ebf298"). De thumbnails staan sinds september 2026 op thumb.wikimedia.org
+(volgens bronnen uit de tweede hand;
 de oude URL's op upload.wikimedia.org werken nog; x3a.md, "CI op 45bb926"); `beeld.tsv` heeft de
 URL zoals de API hem gaf. Is het origineel niet breder dan 1280, dan is het origineel zelf de
 thumbnail, en dat staat altijd op upload.wikimedia.org. Van thumb.wikimedia.org en van
