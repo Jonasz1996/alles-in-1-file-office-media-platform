@@ -14,7 +14,8 @@ import numpy as np
 import pytest
 
 from app.analyse.tokenizer import Tokenizer
-from tests_analyse import siglip_klein
+from app.analyse.worker.ops import beeld as B
+from tests_analyse import fake_beeld, siglip_klein
 from tests_analyse.beeld_echt import kwantielen, voorbewerk
 from tests_analyse.test_beeld_kwaliteit import _meer_zoals, _precisie, _volgorde
 from tests_analyse.test_beeld_tokenizer_echt import (
@@ -65,6 +66,23 @@ def test_voorbewerking_volgt_meta():
     a = voorbewerk(Image.new("RGB", (32, 16), (255, 0, 0)), vb)
     assert a.shape == (3, 8, 8) and a.dtype == np.float32
     assert np.allclose(a[0], 1.0) and np.allclose(a[1:], -1.0)
+
+
+def test_de_worker_voorbewerkt_zoals_voorbewerk():
+    """x3a.md, Open 4: de voorbewerking van de worker (ops/beeld.py) is die van
+    beeld_echt.voorbewerk, met meta.json in de vorm van bouw.py (de grootte, de resample, de
+    schaal, het gemiddelde en std van siglip_klein), op een beeld dat niet vierkant is."""
+    from PIL import Image
+
+    raw = fake_beeld.meta_json(fake_beeld.tokenizer())
+    m = B.parse_meta(raw)
+    vb = json.loads(raw)["beeld"]["voorbewerking"]
+    rng = np.random.default_rng(5)
+    rgb = rng.integers(0, 256, (37, 61, 3), dtype=np.uint8)
+    worker = B.preprocess(rgb, m)
+    ref = voorbewerk(Image.fromarray(rgb, mode="RGB"), vb)
+    assert worker.shape == ref.shape == (3, *m.size) and worker.dtype == np.float32
+    assert np.array_equal(worker, ref)
 
 
 def test_kwantielen():
