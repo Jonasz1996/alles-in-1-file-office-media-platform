@@ -7,7 +7,11 @@
   vangt een tikfout in de lijst al hier; de ids komen pas in de job beeld-model, uit het echte
   bestand. Deze test gebruikt tokenizer.py niet: de lijst mag nooit van onze tokenizer komen;
 - beeld.tsv bestaat nog niet: dan stelt de job hem voor (en is hij rood). Staat hij er, dan komt
-  hij door dezelfde strenge controle als in de job.
+  hij door dezelfde strenge controle als in de job;
+- beeld_niet.tsv (runbook analyse, stap 4): de foto's die een voorstel nooit neemt. Hij komt door
+  dezelfde strenge controle als in de job, heeft geen combinatie van beeld_vragen.tsv (die staan
+  in x3a.md, "De set strenger", om na te kijken), en met beeld.tsv staat er geen foto van
+  beeld.tsv in.
 """
 
 from __future__ import annotations
@@ -117,3 +121,19 @@ def test_beeld_tsv_ontbreekt_nog_of_klopt():
         assert len(fotos) == 120
     else:
         assert tool.SET == pad
+
+
+def test_beeld_niet_tsv_klopt():
+    tool = _tool()
+    pad = SETS / "beeld_niet.tsv"
+    assert tool.NIET == pad
+    niet = tool.lees_niet(pad.read_text(encoding="utf-8"))
+    assert niet
+    combis = {f"{a}+{b}" for a, b in tool.combinaties()}
+    for n in niet.values():
+        assert n.reden in tool.NIET_REDENEN
+        # gezien begint met de sleutel waaronder een mens de foto zag; nooit een combinatie
+        assert n.gezien.split(" ")[0] not in combis, n.regel
+    set_pad = SETS / "beeld.tsv"
+    if set_pad.exists():
+        tool._niet_in_set(tool.lees_set(set_pad.read_text(encoding="utf-8")), niet, "beeld.tsv")

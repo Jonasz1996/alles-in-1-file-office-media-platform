@@ -39,6 +39,7 @@ import importlib.util
 import itertools
 import json
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -2725,3 +2726,425 @@ def test_main_zet_een_fout_om_in_een_zin_en_code_1(werk, tmp_path):
     assert _kort(werk) == [
         "FOUT bron: models.lock regel 1: 2 velden, verwacht sha256 bytes naam url"
     ]
+
+
+# --- de set strenger: eerste keus en beeld_niet.tsv (x3a.md, "De set strenger") ---------------
+
+
+def _goede_katten(commons) -> list[int]:
+    """De zes bruikbare bestanden van alleen kat (CC0, JPEG, 1600 breed), op pageid: zonder
+    voorkeur worden de eerste vier kat-1 tot en met kat-4 (de combinatie kat+sneeuw telt al
+    voor kat)."""
+    kat = bm.CATEGORIEEN["kat"]
+    goed = [
+        i
+        for i, d in sorted(commons.bestanden.items())
+        if d["P180"] == {kat}
+        and d["mime"] == "image/jpeg"
+        and d["breedte"] == 1600
+        and d["bytes"] <= bm.MAX_FOTO
+        and d["P275"] == {"Q6938433"}
+    ]
+    assert len(goed) == 6
+    return goed
+
+
+def _bron(i: int) -> str:
+    return f"https://commons.wikimedia.org/wiki/File:Nep_{i}.jpg"
+
+
+def _per_sleutel(werk) -> dict[str, int]:
+    """Per sleutel van het voorstel het bestand van de nep (uit de bron)."""
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    return {f.sleutel: int(f.bron.rsplit("_", 1)[1].removesuffix(".jpg")) for f in fotos}
+
+
+def _log(capsys, begin: str) -> list[str]:
+    return [r for r in capsys.readouterr().out.splitlines() if r.startswith(begin)]
+
+
+def _api_soorten(nep) -> dict[str, int]:
+    """Hoeveel vragen aan de API van elke soort: zoek, imageinfo (met of zonder sjablonen),
+    wbgetentities, of iets anders."""
+    uit: dict[str, int] = {}
+    for p, _ in nep.vragen:
+        if not p.startswith("/w/api.php"):
+            continue
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(p).query))
+        soort = q.get("list") or q.get("prop") or q.get("action") or "?"
+        uit[soort] = uit.get(soort, 0) + 1
+    return uit
+
+
+def test_de_eerste_keus_gaat_voor_op_dezelfde_pagina(
+    nep, commons, werk, tmp_path, monkeypatch, capsys
+):
+    """Het voorstel op 3a9b07d nam schilderijen, museumvoorwerpen en foto's van mensen zonder
+    P180 = mens, gewoon in de volgorde van Commons. Nu is een kandidaat met een teken van een
+    kunstwerk (P6243 en het sjabloon Artwork) of een persoon (P180 man) tweede keus, en neemt kat
+    de vier van de eerste keus op dezelfde pagina; binnen de eerste keus eerst prominent (P180
+    met rang preferred), dan eigen werk (P7482). Geen vraag meer dan vroeger: 90, en de sjablonen
+    komen mee in de vraag om imageinfo."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    g = _goede_katten(commons)
+    kat = bm.CATEGORIEEN["kat"]
+    commons.bestanden[g[0]]["eigen"] = {"P6243"}
+    commons.bestanden[g[0]]["sjablonen"] = {"Template:Artwork"}
+    commons.bestanden[g[1]]["P180"] = {kat, "Q8441"}
+    commons.bestanden[g[4]]["P7482"] = {bm.EIGEN_WERK}
+    commons.bestanden[g[5]]["prominent"] = {kat}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == [g[5], g[4], g[2], g[3]]
+    assert not {g[0], g[1]} & set(sleutels.values())
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 0 tweede keus (12 kandidaten bekeken op 1 pagina; geen "
+        "eerste keus: 1 kunstwerk, 1 persoon)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-1: eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk nee, prominent ja, P180 1"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-2: eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk ja, prominent nee, P180 1"
+    ) in uit
+    # geen tweede keus nodig: het blok is hetzelfde als vroeger, en geen vraag erbij
+    assert not any("tweede keus (" in r for r in _kort(werk))
+    assert _verkeer(nep).startswith("API: 90 vragen, 0 keer 429; ")
+    assert _api_soorten(nep) == {"search": 30, "imageinfo|templates": 30, "wbgetentities": 30}
+    info = [
+        dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(p).query))
+        for p, _ in nep.vragen
+        if "prop=imageinfo" in p
+    ]
+    assert all(q["tltemplates"] == "|".join(bm.SJABLONEN) for q in info)
+
+
+def test_zonder_genoeg_eerste_keus_vult_de_tweede_keus_aan(
+    nep, commons, werk, tmp_path, monkeypatch, capsys
+):
+    """Geen tekort door de voorkeur: kat heeft op de eerste pagina maar één eerste keus. Dan leest
+    hij de volgende pagina (de andere licentie: 3 vragen erbij, nooit meer pagina's dan vroeger),
+    en vult daarna aan met de tweede keus van alles wat hij las, prominent eerst. Het log zegt
+    hoeveel tweede keus en waarom (zoals "afgevallen"), het blok één regel."""
+    monkeypatch.setattr(bm.time, "monotonic", lambda: 1000.0)
+    g = _goede_katten(commons)
+    kat = bm.CATEGORIEEN["kat"]
+    b = commons.bestanden
+    b[g[0]]["eigen"] = {"P6243"}
+    b[g[0]]["sjablonen"] = {"Template:Artwork"}
+    b[g[1]]["eigen"] = {"P195"}
+    b[g[2]]["P31"] = {"Q3305213"}  # schilderij
+    b[g[3]]["sjablonen"] = {"Template:Personality rights"}
+    b[g[4]]["eigen"] = {"P217"}
+    b[g[4]]["prominent"] = {kat}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == [g[5], g[4], g[0], g[1]]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 3 tweede keus (24 kandidaten bekeken op 2 pagina's; geen "
+        "eerste keus: 2 collectie, 2 kunstwerk, 1 persoon)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-2: tweede keus; kunstwerk nee, collectie ja (P217), persoon nee, "
+        "eigen werk nee, prominent ja, P180 1"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-3: tweede keus; kunstwerk ja (P6243, Artwork), collectie nee, "
+        "persoon nee, eigen werk nee, prominent nee, P180 1"
+    ) in uit
+    regels = _kort(werk)
+    assert regels[0] == (
+        "BZ4 set: 3 tweede keus (kat 3); de eerste keus was op; het bewijs per foto staat in het "
+        "log"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert _verkeer(nep).startswith("API: 93 vragen, 0 keer 429; ")
+
+
+def test_sjablonen_die_niet_in_een_keer_komen_maken_de_pagina_tweede_keus(
+    nep, commons, werk, tmp_path, capsys
+):
+    """Geeft de API de sjablonen niet in één keer (tlcontinue), dan zijn ze voor die pagina
+    onbekend en is geen kandidaat daarvan eerste keus (dicht bij twijfel). Nooit een tekort: de
+    tweede keus vult aan, en het bewijs zegt waarom."""
+    g = _goede_katten(commons)
+    commons.tl_later = {g[0]}
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == g[:4]
+    uit = capsys.readouterr().out.splitlines()
+    assert (
+        "BZ4 set: kat: 4 van 4 gekozen, 4 tweede keus (24 kandidaten bekeken op 2 pagina's; geen "
+        "eerste keus: 6 sjablonen onvolledig)"
+    ) in uit
+    assert (
+        "BZ4 set: bewijs kat-1: tweede keus; kunstwerk nee, collectie nee, persoon nee, eigen "
+        "werk nee, prominent nee, P180 1, sjablonen onvolledig"
+    ) in uit
+    assert _kort(werk)[0].startswith("BZ4 set: 4 tweede keus (kat 4); ")
+
+
+def test_het_bewijs_staat_alleen_in_het_log(nep, commons, werk, tmp_path, capsys):
+    """Per gekozen foto één regel bewijs, in de volgorde van het voorstel, alleen in het log: niet
+    in het blok, en beeld.tsv houdt zijn 7 kolommen. Alleen de sleutel en de tekens, nooit een
+    URL. Per zoekopdracht één regel (6 combinaties, 12 categorieën, 12 andere)."""
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    uit = capsys.readouterr().out.splitlines()
+    bewijs = [r for r in uit if r.startswith("BZ4 set: bewijs ")]
+    fotos = bm.lees_set(werk.voorstel_set.read_text())
+    assert [r.split(":")[1].removeprefix(" bewijs ") for r in bewijs] == [f.sleutel for f in fotos]
+    assert all(r.split(": ", 2)[2].startswith("eerste keus; kunstwerk nee, ") for r in bewijs)
+    assert not any("http" in r or "Nep_" in r for r in bewijs)
+    assert not any("bewijs" in r or "tweede keus" in r for r in _kort(werk))
+    kop = [r for r in werk.voorstel_set.read_text().splitlines() if not r.startswith("#")][0]
+    assert kop.split("\t") == list(bm.KOLOMMEN) and len(bm.KOLOMMEN) == 7
+    per_vraag = [r for r in uit if re.fullmatch(r"BZ4 set: [a-z+-]+: \d+ van \d+ gekozen, .*", r)]
+    assert len(per_vraag) == 30
+    assert all(", 0 tweede keus (" in r for r in per_vraag)
+    # kat+sneeuw: de eerste kandidaat heeft een mens, de tweede is goed
+    assert per_vraag[4] == (
+        "BZ4 set: kat+sneeuw: 1 van 1 gekozen, 0 tweede keus (2 kandidaten bekeken op 1 pagina)"
+    )
+
+
+TWEEDE_KEUS = {
+    "niets": ({}, None),
+    "een foto (P31 Q125191)": ({"P31": {"Q125191"}}, None),
+    "P6243": ({"aanwezig": {"P6243"}}, "kunstwerk"),
+    "P31 schilderij": ({"P31": {"Q3305213"}}, "kunstwerk"),
+    "Art Photo": ({"sjablonen": {"Template:Art Photo"}}, "kunstwerk"),
+    "P195": ({"aanwezig": {"P195"}}, "collectie"),
+    "P217": ({"aanwezig": {"P217"}}, "collectie"),
+    "P180 vrouw": ({"P180": {bm.CATEGORIEEN["kat"], "Q467"}}, "persoon"),
+    "Personality rights": ({"sjablonen": {"Template:Personality rights"}}, "persoon"),
+    "sjablonen onvolledig": ({"sjablonen_heel": False}, "sjablonen onvolledig"),
+    "kunstwerk voor persoon": (
+        {"aanwezig": {"P195"}, "sjablonen": {"Template:Artwork"}, "P180": {"Q8441"}},
+        "kunstwerk",
+    ),
+}
+
+
+@pytest.mark.parametrize("geval", sorted(TWEEDE_KEUS))
+def test_waarom_een_kandidaat_tweede_keus_is(geval):
+    """_tweede_keus: de eerste reden uit TWEEDE_KEUS die geldt, of None (eerste keus). Een
+    kandidaat zonder de nieuwe velden (zoals _foto) is eerste keus."""
+    anders, reden = TWEEDE_KEUS[geval]
+    assert bm._tweede_keus(_foto(**anders)) == reden
+    assert reden is None or reden in bm.TWEEDE_KEUS
+
+
+def test_de_voorkeur_binnen_een_keus():
+    """Eerst meer qids van de zoekopdracht prominent, dan eigen werk; verder blijft de volgorde."""
+    kat, sneeuw = bm.CATEGORIEEN["kat"], bm.CATEGORIEEN["sneeuw"]
+    beide = _foto(P180_prominent={kat, sneeuw})
+    een = _foto(P180_prominent={kat}, P7482={bm.EIGEN_WERK})
+    eigen = _foto(P7482={bm.EIGEN_WERK})
+    gewoon = _foto()
+    rij = [gewoon, eigen, een, beide]
+    assert sorted(rij, key=lambda d: bm._voorkeur(d, (kat, sneeuw))) == [beide, een, eigen, gewoon]
+    assert bm._bewijs(een, (kat, sneeuw), True) == (
+        "eerste keus; kunstwerk nee, collectie nee, persoon nee, eigen werk ja, prominent 1 van "
+        "2, P180 1"
+    )
+
+
+# --- beeld_niet.tsv -----------------------------------------------------------------------------
+
+
+def _lijst(*rijen: tuple[str, str, str]) -> str:
+    regels = ["# een opmerking", "bron\treden\tgezien", *("\t".join(r) for r in rijen)]
+    return "\n".join(regels) + "\n"
+
+
+def test_een_goede_lijst_komt_door_de_controle(tmp_path):
+    tekst = _lijst(
+        (_bron(7), "persoon", "stad-5 op 3a9b07d"),
+        ("https://commons.wikimedia.org/wiki/File:R%C3%A4v_1881.jpg", "kunstwerk", "kat+sneeuw"),
+    )
+    niet = bm.lees_niet(tekst + "\n# nog een opmerking\n")
+    assert list(niet) == [
+        "https://commons.wikimedia.org/wiki/File:Nep_7.jpg",
+        ("https://commons.wikimedia.org/wiki/File:Räv_1881.jpg"),
+    ]
+    eerste = niet["https://commons.wikimedia.org/wiki/File:Nep_7.jpg"]
+    assert eerste == bm.Niet(_bron(7), "persoon", "stad-5 op 3a9b07d", 3)
+    # een ontbrekend bestand is een lege lijst: alles als vroeger
+    assert bm.lees_niet(None) == {}
+    assert bm._lees_niet_pad(tmp_path / "geen.tsv") is None
+    pad = tmp_path / "beeld_niet.tsv"
+    pad.write_text(tekst)
+    assert bm._lees_niet_pad(pad) == bm.lees_niet(tekst)
+    pad.write_bytes(b"bron\treden\tgezien\n\xff\n")
+    with pytest.raises(bm.Fout, match="^beeld_niet.tsv: geen UTF-8$"):
+        bm._lees_niet_pad(pad)
+
+
+GOED = (_bron(7), "persoon", "stad-5 op 3a9b07d")
+KAPOTTE_LIJST = {
+    "geen kop": ("# alleen een opmerking\n", "beeld_niet.tsv: de eerste regel hoort bron"),
+    "andere kop": ("bron\treden\n", "regel 1: de eerste regel hoort bron reden gezien"),
+    "veld te weinig": (_lijst(GOED[:2]), "regel 3: 2 velden, verwacht 3"),
+    "veld te veel": (_lijst((*GOED, "x")), "regel 3: 4 velden, verwacht 3"),
+    "bron van elders": (
+        _lijst(("https://example.org/wiki/File:F.jpg", *GOED[1:])),
+        "regel 3: bron hoort een bestandspagina van Commons",
+    ),
+    "bron zonder bestand": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "bron met spatie": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:Twee woorden.jpg", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "bron niet in ASCII": (
+        _lijst(("https://commons.wikimedia.org/wiki/File:Räv.jpg", *GOED[1:])),
+        "regel 3: bron hoort",
+    ),
+    "onbekende reden": (
+        _lijst((GOED[0], "lelijk", GOED[2])),
+        "regel 3: reden 'lelijk'; alleen persoon, kunstwerk, niet-zichtbaar, toont-categorie",
+    ),
+    "reden met hoofdletter": (_lijst((GOED[0], "Persoon", GOED[2])), "regel 3: reden"),
+    "gezien leeg": (_lijst((*GOED[:2], "")), "regel 3: gezien hoort een korte tekst"),
+    "gezien alleen spaties": (_lijst((*GOED[:2], "   ")), "regel 3: gezien"),
+    "gezien te lang": (_lijst((*GOED[:2], "x" * 81)), "regel 3: gezien"),
+    "dubbele bron": (_lijst(GOED, GOED), r"regel 4: die bron staat er al \(regel 3\)"),
+    "dubbel in een andere vorm": (
+        _lijst(GOED, (GOED[0].replace("Nep_7", "Nep%5F7"), "kunstwerk", "kat-1")),
+        r"regel 4: die bron staat er al \(regel 3\)",
+    ),
+}
+
+
+@pytest.mark.parametrize("geval", sorted(KAPOTTE_LIJST))
+def test_een_lijst_die_niet_klopt(geval):
+    """lees_niet is streng zoals lees_set: een fout met het regelnummer in het bestand
+    (commentaar telt mee, zoals in een editor)."""
+    tekst, fout = KAPOTTE_LIJST[geval]
+    with pytest.raises(bm.Fout, match=fout):
+        bm.lees_niet(tekst)
+
+
+def test_een_voorstel_neemt_nooit_een_foto_uit_de_lijst(nep, commons, werk, tmp_path):
+    """De eerste kat (zonder lijst kat-1) staat in beeld_niet.tsv, in een andere vorm van de bron
+    (_ als %5F): het voorstel slaat hem over en de volgende in dezelfde volgorde krijgt de plek.
+    Het blok zegt hoeveel foto's op de lijst staan en hoeveel daarvan langskwamen."""
+    g = _goede_katten(commons)
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(
+        _lijst(
+            (_bron(g[0]).replace(f"Nep_{g[0]}", f"Nep%5F{g[0]}"), "persoon", "kat-1 op 3a9b07d"),
+            ("https://commons.wikimedia.org/wiki/File:Elders.jpg", "niet-zichtbaar", "bos-1"),
+        )
+    )
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    sleutels = _per_sleutel(werk)
+    assert [sleutels[f"kat-{n}"] for n in range(1, 5)] == g[1:5]
+    assert g[0] not in sleutels.values()
+    regels = _kort(werk)
+    assert (
+        regels[0] == "BZ4 set: beeld_niet.tsv: 2 foto's op de lijst, als kandidaat overgeslagen: 1"
+    )
+    assert regels[1].startswith("BZ4 set: beeld.tsv ontbreekt; voorstel met 120 foto's ")
+    assert _verkeer(nep).startswith("API: 90 vragen, ")
+
+
+def test_een_tekort_noemt_de_lijst_als_reden(nep, commons, werk, tmp_path):
+    """Staan alle zes goede katten op de lijst, dan is er een tekort voor kat, en de regel zegt
+    dat ze uitgesloten zijn (zoals elke reden van afvallen)."""
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst(*((_bron(i), "persoon", f"kat {i}") for i in _goede_katten(commons))))
+    with pytest.raises(bm.Fout, match=r"^Commons: 1 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    assert _kort(werk) == [
+        "BZ4 set: beeld_niet.tsv: 6 foto's op de lijst, als kandidaat overgeslagen: 6",
+        "BZ4 set: Commons: maar 1 bruikbare foto's voor kat (24 kandidaten bekeken; afgevallen: "
+        "12 uitgesloten (beeld_niet.tsv), 2 al gekozen, 2 geen image/jpeg, 2 licentie, 6 om een "
+        "andere reden)",
+    ]
+
+
+def test_de_reserves_slaan_de_lijst_over(nep, commons, werk, tmp_path):
+    """De enige reserve van de nep (zonsondergang+strand) staat op de lijst: hij telt niet, met
+    de reden in de regel van de reserve."""
+    _tekort(commons)
+    cat = bm.CATEGORIEEN
+    (paar,) = [
+        i
+        for i, d in commons.bestanden.items()
+        if d["P180"] == {cat["strand"], cat["zonsondergang"]}
+    ]
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst((_bron(paar), "niet-zichtbaar", "strand-1")))
+    with pytest.raises(bm.Fout, match=r"^Commons: 3 tekort\(en\) voor de set"):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    regels = _kort(werk)
+    assert regels[0] == "BZ4 set: beeld_niet.tsv: 1 foto op de lijst, als kandidaat overgeslagen: 1"
+    assert (
+        "BZ4 reserve zonsondergang+strand: 0 bruikbare foto's (eerste pagina per licentie; "
+        "afgevallen: 1 uitgesloten (beeld_niet.tsv))"
+    ) in regels
+    assert sum(r.startswith("BZ4 reserve ") for r in regels) == 5
+
+
+def test_met_beeld_tsv_is_een_foto_uit_de_lijst_een_fout(nep, commons, werk, tmp_path):
+    """Een foto uit beeld_niet.tsv kan nooit vast in beeld.tsv staan: de fout noemt de regel in
+    beide bestanden en de reden, en er wordt niets opgehaald. Ook via main, met --niet."""
+    assert bm.set_(werk, tmp_path / "geen.tsv") == bm.VOORSTEL
+    set_pad = tmp_path / "beeld.tsv"
+    set_pad.write_text(werk.voorstel_set.read_text())
+    fotos = bm.lees_set(set_pad.read_text())
+    i = next(n for n, f in enumerate(fotos) if f.sleutel == "kat-2")
+    lijst = tmp_path / "beeld_niet.tsv"
+    lijst.write_text(_lijst((fotos[i].bron, "kunstwerk", "kat-2 op 3a9b07d")))
+    vragen = len(nep.vragen)
+    werk2 = bm.Werk(tmp_path / "werk2")
+    fout = (
+        f"beeld.tsv: regel {i + 2} (kat-2) staat in beeld_niet.tsv regel 3 (kunstwerk); zet er "
+        "een andere foto voor in de plaats (runbook analyse, stap 4)"
+    )
+    with pytest.raises(bm.Fout) as e:
+        bm.set_(werk2, set_pad, niet_pad=lijst)
+    assert str(e.value) == fout
+    assert len(nep.vragen) == vragen and not werk2.set.exists()
+    werk3 = bm.Werk(tmp_path / "werk3")
+    argv = ["set", "--werk", str(werk3.map), "--set", str(set_pad), "--niet", str(lijst)]
+    assert bm.main(argv) == 1
+    assert _kort(werk3) == [f"FOUT set: {fout}"]
+    # zonder de lijst (de standaard, hier leeg) komt dezelfde set gewoon door
+    assert bm.set_(werk3, set_pad) == 0
+
+
+def test_een_lijst_die_niet_klopt_stopt_set_voor_de_eerste_vraag(nep, commons, werk, tmp_path):
+    lijst = tmp_path / "beeld_niet.tsv"
+    lijst.write_text(_lijst((GOED[0], "mooi", GOED[2])))
+    argv = ["set", "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")]
+    assert bm.main([*argv, "--niet", str(lijst)]) == 1
+    assert _kort(werk) == [
+        "FOUT set: beeld_niet.tsv regel 3: reden 'mooi'; alleen persoon, kunstwerk, "
+        "niet-zichtbaar, toont-categorie"
+    ]
+    assert not nep.vragen
+
+
+def test_zonder_lijst_is_het_voorstel_als_vroeger(nep, commons, werk, tmp_path):
+    """Een lijst zonder regels geeft hetzelfde voorstel als geen lijst; alleen het blok heeft
+    dan een regel erbij. Zonder het bestand is het blok zoals vroeger."""
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    assert not any("beeld_niet.tsv" in r for r in _kort(werk))
+    leeg = tmp_path / "leeg.tsv"
+    leeg.write_text(_lijst())
+    werk2 = bm.Werk(tmp_path / "werk2")
+    assert bm.set_(werk2, tmp_path / "beeld.tsv", niet_pad=leeg) == bm.VOORSTEL
+    assert werk2.voorstel_set.read_text() == werk.voorstel_set.read_text()
+    assert (
+        _kort(werk2)[0]
+        == "BZ4 set: beeld_niet.tsv: 0 foto's op de lijst, als kandidaat overgeslagen: 0"
+    )
+    assert len(_kort(werk2)) == len(_kort(werk)) + 1

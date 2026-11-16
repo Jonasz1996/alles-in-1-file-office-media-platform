@@ -1733,8 +1733,8 @@ def stel_voor(
 
     niet (beeld_niet.tsv; lees_niet): een kandidaat met een bron daaruit neemt hij nooit, ook
     niet als tweede keus of als reserve (reden UITGESLOTEN); de volgende in dezelfde volgorde
-    krijgt de plek. Als er een lijst is, zegt het blok hoeveel foto's erop staan en hoeveel er
-    als kandidaat langskwamen.
+    krijgt de plek. Als er een lijst is, zegt het blok hoeveel foto's erop staan en hoeveel
+    daarvan als kandidaat langskwamen (de reserves niet meegeteld).
 
     Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten en waarom
     ze afvielen (_afgevallen) in het blok, en pas daarna volgt de fout. Zo laat één run alles zien
@@ -1899,8 +1899,8 @@ def stel_voor(
     if niet is not None:
         aantal = "1 foto" if len(lijst) == 1 else f"{len(lijst)} foto's"
         werk.meld(
-            f"BZ4 set: beeld_niet.tsv: {aantal}, waarvan {len(getroffen)} als kandidaat "
-            "langskwamen en overgeslagen werden"
+            f"BZ4 set: beeld_niet.tsv: {aantal} op de lijst, als kandidaat overgeslagen: "
+            f"{len(getroffen)}"
         )
     if not tekort:
         return gekozen
@@ -1923,7 +1923,7 @@ def stel_voor(
                 if pageid in bekeken:
                     continue
                 bekeken.add(pageid)
-                reden = UITGESLOTEN if uitgesloten(d) else _waarom(d)
+                reden = UITGESLOTEN if _op_lijst(d, lijst) else _waarom(d)
                 if reden is None:
                     goed.add(pageid)
                 else:
