@@ -14,6 +14,9 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
   alleen hier, BZ6 onder taskset -c 0;
 - het rapport van int8 (x3a.md, "CI op 3a9b07d") heeft een eigen stap na BZ6, die mag falen en
   geen poort is: continue-on-error, hooguit 15 min, || true, en Uitslag leest het niet;
+- timeout-minutes van de job draagt het uiterste uit de opmerking erboven (de vragen aan de API
+  zonder contact, het wachten na 429 en de rest) plus de timeout-minutes van die stap (de review,
+  N1);
 - het verslag via upload-artifact, en als laatste stap het blok `=== kort ===`;
 - BEELD_CONTACT (de link naar het repository als contact in de User-Agent naar Wikimedia, met
   toestemming van de eigenaar, 2026-11-15) staat alleen op de twee stappen die Commons vragen.
@@ -21,6 +24,7 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -239,6 +243,42 @@ def test_het_rapport_van_int8_mag_falen_en_is_geen_poort():
     assert stap["run"].rstrip().endswith('| tee "$WERK/bz4r.txt" || true')
     assert "bz4r" not in stappen[i + 1]["run"]
     assert "for stap in bz3 bz4 bz4r bz6; do" in stappen[-1]["run"]
+
+
+TOOL = API.parent / "tools" / "beeld" / "beeld_model.py"
+
+
+def _constante(naam: str) -> float:
+    """Een getal uit tools/beeld/beeld_model.py, zonder de tool te laden."""
+    for knoop in ast.parse(TOOL.read_text(encoding="utf-8")).body:
+        doelen = [getattr(d, "id", "") for d in getattr(knoop, "targets", [])]
+        if isinstance(knoop, ast.Assign) and doelen == [naam]:
+            return float(ast.literal_eval(knoop.value))
+    raise AssertionError(f"{naam} staat niet in {TOOL.name}")
+
+
+def test_de_tijd_van_de_job_draagt_ook_het_rapport_van_int8():
+    """De review, N1: de opmerking boven timeout-minutes rekent het uiterste zonder contact (±V
+    vragen aan de API, elk PAUZE_API_S, plus WACHT_TOTAAL_S en R min voor de rest); daar komt de
+    timeout-minutes van elke stap bij die er een heeft (het rapport van int8). Het getal van de
+    opmerking is dat van de job, en het budget aan vragen is niet kleiner dan op 3a9b07d."""
+    tekst = re.sub(r"\n\s*#\s*", " ", CI.read_text())
+    draagt = re.findall(r"(\d+) min draagt ±(\d+) vragen", tekst)
+    rest = re.findall(r"(\d+) min voor de rest", tekst)
+    assert len(draagt) == 1 and len(rest) == 1, (draagt, rest)
+    (minuten, vragen), rest_min = (int(x) for x in draagt[0]), int(rest[0])
+    j = yaml.safe_load(CI.read_text())["jobs"]["beeld-model"]
+    assert minuten == j["timeout-minutes"]
+    assert vragen >= 450
+    stappen = sum(s.get("timeout-minutes", 0) for s in j["steps"])
+    assert stappen >= 15  # het rapport van int8
+    nodig = (
+        vragen * _constante("PAUZE_API_S") / 60
+        + _constante("WACHT_TOTAAL_S") / 60
+        + rest_min
+        + stappen
+    )
+    assert j["timeout-minutes"] >= nodig, (j["timeout-minutes"], nodig)
 
 
 def test_het_verslag_en_als_laatste_het_blok_kort():
