@@ -59,6 +59,8 @@ export default {
     hiddenNote: "Verborgen: deze persoon staat niet in de lijst en niet in de suggesties.",
     delete: "Wissen",
     deleteText: "{name} verdwijnt van al je foto's. De foto's zelf blijven.",
+    // Erbij als gezichten voor jou aanstaan (X2, bouwontwerp "De web"; sinds 0.8.1, I2)
+    deleteFaces: "De gezichten die je als {name} bevestigde, worden gewist en niet opnieuw voorgesteld.",
     deleted: "{name} is gewist.",
     memories: "Niet in herinneringen",
     memoriesBack: "Weer in herinneringen",

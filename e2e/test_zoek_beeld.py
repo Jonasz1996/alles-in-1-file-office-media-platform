@@ -22,8 +22,10 @@ eigenaar. Daarna, in de browser:
 Elke context houdt elk verzoek bij: geen enkel verzoek gaat naar een andere host dan de app.
 
 Tot slot de app zoals hij in 0.8.0 draait (de server van conftest, de analyse uit): /zoeken in de
-stand beeld, Account → Foto's, de viewer en /beheer tonen precies wat 0.8.0 toonde. Het enige
-nieuwe is één GET /photos/beeld per pagina, met 501 (de stubs van Z0b; zonder werk).
+stand beeld, Account → Foto's, de viewer en /beheer tonen precies wat 0.8.0 toonde, behalve de zin
+op /zoeken en /beheer: die zegt sinds 0.8.1 (I2) dat zoeken op beeld uitstaat en wat de beheerder
+kan doen. Verder is het enige nieuwe één GET /photos/beeld per pagina, met 501 (de stubs van Z0b;
+zonder werk).
 """
 
 from __future__ import annotations
@@ -80,9 +82,18 @@ FOTOS = (
     ("IMG_0105.jpg", "blauw"),
     ("zomer aan zee.jpg", "paars"),
 )
-LATER = "Zoeken op beeld komt in een volgende versie."
-LATER_BEHEER = "Zoeken op beeld komt later in fase 6."
-UITLEG_080 = "Zoeken op beeld komt in een volgende versie. Zoekt in je eigen foto's. Druk op Enter."
+# Met de analyse uit (sinds 0.8.1, I2): de zin dat zoeken op beeld uitstaat en wat de beheerder kan
+# doen, in plaats van "komt later" in 0.8.0 (web/src/i18n/areas/beeld.nl.ts en search.nl.ts)
+LATER = (
+    "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
+    "De beheerder kan het aanzetten met ANALYSE=aan."
+)
+LATER_BEHEER = (
+    "Zoeken op beeld staat uit op deze server: de analyse draait niet "
+    "(ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met "
+    "ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md."
+)
+UITLEG_080 = LATER + " Zoekt in je eigen foto's. Druk op Enter."
 HINT = (
     "Je foto's worden op de achtergrond bekeken, zodat je ze kunt vinden op wat erop staat "
     "('strand', 'hond'). Dat gebeurt op deze server; er gaat niets naar buiten. Alleen jij kunt "
@@ -376,7 +387,7 @@ def test_zoeken_op_beeld_met_alleen_het_toetsenbord(x3: X3App, x3_browsers: Bewa
     expect(page).to_have_url(re.compile(r"/zoeken\?mode=image$"))
     expect(beeld).to_be_checked()
     expect(beeld).to_be_focused()
-    # De server kent zoeken op beeld: het veld zegt niet meer dat het later komt
+    # De server kent zoeken op beeld: het veld zegt niet meer dat het uitstaat
     expect(veld(page)).to_have_accessible_description("Zoekt in je eigen foto's. Druk op Enter.")
     expect(page.get_by_text(LATER, exact=True).filter(visible=True)).to_have_count(0)
 
@@ -666,10 +677,11 @@ def test_met_de_analyse_uit_blijft_de_web_zoals_in_0_8_0(
     server: Server, admin: Account, user_factory: Any, uit_browsers: Bewaakt
 ) -> None:
     """De server van conftest (geen PLATFORM_ANALYSE_ENABLED): GET /photos/beeld geeft 501, en
-    elke plek toont wat 0.8.0 toonde. /zoeken in de stand beeld: de ene zin dat het later komt,
-    de uitleg van het veld van 0.8.0, geen raster en geen vraag aan /search. Account → Foto's: het
-    vinkje van Z6 (zonder de uitleg van X3). De viewer: geen "Meer zoals deze". /beheer: "komt
-    later", zonder knoppen."""
+    elke plek toont wat 0.8.0 toonde, met de zinnen van 0.8.1 (I2). /zoeken in de stand beeld: de
+    ene zin dat zoeken op beeld uitstaat, dezelfde zin als uitleg van het veld, geen raster en geen
+    vraag aan /search. Account → Foto's: het vinkje van Z6 (zonder de uitleg van X3). De viewer:
+    geen "Meer zoals deze". /beheer: dat het uitstaat en wat de beheerder kan doen, zonder
+    knoppen."""
     lisa = user_factory(name="Lisa Zonder Analyse")
     id_ = upload(server, lisa, "IMG_0201.jpg", foto("oranje", 201))
     page = uit_browsers.context_as(lisa).new_page()

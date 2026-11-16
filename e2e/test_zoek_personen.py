@@ -845,7 +845,8 @@ def test_account_fotos_gezichten_en_beeld_nog_niet(server, user_factory, context
 def test_de_knop_zoeken_op_beeld(fien, context_as):
     """Keuze 81: /fotos heeft de knop "Zoeken op beeld" naar /zoeken?mode=image; daar staat de
     focus in het veld (sinds de samenvoeging met de pagina van Z4), met de plaatshouder van de
-    stand beeld. Tot X3 er is, beschrijft het veld ook dat zoeken op beeld later komt (I1, R4)."""
+    stand beeld. Kent de server zoeken op beeld niet (de analyse uit), dan beschrijft het veld ook
+    dat zoeken op beeld uitstaat (I1, R4; de zin sinds 0.8.1, I2)."""
     page = context_as(fien).new_page()
     page.goto("/fotos")
     knop = page.get_by_role("link", name="Zoeken op beeld", exact=True)
@@ -858,13 +859,15 @@ def test_de_knop_zoeken_op_beeld(fien, context_as):
     expect(veld).to_have_attribute(
         "placeholder", "Beschrijf de foto, bijvoorbeeld: hond op het strand"
     )
-    # I1 (review R4): de beschrijving van het veld zegt zelf dat zoeken op beeld er nog niet is,
-    # zonder op de lazy chunk van BeeldResults te wachten (een verborgen zin in ImageHint)
-    expect(veld).to_have_accessible_description(
-        "Zoeken op beeld komt in een volgende versie. Zoekt in je eigen foto's. Druk op Enter."
+    # I1 (review R4): de beschrijving van het veld zegt zelf dat zoeken op beeld uitstaat, zonder
+    # op de lazy chunk van BeeldResults te wachten (een verborgen zin in ImageHint)
+    uit = (
+        "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
+        "De beheerder kan het aanzetten met ANALYSE=aan."
     )
+    expect(veld).to_have_accessible_description(f"{uit} Zoekt in je eigen foto's. Druk op Enter.")
     expect(page.get_by_role("radio", name="Wat er op de foto staat", exact=True)).to_be_checked()
-    # I1 (S8): tot X3 het raster vult, één zin zonder versienummer. Zichtbaar staat hij één keer
-    # (die van BeeldResults); de kopie voor de beschrijving van het veld is verborgen
-    later = page.get_by_text("Zoeken op beeld komt in een volgende versie.", exact=True)
+    # I1 (S8): zonder raster één zin zonder versienummer (sinds 0.8.1: dat het uitstaat). Zichtbaar
+    # staat hij één keer (die van BeeldResults); de kopie voor de beschrijving is verborgen
+    later = page.get_by_text(uit, exact=True)
     expect(later.filter(visible=True)).to_have_count(1)

@@ -14,8 +14,12 @@ met de web van 0.8.0 (`3fca440`) op deze app. De API zelf antwoordt met de analy
 Wat per run verschilt, is gelijkgemaakt: ids, getallen, maanden en dagen (de datum van de
 upload) en "… geleden". De bewaking van de browser (CSP, i18n, fouten) staat aan zoals overal.
 
-Elke boom en elke titel is gelijk aan die van 0.8.0. De routes ook, op precies ERBIJ na: daar
-vraagt de web van golf 6 twee routes die 0.8.0 al had, en toont er niets van (zie ERBIJ).
+Elke boom en elke titel is gelijk aan die van 0.8.0, op precies ANDERS en ERIN na: wat 0.8.1 (I2)
+met de analyse uit bewust anders toont (de zinnen dat gezichten en zoeken op beeld uitstaan, en op
+/account de link naar /over). De routes ook, op precies ERBIJ na: daar vraagt de web van golf 6
+twee routes die 0.8.0 al had, en toont er niets van (zie ERBIJ). Tot slot /over zelf, voor de gast
+Gijs met de analyse uit: de bronnen van de kaart en de modellen, zonder een vraag aan de API
+buiten die van de schil.
 
 De boom is het formaat van aria_snapshot van Playwright (opgenomen met 1.65.2: rollen, namen,
 [level], [checked], [selected], [disabled], [pressed] en /url). Verandert een nieuwe Playwright
@@ -42,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import Locator, Page, expect
 
 from conftest import (
     WEB_DIST,
@@ -111,6 +115,50 @@ ERBIJ: dict[str, list[str]] = {
     "jonas /zoeken?q=strand&mode=image": [BEELD],
 }
 ANTWOORD = {BEELD: {501}, INSTELLINGEN: {200}}
+# Wat de web van 0.8.1 (I2) met de analyse uit anders toont dan die van 0.8.0, per pagina, precies:
+# (regel van 0.8.0, regel van nu). Gezichten en zoeken op beeld zeggen dat ze op deze server
+# uitstaan en wat de beheerder kan doen, in plaats van "komt later" (web/src/i18n/areas/beeld.nl.ts,
+# search.nl.ts en photos_faces.nl.ts). Elke regel van 0.8.0 staat precies één keer in zijn boom.
+LATER_080 = "  - paragraph: Zoeken op beeld komt in een volgende versie."
+LATER = (
+    "  - paragraph: Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
+    "De beheerder kan het aanzetten met ANALYSE=aan."
+)
+UIT_BEHEER = (
+    "staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). "
+    "Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf "
+    "aan bij Account → Foto's. Zie docs/runbooks/analyse.md."
+)
+ANDERS: dict[str, list[tuple[str, str]]] = {
+    "eva /zoeken?q=strand&mode=image": [(LATER_080, LATER)],
+    "gijs /zoeken?q=strand&mode=image": [(LATER_080, LATER)],
+    "jonas /zoeken?q=strand&mode=image": [(LATER_080, LATER)],
+    "jonas /beheer/zoeken": [
+        (
+            "    - paragraph: Gezichten herkennen komt later in fase #.",
+            f'    - paragraph: "Gezichten herkennen {UIT_BEHEER}"',
+        ),
+        (
+            "    - paragraph: Zoeken op beeld komt later in fase #.",
+            f'    - paragraph: "Zoeken op beeld {UIT_BEHEER}"',
+        ),
+    ],
+}
+# Wat de web van 0.8.1 (I2) erbij toont, per pagina: (de regel waar het vóór staat, de regels).
+# /account: onderaan, na Apparaten en sessies, de link naar /over (Keuze 29 en K1-13), voor
+# iedereen die is ingelogd, met de analyse aan of uit (web/src/Account.tsx).
+OVER = [
+    '  - region "Over dit platform":',
+    '    - heading "Over dit platform" [level=#]',
+    "    - paragraph:",
+    '      - link "Bronnen en licenties":',
+    "        - /url: /over",
+]
+ERIN: dict[str, tuple[str, list[str]]] = {
+    "eva /account": ('- region "Meldingen"', OVER),
+    "gijs /account": ('- region "Meldingen"', OVER),
+    "jonas /account": ('- region "Meldingen"', OVER),
+}
 
 _ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}")
 _GELEDEN = re.compile(
@@ -356,6 +404,19 @@ def viewer(page: Page, verkeer: Verkeer) -> dict[str, Any]:
     return {"boom": boom(dialoog), "api": verkeer.neem()}
 
 
+def met_081(key: str, boom: list[str]) -> list[str]:
+    """De boom van 0.8.0 met precies wat 0.8.1 anders toont (ANDERS) en erbij toont (ERIN)."""
+    for regel, nieuw in ANDERS.get(key, []):
+        assert boom.count(regel) == 1, (key, regel)
+        boom = [nieuw if r == regel else r for r in boom]
+    if key in ERIN:
+        voor, regels = ERIN[key]
+        assert boom.count(voor) == 1, (key, voor)
+        i = boom.index(voor)
+        boom = boom[:i] + regels + boom[i:]
+    return boom
+
+
 def verschil(oud: dict[str, Any], nu: dict[str, Any]) -> str:
     regels: list[str] = []
     for key in sorted(set(oud) | set(nu)):
@@ -380,15 +441,46 @@ def test_met_de_analyse_uit_elke_pagina_zoals_in_080(wereld: Wereld, browsers: B
     oud = json.loads(OPNAME.read_text())["paginas"]
     assert len(oud) == len(PAGINAS) * len(WIE) + 2
     assert set(nu) == set(oud)
-    # Opgenomen met de web van 0.8.0 is er niets erbij; met die van nu precies ERBIJ
+    # Opgenomen met de web van 0.8.0 is er niets erbij; met die van nu precies ERBIJ, ANDERS en ERIN
     erbij = {} if OPNEMEN else ERBIJ
     verwacht = {
         key: {**pagina, "api": sorted(set(pagina["api"]) | set(erbij.get(key, [])))}
         for key, pagina in oud.items()
     }
+    if not OPNEMEN:
+        assert set(ANDERS) | set(ERIN) <= set(oud)
+        for key, pagina in verwacht.items():
+            pagina["boom"] = met_081(key, pagina["boom"])
     assert not any(set(erbij[key]) & set(oud[key]["api"]) for key in erbij)
     assert nu == verwacht, "anders dan de web van 0.8.0:\n" + verschil(verwacht, nu)
     # De routes erbij antwoorden zoals in 0.8.0: 501 not_built("X3") en de instellingen
     assert {r: s for r, s in antwoorden.items() if r in set().union(*erbij.values())} == {
         r: ANTWOORD[r] for r in set().union(*erbij.values())
     }
+
+
+def test_over_met_de_analyse_uit_voor_de_gast(wereld: Wereld, browsers: Browsers) -> None:
+    """/over (I2; Keuze 29 en K1-13) met de analyse uit, voor de gast Gijs: de bronnen van de kaart
+    (de plaatsen van GeoNames met CC BY 4.0) en de modellen en pakketten van de analyse, elk met
+    hun licentie. De pagina vraagt de API niets buiten wat de schil op elke pagina vraagt: precies
+    de routes van "gijs /bestaat-niet" in de opname van 0.8.0."""
+    page = browsers.context_as(wereld.wie["gijs"]).new_page()
+    verkeer = Verkeer(page, wereld.server.url)
+    page.goto("/over")
+    verkeer.stil()
+    main = page.get_by_role("main")
+    expect(page).to_have_title("Over dit platform · Platform")
+    expect(main.get_by_role("heading", name="Over dit platform", level=1)).to_be_visible()
+    for regel in (
+        "Plaatsnamen: GeoNames cities1000 (als rg_cities1000.csv uit reverse_geocoder 1.5.1), "
+        "CC BY 4.0.",
+        "Landen: Natural Earth 1:10m admin-0 v5.1.2 (publiek domein).",
+        "Gezichten vinden: YuNet 2026may van opencv_zoo, MIT, Copyright (c) 2020 Shiqi Yu.",
+        "Gezichten herkennen: SFace 2021dec van opencv_zoo, Apache-2.0.",
+        "Zoeken op beeld: SigLIP 2 B/32-256 van Google (google/siglip2-base-patch32-256), "
+        "Apache-2.0.",
+        "onnxruntime 1.31.1: MIT",
+    ):
+        expect(main.get_by_role("listitem").filter(has_text=regel)).to_have_text(regel)
+    oud = json.loads(OPNAME.read_text())["paginas"]
+    assert verkeer.neem() == oud["gijs /bestaat-niet"]["api"]

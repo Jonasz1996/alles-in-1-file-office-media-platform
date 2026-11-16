@@ -3,11 +3,16 @@
 //
 // Fase 6 (Z6, Keuze 44): het blok Foto's (photos/people/PhotoSettingsBlock.tsx) is een eigen
 // chunk met het gebied photos_people, niet voor een gast.
+//
+// Fase 6 (I2): onderaan "Over dit platform" met een link naar /over (de bronnen en licenties),
+// voor iedereen die bij zijn account kan (niet zolang 2FA nog aan moet: dan is er alleen
+// /account). De twee zinnen staan in het gebied about (routes.tsx laadt het mee).
 
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from "react";
 import { type Api, api, type TotpSetup, type User } from "./api";
 import { useCurrentUser, useShellActions } from "./currentUser";
 import { errorText, fmt, lazyWithAreas, t } from "./i18n";
+import { Link } from "./links";
 import type { RouteProps } from "./router";
 import { Button } from "./ui/Button";
 import { confirm } from "./ui/dialogs";
@@ -91,6 +96,12 @@ export function Account({
         <>
           <PasswordChange totpEnabled={user.totp_enabled} onChanged={() => setPasswordChanged((n) => n + 1)} />
           <Sessions reload={`${passwordChanged}-${user.totp_enabled}`} />
+          <section aria-labelledby="account-about">
+            <h2 id="account-about">{t("about.account.title")}</h2>
+            <p>
+              <Link to="/over">{t("about.account.link")}</Link>
+            </p>
+          </section>
         </>
       )}
     </main>

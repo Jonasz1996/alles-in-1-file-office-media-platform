@@ -3,7 +3,8 @@ import type nl from "./photos_faces.nl";
 
 const en: Translation<typeof nl> = {
   title: "Faces",
-  notReady: "Face recognition comes later in phase 6.",
+  notReady:
+    "Face recognition is off on this server: the analysis is not running (ANALYSE=uit in /opt/platform/.env). To turn it on, run the install script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.",
   switch: {
     label: "Recognise faces in my photos",
     consent:

@@ -3,8 +3,10 @@
 // zette het leeg neer (Keuze 55). X2b vulde het met de teksten van Keuze 66 en 67.
 export default {
   title: "Gezichten",
-  // Het blok op /beheer zonder gezichten (X2 draait niet: geen analyse); zo stond het in 0.8.0
-  notReady: "Gezichten herkennen komt later in fase 6.",
+  // Het blok op /beheer zonder gezichten (X2 draait niet: geen analyse). Sinds 0.8.1 (I2): dat het
+  // uitstaat en wat de beheerder kan doen (in 0.8.0 stond hier "komt later in fase 6")
+  notReady:
+    "Gezichten herkennen staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md.",
   switch: {
     label: "Gezichten herkennen in mijn foto's",
     consent:

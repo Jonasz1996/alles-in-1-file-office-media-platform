@@ -54,6 +54,8 @@ const AREAS: Area[] = [
   "beeld",
   // Fase 6 (X1)
   "ocr",
+  // Fase 6 (I2)
+  "about",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */
