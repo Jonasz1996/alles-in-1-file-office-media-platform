@@ -133,7 +133,7 @@ function On(): JSX.Element {
           {statusLine(status)}
         </p>
       )}
-      {suggest && suggest.people.length > 0 && (
+      {(open?.kind === "person" || !!suggest?.people.length) && (
         <section aria-labelledby="faces-voorstellen">
           <h2 id="faces-voorstellen">{t("photos_faces.suggest.title")}</h2>
           {open?.kind === "person" ? (
@@ -147,7 +147,7 @@ function On(): JSX.Element {
             />
           ) : (
             <ul className="faces-cards">
-              {suggest.people.map((ps) => (
+              {suggest?.people.map((ps) => (
                 <li key={ps.person.id}>
                   <FaceCard
                     faces={ps.sample}
@@ -163,7 +163,7 @@ function On(): JSX.Element {
           )}
         </section>
       )}
-      {groups && groups.groups.length > 0 && (
+      {(open?.kind === "group" || !!groups?.groups.length) && (
         <section aria-labelledby="faces-groepen">
           <h2 id="faces-groepen">{t("photos_faces.group.title")}</h2>
           {open?.kind === "group" ? (
@@ -176,7 +176,7 @@ function On(): JSX.Element {
             />
           ) : (
             <ul className="faces-cards">
-              {groups.groups.map((g) => (
+              {groups?.groups.map((g) => (
                 <li key={g.key}>
                   <FaceCard
                     faces={g.faces}

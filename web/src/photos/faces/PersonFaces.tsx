@@ -25,7 +25,7 @@ const focusNow = (el: HTMLElement | null) => el?.focus();
 
 export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element | null {
   const [page, setPage] = useState<FacePage | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(""); // de naam, zolang het raster open is
   const [done, setDone] = useState("");
   const button = useRef<HTMLButtonElement | null>(null);
   const who = useCurrentUser()?.id ?? "";
@@ -45,7 +45,8 @@ export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element
   }, [load]);
   useReloadOn((e) => e.type === PEOPLE_CHANGED, () => void load());
 
-  const name = page?.faces[0]?.suggest?.name ?? done;
+  // Zolang het raster open is, blijft het staan, ook als een nieuwe lading niets meer geeft
+  const name = open || page?.faces[0]?.suggest?.name || done;
   if (!name) return null;
   const title = t("photos_faces.suggest.maybe", { name });
   return (
@@ -58,7 +59,7 @@ export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element
           person={{ id: personId, name }}
           load={(c) => personFaceSuggestions(personId, c, FACES_PAGE)}
           onClose={() => {
-            setOpen(false);
+            setOpen("");
             requestAnimationFrame(() => button.current?.focus());
             void load().then((n) => n || setDone(name));
           }}
@@ -72,7 +73,7 @@ export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element
           faces={page.faces}
           label={t("photos_faces.grid.open")}
           open={false}
-          onOpen={() => setOpen(true)}
+          onOpen={() => setOpen(name)}
           button={(el) => {
             button.current = el;
           }}
