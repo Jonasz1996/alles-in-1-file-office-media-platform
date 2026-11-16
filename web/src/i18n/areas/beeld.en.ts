@@ -25,7 +25,7 @@ const en: Translation<typeof nl> = {
   like: "More like this",
   switch: {
     label: "Search by image",
-    hint: "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). This happens on this server; nothing goes outside. Only you can search your own photos this way. Off erases what is kept only for you. Snapshots the administrator makes of the server keep it until they expire.",
+    hint: "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). This happens on this server; nothing goes outside. Only you can search your own photos this way. Off erases what is kept only for you. Snapshots the administrator makes of the server keep it until they expire. What to expect: one word usually puts a few good photos at the top. Some words find little; then try another word, for example the singular. About half of what 'More like this' shows is about the same subject.",
     saved: "Saved.",
   },
   admin: {

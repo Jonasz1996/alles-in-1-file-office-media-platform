@@ -87,7 +87,10 @@ HINT = (
     "Je foto's worden op de achtergrond bekeken, zodat je ze kunt vinden op wat erop staat "
     "('strand', 'hond'). Dat gebeurt op deze server; er gaat niets naar buiten. Alleen jij kunt "
     "zo in je eigen foto's zoeken. Uit wist wat alleen voor jou bewaard is. Snapshots die de "
-    "beheerder zelf van de server maakt, houden het tot ze verlopen."
+    "beheerder zelf van de server maakt, houden het tot ze verlopen. Wat je mag verwachten: één "
+    "woord geeft meestal een paar goede foto's bovenaan. Sommige woorden vinden weinig; zoek dan "
+    "op 'berg' in plaats van 'bergen', of op 'bootje' in plaats van 'boot'. Bij 'Meer zoals "
+    "deze' gaat ongeveer de helft over hetzelfde onderwerp."
 )
 UIT_JIJ = "Zoeken op beeld staat uit. Je zet het aan bij Account → Foto's."
 UIT_BEHEER = "Zoeken op beeld staat uit voor dit platform."
