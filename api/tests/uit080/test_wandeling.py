@@ -4,7 +4,9 @@ inhoud of bestand bij die 0.8.0 niet had.
 
 De wandeling staat in wandel.py; antwoorden_080.json is dezelfde wandeling op de code van 0.8.0
 (`3fca440`). Gezichten (X2b) en zoeken op beeld (X3b) geven met de analyse uit dus 501
-not_built("X2") en ("X3"), zoals de stubs van Z0b in 0.8.0.
+not_built("X2") en ("X3"), zoals de stubs van Z0b in 0.8.0. De wandeling draait in een nieuw
+proces, net als de opname: wat eerdere tests in het proces van pytest achterlieten, telt zo niet
+mee (wandel.in_een_nieuw_proces).
 """
 
 from __future__ import annotations
@@ -12,11 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from tests.uit080 import wandel
-
-pytestmark = pytest.mark.anyio
 
 OUD = json.loads((Path(__file__).parent / "antwoorden_080.json").read_text())
 # De tabellen van 0011 en 0012 (A0, vast). Met de analyse uit geen gezicht en geen vector; alleen
@@ -33,8 +31,8 @@ NIEUW = {
 }
 
 
-async def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
-    nu = await wandel.wandel(tmp_path)
+def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
+    nu = wandel.in_een_nieuw_proces(tmp_path)
     # Elke route van 0.8.0 (292 met hun methoden, behalve de stroom /events) voor niemand, Eva,
     # de gast Gijs en de beheerder Jonas: geen route erbij of eraf, en elk antwoord gelijk
     assert len(OUD["antwoorden"]) == 291 * len(wandel.WIE)

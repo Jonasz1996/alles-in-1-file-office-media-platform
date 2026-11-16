@@ -305,6 +305,39 @@ async def wandel(data_dir: Path) -> dict[str, Any]:
     return {"antwoorden": antwoorden, "stand": _stand(data_dir)}
 
 
+def in_een_nieuw_proces(tmp: Path) -> dict[str, Any]:
+    """De wandeling in een nieuw proces, zoals opnemen hem op 0.8.0 deed: zonder wat eerdere tests
+    in het proces van pytest achterlieten. main.lifespan laat app.state.started_at staan (in
+    test_rate_limits.py, test_geo_load.py en test_analyse_monitor.py); dan gaf /admin/status in
+    de volle suite system.started_at en uptime_s, en de melding jobs_stopped, die 0.8.0 in een
+    vers proces niet gaf. De datamap is tmp/data; de uitkomst komt als JSON in tmp/wandeling.json
+    (buiten de datamap: _stand telt elk bestand daarin)."""
+    import subprocess
+    import sys
+
+    api = Path(__file__).resolve().parents[2]
+    data, uit = tmp / "data", tmp / "wandeling.json"
+    data.mkdir()
+    code = (
+        f"import sys; sys.path[:0] = [{str(api)!r}]\n"
+        "import asyncio, json\n"
+        "from pathlib import Path\n"
+        "from tests.uit080 import wandel\n"
+        "uitkomst = asyncio.run(wandel.wandel(Path(sys.argv[1])))\n"
+        "Path(sys.argv[2]).write_text(json.dumps(uitkomst))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(data), str(uit)],
+        cwd=api,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    return json.loads(uit.read_text())
+
+
 def opnemen(doel: str) -> None:
     """Schrijf de wandeling van deze code naar doel (zie de docstring): één antwoord per regel."""
     with tempfile.TemporaryDirectory() as tmp:
