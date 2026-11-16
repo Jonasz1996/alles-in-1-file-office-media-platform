@@ -1382,7 +1382,7 @@ def test_kort_blok_met_de_analyse_en_zonder_een_woord_van_de_vragen() -> None:
     assert len([r for r in blok if r.startswith("poort (stap achtergrond): ")]) == 13
     assert blok[-1] == "uitkomst: rapport"
     assert ("analyse (nep, core 3): voorbereiding klaar na 41.5 s, beeld ok, 300 van 300 foto's "
-            "in het bestand, embed {'done': 300}") in blok  # fmt: skip
+            "in het bestand, embed done 300") in blok  # fmt: skip
     regel = next(r for r in blok if r.startswith("achtergrond: analyse: "))
     assert "embed klaar 300 → 300 (na media) → 300" in regel
     assert "gezichten gescand 0 → 0 (na media) → 120 (open 180), 4 gevonden" in regel
@@ -1572,3 +1572,14 @@ def test_main_met_analyse_tot_de_server(
     assert ("analyse echt (" if echt else "analyse nep (FakeAnalyseWorker)") in uit
     assert ("SFace en het groeperen" if echt else "de echte analyse: --analyse nep") in uit
     assert os.environ.get(runtime.KEY_ENV) is None
+
+
+def test_de_analyse_op_core_3_of_de_hoogste_die_er_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De worker van de analyse krijgt core 3 (media 0-2); een machine of een taskset zonder
+    core 3: de hoogste die dit proces mag gebruiken."""
+    import os
+
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+    assert zs.analyse_core() == 3
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1})
+    assert zs.analyse_core() == 1

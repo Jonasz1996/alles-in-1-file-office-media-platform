@@ -655,8 +655,7 @@ class Analyse:
 
     def start(self) -> None:
         (self.base / "run").mkdir(parents=True, mode=0o700, exist_ok=True)
-        beschikbaar = os.sched_getaffinity(0)
-        self.core = ANALYSE_CORE if ANALYSE_CORE in beschikbaar else max(beschikbaar)
+        self.core = analyse_core()
         with open(self.log, "wb") as uit:
             self.proc = subprocess.Popen(
                 self.argv(self.core),
@@ -688,6 +687,12 @@ class Analyse:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def analyse_core() -> int:
+    """ANALYSE_CORE, of de hoogste core die dit proces mag gebruiken als die er niet bij is."""
+    beschikbaar = os.sched_getaffinity(0)
+    return ANALYSE_CORE if ANALYSE_CORE in beschikbaar else max(beschikbaar)
 
 
 def nep_dienst(socket: str) -> None:
@@ -1438,10 +1443,10 @@ def voorbereiding_regel(ana: dict[str, Any]) -> str:
     v = ana.get("voorbereiding") or {}
     klaar = "klaar" if v.get("klaar") else "NIET klaar (de poort van beeld is dan ongeldig)"
     voortgang = v.get("voortgang") or {}
-    embed = voortgang.get("embed") or {}
+    embed = ", ".join(f"{s} {n}" for s, n in sorted((voortgang.get("embed") or {}).items()))
     return (f"analyse ({ana.get('bron')}, core {ana.get('core')}): voorbereiding {klaar} na "
             f"{v.get('s')} s, beeld {v.get('stand')}, {v.get('in_bestand', 0)} van "
-            f"{v.get('fotos', 0)} foto's in het bestand, embed {embed}")  # fmt: skip
+            f"{v.get('fotos', 0)} foto's in het bestand, embed {embed or '-'}")  # fmt: skip
 
 
 def achtergrond_regel(s: dict[str, Any]) -> str:
@@ -1628,7 +1633,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.analyse == NEP:
         opzet_tekst += ", analyse nep (FakeAnalyseWorker)"
     elif args.analyse:
-        opzet_tekst += f", analyse echt ({Path(args.analyse).name}, core {ANALYSE_CORE})"
+        opzet_tekst += f", analyse echt ({Path(args.analyse).name}, core {analyse_core()})"
     # De belastingtest in de app draait fase a en b (korter dan 120 s alleen b); fase c alleen met
     # spelers buiten de app, fase d met de hand (runbook media.md). kort_blok laat die twee weg.
     opzet_tekst += "; media fase b" if args.duur < 120 else "; media fase a en b"
