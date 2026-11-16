@@ -266,6 +266,13 @@ def test_test_omzetter_echt_draait_beeld_model_van_install_sh():
     script = OMZETTER.read_text(encoding="utf-8")
     assert script.startswith("#!/usr/bin/env bash\n")
     assert "\nset -euo pipefail\n" in script
+    # het opruimen staat meteen na mktemp, vóór de eerste stap die kan falen, en docker_root (dat
+    # cleanup onder set -u leest) staat er al (review I2, V1)
+    werk = script.index('\nWERK=$(mktemp -d "${TMPDIR:-/tmp}/omzettertest.XXXXXX")\n')
+    trap = script.index("\ntrap cleanup EXIT\n")
+    assert script.index("\ndocker_root=$(") < script.index("\ncleanup() {") < werk < trap
+    assert "\n" not in script[werk + 1 : trap], "trap op de regel na mktemp"
+    assert trap < script.index('mkdir -p "$OUT"')
     # install.sh zelf (als bibliotheek), met de analyse aan en de echte compose-bestanden
     assert "export PLATFORM_ROOT=$WERK/platform INSTALL_LIB=1\n" in script
     assert '. "$install_sh"\n' in script
