@@ -343,6 +343,19 @@ describe("de teksten van het gebied beeld", () => {
     );
   });
 
+  it("de uitleg in het Engels zegt alleen wat gemeten is (Keuze 85)", () => {
+    // Gemeten zijn alleen Nederlandse vragen: 'bergen' werd 'berg', 'boot' werd 'bootje' (geen
+    // enkelvoud); de Engelse vragen van BZ4 haalden allemaal 3 of meer van 5.
+    expect(en["switch.hint"]).toBe(
+      "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). " +
+        "This happens on this server; nothing goes outside. Only you can search your own photos this way. Off " +
+        "erases what is kept only for you. Snapshots the administrator makes of the server keep it until they " +
+        "expire. What to expect: one word usually puts a few good photos at the top. Some words find little; " +
+        "then try a different word for the same thing. About half of what 'More like this' shows is about the " +
+        "same subject.",
+    );
+  });
+
   it("de code maakt nooit HTML van een tekst of een naam", () => {
     for (const source of [beeldResultsSource, beeldSwitchSource, beeldSource, statusSource, likeRowSource, beeldBlockSource]) {
       expect(source).not.toMatch(/dangerouslySetInnerHTML|innerHTML|insertAdjacentHTML|outerHTML/);
