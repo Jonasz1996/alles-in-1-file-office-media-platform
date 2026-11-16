@@ -1,5 +1,5 @@
 """Gezichten automatisch (fase 6, X2b; Keuze 64–69) in de browser, alleen met het toetsenbord:
-Tab, Enter, Spatie, Esc, de pijlen, J en N en typen; nergens een klik
+Tab, Enter, Spatie, Esc, de pijlen, J en N, Ctrl+Z en typen; nergens een klik
 (docs/fase-6/toetsenbord-x2.md).
 
 **Met de analyse (de nep-worker).** Een eigen app met PLATFORM_ANALYSE_ENABLED, een map met
@@ -16,7 +16,9 @@ is Cas). Eva:
    rode schijf: het kader valt op het gevonden gezicht, dat is dan ja (de rij Gezichten toont
    Anna in plaats van "?");
 5. na 30 s (VERDICT_WAIT) komt "Is dit Anna?": Enter opent het raster met de focus op het eerste
-   gezicht; J, J, N; Esc: de kaart van Anna is weg, de focus blijft in het blok gezichten;
+   gezicht; J, J, N; de pagina laadt opnieuw zonder Anna, maar het raster blijft open: Ctrl+Z
+   maakt de N ongedaan, en N weer; Esc: de kaart van Anna is weg, de focus blijft in het blok
+   gezichten;
 6. zoekt "anna" (Ctrl+K, ↓ tot de persoon Anna, Enter): de drie foto's van Anna;
 7. "Wie is dit?" → Naam "Cas" (een nieuwe persoon) → Bevestigen: drie gezichten;
 8. Bram (met wie Eva één foto deelt) ziet niets: [] voor die foto, 404 voor de rest, geen
@@ -272,6 +274,27 @@ def is_suggestie(r: Any) -> bool:
     return "/api/v1/search/suggest?" in r.url and r.request.method == "GET"
 
 
+def is_voorstellen(r: Any) -> bool:
+    """GET /people/faces/suggestions zonder person: de kaarten "Is dit …?" (de pagina laadt ze na
+    elke keuze opnieuw)."""
+    pad = r.url.split("?", 1)[0]
+    return r.request.method == "GET" and pad.endswith("/api/v1/people/faces/suggestions")
+
+
+def wacht_op_lading(page: Page, geladen: list[Any], klaar: Callable[[Any], bool], wat: str) -> None:
+    """Wacht tot de pagina een antwoord kreeg (uit geladen, gevuld door page.on) waarvoor klaar
+    waar is."""
+    eind = time.monotonic() + 15
+    gezien = 0
+    while True:
+        while gezien < len(geladen):
+            if klaar(geladen[gezien].json()):
+                return
+            gezien += 1
+        assert time.monotonic() < eind, f"{wat}: de pagina laadde niet opnieuw"
+        page.wait_for_timeout(50)
+
+
 def schakel(page: Page, aan: bool) -> None:
     """De schakelaar onder Account → Foto's, met zijn dialoog: Spatie, de focus op Annuleren, Tab
     naar de knop die het doet, Enter."""
@@ -431,11 +454,29 @@ def test_gezichten_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> 
         expect(cellen.nth(i)).to_have_attribute("aria-label", f"Gezicht {i + 1} van 3: ja")
         expect(cellen.nth(i + 1)).to_be_focused()
     expect(toast(page, "1 gezicht bevestigd als Anna.").first).to_be_visible()
+    geladen: list[Any] = []
+    page.on("response", lambda r: geladen.append(r) if is_voorstellen(r) else None)
     with page.expect_response(post_naar("/people/faces/reject")) as nee:
         page.keyboard.press("n")
     assert nee.value.status == 204
     expect(cellen.nth(2)).to_have_attribute("aria-label", "Gezicht 3 van 3: nee")
     expect(toast(page, "Niet Anna.")).to_be_visible()
+    # Na elke keuze laadt de pagina opnieuw; na deze staat Anna niet meer in de voorstellen. Het
+    # raster blijft toch open, met de keuzes en Ctrl+Z, tot Esc (de lading haalt het niet weg)
+    wacht_op_lading(page, geladen, lambda s: s["people"] == [], "na de laatste keuze")
+    page.wait_for_timeout(500)  # de tijd om de nieuwe lading te tekenen
+    expect(raster).to_have_count(1)
+    expect(cellen.nth(2)).to_be_focused()
+    with page.expect_response(post_naar("/people/faces/reset")) as terug:
+        page.keyboard.press("Control+z")
+    assert terug.value.status == 204
+    expect(cellen.nth(2)).to_have_attribute("aria-label", "Gezicht 3 van 3")
+    expect(cellen.nth(2)).to_be_focused()
+    with page.expect_response(post_naar("/people/faces/reject")) as nee:
+        page.keyboard.press("n")
+    assert nee.value.status == 204
+    expect(cellen.nth(2)).to_have_attribute("aria-label", "Gezicht 3 van 3: nee")
+    expect(toast(page, "Niet Anna.").first).to_be_visible()
     page.keyboard.press("Escape")
     expect(raster).to_have_count(0)
     # Dit was het laatste voorstel: de kaart van Anna is weg, en de focus met hem. Hij staat dan
