@@ -3,7 +3,7 @@
 Plannen; om de beurt (≤ 4 per eigenaar), nieuwste eerst, de viewer vooraan; no_preview → wait,
 dan na preview.large klaar; too_small → skip; alleen foto's; unreadable en bad_output zonder
 nieuwe poging; timeout 3 keer; Defer zonder poging; busy → wait na een crash; "uit" tijdens een
-job: niets geschreven.
+job: niets geschreven; en pas na de backfill van de index (Keuze 65).
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app import jobs
+from app import analysis, jobs
 from app.analyse import monitor, wire
-from app.models import Face, FaceScan, PhotoPref
+from app.models import Face, FaceScan, Job, PhotoPref
 from app.people.faces import crypto, register, scan
 from tests.analyse.fake_worker import FakeFail
 from tests.factories import create_file, create_user, maker
-from tests.people.faces.conftest import BASE, aan, draai, foto, write_large
+from tests.people.faces.conftest import BASE, aan, draai, foto, later, write_large
 
 pytestmark = pytest.mark.anyio
 
@@ -192,6 +192,33 @@ async def test_defer_zonder_poging(settings, nep, fake, make, seconds):
     assert found.value.seconds == seconds
     assert (await _scans(settings))[node][:3] == ("wait", None, 0)
     assert (monitor.DEFER_DOWN, monitor.DEFER_BUSY, monitor.DEFER_MODEL) == (300, 30, 3600)
+
+
+async def test_eerst_de_backfill_van_de_index(settings, nep, fake):
+    """Keuze 65 (K2-07): zolang analysis.backfill loopt of wacht, plant faces.plan niets; het wacht
+    BACKFILL_WAIT_S zonder poging, en daarna gaat alles zoals altijd."""
+    eva = await _eva(settings)
+    node = await foto(settings, nep, eva, "een.jpg", [(BOX, 1)])
+    async with maker(settings)() as session:
+        session.add(Job(type=analysis.BACKFILL, key=analysis.BACKFILL, status="queued",
+                        run_after=BASE + timedelta(days=3650)))  # fmt: skip
+        await session.commit()
+    await aan(settings, eva)
+    with pytest.raises(jobs.Defer) as found:
+        await scan.plan_job(settings, {"scope": "owner", "owner": str(eva)})
+    assert found.value.seconds == scan.BACKFILL_WAIT_S == 60
+    await draai(settings)
+    assert await _scans(settings) == {}
+    assert nep.seen == 0
+    async with maker(settings)() as session:
+        plan = await session.scalar(select(Job).where(Job.type == "faces.plan"))
+        assert (plan.status, plan.attempts) == ("queued", 0)
+        backfill = await session.scalar(select(Job).where(Job.key == analysis.BACKFILL))
+        backfill.status = "done"
+        await session.commit()
+    await later(settings)
+    await draai(settings)
+    assert (await _scans(settings))[node] == ("done", None, 0, 1)
 
 
 async def test_wijken_tijdens_de_opdracht(settings, nep, fake, monkeypatch):
