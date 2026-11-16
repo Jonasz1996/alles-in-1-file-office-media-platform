@@ -13,7 +13,9 @@ de API, de web, `/beheer`, `analyse-bench` en `analyse-kwaliteit` (X2b), en alle
 **Onzichtbaar tot 0.8.1.** De versie blijft 0.8.0; er is geen nieuwe migratie (0001–0012 staan
 vast). `install.sh` doet zonder `ANALYSE` in `.env` precies wat 0.8.0 deed: de standaard staat in
 één constante, `ANALYSE_STANDAARD=uit`, en I2 zet hem op `aan`. Tests en CI zetten hem aan met
-`ANALYSE=aan`. `app/cli.py` houdt `ANALYSE_STUBS` (`analyse-bench` blijft een stub).
+`ANALYSE=aan`. `app/cli.py` houdt `ANALYSE_STUBS` (`analyse-bench` blijft een stub). [I2: zo
+gedaan in P1 (`e0a271e`): `ANALYSE_STANDAARD=aan`, en een gevraagde `ANALYSE=uit` of `BEELD=uit`
+blijft in `.env` staan ([integratie-2.md](integratie-2.md)).]
 
 Gebouwd op de tak `wip/golf5-x2a`, vanaf `b1a128e` (A0 met stap 0 van X3a: `onnxw.py` en
 `api/tests_analyse/`), in de worktree `/home/user/wt-g5-x2a`, naast X3a. Niet gepusht.
@@ -142,7 +144,8 @@ en niet pas na zijn eigen prctl (review golf 5, veilig F6; zie De review).
 - [docs/runbooks/analyse.md](../runbooks/analyse.md): het deel van X2 (wat het script doet, de
   stand en elke reden, de afscherming, uit, de sleutels, terug naar 0.8.0).
 - `infra/single/README.md`: `dc()` met de bestanden van de analyse, "Wat er draait", en de
-  sectie "Gezichten: de container analyse (tot 0.8.1 uit)".
+  sectie "Gezichten: de container analyse (tot 0.8.1 uit)". [I2: die sectie heet nu "Gezichten en
+  zoeken op beeld: de container analyse".]
 
 ## Vormen die X2b (en X3) gebruiken
 
@@ -237,6 +240,8 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    een gewone tweede run start niets opnieuw.
 8. **Een gevraagde `ANALYSE=uit` zonder regel in `.env` voegt geen regel toe**: een ontbrekende
    `ANALYSE` blijft ontbreken tot 0.8.1, zodat `.env` byte voor byte die van 0.8.0 blijft.
+   [I2: sinds 0.8.1 komt een gevraagde `ANALYSE=uit` wel in `.env` (P1, `e0a271e`), anders zette
+   de volgende run zonder `ANALYSE` de analyse weer aan.]
 9. **`BEELD` komt niet in `.env`** (`merge_analyse_env`): dat is van X3 en hoort pas bij beeld.
 10. **`app/cli.py`** (van A0) is aangeraakt: `_analyse_status` gebruikt `status.collect`, en de
     uitleg noemt de extra regels. Drie exacte verwachtingen in `test_analyse_monitor.py` gaan nu
@@ -270,9 +275,10 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
 
 ## Open
 
-1. **CI na de push**: `api-analyse` en `analyse-image` hebben nog niet gedraaid. Het echte image
+1. ~~**CI na de push**: `api-analyse` en `analyse-image` hebben nog niet gedraaid. Het echte image
    bouwt alleen in CI; lokaal draaide `test_analyse_container.sh` tegen een stand-in (de echte
-   Dockerfile zonder de web-stap en zonder apt).
+   Dockerfile zonder de web-stap en zonder apt).~~ [I2: beide groen op `e535332` (run
+   43892193604), `api-analyse` met 330 goed en 16 niet gekozen.]
 2. ~~**De telling na het samenvoegen met X3a** (`ANALYSE_TESTS`, `ANALYSE_DESELECTED` in `ci.yml`).~~
    [Golf 5: 188 en 11 (`ac6950c`); zie De samenvoeging (golf 5).]
 3. ~~**X2b**: de keten in de app, `group` (ops en `test_worker_group.py`, `test_group_perf.py`),
@@ -280,6 +286,8 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    `analyse-kwaliteit`, `e2e/test_zoek_gezichten_echt.py` in `analyse-image`,~~ `df` op `DATA_ROOT`
    (K2-19), ~~het runbook `gezichten.md` en de README over wat er bewaard wordt.~~
    [Golf 6: gebouwd door X2b ([x2b.md](x2b.md)); `df` voor gezichten blijft open, x2b.md Open 7.]
+   [I2: `df` op `DATA_ROOT` voor gezichten is er sinds P1 (`e0a271e`): `gezichten_ruimte`
+   waarschuwt onder 105 MB vrij, nooit fataal.]
 4. ~~**X3**: `BEELD` in `.env`, de handlers van `zoeken`, `caps.beeld`, de omzetter.~~ [Golf 5: de
    omzetter is er (X3a) en draait via de dienst `analyse-omzetten`; de rest blijft van X3b.]
    [Golf 6: de rest gebouwd door X3b ([x3b.md](x3b.md)).]
@@ -287,8 +295,9 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    beslist laag 4 (Vraag 8: standaard op de LXC).
 6. De standaarden van de vragen blijven staan (Vraag 8 nee, 10 (a), 11 uit, 12b nee, 13 twee
    leveringen, 14 250 ms); B49–B70, Vraag 4 en Vraag 8–14 zijn niet als besloten gemarkeerd.
-7. **`e2e/test_office_o2.py::test_samen_bewerken_geeft_een_versie_met_beide_teksten` was één
-   keer rood** (de office-e2e met de nep-DS, terwijl ernaast de volle API-suite van X3a op
+7. ~~**`e2e/test_office_o2.py::test_samen_bewerken_geeft_een_versie_met_beide_teksten` was één
+   keer rood**~~ [I2: hersteld in P5 (`919d7f8`): Bram sluit pas als zijn statusregel weet dat
+   Anna weg is; geen grens veranderd.] (de office-e2e met de nep-DS, terwijl ernaast de volle API-suite van X3a op
    dezelfde cores draaide): na Sluiten bleef Bram op `/bewerken/…`. Alleen draaide hij 15 keer
    groen (10 keer op 12 november, 5 keer onder het slot op 15 november, 7–13 s per keer). De
    oorzaak is een race tussen de test en de opmaak, niet iets van golf 5: `web/` en `e2e/` zijn
