@@ -1,5 +1,5 @@
 """Gezichten automatisch (fase 6, X2b; Keuze 64–69) in de browser, alleen met het toetsenbord:
-Tab, Enter, Spatie, Esc, de pijlen, J en N, Ctrl+Z en typen; nergens een klik
+Tab, Enter, Spatie, Esc, de pijlen, J en N, Ctrl+Z, Ctrl+K en typen; nergens een klik
 (docs/fase-6/toetsenbord-x2.md).
 
 **Met de analyse (de nep-worker).** Een eigen app met PLATFORM_ANALYSE_ENABLED, een map met
@@ -24,11 +24,16 @@ is Cas). Eva:
 8. Bram (met wie Eva één foto deelt) ziet niets: [] voor die foto, 404 voor de rest, geen
    personen, geen uitsnede, en zijn /fotos/personen vraagt geen route van gezichten;
 9. zet gezichten uit (het dialoog "Gezichten uitzetten?"): 0 gezichten (API), de sleutel is weg,
-   Anna en Cas blijven op de bevestigde foto's.
+   Anna en Cas blijven op de bevestigde foto's;
+10. de beheerder ziet op /beheer → Zoeken en foto's het blok Gezichten (de analyse werkt, de
+    kwaliteit is niet gemeten); Spatie op "Gezichtsherkenning toestaan" vraagt eerst (Esc laat
+    alles zoals het was), "Verbieden en wissen" verbiedt het (Eva ziet dat onder Account), en
+    Spatie staat het meteen weer toe, zonder dat Eva daardoor aan staat.
 
-Eerst de foto's, dan aanzetten: groeperen (full) gaat hooguit één keer per uur, zodra de rij van de
-eigenaar leeg is (group.maybe_full). Zo ziet de eerste ronde alle zeven gezichten; met uploaden na
-het aanzetten hangt dat af van wanneer de rij even leeg is (docs/fase-6/x2b.md, Open).
+Eerst de foto's, dan aanzetten: groeperen (full) gaat zodra de rij van de eigenaar leeg is
+(group.maybe_full), hooguit één keer per uur. Zo ziet de eerste ronde alle zeven gezichten; wat na
+een full binnenkomt, groepeert de ronde van elk uur (docs/fase-6/x2b.md, Vormen), en zo lang wacht
+deze test niet.
 
 **Zonder de analyse** (de server van de sessie, zoals 0.8.0): de gebruiker en de beheerder zien
 niets nieuws, en de web vraagt geen enkele route van gezichten.
@@ -257,6 +262,10 @@ class Verkeer:
 
 def patch_instellingen(r: Any) -> bool:
     return r.request.method == "PATCH" and r.url.endswith("/api/v1/me/photo-settings")
+
+
+def patch_beheer(r: Any) -> bool:
+    return r.request.method == "PATCH" and r.url.endswith("/api/v1/admin/search")
 
 
 def post_naar(pad: str) -> Callable[[Any], bool]:
@@ -592,6 +601,52 @@ def test_gezichten_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> 
     expect(page.get_by_role("link", name=re.compile(r"^Anna"))).to_have_count(1)
     expect(page.get_by_role("link", name=re.compile(r"^Cas"))).to_have_count(1)
     expect(page.get_by_role("heading", name="Wie is dit?")).to_have_count(0)
+
+    # --- /beheer: het blok Gezichten, verbieden en weer toestaan (Keuze 67) ---
+    beheer = aan.context_as(wereld.admin).new_page()
+    beheer.goto("/beheer/zoeken")
+    blok = beheer.locator("section[aria-labelledby=admin-faces-title]")
+    expect(blok.locator('[data-search="faces-analyse"]')).to_have_text("werkt")
+    expect(blok.locator('[data-search="faces-quality"]')).to_have_text("niet gemeten")
+    expect(blok.locator('[data-search="faces-users"]')).to_have_text("0")
+    toestaan = blok.get_by_role("checkbox", name="Gezichtsherkenning toestaan", exact=True)
+    expect(toestaan).to_be_checked()
+    tab_to(beheer, toestaan, limit=80)
+    beheer.keyboard.press("Space")
+    verbieden = beheer.get_by_role("dialog", name="Gezichtsherkenning verbieden?")
+    expect(verbieden).to_be_visible()
+    expect(verbieden.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    beheer.keyboard.press("Escape")  # niets veranderd
+    expect(verbieden).to_be_hidden()
+    expect(toestaan).to_be_checked()
+    expect(toestaan).to_be_focused()
+    beheer.keyboard.press("Space")
+    expect(verbieden).to_be_visible()
+    beheer.keyboard.press("Tab")
+    expect(verbieden.get_by_role("button", name="Verbieden en wissen", exact=True)).to_be_focused()
+    with beheer.expect_response(patch_beheer) as verboden:
+        beheer.keyboard.press("Enter")
+    assert verboden.value.status == 200, verboden.value.text()
+    assert verboden.value.json()["faces"]["allowed"] is False
+    expect(toestaan).not_to_be_checked()
+    expect(toestaan).to_be_focused()
+    eva_stand = server.call(eva, "GET", f"{API}/me/photo-settings", expect=200).json()
+    assert (eva_stand["faces"], eva_stand["faces_forbidden"]) == ("uit", True)
+    page.goto("/account")
+    schakelaar = page.get_by_role("checkbox", name="Gezichten herkennen in mijn foto's", exact=True)
+    expect(schakelaar).not_to_be_checked()
+    verbod = "De beheerder heeft gezichtsherkenning uitgezet"
+    expect(schakelaar).to_have_accessible_description(verbod)
+    # Weer toestaan: zonder dialoog, en niemand staat daardoor aan
+    with beheer.expect_response(patch_beheer) as toegestaan:
+        beheer.keyboard.press("Space")
+    assert toegestaan.value.status == 200, toegestaan.value.text()
+    assert toegestaan.value.json()["faces"]["allowed"] is True
+    expect(beheer.get_by_role("dialog")).to_have_count(0)
+    expect(toestaan).to_be_checked()
+    expect(toestaan).to_be_focused()
+    eva_stand = server.call(eva, "GET", f"{API}/me/photo-settings", expect=200).json()
+    assert (eva_stand["faces"], eva_stand["faces_forbidden"]) == ("uit", False)
 
 
 # --- 2. zonder de analyse: precies 0.8.0 ------------------------------------------------------
