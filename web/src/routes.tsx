@@ -1,6 +1,6 @@
 // De routetabel (frozen na P0; fase 4 voegt /bewerken/:id toe, van O0; fase 5 de pagina's van
-// media en muziek, van M0; fase 6 de kaart, personen en dubbele bestanden, van Z0). Elke pagina is
-// lazy:
+// media en muziek, van M0; fase 6 de kaart, personen en dubbele bestanden, van Z0, en /over, van
+// I2). Elke pagina is lazy:
 // load() wacht op het chunk én op de woordenboeken die de pagina nodig heeft, zodat t() meteen
 // werkt bij de eerste render.
 
@@ -76,7 +76,11 @@ export const routes: readonly RouteDef[] = [
   route("/fotos/personen/:id", () => import("./photos/people/PersonPage"), people, "photos_people.person", "photos", own),
   route("/dubbel", () => import("./dupes/DupesPage"), ["dupes"], "dupes.title", "files", own),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
-  route("/account", () => import("./Account"), ["account"], "account.title", "account"),
+  // Account linkt naar /over (I2): daarom ook het gebied about, met alleen die twee zinnen erbij
+  route("/account", () => import("./Account"), ["account", "about"], "account.title", "account"),
+  // Fase 6 (I2, Keuze 29 en K1-13): de bronnen en licenties. Voor iedereen die is ingelogd, ook een
+  // gast, en met de analyse aan of uit; een eigen chunk zonder aanroepen (about/AboutPage.tsx)
+  route("/over", () => import("./about/AboutPage"), ["about"], "about.title", null),
   // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office
   // is hij er niet (de pagina zegt dan "niet gevonden", zoals in fase 3)
   route("/bewerken/:id", () => import("./office/EditorPage"), ["office"], "office.title", null),
