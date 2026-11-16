@@ -2048,3 +2048,184 @@ De telling van `api-analyse`: `ANALYSE_TESTS` 281 (278 en de 3 nieuwe van
 `test_beeld_int8_klein.py`), `ANALYSE_DESELECTED` 16 (`52dd177`). Geen poort, drempel of test
 lager, `beeld_vragen.tsv` en `models.lock` niet veranderd, geen afhankelijkheid, host, model of
 action erbij; de omzetter is niet veranderd.
+
+## CI op 669f03c
+
+Twee jobs rood op `669f03c`: `API analyse` (twee varianten van één test) en `beeld-model` (de twee
+poorten van BZ4 die ook fp32 niet haalt, zie "CI op 011bf2d"). De rest groen.
+
+### API analyse: een variant die alleen met VNNI goed rekent
+
+`test_elke_variant_bouwt_en_rekent[beeld-per tensor + q_max 127]` en `[tekst-per tensor + q_max
+127]` rood (2 van de 281), letterlijk uit het log:
+
+```
+cos per item beeld = [0.9794978, 0.98845686, 0.97265358]  (eis ≥ 0.99)
+cos per item tekst = [0.99013178, 0.9907632, 0.99252191, 0.99138095, 0.98945253]
+```
+
+Dezelfde graaf was groen op de runner van `011bf2d` (toen heette de variant `q_max 127`, en per
+tensor was de standaard) en is groen in de sandbox, die VNNI heeft.
+
+**De oorzaak.** Per tensor (`DynamicQuantizeMatMul`) rekent onnxruntime op x86 zonder VNNI met de
+U8S8-kern (`vpmaddubsw`): die telt twee buren langs K op in int16. Met de invoer in uint8 (tot 255,
+nulpunt rond 128) en een gewicht tot |127| kan zo'n paar 255 × 127 × 2 = 64.770 worden, boven
+32.767, en dan verzadigt het. Daarom heeft de omzetter `Q_MAX` 64 (zie "CI op 7569d48"). De
+variant `per tensor + q_max 127` van `test_beeld_int8_klein.py` zette die grens op 127 en rekende
+daarmee; op een runner zonder VNNI kan dat niet goed gaan.
+
+**Nagerekend.** Een script (in de scratch van deze ronde, niet in de repo) bouwt dezelfde grafen
+als de test en vervangt elke `DynamicQuantizeMatMul` door dezelfde som met de paren van (even,
+oneven) langs K, op de ruwe uint8 en geknipt op int16. Dat geeft alle acht cosinussen van de CI tot
+op de 8 decimalen van het log (verschil 1e-9 tot 5e-9). Zonder knippen is het op deze host (met
+VNNI) bit voor bit gelijk aan onnxruntime, bij q_max 127 op elke node en de uitvoer. Bij q_max 64
+en 32 verzadigt geen enkel paar, en is de nabootsing met of zonder knippen bit voor bit gelijk aan
+onnxruntime. Een controle die op (a − nulpunt) knipt in plaats van op de ruwe a, verzadigt 2 paren
+in het beeld en 0 in de tekst en blijft op cos ±0,9997: de getallen van de CI vragen echt de
+verzadiging op de ruwe uint8. Met q_max 127 verzadigen in de eerste laag van het beeld 2.237 van de
+1.179.648 paren van qkv en 1.899 van fc1; in de tekst 1.801 (qkv) en 9.064 (fc1). Het log zegt niet
+welke CPU de runner had; "geen VNNI" volgt uit die exacte overeenkomst.
+
+**Het herstel** (`b83a49b`). De variant heet nu `per tensor + q_max 32`: per tensor, met een grens
+onder 64, zodat hij op elke CPU hetzelfde rekent. De test eist voor elke variant `q_max` ≤ `LINEAR`
+(64) en zegt het in de docstring. Op deze host met de nabootsing zonder VNNI en met onnxruntime
+gelijk: cos beeld laagste 0,99835, tekst laagste 0,99840 (marge ±0,008 op 0,99), 0 verzadigde
+paren. 127 komt nog alleen voor in tests van grafen die niet rekenen
+(`test_q_max_gaat_door_naar_per_kolom` en `test_per_token_met_een_gewicht_boven_64_is_een_fout`).
+De telling blijft 281 en 16: dezelfde test, een andere naam voor de variant. Geen drempel lager
+(COS 0,99 blijft), de omzetter niet veranderd.
+
+### beeld-model
+
+BZ1 (de vijf hosts bereikbaar), BZ3, BZ6 en BZ7 goed. BZ2: twee omzettingen met dezelfde sha256
+voor alle vijf bestanden (8,5 en 8,0 s, maxrss 352 MiB), ook met `--fp32` (14,8 s, 1.606 MiB). `set`
+gaf weer 120 foto's met 1 tweede keus (`kat+sneeuw`), en `beeld_niet.tsv` sloeg 49 kandidaten over.
+pytest: `bz3` 4 goed, `bz4` 2 fout en 4 goed in 34,2 s, `bz4r` 5 goed in 162,7 s, `bz6` 1 goed.
+
+**De pins van `VERSIE` 3.** Uit het voorstel van BZ2; ze gaan met X3b in `models.lock` (alleen als
+de bytes van de omzetter dan nog dezelfde zijn). De bronnen zijn niet veranderd.
+
+| Bestand | sha256 | bytes |
+|---|---|---|
+| `beeld.int8.onnx` | `ddc76fc08a1c30bd0d0b8fa997f5f8fa44c0cbe25b9f04d81859fa41cb877a5b` | 102.609.072 |
+| `tekst.int8.onnx` | `258337dbc659cfebc72850ca0ce8fdec4c50c726da35790893569eb8a10bfd1a` | 284.248.004 |
+| `tokenizer.bin` | `1516dde1739c181c24fcaef51d49e49ae26bea112490ff57799f945e7666b8ec` | 12.414.446 |
+| `meta.json` | `dfb3d153f941cd0ea549922f34c584f81730a43708539fff879e6d85a6d49af1` | 2.376 |
+| `siglip2-Apache-2.0.txt` | `0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594` | 10.174 |
+
+Het rapport (`kort.txt` en `bz4r.txt`), letterlijk:
+
+```
+BZ4 set: 120 foto's uit voorstel-beeld.tsv, previews met app.render.image
+BZ4 nl: precisie@5 0.692 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 combinaties: 6/6 in de top 10 (poort ≥ 5), plekken [4, 1, 2, 3, 1, 6] — goed
+BZ4 int8 tegen fp32: precisie@5 0.692 tegen 0.692, zakt 0.000 (poort ≤ 0.05) — goed
+BZ4 meer zoals deze: 0.475 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 zelftest kleuren: 3/3 bovenaan — goed
+BZ4 engels (rapport): precisie@5 0.833
+BZ4 256 tegen 1024 (rapport): precisie@5 0.692 tegen 0.700; zakt 0.008 (256 blijft)
+BZ4 MIN_TEKST (rapport): kans goed p5 0.0, niet goed p95 0.0
+BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 0.4757, anders p95 0.6394
+BZ4 torens (rapport): precisie@5 nl tekst int8 + beeld fp32 0.700, tekst fp32 + beeld int8 0.692 (beide int8 0.692, beide fp32 0.692)
+BZ4 fp32 (rapport): engels 0.833 (int8 0.833), meer zoals deze 0.463 (int8 0.475), MIN_FOTO zelfde p5 0.4805 anders p95 0.642, MIN_TEKST kans goed p5 0.0 niet goed p95 0.0, combinaties 6/6 plekken [4, 1, 2, 3, 1, 9]
+BZ4 cos int8 tegen fp32 (rapport): tekst nl p5 0.9979 mediaan 0.9991 laagste 0.9972 (zandstrand); beeld p5 0.9838 mediaan 0.994 laagste 0.9667 (berg-3)
+BZ4 één per keer (rapport): tekst int8 precisie@5 0.692 (in batches van 16: 0.692), cos tegen batch p5 1.0; beeld int8 cos tegen batch p5 1.0, meer zoals deze 0.475
+BZ4 buren uit dezelfde batch (rapport): int8 0.463, fp32 0.471 (toeval 0.126)
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: strand 3/3/3/3, zandstrand 3/3/3/3, hond 5/5/5/5, een hond 3/3/3/4, kat 5/5/5/5, poes 5/5/5/5, sneeuw 5/5/5/5, een sneeuwlandschap 5/5/5/5
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 2/3: auto 3/3/3/3, personenauto 2/1/2/1, fiets 4/4/4/4, een fiets 4/4/4/4, berg 3/3/3/4, bergen 0/0/0/0, bos 4/4/4/4, een bos 4/4/4/4
+BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 3/3: stad 2/1/2/2, een stad 3/3/3/3, eten 4/4/4/4, een maaltijd 2/3/2/2, boot 0/1/0/0, bootje 4/4/4/4, zonsondergang 5/5/5/5, ondergaande zon 5/5/5/5
+BZ4 en per vraag (rapport, int8/fp32): beach 3/3, dog 4/4, cat 5/5, snow 4/4, bicycle 4/4, sunset 5/5
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 1/4: strand 0.417/0.458 (fout int8: zonsondergang 4, berg 3, sneeuw 3; fp32: zonsondergang 4, berg 2, boot 2) | hond 0.600/0.650 (fout int8: kat 3, anders-vogel 2, anders-paard 1; fp32: anders-vogel 3, kat 2, anders-vliegtuig 1) | kat 0.833/0.750 (fout int8: anders-paard 2, anders-vogel 2; fp32: anders-vogel 3, anders-paard 1, bos 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 2/4: sneeuw 0.583/0.556 (fout int8: anders-paard 3, stad 3, zonsondergang 2; fp32: anders-paard 4, bos 2, stad 2) | auto 0.250/0.250 (fout int8: anders-vliegtuig 3, sneeuw 3, stad 3; fp32: anders-vliegtuig 3, stad 3, fiets 2) | fiets 0.550/0.550 (fout int8: auto 2, sneeuw 2, anders-gitaar 1; fp32: auto 3, sneeuw 2, anders-paard 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 3/4: berg 0.250/0.250 (fout int8: zonsondergang 5, bos 3, anders-paard 2; fp32: zonsondergang 5, anders-paard 3, bos 3) | bos 0.400/0.400 (fout int8: zonsondergang 5, berg 3, anders-bloem 2; fp32: zonsondergang 4, berg 3, anders-bloem 2) | stad 0.500/0.458 (fout int8: auto 6, zonsondergang 3, anders-brug 1; fp32: auto 7, zonsondergang 3, anders-brug 1)
+BZ4 meer zoals deze per categorie (rapport, int8/fp32) 4/4: eten 0.400/0.350 (fout int8: anders-bloem 5, anders-insect 2, zonsondergang 2; fp32: anders-bloem 6, anders-insect 2, zonsondergang 2) | boot 0.500/0.450 (fout int8: strand 4, anders-brug 3, anders-vliegtuig 1; fp32: strand 4, anders-brug 2, anders-vliegtuig 1) | zonsondergang 0.458/0.458 (fout int8: bos 3, strand 3, berg 2; fp32: bos 3, strand 3, anders-vogel 2)
+BZ4 zwakke vragen (rapport) 1/4: bergen (nl; int8 0/5, fp32 0/5): int8 anders-trein-5 boot-1 anders-kerk-2 hond-1 auto+sneeuw; fp32 anders-trein-5 boot-1 anders-kerk-2 hond-1 boot-2
+BZ4 zwakke vragen (rapport) 2/4: boot (nl; int8 0/5, fp32 1/5): int8 anders-stoel-1 anders-boek-5 anders-paard-1 anders-paard-4 anders-gitaar-2; fp32 anders-stoel-1 anders-boek-5 anders-paard-1 anders-gitaar-2 boot-4
+BZ4 zwakke vragen (rapport) 3/4: personenauto (nl; int8 2/5, fp32 1/5): int8 auto-1 sneeuw-2 sneeuw-3 anders-trein-5 auto+sneeuw; fp32 auto-1 sneeuw-2 zonsondergang-5 sneeuw-3 anders-trein-5
+BZ4 zwakke vragen (rapport) 4/4: stad (nl; int8 2/5, fp32 1/5): int8 anders-brug-1 stad-3 auto+sneeuw stad-2 sneeuw-2; fp32 anders-brug-1 auto+sneeuw stad-3 sneeuw-2 anders-stoel-3
+BZ4 meer zoals deze top 1 (rapport): int8 0.667 (40/60), fp32 0.667 (40/60)
+BZ6 beeld int8 op 1 core(s): 32.4 ms per foto uit 256.webp, 1852 per minuut (poort ≥ 500) — goed
+BZ6 vraag (tokenizer + tekst int8): p50 19.9 ms, p95 20.4 ms (voorwaarde ≤ 250 ms), eerste 21.5 ms, met laden 491 ms; maxrss 861 MiB — goed
+BZ4 cpu (rapport): Intel(R) Xeon(R) 6975P-C; vnni ja
+BZ4 gewicht int8 beeld (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0178, slechtste 0.0307 (laag 0 fc2); met 127 mediaan 0.0090
+BZ4 gewicht int8 tekst (rapport): fout per Linear met |q| ≤ 64 mediaan 0.0161, slechtste 0.0236 (laag 0 fc2); met 127 mediaan 0.0081
+BZ4 invoer beeld (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 5 fc2 max 152 = 274× rms (token 15 patch, kanaal 1449), fout 0.320/0.319/0.014/0.015; laag 9 fc2 max 1.49e+03 = 605× rms (token 7 patch, kanaal 1038), fout 0.118/0.087/0.005/0.991; laag 6 fc2 max 20.3 = 111× rms (token 62 patch, kanaal 3019), fout 0.081/0.080/0.028/0.033
+BZ4 afwijking per laag beeld (rapport): cos int8/fp32 gemiddeld over de patches na laag 0..11: 0.99927 0.99815 0.99719 0.99644 0.99597 0.99571 0.99454 0.99198 0.99008 0.98884 0.98369 0.98209; uitvoer 0.99395
+BZ4 invoer tekst (rapport; fout per tensor in de batch/per tensor alleen/per token/per token na glad): laag 1 fc2 max 10.5 = 137× rms (token 24 pad, kanaal 151), fout 0.099/0.086/0.049/0.024; laag 6 fc2 max 9.17 = 102× rms (token 19 pad, kanaal 1928), fout 0.086/0.081/0.048/0.033; laag 7 fc2 max 7.42 = 93× rms (token 12 pad, kanaal 51), fout 0.069/0.052/0.031/0.038
+BZ4 afwijking per laag tekst (rapport): cos int8/fp32 op token 63 na laag 0..11: 0.99656 0.99658 0.99602 0.99553 0.99561 0.99614 0.99662 0.99728 0.99731 0.99789 0.99821 0.99799; uitvoer 0.99927
+BZ4 variant fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.463, cos beeld p5 1.0000 tekst p5 1.0000; beeld 378 MB 71.0 ms per foto, tekst 1129 MB 67.6 ms per vraag
+BZ4 variant zoals nu (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.475, cos beeld p5 0.9838 tekst p5 0.9980; beeld 103 MB 30.7 ms per foto, tekst 284 MB 27.6 ms per vraag
+BZ4 variant per tensor (v2) (rapport): nl 0.450 (zakt 0.242, slechtste 0/5), engels 0.767, combinaties 6/6, meer zoals deze 0.287, cos beeld p5 0.5820 tekst p5 0.8756; beeld 103 MB 20.8 ms per foto, tekst 284 MB 18.4 ms per vraag
+BZ4 variant fc2 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.458, cos beeld p5 0.9883 tekst p5 0.9992; beeld 188 MB 43.7 ms per foto, tekst 369 MB 40.0 ms per vraag
+BZ4 variant mlp fp32 (rapport): nl 0.683 (zakt 0.008, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.463, cos beeld p5 0.9928 tekst p5 0.9993; beeld 272 MB 56.5 ms per foto, tekst 454 MB 53.9 ms per vraag
+BZ4 variant aandacht fp32 (rapport): nl 0.700 (zakt -0.008, slechtste 0/5), engels 0.867, combinaties 6/6, meer zoals deze 0.467, cos beeld p5 0.9886 tekst p5 0.9982; beeld 187 MB 43.4 ms per foto, tekst 369 MB 40.4 ms per vraag
+BZ4 variant kop fp32 (rapport): nl 0.683 (zakt 0.008, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.479, cos beeld p5 0.9845 tekst p5 0.9981; beeld 124 MB 31.1 ms per foto, tekst 286 MB 27.5 ms per vraag
+BZ4 variant laag 0-3 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.458, cos beeld p5 0.9962 tekst p5 0.9990; beeld 187 MB 44.8 ms per foto, tekst 369 MB 41.4 ms per vraag
+BZ4 variant laag 8-11 fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.471, cos beeld p5 0.9837 tekst p5 0.9982; beeld 187 MB 45.5 ms per foto, tekst 369 MB 41.9 ms per vraag
+BZ4 variant per token + glad (rapport): nl 0.592 (zakt 0.100, slechtste 1/5), engels 0.667, combinaties 5/6, meer zoals deze 0.304, cos beeld p5 0.5867 tekst p5 0.9980; beeld 103 MB 32.7 ms per foto, tekst 284 MB 29.4 ms per vraag
+BZ4 variant embedding fp32 (rapport): nl 0.692 (zakt 0.000, slechtste 0/5), engels 0.833, combinaties 6/6, meer zoals deze 0.475, cos beeld p5 0.9838 tekst p5 0.9985; beeld 103 MB 33.0 ms per foto, tekst 873 MB 28.9 ms per vraag
+```
+
+### Wat het rapport zegt
+
+- **Int8 is gelijk aan fp32.** Precisie@5 nl 0,692 tegen 0,692 (zakt 0,000), engels 0,833 tegen
+  0,833, combinaties 6/6, cos tegen fp32 p5 0,984 (beeld) en 0,998 (tekst). Per token (`VERSIE` 3)
+  doet wat "CI op 011bf2d" verwachtte. Eén per keer of in batches van 16 geeft hetzelfde (cos tegen
+  de batch p5 1,0): een vector hangt niet meer van zijn batch af.
+- **BZ6 ruim.** 32,4 ms per foto op één core (1.852 per minuut, poort ≥ 500), een vraag p95
+  20,4 ms. Op de traagste runner tot nu zou dat ±115 ms zijn (zie "Open na 011bf2d"); deze runner
+  was snel.
+- **256 tegen 1024** zakt 0,008, onder de 0,02 van Keuze 77: X3 rekent uit 256.webp.
+- **Geen variant haalt de twee poorten.** Bovenop per token geven fc2, mlp, aandacht, kop, laag
+  0-3, laag 8-11 en embedding in fp32 nl 0,683 tot 0,700 en "meer zoals deze" 0,458 tot 0,479;
+  elke variant heeft een vraag met 0/5. Per token + glad zakt weer (0,592). Per tensor (`VERSIE` 2)
+  geeft 0,450, zoals op `011bf2d`.
+- **De twee rode poorten zijn het model, niet de omzetting.** fp32 heeft ze ook:
+  - "bergen" 0/5 in int8 en fp32. De top 5 is in beide een trein, een boot, een kerk en een hond,
+    en daarbij in int8 een auto in de sneeuw, in fp32 nog een boot; "berg" haalt 3/5. Een vermoeden (niet gemeten): het model leest "bergen" als de stad Bergen.
+  - "boot" 0/5 in int8, 1/5 in fp32 (een stoel, een boek, paarden, een gitaar); "bootje" haalt
+    4/5. Ook een vermoeden: het model leest "boot" als het Engelse woord.
+  - "Meer zoals deze" 0,475 van de top 4 (fp32 0,463), de naaste buur klopt in 0,667. Per
+    categorie: kat 0,833 en hond 0,600 het best, berg en auto 0,250 het slechtst. Berg gaat vooral
+    naar zonsondergang (5) en bos (3), auto naar vliegtuig, sneeuw en stad (3 elk), stad naar auto
+    (6).
+
+### De vraag aan Jonas
+
+De poorten blijven zoals ze zijn (Keuze 83). Op 2026-11-16 ging een kaart naar Jonas met drie
+keuzes: **toch uitbrengen** (voorgesteld: zoeken op beeld komt in 0.8.1, standaard uit per
+gebruiker, de twee poorten worden in een nieuwe keuze ondergrenzen op wat nu gemeten is, en de
+zwakke vragen staan in de uitleg), **uitstellen** (0.8.1 brengt alleen gezichten) of **B/16 meten**
+(±3 × trager per foto, boven de 120 ms van BZ6, en niet zeker dat het de twee punten haalt). Tot
+het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze twee.
+
+### Open na 669f03c
+
+- **Het antwoord van Jonas** op de kaart hierboven.
+- **De pins van `VERSIE` 3** gaan met X3b in `models.lock`.
+- **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
+  helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
+  poort.
+
+### De review
+
+Een tweede lezing van `b83a49b` gaf niets dat moest, twee punten die zouden moeten en vier kleine.
+Ze bootste los van de eerste een CPU zonder VNNI na (elk `DynamicQuantizeMatMul` en
+`MatMulInteger` met de paren geknipt op int16) en vond de getallen van de CI terug tot op ±7
+decimalen. Elke variant die de test nu draait is met en zonder VNNI bit voor bit gelijk (grootste
+paar 30.530 bij |q| 64, 15.361 bij |q| 32; de grens is 255 × 64 × 2 = 32.640), de laagste cos is
+0,998. Ook per tensor met q_max 64 en per tensor + glad met q_max 64, die ze erbij nam, zijn gelijk.
+Het nulpunt van de invoer doet er niet toe (de kern corrigeert het met kolomsommen), en K is overal
+een veelvoud van 4. CI draait alleen op x64.
+
+| Punt | Wat er gebeurde |
+|---|---|
+| **ZOU 1** Geen sectie "CI op 669f03c" in x3a.md | Deze sectie |
+| **ZOU 2** De job `api-analyse` zegt niet welke CPU de runner heeft; "geen VNNI" moest uit de getallen volgen | De stap `Cores` schrijft nu de CPU en welke van `avx512_vnni`, `avx_vnni` en `amx_int8` er zijn (of "geen"); de telling verandert niet |
+| **N1** "Elke variant die rekent houdt \|q\| ≤ 64" klopt niet voor de embedding van de tekst (127) | De docstring zegt nu "het gewicht van elke Linear", en dat de embedding 127 houdt omdat daar geen matmul in gehele getallen zit (Gather, Cast, Mul) |
+| **N2** "zoals 7569d48" noemt een commit, niet de CI-run | "zoals CI op 7569d48" |
+| **N3** De bewaking zag een impliciete `Q_MAX` niet, en gaf bij `"q_max": None` een TypeError | `top = bouw.Q_MAX` als de variant geen `q_max` zet, anders die waarde; dan `top ≤ LINEAR` |
+| **N4** (optioneel) De getallen van 669f03c vastpinnen met de nabootsing, zoals die van 7569d48 in `test_onnxw_ort.py` | Niet gedaan: dat is een test erbij en het voegt niets toe aan de juistheid; de nabootsing en haar uitkomst staan hierboven |
+
+Na de punten: `test_beeld_int8_klein.py` 60 goed, `tests_analyse` telt 281 en 16 gedeselecteerd,
+de tests die `ci.yml` lezen 246 goed, ruff en yamllint schoon.

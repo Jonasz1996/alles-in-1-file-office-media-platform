@@ -17,11 +17,13 @@ rekent (cosinus ≥ 0,99 met de numpy-versie), en elke optie doet wat ze belooft
 - meet: de invoer van elke Linear en de residu na elke laag als uitvoer, zonder de gewone
   uitvoer te veranderen.
 
-Elke variant die rekent houdt |q| ≤ 64 (LINEAR): dan past een paar van uint8 maal int8 in int16 en
-rekent onnxruntime op elke CPU hetzelfde, met of zonder VNNI (test_onnxw_ort.py). Met 127 rekent
-per tensor alleen met VNNI goed: CI op 669f03c gaf op een runner zonder VNNI cosinus 0,973 (beeld)
-en 0,989 (tekst), zoals 7569d48. Daarom is die variant per tensor + q_max 32; 127 komt alleen nog
-in een graaf die niet rekent (test_q_max_gaat_door_naar_per_kolom, de bouw in
+In elke variant die rekent houdt het gewicht van elke Linear |q| ≤ 64 (LINEAR): dan past een paar
+van uint8 maal int8 in int16 en rekent onnxruntime op elke CPU hetzelfde, met of zonder VNNI
+(test_onnxw_ort.py). De embedding van de tekst houdt 127 (EMBEDDING): Gather, Cast en Mul, geen
+matmul in gehele getallen. Met 127 in een Linear rekent per tensor alleen met VNNI goed: CI op
+669f03c gaf op een runner zonder VNNI cosinus 0,973 (beeld) en 0,989 (tekst), zoals CI op 7569d48.
+Daarom is die variant per tensor + q_max 32; 127 in een Linear komt alleen nog voor in een graaf
+die niet rekent (test_q_max_gaat_door_naar_per_kolom, de bouw in
 test_per_token_met_een_gewicht_boven_64_is_een_fout).
 
 Met één neuron × 100 (E6 van de analyse) eist de test alleen wat zeker is (per token los van de
@@ -187,9 +189,10 @@ GEVALLEN = [
 
 @pytest.mark.parametrize(("toren", "naam"), GEVALLEN)
 def test_elke_variant_bouwt_en_rekent(km, toren, naam):
-    """Bouwt, rekent en ligt binnen COS van numpy, op elke CPU: geen variant boven |q| 64."""
+    """Bouwt, rekent en ligt binnen COS van numpy, op elke CPU: geen Linear boven |q| 64."""
     opties = dict(VARIANTEN[naam])
-    assert opties.get("q_max", LINEAR) <= LINEAR, naam
+    top = bouw.Q_MAX if opties.get("q_max") is None else opties["q_max"]
+    assert top <= LINEAR, naam
     if opties.get("glad") == GLAD:
         opties["glad"] = _glad_geijkt(km, toren)
     if opties.get("meet") == MEET:

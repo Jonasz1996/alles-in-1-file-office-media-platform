@@ -153,6 +153,10 @@ jobs:
         run: |
           n="$(nproc)"
           echo "cores: $n"
+          # int8 per tensor rekent zonder VNNI anders (CI op 669f03c): zeg welke CPU dit is
+          echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
+          vnni="$(grep -owE 'avx512_vnni|avx_vnni|amx_int8' /proc/cpuinfo | sort -u | tr '\n' ' ' || true)"
+          echo "vnni/amx: ${vnni:-geen}"
           if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
           echo "CORES=$cores" >> "$GITHUB_ENV"
       - name: De modellen van models.lock (cache op de sha256 van de lock)
