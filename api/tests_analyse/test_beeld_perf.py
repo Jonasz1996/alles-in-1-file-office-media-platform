@@ -18,6 +18,22 @@ de worker met zijn kinderen (die erven het van de test).
 - Elk antwoord is echt zoeken op beeld (geen fallback) met treffers.
 - De heap van het testproces staat in gc.freeze zolang de test loopt, zoals serve.freeze_heap
   dat in de echte app na de start doet (frozen_heap hieronder).
+
+**Met modellen van de echte vorm** (BEELD_PERF_MODELLEN en BEELD_PERF_LOCK, samen; de een zonder
+de ander faalt): dezelfde test met die map en die lock in plaats van de nep, bijvoorbeeld SigLIP 2
+op ware grootte met willekeurige gewichten (siglip_vol.py, omgezet zoals de job beeld-model). Dan
+telt het tekstmodel van ware grootte op één core mee in elke vraag, met dezelfde grens van 100 ms.
+Dat is strenger dan het ontwerp: daar is 100 ms alles behalve het tekstmodel, en het geheel met het
+echte model is BZ6 (≤ 250 ms, in de belastingtest). Op de sandbox van I2 haalde de echte vorm
+100 ms niet bij 100.000 foto's (p95 105,7 ms warm en 113,0 ms na opwarmen; het tekstmodel kost
+daar ±40 ms per vraag op één core), de nep wel (69,0 en 68,8 ms).
+
+Vóór de eerste vraag laadt een embed_text in zoeken de tokenizer en het tekstmodel (de regel
+"beeld-perf tekstmodel laden" noemt de tijd; 1,65 s op de sandbox). Dat is langer dan
+PLATFORM_BEELD_DEADLINE_MS (800 ms): de eerste vraag na de start van de worker valt in de app terug
+op slow. Zoeken laadt dan verder en houdt het model (nagegaan op de sandbox: na 800 ms afgebroken,
+hetzelfde kind, de volgende embed_text 40 ms). Wat gemeten wordt, is daarna. Zonder die
+variabelen verandert er niets.
 """
 
 from __future__ import annotations
@@ -36,7 +52,9 @@ import numpy as np
 import pytest
 
 from app import db
-from app.analyse import monitor
+from app.analyse import client as analyse
+from app.analyse import monitor, wire
+from app.analyse.wire import Op
 from app.analysis import VERSIONS, Step
 from app.beeld import cache as bcache
 from app.beeld import jobs as bjobs
@@ -49,7 +67,7 @@ from tests.beeld.nep import run_jobs
 from tests.conftest import admin, anyio_backend, certs, client  # noqa: F401
 from tests.test_files import root
 from tests.test_shares import person
-from tests_analyse import echt, fake_beeld, fake_models
+from tests_analyse import echt, fake_beeld, fake_models, siglip_vol
 
 pytestmark = pytest.mark.anyio
 
@@ -58,6 +76,7 @@ VRAGEN = 40
 NIEUW = 20
 GRENS_MS = 100.0
 STUK = 10_000
+MODELLEN_ENV, LOCK_ENV = "BEELD_PERF_MODELLEN", "BEELD_PERF_LOCK"
 
 
 def _alle_draden(cpus: set[int]) -> None:
@@ -96,9 +115,11 @@ def frozen_heap():
 
 @pytest.fixture
 def worker(tmp_path, een_kern):
-    gezichten = fake_models.install(tmp_path / "modellen")
-    fake_beeld.install(gezichten)
-    with echt.EchteWorker(tmp_path / "worker", gezichten) as w:
+    modellen = siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV)
+    if modellen is None:
+        modellen = fake_models.install(tmp_path / "modellen")
+        fake_beeld.install(modellen)
+    with echt.EchteWorker(tmp_path / "worker", modellen) as w:
         yield w
 
 
@@ -214,6 +235,18 @@ def p95(waarden: list[float]) -> float:
     return rij[max(0, math.ceil(0.95 * len(rij)) - 1)]
 
 
+async def _tekstmodel_laden(settings: Settings) -> float:
+    """embed_text één keer (in zoeken, zoals rank): de tokenizer en het tekstmodel in het
+    geheugen van zoeken. Geeft de seconden."""
+    uit = wire.out_memfd("uit")
+    begin = time.perf_counter()
+    try:
+        await analyse.call(settings, Op.EMBED_TEXT, wire.EmbedTextArgs(text="opwarmen"), fds=[uit])
+    finally:
+        wire.close_all([uit])
+    return time.perf_counter() - begin
+
+
 async def _vraag(client, headers, q: str) -> float:  # noqa: F811
     begin = time.perf_counter()
     r = await client.get("/api/v1/search", params={"mode": "image", "q": q}, headers=headers)
@@ -246,6 +279,9 @@ async def test_p95_bij_55000_en_100000_fotos(
         assert r.status_code == 200, r.text
         await run_jobs(settings)
         map_ = uuid.UUID((await root(client, eva))["folder"]["id"]).hex
+        if siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV) is not None:
+            laden = await _tekstmodel_laden(settings)
+            print(f"\nbeeld-perf tekstmodel laden (echte vorm, één core): {laden:.2f} s")
         klaar = 0
         for n in (N_KLEIN, N_GROOT):
             _vul(dbpad, eigenaar, map_, klaar, n - klaar)

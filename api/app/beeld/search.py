@@ -14,7 +14,9 @@ Is de klok op, de container weg of het model er niet, dan Fallback(reden): de ro
 treffers van gewoon zoeken (Keuze 9) met fallback slow, down of no_model.
 
 Een drempel (MIN_TEKST, MIN_FOTO) op sigmoid(scale · cos + bias): onder de grens valt een treffer
-weg. BZ4 stelt de grenzen vast; tot dan 0 (alles telt).
+weg. BZ4 gaf geen grens die goed van niet goed scheidt (de kans van een goede treffer heeft p5
+0,0; de cosinus van "Meer zoals deze" overlapt tussen zelfde en andere categorie), dus beide 0:
+elke treffer telt. tests/beeld/test_beeld_drempels.py houdt ze vast.
 
 Nooit in een log of een antwoord: de vraag, de vector, de score (K1-16).
 """
@@ -52,7 +54,8 @@ from app.search.types import BeeldHour, IndexProgress, SearchPage, SearchParams
 log = logging.getLogger("platform.beeld")
 
 Reason = Literal["slow", "down", "no_model"]
-MIN_TEKST = 0.0  # BZ4; tot dan telt elke treffer
+# BZ4 (x3a.md, "CI op 3a9b07d" en "CI op 669f03c"): geen grens scheidt goed van niet goed, dus 0
+MIN_TEKST = 0.0
 MIN_FOTO = 0.0
 SQL_MS = 40  # de klok van Z1 op stap 5
 HOUR_S = 3600.0

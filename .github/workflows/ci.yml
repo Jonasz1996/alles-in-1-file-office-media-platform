@@ -1388,13 +1388,19 @@ jobs:
   # 0, nice 19 en RLIMIT_DATA van werk, geen sleutel); werk na SIGKILL en na 8 opdrachten; stoppen
   # en starten; de omzetter zonder OMZET_BRON; en de logs zonder sleutel, merkteken of
   # "geheimwoord7". De regels goed en FOUT gaan naar analyse.txt, voor "=== kort ===". Het image
-  # is alleen hier te bouwen: wat dit script toetst, blijkt pas na de push.
+  # is alleen hier te bouwen: wat dit script toetst, blijkt pas na de push. Daarna X2b (de echte
+  # scan in de e2e) en, achter een eigen poort, X3: de echte bron van SigLIP 2 in de dienst
+  # analyse-omzetten met beeld_model van install.sh (test_omzetter_echt.sh; x3a.md Open 9).
   analyse-image:
     name: Analyse-image (de container analyse met de echte modellen)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 min voor alles tot X2b; daarbij hooguit 15 min voor de echte bron in analyse-omzetten
+    # (de timeout-minutes van die stap; alleen als de poort ja zegt)
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git diff over de push of de PR (de poort van de omzetter)
       - uses: docker/setup-buildx-action@v3
       - name: Platform-image bouwen (de cache van images)
         id: bouw
@@ -1440,6 +1446,64 @@ jobs:
           uv run --with playwright python -m pytest ../e2e/test_zoek_gezichten_echt.py \
             -m analyse_echt -q -rs | tee "$uit"
           grep -Eq '^1 passed in ' "$uit"
+      # X3 (x3a.md Open 9): de echte bron van SigLIP 2 in de dienst analyse-omzetten, zoals
+      # install.sh hem op de LXC omzet. Alleen als iets verandert dat die omzetting raakt (het
+      # image, uv.lock, install.sh, de compose-bestanden, de omzetter en wat hij leest,
+      # models.lock, de test zelf), of als de PR een regel "beeld-model: ja" heeft: dezelfde
+      # poort als de job beeld-model, want de bron is ±1,55 GB van huggingface.co, elke keer
+      # (nooit uit een cache; K2-03). De tekst van de PR gaat via env en komt niet in het log
+      - name: 'Moet de echte bron door analyse-omzetten? (git diff, of "beeld-model: ja" in de PR)'
+        id: omzet-poort
+        if: ${{ !cancelled() }}
+        env:
+          SOORT: ${{ github.event_name }}
+          ACTIE: ${{ github.event.action }}
+          VOOR: ${{ github.event.before }}
+          NA: ${{ github.event.after }}
+          SHA: ${{ github.sha }}
+          BASIS: ${{ github.event.pull_request.base.sha }}
+          KOP: ${{ github.event.pull_request.head.sha }}
+          PR_TEKST: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/analyse-image"
+          paden=(Dockerfile api/uv.lock infra/single/install.sh infra/single/compose.yaml)
+          paden+=(infra/single/compose.analyse.yaml infra/single/compose.analyse-limits.yaml)
+          paden+=(api/app/analyse/worker/omzetten api/app/analyse/tokenizer.py api/app/analyse/onnxw.py)
+          paden+=(api/app/analyse/lock.py api/app/analyse/models.lock api/app/analyse/licenties)
+          paden+=(infra/single/tests/test_omzetter_echt.sh)
+          if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
+            van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
+          elif [ "$SOORT" = pull_request ]; then
+            van="$BASIS"; tot="$KOP"; reeks="$BASIS...$KOP"
+          else
+            van="$VOOR"; tot="$SHA"; reeks="$VOOR..$SHA"
+          fi
+          if printf '%s\n' "$PR_TEKST" | tr -d '\r' | grep -Eq '^[[:space:]]*beeld-model:[[:space:]]*ja[[:space:]]*$'; then
+            draaien=ja; reden='de PR zegt "beeld-model: ja"'
+          elif ! git cat-file -e "${van:-x}^{commit}" 2> /dev/null || ! git cat-file -e "${tot:-x}^{commit}" 2> /dev/null; then
+            draaien=ja; reden="geen vorige commit om mee te vergelijken"
+          elif gewijzigd=$(git diff --name-only "$reeks" -- "${paden[@]}") && [ -n "$gewijzigd" ]; then
+            draaien=ja; reden="gewijzigd: $(echo "$gewijzigd" | head -n 5 | tr '\n' ' ')"
+          else
+            draaien=nee; reden="geen wijziging in het image, install.sh, compose, de omzetter of models.lock"
+          fi
+          echo "draaien=$draaien" >> "$GITHUB_OUTPUT"
+          echo "omzetten: draaien $draaien ($reden)" | tee "$RUNNER_TEMP/analyse-image/omzet-poort.txt"
+      # beeld_model van install.sh (INSTALL_LIB=1) met de echte compose-bestanden en platform:ci:
+      # de vijf bronnen van huggingface.co (sha256 van models.lock), de omzetting als uid 10004
+      # (read_only, network none, /tmp 64 MB, 3 GB en 1 cpu), elk bestand van de uitkomst gelijk
+      # aan zijn regel in models.lock (siglip2-b32-256, url -), de bron weg. df vooraf, na
+      # beeld_model en na het opruimen. Als root (sudo -n), zoals install.sh
+      - name: De echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh, X3)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' && steps.omzet-poort.outputs.draaien == 'ja' }}
+        timeout-minutes: 15
+        env:
+          OMZETTER_IMAGE: platform:ci
+          OMZETTER_OUT: ${{ runner.temp }}/analyse-image
+        run: |
+          mkdir -p "$OMZETTER_OUT"
+          bash infra/single/tests/test_omzetter_echt.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1455,6 +1519,15 @@ jobs:
           echo "X2b de echte scan in de e2e (test_zoek_gezichten_echt.py):"
           if [ -f "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" ]; then
             tail -n 1 "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
+          echo "X3 de echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh):"
+          sed 's/^/  /' "$RUNNER_TEMP/analyse-image/omzet-poort.txt" 2> /dev/null || echo "  de poort liep niet"
+          if [ -s "$RUNNER_TEMP/analyse-image/omzetter.txt" ]; then
+            sed 's/^/  /' "$RUNNER_TEMP/analyse-image/omzetter.txt"
+          elif [ -f "$RUNNER_TEMP/analyse-image/omzetter.txt" ]; then
+            echo "  begon, maar kwam niet tot een controle (zie het log van de stap)"
           else
             echo "  liep niet"
           fi
@@ -1525,6 +1598,7 @@ jobs:
           paden+=(tests_analyse/test_beeld_kwaliteit.py tests_analyse/test_beeld_echt_perf.py)
           paden+=(tests/analyse/sets/beeld_tokens.tsv tests/analyse/sets/beeld_vragen.tsv tests/analyse/sets/beeld.tsv)
           paden+=(tests_analyse/test_beeld_int8_lagen.py tests/analyse/sets/beeld_niet.tsv)
+          paden+=(tests/beeld/piek.py)
           if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
             van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
           elif [ "$SOORT" = pull_request ]; then

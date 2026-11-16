@@ -15,7 +15,8 @@ beeld_echt.py). Nooit met het bestand van Gemma (K1-14, K2-14).
   van `tokenizers` (Vraag 12b: nee), wel een tweede blik op hetzelfde bestand.
 - **tokenizer.bin** van de omzetter is precies Tokenizer.from_json(echt).to_bin().
 - **BZ7**: tokenizer.bin laden in een vers proces: ≤ 0,5 s (de mediaan van drie) en ≤ 100 MB
-  erbij (maxrss na het laden min ervoor, het hoogste van drie).
+  erbij (VmHWM van het kind na het laden min zijn VmRSS ervoor, het hoogste van drie; tests/beeld/
+  piek.py. Niet ru_maxrss: dat erft bij exec de piek van pytest, en dan was "erbij" 0).
 """
 
 from __future__ import annotations
@@ -23,15 +24,14 @@ from __future__ import annotations
 import json
 import random
 import statistics
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from app.analyse.tokenizer import Tokenizer
 from app.analyse.worker import omzetten
-from tests_analyse.beeld_echt import API, SETS, Verslag, omgeving
+from tests.beeld import piek
+from tests_analyse.beeld_echt import SETS, Verslag, omgeving
 
 pytestmark = pytest.mark.beeld_echt
 
@@ -286,31 +286,8 @@ def test_bz3_tokenizer_bin_is_from_json(echt, ons, bin_pad):
     assert gelijk
 
 
-_LAAD = (
-    "import json,resource,sys,time\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "from app.analyse.tokenizer import Tokenizer\n"
-    "voor = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
-    "t = time.perf_counter()\n"
-    "tok = Tokenizer.load(sys.argv[2])\n"
-    "s = time.perf_counter() - t\n"
-    "na = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
-    "tok.encode('hond op het strand')\n"
-    "print(json.dumps({'s': s, 'erbij': (na - voor) * 1024, 'maxrss': na * 1024}))\n"
-)
-
-
 def test_bz7_tokenizer_bin_laden(bin_pad):
-    metingen = []
-    for _ in range(3):
-        uit = subprocess.run(
-            [sys.executable, "-I", "-c", _LAAD, str(API), str(bin_pad)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
-        )
-        metingen.append(json.loads(uit.stdout))
+    metingen = [piek.laad(bin_pad) for _ in range(3)]
     s = statistics.median(m["s"] for m in metingen)
     erbij = max(m["erbij"] for m in metingen)
     verslag = Verslag("bz7")
