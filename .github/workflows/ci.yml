@@ -1458,6 +1458,7 @@ jobs:
           paden+=(../tools/beeld tests_analyse/beeld_echt.py tests_analyse/test_beeld_tokenizer_echt.py)
           paden+=(tests_analyse/test_beeld_kwaliteit.py tests_analyse/test_beeld_echt_perf.py)
           paden+=(tests/analyse/sets/beeld_tokens.tsv tests/analyse/sets/beeld_vragen.tsv tests/analyse/sets/beeld.tsv)
+          paden+=(tests_analyse/test_beeld_int8_lagen.py tests/analyse/sets/beeld_niet.tsv)
           if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
             van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
           elif [ "$SOORT" = pull_request ]; then
@@ -1584,6 +1585,18 @@ jobs:
           if grep -q "^SKIPPED" "$WERK/bz6.txt"; then
             echo "BZ6 overgeslagen" && exit 1
           fi
+      # Alleen een rapport, nooit een poort (x3a.md, "CI op 3a9b07d"): waar int8 het verlies maakt,
+      # per Linear, per laag en per variant van de omzetter. Mag falen (continue-on-error, || true)
+      # en duurt hooguit 15 min; Uitslag leest het niet. Geen netwerk: de bron en de set van hierboven
+      - name: BZ4 rapport int8 per laag en varianten (geen poort)
+        if: ${{ !cancelled() && steps.omzetten.outcome == 'success' && steps.set.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          tsv="$PWD/tests/analyse/sets/beeld.tsv"
+          if [ ! -f "$tsv" ]; then tsv="$WERK/voorstel-beeld.tsv"; fi
+          BEELD_BRON="$WERK/bron" BEELD_MODEL="$WERK/uitfp32" BEELD_SET="$WERK/set" BEELD_SET_TSV="$tsv" BEELD_RAPPORT="$WERK" \
+            uv run --no-sync pytest -q -m beeld_echt -rs tests_analyse/test_beeld_int8_lagen.py | tee "$WERK/bz4r.txt" || true
       - name: Uitslag (rood zolang models.lock of beeld.tsv een voorstel is)
         if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}
         run: python3 -I ../tools/beeld/beeld_model.py uitslag --werk "$WERK"
@@ -1610,7 +1623,7 @@ jobs:
           else
             echo "beeld-model: liep niet"
           fi
-          for stap in bz3 bz4 bz6; do
+          for stap in bz3 bz4 bz4r bz6; do
             if [ -f "$WERK/$stap.txt" ]; then
               echo "pytest $stap: $(tail -n 1 "$WERK/$stap.txt")"
             fi
