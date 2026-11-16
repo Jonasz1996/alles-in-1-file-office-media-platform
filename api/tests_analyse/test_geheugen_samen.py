@@ -21,6 +21,16 @@ tijdens het herladen bij de grens van de cache plus de import: vóór de samenvo
 Cache.get de oude matrix van Eva vast tot na het laden (zoeken 801 MB in plaats van 507 MB;
 test_beeld_cache.py::test_herladen_laat_het_oude_bestand_los_voor_het_laden).
 
+**Met modellen van de echte vorm** (ANALYSE_GEHEUGEN_MODELLEN en ANALYSE_GEHEUGEN_LOCK, samen; de
+een zonder de ander faalt): dezelfde test met die map en die lock in plaats van de nep, bijvoorbeeld
+SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py, omgezet zoals de job
+beeld-model) en de echte YuNet en SFace. Dan laadt werk vóór de groepsronde YuNet, SFace en het
+beeldmodel (een faces- en een embed-opdracht, zoals tijdens de backfill), en laadt zoeken de
+tokenizer en het tekstmodel bij de vraag midden in de ronde. ECHT_ERBIJ en IMPORT (de schatting
+van wat de nep niet kost, en de ruimte van zoeken naast de cache met de nep) gelden dan niet: de
+poort is de som ≤ 2,5 GB en elk kind onder zijn RLIMIT_DATA, en de regel noemt per kind het
+gemeten getal en zijn RLIMIT_DATA. Zonder die variabelen verandert er niets.
+
 Wat alleen CI of de LXC meet: het echte SigLIP 2 en YuNet en SFace in dezelfde container, en de
 piek van de cgroup (memory.peak onder mem_limit: 3g). Zie x3b.md, Open 3.
 """
@@ -35,6 +45,7 @@ from pathlib import Path
 import anyio
 import numpy as np
 import pytest
+from PIL import Image
 
 from app.analyse import client, wire
 from app.analyse.wire import Child, Op
@@ -55,6 +66,7 @@ OPEN, BEKEND = 60_000, 6_000
 EVA, BRAM = "e" * 32, "b" * 32
 N_EVA, N_BRAM = 100_000, 36_000
 STUK = 10_000
+MODELLEN_ENV, LOCK_ENV = "ANALYSE_GEHEUGEN_MODELLEN", "ANALYSE_GEHEUGEN_LOCK"
 
 
 def vectoren(path: Path, n: int, gen: int, seed: int) -> None:
@@ -136,12 +148,40 @@ def kinderen(pid: int) -> dict[Child, int]:
     return uit
 
 
+def echte_vorm() -> fake_models.Installed | None:
+    """De map en lock van ANALYSE_GEHEUGEN_MODELLEN en ANALYSE_GEHEUGEN_LOCK, of None zonder
+    beide; met maar één van de twee faalt de test (geen stille terugval op de nep)."""
+    root, lock = os.environ.get(MODELLEN_ENV), os.environ.get(LOCK_ENV)
+    if not root and not lock:
+        return None
+    if not root or not lock:
+        pytest.fail(f"{MODELLEN_ENV} en {LOCK_ENV} horen samen")
+    return fake_models.Installed(Path(root), Path(lock))
+
+
 @pytest.fixture
 def worker(tmp_path):
-    gezichten = fake_models.install(tmp_path / "modellen")
-    fake_beeld.install(gezichten)
-    with echt.EchteWorker(tmp_path / "worker", gezichten) as w:
+    modellen = echte_vorm()
+    if modellen is None:
+        modellen = fake_models.install(tmp_path / "modellen")
+        fake_beeld.install(modellen)
+    with echt.EchteWorker(tmp_path / "worker", modellen) as w:
         yield w
+
+
+async def werk_laadt_alles(settings) -> None:
+    """Een faces-opdracht (YuNet en SFace) en een embed-opdracht (het beeldmodel) in werk: dan
+    houdt werk alle drie vast tijdens de groepsronde, zoals na de backfill."""
+    foto = echt.webp(Image.new("RGB", (256, 256), (200, 120, 90)))
+    gevonden, _ = await echt.faces(settings, [foto])
+    assert [p.code for p in gevonden.photos] == ["ok"]
+    fds = [echt.preview(foto)]
+    uit = wire.out_memfd("uit")
+    try:
+        data = await client.call(settings, Op.EMBED_IMAGE, wire.EmbedImageArgs(), fds=[*fds, uit])
+    finally:
+        wire.close_all([*fds, uit])
+    assert [p.code for p in wire.EmbedImageData.model_validate(data).photos] == ["ok"]
 
 
 async def test_groeperen_een_volle_cache_en_herladen_tegelijk_onder_2_5_gb(worker, tmp_path):
@@ -151,7 +191,10 @@ async def test_groeperen_een_volle_cache_en_herladen_tegelijk_onder_2_5_gb(worke
     vectoren(eva2, N_EVA, 2, seed=2)
     vectoren(bram, N_BRAM, 1, seed=3)
     data = groep()
+    echte = echte_vorm() is not None
     with Meter(worker.pid) as meter:
+        if echte:
+            await werk_laadt_alles(s)
         # De cache vol: Eva en Bram opgewarmd (k = 0), zoals bjobs.warm na een build
         assert await rank(s, EVA, eva1, 1, k=0) == []
         assert await rank(s, BRAM, bram, 1, k=0) == []
@@ -190,15 +233,31 @@ async def test_groeperen_een_volle_cache_en_herladen_tegelijk_onder_2_5_gb(worke
     hwm = {soort: guard._status(pid)["VmHWM"] * 1024 for soort, pid in na.items()}
     pid1 = guard._status(worker.pid)["VmHWM"] * 1024
     som = pid1 + sum(hwm.values())
-    erbij = sum(ECHT_ERBIJ.values())
-    print(
-        f"\nBZ5 met de nepmodellen: pid 1 {pid1 / MB:.0f} MB, werk {hwm[Child.WERK] / MB:.0f} MB,"
-        f" zoeken {hwm[Child.ZOEKEN] / MB:.0f} MB (maxrss); som {som / MB:.0f} MB, piek tegelijk"
-        f" {meter.piek / MB:.0f} MB; met de echte modellen erbij {(som + erbij) / MB:.0f} MB"
-    )
+    if echte:
+        # De modellen zitten er zelf in: geen schatting erbij; de som is de poort, en elk kind
+        # blijft onder zijn RLIMIT_DATA
+        print(
+            f"\nBZ5 met modellen van de echte vorm: pid 1 {pid1 / MB:.0f} MB, werk"
+            f" {hwm[Child.WERK] / MB:.0f} MB (RLIMIT_DATA"
+            f" {wire.CHILDREN[Child.WERK].rlimit_data / MB:.0f}), zoeken"
+            f" {hwm[Child.ZOEKEN] / MB:.0f} MB (RLIMIT_DATA"
+            f" {wire.CHILDREN[Child.ZOEKEN].rlimit_data / MB:.0f}) (maxrss); som {som / MB:.0f} MB"
+            f" (poort {GRENS / MB:.0f} MB), piek tegelijk {meter.piek / MB:.0f} MB"
+        )
+        assert som <= GRENS
+        for soort, waarde in hwm.items():
+            assert waarde < wire.CHILDREN[soort].rlimit_data, (soort, waarde)
+    else:
+        erbij = sum(ECHT_ERBIJ.values())
+        print(
+            f"\nBZ5 met de nepmodellen: pid 1 {pid1 / MB:.0f} MB, werk {hwm[Child.WERK] / MB:.0f}"
+            f" MB, zoeken {hwm[Child.ZOEKEN] / MB:.0f} MB (maxrss); som {som / MB:.0f} MB, piek"
+            f" tegelijk {meter.piek / MB:.0f} MB; met de echte modellen erbij"
+            f" {(som + erbij) / MB:.0f} MB"
+        )
+        assert hwm[Child.ZOEKEN] <= wire.ANALYSE_BEELD_CACHE_MB * MB + IMPORT
+        assert som + erbij <= GRENS
+        for soort, waarde in hwm.items():
+            assert waarde + ECHT_ERBIJ[soort] < wire.CHILDREN[soort].rlimit_data, (soort, waarde)
     assert meter.piek <= som
-    assert hwm[Child.ZOEKEN] <= wire.ANALYSE_BEELD_CACHE_MB * MB + IMPORT
-    assert som + erbij <= GRENS
-    for soort, waarde in hwm.items():
-        assert waarde + ECHT_ERBIJ[soort] < wire.CHILDREN[soort].rlimit_data, (soort, waarde)
     assert b"Traceback" not in worker.stderr()
