@@ -17,6 +17,7 @@ import datetime as dt
 import gc
 import json
 import random
+import threading
 import time
 from pathlib import Path
 
@@ -234,11 +235,13 @@ def frozen_heap():
     """De heap van dit testproces gaat in gc.freeze zolang de tijdtest loopt, zoals frozen_heap
     in tests/search/test_search_rebuild.py (b74e1ae), test_media_loadtest en
     tests/beeld/test_beeld_gen, en zoals python -m app.serve dat na de start doet
-    (serve.freeze_heap). In de hele api-suite komt deze test na ±4.000 andere, en heeft het
-    proces honderdduizenden objecten van eerdere tests; een volle ronde van de gc daarover viel
-    in de meting, en dan kostte 10.000 namen 0,52 tot 0,56 s (docs/fase-6/z0.md, a0.md). Dat is
-    de rest van de suite, niet de parser. Wat de parser zelf aan afval maakt, ruimt de gc nog
-    steeds op, en de grens van 0,5 s blijft."""
+    (serve.freeze_heap). Een volle ronde van de gc gaat dan niet over wat eerdere tests hebben
+    achtergelaten; wat de parser zelf aan afval maakt, ruimt de gc nog steeds op, en de grens
+    van 0,5 s blijft. Zonder freeze viel er bij een losse run één volle ronde in de meting, in
+    de eerste van de drie keer. Dat de hele api-suite 0,514 tot 0,561 s gaf, en een losse run
+    één keer 0,505 s (docs/fase-6/z0.md, z1.md, a0.md), is daarmee niet verklaard: de beste
+    van drie mist zo'n ene ronde. Daarom noemt de melding bij rood de drie tijden, de volle
+    rondes en de draden."""
     gc.collect()
     gc.freeze()
     yield
@@ -250,15 +253,22 @@ def test_fuzz_10000_namen_met_vaste_seed(frozen_heap):
     top = dt.date.today().year + 1
     # De beste van drie keer, elke keer zonder wat de parser onthoudt: een gedeelde machine
     # (CI, een tweede agent) kan één keer haperen; de parser zelf wordt zo niet sneller
-    elapsed = 9.0
+    rounds = []
+    full = gc.get_stats()[2]["collections"]
     for _ in range(3):
         names._movie_core.cache_clear()
         started = time.perf_counter()
         results = [
             names.parse(name, "shows" if episode else "movies") for name, *_, episode in cases
         ]
-        elapsed = min(elapsed, time.perf_counter() - started)
-    assert elapsed < 0.5, f"10.000 namen in {elapsed:.3f} s"
+        rounds.append(time.perf_counter() - started)
+    full = gc.get_stats()[2]["collections"] - full
+    elapsed = min(rounds)
+    assert elapsed < 0.5, (
+        f"10.000 namen in {elapsed:.3f} s (de drie keer: "
+        f"{', '.join(f'{r:.3f}' for r in rounds)}; volle gc-rondes: {full}; "
+        f"draden: {sorted(t.name for t in threading.enumerate())})"
+    )
     for (name, title, year, episode), got in zip(cases, results, strict=True):
         assert got.year is None or names.YEAR_MIN <= got.year <= top, name
         if any(c.isalpha() for c in name.rsplit(".", 1)[0]):
