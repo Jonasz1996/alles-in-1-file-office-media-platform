@@ -260,6 +260,12 @@ JPEG_BEGIN = b"\xff\xd8\xff"  # de eerste bytes van elke JPEG (SOI en het begin 
 PREVIEW = 1024  # de lange kant van 1024.webp (app.render.SIZES)
 INVOER = 256  # de zijde van de invoer van het beeldmodel (meta.json; SigLIP 2 B/32 op 256)
 KOLOMMEN = ("sleutel", "categorieen", "licentie", "sha256", "bytes", "url", "bron")
+# beeld_niet.tsv (lees_niet): de foto's die een voorstel nooit neemt, met waarom. Alleen om een
+# van deze vier redenen, die een mens aan de foto en zijn pagina ziet, nooit om een score van het
+# model (runbook analyse, stap 4)
+NIET_KOLOMMEN = ("bron", "reden", "gezien")
+NIET_REDENEN = ("persoon", "kunstwerk", "niet-zichtbaar", "toont-categorie")
+UITGESLOTEN = "uitgesloten (beeld_niet.tsv)"  # de reden in REDENEN
 _SLEUTEL = re.compile(r"[a-z]+(-[a-z]+)?-[1-9]|[a-z]+\+[a-z]+")
 _SHA = re.compile(r"[0-9a-f]{64}")
 
@@ -1174,6 +1180,103 @@ def _telling(fotos: list[Foto], combis: list[tuple[str, ...]]) -> None:
             raise Fout(f"beeld.tsv: de vaste foto {a}+{b} van beeld_vragen.tsv ontbreekt")
 
 
+@dataclass(frozen=True)
+class Niet:
+    """Een regel van beeld_niet.tsv: een foto die een voorstel nooit neemt."""
+
+    bron: str
+    reden: str  # een van NIET_REDENEN
+    gezien: str  # waar een mens hem zag, zoals "stad-5 op 3a9b07d"
+    regel: int  # het regelnummer in het bestand
+
+
+def _bron_sleutel(bron_: str) -> str:
+    """Waarop beeld_niet.tsv een bron vergelijkt: zonder procentcodering en met _ voor een spatie.
+    Zo is "R%C3%A4v" gelijk aan "R%c3%a4v", en "File:Twee%20woorden" aan "File:Twee_woorden"."""
+    return urllib.parse.unquote(bron_).replace(" ", "_")
+
+
+def lees_niet(tekst: str | None) -> dict[str, Niet]:
+    """beeld_niet.tsv, streng nagekeken, op _bron_sleutel. Fout met het regelnummer in het bestand
+    (commentaar en lege regels tellen mee, zoals in een editor). None (geen bestand) is een lege
+    lijst: dan is een voorstel hetzelfde als zonder de lijst."""
+    if tekst is None:
+        return {}
+    uit: dict[str, Niet] = {}
+    kop = False
+    for nr, regel in enumerate(tekst.splitlines(), start=1):
+        if not regel or regel.startswith("#"):
+            continue
+        v = regel.split("\t")
+        if not kop:
+            if tuple(v) != NIET_KOLOMMEN:
+                raise Fout(
+                    f"beeld_niet.tsv regel {nr}: de eerste regel hoort {' '.join(NIET_KOLOMMEN)}"
+                )
+            kop = True
+            continue
+        if len(v) != len(NIET_KOLOMMEN):
+            raise Fout(f"beeld_niet.tsv regel {nr}: {len(v)} velden, verwacht {len(NIET_KOLOMMEN)}")
+        bron_, reden, gezien = v
+        pagina = "https://commons.wikimedia.org/wiki/File:"
+        if not bron_.startswith(pagina) or bron_ == pagina or not re.fullmatch(r"[!-~]+", bron_):
+            raise Fout(
+                f"beeld_niet.tsv regel {nr}: bron hoort een bestandspagina van Commons, zoals in "
+                "de kolom bron van het voorstel (zonder spaties)"
+            )
+        if reden not in NIET_REDENEN:
+            raise Fout(
+                f"beeld_niet.tsv regel {nr}: reden {reden!r}; alleen {', '.join(NIET_REDENEN)}"
+            )
+        if not gezien.strip() or not re.fullmatch(r"[^\x00-\x1f\x7f]{1,80}", gezien):
+            raise Fout(
+                f"beeld_niet.tsv regel {nr}: gezien hoort een korte tekst (hooguit 80 tekens), "
+                'zoals "stad-5 op 3a9b07d"'
+            )
+        sleutel = _bron_sleutel(bron_)
+        if sleutel in uit:
+            raise Fout(
+                f"beeld_niet.tsv regel {nr}: die bron staat er al (regel {uit[sleutel].regel})"
+            )
+        uit[sleutel] = Niet(bron_, reden, gezien, nr)
+    if not kop:
+        raise Fout(f"beeld_niet.tsv: de eerste regel hoort {' '.join(NIET_KOLOMMEN)}")
+    return uit
+
+
+def _lees_niet_pad(pad: Path) -> dict[str, Niet] | None:
+    """beeld_niet.tsv van pad; None als het bestand er niet is."""
+    if not pad.is_file():
+        return None
+    try:
+        return lees_niet(pad.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise Fout("beeld_niet.tsv: geen UTF-8") from None
+
+
+def _op_lijst(d: dict, niet: dict[str, Niet]) -> bool:
+    bron_ = d.get("bron")
+    return bool(niet) and isinstance(bron_, str) and _bron_sleutel(bron_) in niet
+
+
+def _niet_in_set(fotos: list[Foto], niet: dict[str, Niet], naam: str) -> None:
+    """Fout als een foto van de set (beeld.tsv, of een voorstel: naam) in beeld_niet.tsv staat,
+    met alle zulke foto's: de regel van de set (zoals lees_set telt), de sleutel, en de regel en
+    de reden in beeld_niet.tsv."""
+    fout = []
+    for i, f in enumerate(fotos):
+        n = niet.get(_bron_sleutel(f.bron))
+        if n is not None:
+            fout.append(
+                f"regel {i + 2} ({f.sleutel}) staat in beeld_niet.tsv regel {n.regel} ({n.reden})"
+            )
+    if fout:
+        raise Fout(
+            f"{naam}: {'; '.join(fout)}; zet er een andere foto voor in de plaats (runbook "
+            "analyse, stap 4)"
+        )
+
+
 def zoek(srsearch: str, offset: int) -> tuple[list[int], int | None]:
     """Eén pagina van de zoekmachine van Commons (namespace File); (pageids, volgende offset)."""
     q = {
@@ -1326,6 +1429,7 @@ REDENEN = (
     "te langgerekt",  # de thumbnail geeft een 1024.webp met een korte kant onder INVOER
     "onleesbare gegevens",  # een veld dat geen getal is, of een URL met spaties
     "al gekozen",  # stel_voor: al in de set (een combinatie of een andere categorie)
+    UITGESLOTEN,  # stel_voor en de reserves: de bron staat in beeld_niet.tsv
     "beeldt een categorie af",  # stel_voor: een andere foto die een van de twaalf afbeeldt
 )
 
@@ -1610,7 +1714,13 @@ def _mb(n: int) -> str:
     return f"{n / 1e6:.1f} MB".replace(".", ",")
 
 
-def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) -> list[Foto]:
+def stel_voor(
+    werk: Werk,
+    *,
+    combis=None,
+    voortgang: Voortgang | None = None,
+    niet: dict[str, Niet] | None = None,
+) -> list[Foto]:
     """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download): van
     elke foto de thumbnail van DUIM_BREEDTE breed (_duim), nooit een groot origineel.
 
@@ -1620,6 +1730,11 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
     vroeger bruikbaar was, is het nog. Het log (niet het blok) zegt per zoekopdracht hoeveel er
     tweede keus waren en waarom ("geen eerste keus: ..."), en per gekozen foto het bewijs
     (_bewijs); het blok één regel met alle tweede keus samen, als die er was.
+
+    niet (beeld_niet.tsv; lees_niet): een kandidaat met een bron daaruit neemt hij nooit, ook
+    niet als tweede keus of als reserve (reden UITGESLOTEN); de volgende in dezelfde volgorde
+    krijgt de plek. Als er een lijst is, zegt het blok hoeveel foto's erop staan en hoeveel er
+    als kandidaat langskwamen.
 
     Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten en waarom
     ze afvielen (_afgevallen) in het blok, en pas daarna volgt de fout. Zo laat één run alles zien
@@ -1632,6 +1747,14 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
     tekort: list[str] = []
     combi_tekort = False
     tweede_keus: dict[str, int] = {}  # per zoekopdracht hoeveel er tweede keus waren
+    lijst = niet or {}
+    getroffen: set[str] = set()  # de bronnen uit beeld_niet.tsv die als kandidaat langskwamen
+
+    def uitgesloten(d: dict) -> bool:
+        if not _op_lijst(d, lijst):
+            return False
+        getroffen.add(_bron_sleutel(d["bron"]))
+        return True
 
     def neem(pageid: int, d: dict, sleutel: str, cats: tuple[str, ...], bewijs: str) -> None:
         doel = werk.set / f"{sleutel}.jpg"
@@ -1653,6 +1776,8 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
         """Valt deze kandidaat af? Zo ja, dan telt zijn reden (REDENEN) in redenen."""
         if pageid in gebruikt:
             reden = "al gekozen"
+        elif uitgesloten(d):
+            reden = UITGESLOTEN
         else:
             reden = _waarom(d)
             if reden is None and anders and d["P180"] & alle_qids:
@@ -1771,6 +1896,12 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
             f"BZ4 set: {sum(tweede_keus.values())} tweede keus ({samen}); de eerste keus was "
             "op; het bewijs per foto staat in het log"
         )
+    if niet is not None:
+        aantal = "1 foto" if len(lijst) == 1 else f"{len(lijst)} foto's"
+        werk.meld(
+            f"BZ4 set: beeld_niet.tsv: {aantal}, waarvan {len(getroffen)} als kandidaat "
+            "langskwamen en overgeslagen werden"
+        )
     if not tekort:
         return gekozen
     # De keuze is klaar: een fout vanaf hier (ook bij het tellen van de reserves) zegt hoeveel
@@ -1792,7 +1923,7 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
                 if pageid in bekeken:
                     continue
                 bekeken.add(pageid)
-                reden = _waarom(d)
+                reden = UITGESLOTEN if uitgesloten(d) else _waarom(d)
                 if reden is None:
                     goed.add(pageid)
                 else:
@@ -1816,11 +1947,14 @@ def set_tsv(fotos: list[Foto]) -> str:
     return kop + "\t".join(KOLOMMEN) + "\n" + "".join(f.regel() + "\n" for f in fotos)
 
 
-def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
+def set_(werk: Werk, set_pad: Path, *, combis=None, niet_pad: Path | None = None) -> int:
     """Gaat het ophalen mis, dan zegt de fout ook hoe ver set kwam en wat hij ophaalde (een
     thumbnail of een origineel; Voortgang); in een voorstel is het totaal het doel van Keuze 83
     (120). De regel van een goede set zegt hoeveel er als origineel kwamen, de bytes en de tijd.
-    Beide zeggen ook het verkeer met Commons (Voortgang.verkeer)."""
+    Beide zeggen ook het verkeer met Commons (Voortgang.verkeer).
+
+    niet_pad (standaard NIET): beeld_niet.tsv. Een voorstel neemt er nooit een foto uit; met
+    beeld.tsv is een foto uit die lijst een fout, vóór er iets wordt opgehaald."""
     # Alleen in het log, niet in het blok: het tempo, en of er een contact meegaat (nooit welk)
     print(
         f"BZ4 set: de API van Commons hooguit één vraag per {_tussen('API'):.0f} s, thumb één "
@@ -1829,8 +1963,10 @@ def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
         flush=True,
     )
     combis = combis if combis is not None else combinaties()
+    niet = _lees_niet_pad(niet_pad if niet_pad is not None else NIET)
     if set_pad.is_file():
         fotos = lees_set(set_pad.read_text(encoding="utf-8"), combis)
+        _niet_in_set(fotos, niet or {}, "beeld.tsv")
         werk.set.mkdir(exist_ok=True)
         voortgang = Voortgang(len(fotos))
         uit_cache = 0
@@ -1857,11 +1993,12 @@ def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
         return 0
     voortgang = Voortgang(len(CATEGORIEEN) * PER_CATEGORIE + len(ANDERE) * PER_ANDER)
     try:
-        fotos = stel_voor(werk, combis=combis, voortgang=voortgang)
+        fotos = stel_voor(werk, combis=combis, voortgang=voortgang, niet=niet)
     except Fout as e:
         raise Fout(f"{e} ({voortgang.waar()})") from None
     tekst = set_tsv(fotos)
-    lees_set(tekst, combis)  # het voorstel moet zelf door de controle komen
+    # het voorstel moet zelf door de controle komen, ook die van beeld_niet.tsv
+    _niet_in_set(lees_set(tekst, combis), niet or {}, "voorstel-beeld.tsv")
     werk.voorstel_set.write_text(tekst, encoding="utf-8")
     werk.meld(
         f"BZ4 set: beeld.tsv ontbreekt; voorstel met {len(fotos)} foto's in het verslag "
@@ -1900,6 +2037,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--werk", type=Path, required=True, help="de werkmap ($RUNNER_TEMP/beeld)")
     p.add_argument("--lock", type=Path, default=LOCK, help="models.lock")
     p.add_argument("--set", type=Path, default=SET, help="beeld.tsv")
+    p.add_argument("--niet", type=Path, default=NIET, help="beeld_niet.tsv (set)")
     p.add_argument("--uit", type=Path, action="append", default=[], help="een uitvoermap")
     p.add_argument("--log", type=Path, action="append", default=[], help="stderr van de omzetter")
     p.add_argument("--uit-fp32", type=Path, help="de uitvoermap van de omzetting met --fp32 (BZ4)")
@@ -1916,7 +2054,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.stap == "vergelijk":
             return vergelijk(werk, args.lock, args.uit, args.log, args.uit_fp32, args.log_fp32)
         if args.stap == "set":
-            return set_(werk, args.set)
+            return set_(werk, args.set, niet_pad=args.niet)
         return uitslag(werk)
     except (Fout, lock.LockError) as e:
         werk.meld(f"FOUT {args.stap}: {e}")

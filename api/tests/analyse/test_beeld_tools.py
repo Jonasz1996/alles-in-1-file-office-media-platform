@@ -195,6 +195,14 @@ def _zonder_contact(monkeypatch):
     monkeypatch.setattr(bm, "_contact", None, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _zonder_lijst(monkeypatch, tmp_path):
+    """Elke test begint zonder beeld_niet.tsv: niet die van de repository (die heeft echte bronnen
+    van Commons, geen van de nep). Een test die een lijst wil, schrijft hem naar bm.NIET.
+    raising=False: ook de tool van vóór de lijst draait tegen deze tests (de terugdraaitest)."""
+    monkeypatch.setattr(bm, "NIET", tmp_path / "lijst" / "beeld_niet.tsv", raising=False)
+
+
 @pytest.fixture
 def werk(tmp_path):
     return bm.Werk(tmp_path / "werk")
