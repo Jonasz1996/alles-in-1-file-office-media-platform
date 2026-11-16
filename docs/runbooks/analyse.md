@@ -297,6 +297,18 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
     zoals de dienst) en `BZ4 buren uit dezelfde batch (rapport)` (tegen toeval);
   - `BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: …` (drie regels) en `BZ4 en
     per vraag (rapport, int8/fp32): …`;
+  - sinds CI op 011bf2d, elk in een eigen try (een fout is `BZ4 <deel> (rapport): mislukt
+    (<soort>)`, de andere delen gaan door): `BZ4 meer zoals deze per categorie (rapport,
+    int8/fp32) 1/4: strand …/… (fout int8: stad …, boot …, anders-brug …; fp32: …) | …`
+    (vier regels, drie categorieën per regel: het deel van de top 4 in int8 en fp32, en waar de
+    foute buren het vaakst vandaan komen: een categorie, of bij een afleider de naam zoals
+    `anders-vogel`; een combinatie telt bij allebei), `BZ4 zwakke vragen (rapport) 1/n: bergen
+    (nl; int8 …/5, fp32 …/5): int8 <vijf sleutels>; fp32 <vijf sleutels>` (elke vraag in nl of
+    en met hooguit 1 goede foto in de top 5 in int8 of fp32, de zwakste eerst, met de sleutels
+    van de top 5; hooguit 24 regels en dan `nog …, niet uitgeschreven`; zonder zwakke vraag één
+    regel `geen`) en `BZ4 meer zoals deze top 1 (rapport): int8 … (…/…), fp32 …` (hoe vaak de
+    naaste buur een categorie deelt). In `bz4.json`: `meer_zoals_per_categorie`,
+    `zwakke_vragen` (`aantal` en hooguit 24 `vragen`) en `meer_zoals_top1`;
 
   en uit de eigen stap `BZ4 rapport int8 per laag en varianten (geen poort)`, in `bz4r.json` (die
   stap mag falen, heeft hooguit 15 minuten en de uitslag leest hem niet):
@@ -308,10 +320,14 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
     token en per token na glad;
   - `BZ4 afwijking per laag <toren> (rapport)`: cos tussen int8 en fp32 na elke laag;
   - `BZ4 variant <naam> (rapport)`: nl (en hoeveel die zakt tegen fp32), engels, combinaties, meer
-    zoals deze, cos, en de grootte en tijd van de grafen. Elke variant meet één plek: `fc2 fp32`,
-    `mlp fp32` en `aandacht fp32` alleen in de lagen van de encoder, de koppen alleen in `kop
-    fp32`. Na 8 minuten `overgeslagen: tijd`; `Q_MAX 127` zonder VNNI `overgeslagen: geen VNNI`;
-    een variant die faalt `mislukt (<soort>)`, en de volgende gaat door;
+    zoals deze, cos, en de grootte en tijd van de grafen. `fp32`, `zoals nu` (wat de job omzet:
+    sinds `VERSIE` 3 per token) en `per tensor (v2)` (de vorm van `VERSIE` 2), en bovenop per
+    token: `fc2 fp32`, `mlp fp32`, `aandacht fp32`, `kop fp32`, `laag 0-3 fp32`, `laag 8-11 fp32`,
+    `per token + glad` en `embedding fp32` (sinds CI op 011bf2d; `per token`, `per token + kop
+    fp32` en `Q_MAX 127` zijn weg). Elke variant meet één plek: `fc2 fp32`, `mlp fp32` en
+    `aandacht fp32` alleen in de lagen van de encoder, de koppen alleen in `kop fp32`. Na 8
+    minuten `overgeslagen: tijd`; een variant die faalt `mislukt (<soort>)`, en de volgende gaat
+    door;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel (`bz3`, `bz4`, `bz4r`, `bz6`).
 
@@ -449,6 +465,11 @@ zelf nooit iets in het repo; een mens doet dat, zo:
 6. Push. De job draait dan weer (de lock is veranderd), nu streng: een andere sha256 of grootte
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
 
+Neem de regels van `beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` uit een run op een commit
+met `VERSIE` 3 (na `011bf2d`). Die van de runs ervoor (beeld `96c602da`, tekst `afc9dd55`, meta
+`cc84a88b`, `VERSIE` 2) gelden niet meer: per token geeft andere int8-bytes en een andere
+`meta.json`. De bronnen, `tokenizer.bin` en de licentie zijn niet veranderd.
+
 **Klopt een foto van `beeld.tsv` later niet meer** ("FOUT set: kat-2.jpg: sha256 …, verwacht …
 (bij foto … van 120, een thumbnail van 1280 px, …)"), dan heeft Wikimedia die thumbnail
 waarschijnlijk opnieuw gemaakt, met andere bytes. Zolang de cache in CI de eerste goede kopie
@@ -482,6 +503,13 @@ job.
 Op stdout komen de regels voor `models.lock`, op stderr de voortgang, de tijd en maxrss. Code 2
 met één zin is een bron of map die niet klopt (de uitvoermap blijft leeg); code 1 is een fout in
 de omzetter.
+
+De int8-grafen hebben sinds `VERSIE` 3 (x3a.md, "CI op 011bf2d") per token: elke Linear van beide
+torens, ook de MAP-kop, is `MatMulInteger` met de invoer in uint8 per rij (max |x| / 127, nulpunt
+128) en het gewicht in int8 per kolom (|q| ≤ 64); de embedding van de tekst blijft int8 per rij.
+`meta.json` zegt `"omzetter": 3` en beschrijft dat onder `int8`. De vorm van `VERSIE` 2 (per
+tensor, `DynamicQuantizeMatMul`) is alleen nog een optie in de code (`per_token=False`), voor het
+rapport; de opdrachtregel kent hem niet.
 
 ## Wat er nog niet is
 
