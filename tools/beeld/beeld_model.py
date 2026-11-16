@@ -32,9 +32,11 @@ Zo ook de set: zonder api/tests/analyse/sets/beeld.tsv stelt `set` er een voor u
 gestructureerde gegevens van Wikimedia Commons (voorstel-beeld.tsv) en haalt hij die foto's op,
 elk als thumbnail van de vaste breedte DUIM_BREEDTE (1280 px), niet als origineel. Met beeld.tsv
 haalt hij alleen wat in set/ ontbreekt of niet klopt (in CI staat set/ in een cache op de sha256
-van beeld.tsv). Van upload.wikimedia.org gemiddeld hooguit BANDBREEDTE, van de API van Commons
-hooguit één vraag per PAUZE_API_S (de grens zonder contact), en Retry-After altijd gevolgd (de
-robotregels van Wikimedia). `uitslag` faalt met "models.lock mist de regels van
+van beeld.tsv). Van thumb.wikimedia.org (de thumbnails) en upload.wikimedia.org (de originelen,
+en oude URL's van thumbnails) elk gemiddeld hooguit BANDBREEDTE, altijd als JPEG (ACCEPT), van de
+API van Commons hooguit één vraag per PAUZE_API_S (de grens zonder contact), en Retry-After altijd
+gevolgd (de robotregels van Wikimedia). Een omleiding van Commons volgt hij alleen naar een host
+van Commons (_Omleiding). `uitslag` faalt met "models.lock mist de regels van
 SigLIP" en "beeld.tsv ontbreekt" zolang er een voorstel ligt; een mens zet de regels erin, nooit
 de job zelf, en die van SigLIP pas samen met X3b (de stap BEELD van install.sh; anders meldt de
 container ze als ontbrekend).
@@ -71,7 +73,8 @@ UA = "beeld-model-meting/1.0 (CI van een zelf-gehost fotoplatform)"
 # Optioneel en standaard uit: een contact in de User-Agent, in de vorm van de richtlijn van
 # Wikimedia voor de User-Agent ("naam/versie (contactgegevens) ..."; een e-mailadres of een URL).
 # Alleen als de omgevingsvariabele BEELD_CONTACT gezet en niet leeg is (_zet_contact), en alleen
-# naar Commons (de API en upload), nooit naar Hugging Face. Het contact is van de eigenaar en
+# naar Commons (de API, thumb en upload: _dienst), nooit naar Hugging Face of een andere host,
+# ook niet na een omleiding (_Omleiding). Het contact is van de eigenaar en
 # Wikimedia ziet het in elke vraag: alleen met zijn toestemming. ci.yml zet sinds 2026-11-15 de
 # link naar het repository, alleen op BZ1 en BZ4 set (runbook analyse.md). Het log zegt alleen
 # "contact: ja" of "contact: nee", nooit het contact zelf
@@ -94,7 +97,19 @@ MAX_BRON = {
 MAX_RSS_MIB = 1536  # BZ2: maxrss van één omzetting zoals de dienst (zonder --fp32) ≤ 1,5 GB
 
 COMMONS = "https://commons.wikimedia.org/w/api.php"
+# De originelen. Ook de oude URL's van thumbnails (.../thumb/...) werken hier nog (zie THUMB)
 UPLOAD = "https://upload.wikimedia.org/"
+# De thumbnails. Wikimedia haalde de cache van de thumbnails uit het upload-cluster naar een eigen
+# host (phabricator T427465, "Move thumbnail caching from upload cluster to text"; uitgerold
+# vanaf 2026-08-19, "everywhere" sinds 2026-09-07). Alleen de host verandert; het pad blijft
+# /wikipedia/commons/thumb/<a>/<ab>/<naam>/<breedte>px-<naam>. MediaWiki noemt nu die host: de
+# thumburl van imageinfo in de API staat op thumb.wikimedia.org (fuzheado/Wikipedia-AI-Skills,
+# PR #26, 2026-09-03). De oude URL's op upload werken voorlopig nog; een 301 naar
+# thumb.wikimedia.org komt "eventually". De originelen blijven op upload: het pad van een origineel
+# op thumb.wikimedia.org geeft een 301 naar https://commons.wikimedia.org/. Op 45bb926 nam _duim
+# alleen een thumbnail op upload, en viel in CI elke kandidaat af (x3a.md, "CI op 45bb926"). Deze
+# bronnen zijn uit de tweede hand: de sandbox komt niet bij Wikimedia
+THUMB = "https://thumb.wikimedia.org/"
 # BZ1 noemt ook NASA; de set komt alleen van Commons (Vraag 12a), dus alleen de regel in het blok
 NASA = "https://images-assets.nasa.gov/"
 # Keuze 83: twaalf categorieën met hun item op Wikidata (P180, "beeldt af")
@@ -162,7 +177,20 @@ MAX_PIXELS = 50_000_000  # van het origineel
 # bestand dat set ophaalt (de thumbnail); streng is dan rood op de sha256, met de sleutel, nooit
 # stil. De cache in CI (op de sha256 van beeld.tsv) houdt de eerste goede kopie. De
 # bestandspagina van het origineel blijft in de kolom bron (de naamsvermelding).
+# Sinds de thumbnails van thumb.wikimedia.org komen (zie THUMB): die host geeft alleen de vaste
+# maten (120, 250, 330, 500, 960, 1280, 1920 en 3840 px; ook 20, 40 en 60) en een HTTP 400 op een
+# andere, en kiest het formaat op dezelfde URL (.jpg) naar de Accept van de vraag: met
+# "image/webp,*/*" (en de Accept van Chrome) WebP, zonder Accept, met "image/jpeg" of met
+# "image/avif,*/*" JPEG; het antwoord in WebP heeft geen Vary. Met 1 s tussen twee vragen gaf hij
+# geen 429 (een verslag op dev.to, "Wikimedia thumbnails now: thumb.wikimedia.org, a fixed list
+# of widths, and WebP only for some clients", nagekeken op 2026-11-14; ook uit de tweede hand).
+# Een cache die de Vary mist, kan dus WebP geven op een vraag om JPEG, en de sha256 in beeld.tsv
+# hoort bij vaste bytes. Daarom vraagt set elke foto met Accept: ACCEPT, en kijkt hij na de
+# download na dat de bytes met JPEG_BEGIN beginnen (haal met jpeg); anders een Fout en niets op
+# schijf
 DUIM_BREEDTE = 1280
+ACCEPT = "image/jpeg"  # de Accept van elke download van de set (haal met jpeg)
+JPEG_BEGIN = b"\xff\xd8\xff"  # de eerste bytes van elke JPEG (SOI en het begin van een marker)
 # Hoe groot de thumbnail minstens is. De kwaliteitstest maakt er met app.render.image 1024.webp en
 # 256.webp van, zoals de app (lange kant 1024 en 256, nooit vergroot), en het model krijgt die als
 # INVOER × INVOER (meta.json: vierkant, zonder bijsnijden). Het model rekent uit 256.webp; BZ4
@@ -220,19 +248,105 @@ def _zet_contact(waarde: str | None) -> None:
 
 
 def _user_agent(url: str) -> str:
-    """UA, of met BEELD_CONTACT UA_MET_CONTACT, maar dan alleen naar Commons (_dienst)."""
+    """UA, of met BEELD_CONTACT UA_MET_CONTACT, maar dan alleen naar Commons (_dienst). Ook na
+    een omleiding geldt de nieuwe URL (_Omleiding)."""
     if _contact is not None and _dienst(url) is not None:
         return UA_MET_CONTACT.format(contact=_contact)
     return UA
 
 
-def _vraag(url: str, *, methode: str = "GET") -> urllib.request.Request:
-    return urllib.request.Request(url, method=methode, headers={"User-Agent": _user_agent(url)})
+def _vraag(
+    url: str, *, accept: str | None = None, omleidingen: list | None = None
+) -> urllib.request.Request:
+    """De vraag voor _opener: de User-Agent voor url, en Accept als die er is. begin en
+    omleidingen zijn voor _Omleiding: waar de vraag begon, en (code, nieuwe url) van elke
+    omleiding die hij volgde."""
+    vraag = urllib.request.Request(url, headers={"User-Agent": _user_agent(url)})
+    if accept is not None:
+        vraag.add_header("Accept", accept)
+    vraag.begin = url
+    vraag.omleidingen = omleidingen if omleidingen is not None else []
+    return vraag
+
+
+class Geweigerd(Exception):
+    """Een omleiding die _Omleiding niet volgt: naar de nieuwe URL gaat nooit een vraag. Nooit
+    opnieuw geprobeerd (_open probeert alleen een HTTPError of een netwerkfout opnieuw)."""
+
+    def __init__(self, code: int, naar: str) -> None:
+        self.code = code
+        self.naar = naar
+        super().__init__(f"HTTP {code} naar {naar}, niet gevolgd ({ALLEEN_COMMONS})")
+
+
+# Waar een omleiding van een vraag aan Commons heen mag. In de URL's van COMMONS, THUMB en UPLOAD
+# (_commons_hosts): https, en die drie hosts
+ALLEEN_COMMONS = (
+    "van Commons alleen naar https op commons.wikimedia.org, thumb.wikimedia.org of "
+    "upload.wikimedia.org"
+)
+
+
+def _oorsprong(url: str) -> tuple[str, str, int] | None:
+    """(schema, host, poort) van een url, de poort ook als die er niet staat; None als dat niet
+    te lezen is."""
+    try:
+        deel = urllib.parse.urlsplit(url)
+        poort = deel.port or {"https": 443, "http": 80}.get(deel.scheme)
+    except ValueError:
+        return None
+    if not deel.hostname or poort is None:
+        return None
+    return deel.scheme, deel.hostname, poort
+
+
+def _commons_hosts() -> set[tuple[str, str, int]]:
+    """De hosts van de diensten van Commons, met schema en poort: commons.wikimedia.org,
+    thumb.wikimedia.org en upload.wikimedia.org, alle drie over https (uit COMMONS, THUMB en
+    UPLOAD; de tests zetten die op hun eigen server)."""
+    return {o for o in map(_oorsprong, (COMMONS, THUMB, UPLOAD)) if o is not None}
+
+
+class _Omleiding(urllib.request.HTTPRedirectHandler):
+    """Hoe _opener een omleiding (301, 302, 303, 307, 308) volgt. urllib volgt elke omleiding,
+    ook naar een andere host, en neemt de kopregels mee, ook de User-Agent met BEELD_CONTACT. Hier:
+
+    - begon de vraag bij een dienst van Commons (de API, thumb of upload: _dienst), dan volgt hij
+      alleen een omleiding naar https op een host van Commons (_commons_hosts); elke andere URL
+      is een Geweigerd, en daar gaat nooit een vraag heen. Een vraag die elders begon (Hugging
+      Face en zijn CDN) volgt hij zoals urllib;
+    - de User-Agent komt opnieuw van _user_agent, voor de nieuwe URL: het contact gaat alleen naar
+      een dienst van Commons;
+    - de nieuwe vraag is een vraag als elke andere: naar een dienst van Commons wacht hij eerst
+      _pauze en telt hij bij die dienst (Teller); naar een andere host niet. Accept gaat mee."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        begin = getattr(req, "begin", req.full_url)
+        if _dienst(begin) is not None and _oorsprong(newurl) not in _commons_hosts():
+            fp.close()
+            raise Geweigerd(code, _hostnaam(newurl))
+        nieuw = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if nieuw is None:
+            return None
+        nieuw.add_header("User-Agent", _user_agent(newurl))
+        nieuw.begin = begin
+        nieuw.omleidingen = getattr(req, "omleidingen", [])
+        nieuw.omleidingen.append((code, newurl))
+        _pauze(newurl)
+        return nieuw
+
+
+# Alle vragen van de tool gaan door deze opener: urlopen met _Omleiding in plaats van de gewone
+# HTTPRedirectHandler
+_opener = urllib.request.build_opener(_Omleiding)
 
 
 # Wikimedia vraagt om vragen na elkaar en om Retry-After te volgen (API:Etiquette). Zonder pauze
 # gaf commons.wikimedia.org na ±10 s HTTP 429, ook na drie pogingen (CI-run op 26c49ca)
-PAUZE_S = 1.0  # tussen twee vragen aan upload.wikimedia.org (en aan de API met BEELD_CONTACT)
+# Tussen twee vragen aan thumb.wikimedia.org, aan upload.wikimedia.org (elk apart) en aan de API
+# met BEELD_CONTACT. Op thumb.wikimedia.org gaf 1 s geen 429 (het verslag op dev.to bij
+# DUIM_BREEDTE)
+PAUZE_S = 1.0
 # De API van Commons heeft sinds maart 2026 grenzen per soort client (wikitech-l, 2 maart 2026,
 # "New global API rate limits": eerst lage grenzen voor anonieme vragen, vanaf april hogere voor
 # wie zich identificeert). De getallen staan op mediawiki.org, "Wikimedia APIs/Rate limits"; die
@@ -264,8 +378,10 @@ WACHT_TOTAAL_S = 900.0  # samen hooguit zo lang wachten na 429 en 5xx, per proce
 # seconde binnen; na ±9 minuten gaf upload.wikimedia.org HTTP 429 (CI-run op f16ed5a). Dus van
 # upload gemiddeld hooguit BANDBREEDTE, onder die 25 Mbps. Ook met die grens stopte de stap op een
 # 429 (CI-run op 9ebf298: na ±30 minuten; de 429 kwam ±10 minuten eerder, daarna vijf keer 120 s
-# gewacht); sindsdien haalt de set thumbnails (DUIM_BREEDTE)
-BANDBREEDTE = 2_500_000  # bytes per seconde van upload.wikimedia.org (20 Mbps)
+# gewacht); sindsdien haalt de set thumbnails (DUIM_BREEDTE). Die komen nu van thumb.wikimedia.org
+# (THUMB): ook daar gemiddeld hooguit BANDBREEDTE, per host (_rem). De job haalt één ding
+# tegelijk, dus nooit van beide tegelijk
+BANDBREEDTE = 2_500_000  # bytes per seconde van thumb.wikimedia.org en van upload (20 Mbps)
 # Wat het log van een opgegeven 429 of 5xx overneemt: de tekst van <title>, anders van de eerste
 # <p>, anders de eerste regel met tekst, zonder de tags van HTML; wat alleen "Error" of "Wikimedia
 # Error" zegt, telt niet (_antwoord)
@@ -277,7 +393,8 @@ _vorige: dict[str, float] = {}  # per dienst van Commons (_dienst): de laatste v
 _klaar: dict[str, float] = {}  # per host: wanneer de bytes tot nu toe op BANDBREEDTE binnen zijn
 _gewacht = 0.0  # seconden, samen gewacht na 429 en 5xx in dit proces (WACHT_TOTAAL_S)
 _opgehaald = 0  # bytes die haal in dit proces binnenkreeg (de voortgang van set)
-DIENSTEN = ("API", "upload")
+# De diensten van Commons (_dienst), in de volgorde van het log (Voortgang.verkeer)
+DIENSTEN = ("API", "thumb", "upload")
 
 
 @dataclass
@@ -301,9 +418,13 @@ def _teller(dienst: str) -> Teller:
 
 def _dienst(url: str) -> str | None:
     """Welke dienst van Commons een url is: "API" (COMMONS; de tool vraagt commons.wikimedia.org
-    niets anders), "upload" (UPLOAD, upload.wikimedia.org), of None voor elke andere host."""
+    niets anders), "thumb" (THUMB, thumb.wikimedia.org: de thumbnails), "upload" (UPLOAD,
+    upload.wikimedia.org: de originelen, en oude URL's van thumbnails), of None voor elke andere
+    URL: een andere host, en ook commons.wikimedia.org buiten de API (alleen na een omleiding)."""
     if url.startswith(COMMONS):
         return "API"
+    if url.startswith(THUMB):
+        return "thumb"
     if url.startswith(UPLOAD):
         return "upload"
     return None
@@ -317,8 +438,9 @@ def _tussen(dienst: str) -> float:
 
 def _pauze(url: str) -> None:
     """Vóór elke vraag aan Commons, ook vóór elke nieuwe poging van _open: minstens _tussen na
-    de vorige vraag aan dezelfde dienst (de API en upload elk apart; een download loopt door in de
-    pauze van de API), en de vraag telt (Teller). Andere hosts wachten niet en tellen niet."""
+    de vorige vraag aan dezelfde dienst (de API, thumb en upload elk apart; een download loopt
+    door in de pauze van de API), en de vraag telt (Teller). Ook een vraag na een omleiding
+    (_Omleiding). Andere hosts wachten niet en tellen niet."""
     dienst = _dienst(url)
     if dienst is None:
         return
@@ -343,11 +465,11 @@ def _tel_weigering(url: str, code: int) -> None:
 
 
 def _rem(url: str, n: int) -> None:
-    """Na n bytes van upload.wikimedia.org: wachten tot alles wat er tot nu toe binnenkwam, op
-    BANDBREEDTE binnen had kunnen zijn. De schuld loopt door van de ene download naar de
-    volgende; stilte spaart geen tegoed op (na een pauze telt hij vanaf nu). Andere hosts wachten
-    niet."""
-    if not url.startswith(UPLOAD):
+    """Na n bytes van thumb.wikimedia.org of upload.wikimedia.org: wachten tot alles wat er tot nu
+    toe van die host binnenkwam, op BANDBREEDTE binnen had kunnen zijn (per host). De schuld loopt
+    door van de ene download naar de volgende; stilte spaart geen tegoed op (na een pauze telt hij
+    vanaf nu). Andere hosts, en de API, wachten niet."""
+    if _dienst(url) not in ("thumb", "upload"):
         return
     host = _host(url)
     nu = time.monotonic()
@@ -476,26 +598,39 @@ def _te_lang(na: float | None, tijd: float) -> str | None:
     return None
 
 
-def _open(url: str, *, pogingen: int = 6, timeout: float = 60):
-    """urlopen met pogingen bij 429, 5xx of een netwerkfout: wachten 2, 4, 8, 16, 32 s, of zo
+def _open(
+    url: str,
+    *,
+    pogingen: int = 6,
+    timeout: float = 60,
+    accept: str | None = None,
+    omleidingen: list | None = None,
+):
+    """_opener.open met pogingen bij 429, 5xx of een netwerkfout: wachten 2, 4, 8, 16, 32 s, of zo
     lang als Retry-After zegt als dat langer is. Na een 429 of 5xx nooit eerder dan Retry-After
     zegt: is dat meer dan MAX_WACHT_S, is hij niet te lezen, of past het wachten (ook 2 tot 32 s
     zonder Retry-After) niet meer in WACHT_TOTAAL_S, dan stopt hij meteen. Geeft hij het op na
     een 429 of 5xx, dan krijgt de HTTPError een uitleg voor het log mee (_uitleg, _reden): op
     f16ed5a zei "HTTP 429" niet wat Wikimedia vroeg. Elke poging gaat door _pauze (en telt), dus
     ook na het wachten nooit eerder dan PAUZE_API_S na de vorige vraag aan de API; het wachten en
-    de pauze lopen samen, ze tellen niet op."""
+    de pauze lopen samen, ze tellen niet op. accept: de kopregel Accept (ACCEPT voor de set).
+    omleidingen: een lijst die (code, nieuwe url) krijgt van elke omleiding die de laatste poging
+    volgde (_Omleiding; voor bereik). Een omleiding die _Omleiding weigert, is een Geweigerd:
+    nooit een nieuwe poging. Een 429 of 5xx na een omleiding telt bij de dienst die hem gaf."""
     global _gewacht
     wacht = 2.0
     retry_after: str | None = None  # de laatste die hij zag, zoals hij binnenkwam
     for poging in range(pogingen):
         _pauze(url)
+        if omleidingen is not None:
+            omleidingen.clear()
         try:
-            return urllib.request.urlopen(_vraag(url), timeout=timeout)
+            vraag = _vraag(url, accept=accept, omleidingen=omleidingen)
+            return _opener.open(vraag, timeout=timeout)
         except urllib.error.HTTPError as e:
             if e.code != 429 and e.code < 500:
                 raise
-            _tel_weigering(url, e.code)
+            _tel_weigering(e.geturl() or url, e.code)
             if e.headers is not None and e.headers.get("Retry-After"):
                 retry_after = e.headers.get("Retry-After")
             if poging == pogingen - 1:
@@ -522,7 +657,7 @@ def json_van(url: str, max_bytes: int = 32 << 20) -> object:
     try:
         with _open(url) as antwoord:
             data = antwoord.read(max_bytes + 1)
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, Geweigerd) as e:
         raise Fout(f"{_host(url)}: {_reden(e)}") from None
     if len(data) > max_bytes:
         raise Fout(f"{_host(url)}: antwoord groter dan {max_bytes} bytes")
@@ -536,7 +671,27 @@ def _host(url: str) -> str:
     return urllib.parse.urlsplit(url).hostname or "?"
 
 
+# Een gewone hostnaam: letters, cijfers en liggende streepjes, in delen gescheiden door punten
+_HOSTNAAM = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
+MAX_HOSTNAAM = 64  # tekens
+
+
+def _hostnaam(url: str) -> str:
+    """De host van een url die van buiten komt (een thumburl, een omleiding), voor het log: alleen
+    als het een gewone hostnaam is van hooguit MAX_HOSTNAAM tekens, anders "een onbekende host".
+    Nooit de hele URL."""
+    try:
+        host = urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    if len(host) <= MAX_HOSTNAAM and _HOSTNAAM.fullmatch(host):
+        return host
+    return "een onbekende host"
+
+
 def _reden(e: BaseException) -> str:
+    if isinstance(e, Geweigerd):
+        return str(e)
     if isinstance(e, urllib.error.HTTPError):
         # vars(): HTTPError geeft een onbekend attribuut door aan zijn antwoord
         uitleg = vars(e).get("uitleg")
@@ -546,30 +701,58 @@ def _reden(e: BaseException) -> str:
     return type(e).__name__
 
 
-def haal(url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None) -> tuple[str, int]:
+def _geen_jpeg(naam: str, kop: bytes) -> Fout | None:
+    """De Fout als een download van de set niet met JPEG_BEGIN begint, met wat hij wel is:
+    "<naam>: WebP in plaats van JPEG" (RIFF....WEBP), anders "<naam>: geen JPEG"; None als het
+    een JPEG is. kop: de eerste (hooguit 12) bytes."""
+    if kop.startswith(JPEG_BEGIN):
+        return None
+    if kop[:4] == b"RIFF" and kop[8:12] == b"WEBP":
+        return Fout(f"{naam}: WebP in plaats van JPEG")
+    return Fout(f"{naam}: geen JPEG")
+
+
+def haal(
+    url: str, doel: Path, *, max_bytes: int, grootte=None, sha256=None, jpeg: bool = False
+) -> tuple[str, int]:
     """Eén bestand naar doel via doel.part. Met grootte en sha256: alleen die bytes komen op hun
-    plek. Geeft (sha256, bytes)."""
+    plek. Geeft (sha256, bytes).
+
+    jpeg (een foto van de set; Voortgang.haal): de vraag met Accept: ACCEPT, en de bytes moeten
+    met JPEG_BEGIN beginnen. Zo niet, dan stopt hij zodra hij de eerste 12 bytes heeft, met een
+    Fout die zegt wat er kwam ("WebP in plaats van JPEG" of "geen JPEG"), en blijft er niets
+    staan (zie DUIM_BREEDTE: thumb.wikimedia.org kan op dezelfde URL WebP geven). Zonder jpeg
+    (Hugging Face, de bron) zoals altijd: geen Accept en geen controle op de bytes."""
     global _opgehaald
     part = doel.with_name(doel.name + ".part")
     grens = grootte if grootte is not None else max_bytes
     h = hashlib.sha256()
     n = 0
+    kop = b""  # de eerste 12 bytes, voor jpeg
     try:
         try:
             # set/ kan uit een cache komen (CI op f16ed5a): een .part die er al staat, ook een
             # symlink, gaat eerst weg, en "xb" schrijft nooit door een link naar elders
             part.unlink(missing_ok=True)
-            with _open(url, timeout=120) as antwoord, part.open("xb") as f:
+            accept = ACCEPT if jpeg else None
+            with _open(url, timeout=120, accept=accept) as antwoord, part.open("xb") as f:
+                van = antwoord.geturl()  # na een omleiding de host die de bytes geeft (_rem)
                 while stuk := antwoord.read(1 << 20):
                     n += len(stuk)
                     _opgehaald += len(stuk)
+                    if jpeg and len(kop) < 12:
+                        kop += stuk[: 12 - len(kop)]
+                        if len(kop) == 12 and (fout := _geen_jpeg(doel.name, kop)):
+                            raise fout
                     if n > grens:
                         raise Fout(f"{doel.name}: groter dan {grens} bytes")
                     h.update(stuk)
                     f.write(stuk)
-                    _rem(url, len(stuk))
-        except (urllib.error.URLError, OSError) as e:
+                    _rem(van, len(stuk))
+        except (urllib.error.URLError, OSError, Geweigerd) as e:
             raise Fout(f"{doel.name}: {_reden(e)}") from None
+        if jpeg and n and (fout := _geen_jpeg(doel.name, kop)):
+            raise fout
         if grootte is not None and n != grootte:
             raise Fout(f"{doel.name}: {n} bytes, models.lock of de set zegt {grootte}")
         if sha256 is not None and h.hexdigest() != sha256:
@@ -621,19 +804,38 @@ class Werk:
 # --- BZ1 ---------------------------------------------------------------------------------------
 
 
+def _via(omleidingen: list, eind: str, *, daar: bool = True) -> str:
+    """Wat BZ1 tussen haakjes zet: "HTTP 200", of na een omleiding (_Omleiding) ook waar die heen
+    ging en wat daar het antwoord was: "HTTP 301 naar commons.wikimedia.org, daar HTTP 200". Zo
+    zegt de regel wat de host zelf antwoordde, ook als zijn wortel omleidt. eind: het laatste
+    antwoord ("HTTP 200"), of (daar False) een omleiding die de tool niet volgde (Geweigerd)."""
+    stappen = [f"HTTP {c} naar {_hostnaam(naar)}" for c, naar in omleidingen]
+    if stappen and daar:
+        eind = f"daar {eind}"
+    return ", ".join([*stappen, eind])
+
+
 def bereik(werk: Werk) -> int:
+    """BZ1: per host bereikbaar of niet, met het antwoord. thumb.wikimedia.org erbij sinds de
+    thumbnails daar staan (THUMB). Een omleiding die _Omleiding weigert, zegt de regel ook: de
+    host is bereikbaar, maar de tool volgt hem niet."""
     hosts = (
         ("huggingface.co", f"{HF}/api/models/{REPO}"),
         ("commons.wikimedia.org", f"{COMMONS}?action=query&meta=siteinfo&format=json"),
+        ("thumb.wikimedia.org", THUMB),
         ("upload.wikimedia.org", UPLOAD),
         ("images-assets.nasa.gov", NASA),
     )
     for naam, url in hosts:
+        omleidingen: list = []
         try:
-            with _open(url, pogingen=2, timeout=30) as antwoord:
-                werk.meld(f"BZ1 {naam}: bereikbaar (HTTP {antwoord.status})")
+            with _open(url, pogingen=2, timeout=30, omleidingen=omleidingen) as antwoord:
+                via = _via(omleidingen, f"HTTP {antwoord.status}")
+                werk.meld(f"BZ1 {naam}: bereikbaar ({via})")
         except urllib.error.HTTPError as e:
-            werk.meld(f"BZ1 {naam}: bereikbaar (HTTP {e.code})")
+            werk.meld(f"BZ1 {naam}: bereikbaar ({_via(omleidingen, f'HTTP {e.code}')})")
+        except Geweigerd as e:
+            werk.meld(f"BZ1 {naam}: bereikbaar ({_via(omleidingen, str(e), daar=False)})")
         except urllib.error.URLError as e:
             werk.meld(f"BZ1 {naam}: niet bereikbaar ({type(e.reason).__name__})")
         except OSError as e:
@@ -856,11 +1058,21 @@ def lees_set(tekst: str, combis: list[tuple[str, ...]] | None = None) -> list[Fo
             raise Fout(f"beeld.tsv regel {nr}: sha256 of bytes klopt niet")
         if int(n) > MAX_FOTO:
             raise Fout(f"beeld.tsv regel {nr}: groter dan {MAX_FOTO} bytes")
-        if not url.startswith(UPLOAD) or not re.fullmatch(r"[!-~]+", url):
-            raise Fout(f"beeld.tsv regel {nr}: url hoort bij {UPLOAD}")
+        # Een thumbnail op thumb.wikimedia.org (zoals de API hem nu geeft) of, de oude vorm, op
+        # upload; een origineel alleen op upload (zie THUMB)
+        op_thumb = url.startswith(THUMB)
+        if not (op_thumb or url.startswith(UPLOAD)) or not re.fullmatch(r"[!-~]+", url):
+            raise Fout(f"beeld.tsv regel {nr}: url hoort bij {THUMB} of {UPLOAD}")
         # Een thumbnail alleen van de vaste maat: een andere maat weigert Wikimedia of remt hij af
-        if "thumb" in urllib.parse.urlsplit(url).path.split("/") and not _is_duim(url):
+        duim = "thumb" in urllib.parse.urlsplit(url).path.split("/")
+        if duim and not _is_duim(url):
             raise Fout(f"beeld.tsv regel {nr}: url is een thumbnail, maar niet {DUIM_BREEDTE} px")
+        # Het pad van een origineel op thumb.wikimedia.org geeft een 301 naar commons.wikimedia.org
+        if op_thumb and not duim:
+            raise Fout(
+                f"beeld.tsv regel {nr}: url op {THUMB} is geen thumbnail; een origineel hoort bij "
+                f"{UPLOAD}"
+            )
         if not bron_.startswith("https://commons.wikimedia.org/wiki/File:"):
             raise Fout(f"beeld.tsv regel {nr}: bron hoort een bestandspagina van Commons")
         _past(sleutel, categorieen, nr)
@@ -980,13 +1192,14 @@ def _licentie(d: dict) -> str | None:
 
 
 def _is_duim(url: str) -> bool:
-    """Een thumbnail van DUIM_BREEDTE breed op upload: .../thumb/<pad>/<naam>/1280px-<naam>."""
+    """Het pad van een thumbnail van DUIM_BREEDTE breed (op thumb of, de oude vorm, op upload):
+    .../thumb/<pad>/<naam>/1280px-<naam>."""
     deel = urllib.parse.urlsplit(url).path.split("/")
     return "thumb" in deel[:-2] and deel[-1].startswith(f"{DUIM_BREEDTE}px-")
 
 
 def _soort(url: str) -> str:
-    """Wat set van upload haalt, voor het log: de thumbnail of het origineel zelf."""
+    """Wat set haalt, voor het log: de thumbnail of het origineel zelf."""
     return f"een thumbnail van {DUIM_BREEDTE} px" if _is_duim(url) else "een origineel"
 
 
@@ -996,44 +1209,121 @@ def _genoeg(breedte: int, hoogte: int) -> bool:
     return min(breedte, hoogte) * PREVIEW >= INVOER * max(breedte, hoogte, PREVIEW)
 
 
+# Waarom set een kandidaat niet neemt (_waarom), een vaste reeks; in de regels van een tekort met
+# hun aantal (_afgevallen). "thumbnail op een andere host" krijgt de host erbij (_hostnaam)
+GEEN_DUIM = f"geen thumbnail van {DUIM_BREEDTE} px"
+ANDERE_HOST = "thumbnail op een andere host"
+REDENEN = (
+    "geen image/jpeg",  # mime
+    "origineel niet op upload",  # url
+    "geen bestandspagina",  # bron
+    "te klein",  # de korte kant onder MIN_ZIJDE, of 0 bytes
+    "te groot",  # meer dan MAX_PIXELS, of een origineel als thumbnail groter dan MAX_FOTO
+    "mens erop",  # P180 = mens
+    "licentie",  # geen CC0 en geen publiek domein
+    GEEN_DUIM,  # geen thumburl van 1280 breed (ook: een breder origineel als thumburl)
+    ANDERE_HOST,  # een thumburl buiten thumb en upload
+    "te langgerekt",  # de thumbnail geeft een 1024.webp met een korte kant onder INVOER
+    "onleesbare gegevens",  # een veld dat geen getal is, of een URL met spaties
+    "al gekozen",  # stel_voor: al in de set (een combinatie of een andere categorie)
+    "beeldt een categorie af",  # stel_voor: een andere foto die een van de twaalf afbeeldt
+)
+
+
+def _waarom_duim(d: dict) -> str | None:
+    """Waarom set van een foto niets kan ophalen (een van REDENEN), of None: dan geeft _duim wat
+    hij ophaalt. Een thumbnail van DUIM_BREEDTE breed op thumb.wikimedia.org (de normale vorm
+    sinds T427465, zie THUMB) of op upload (de oude vorm), met het pad van _is_duim en thumbwidth
+    1280. Is het origineel niet breder, dan geeft MediaWiki het origineel zelf als thumburl: alleen
+    op upload, en niet groter dan MAX_FOTO. Hoe breed MediaWiki dan in thumbwidth zegt, telt niet:
+    de maten van het origineel gelden."""
+    try:
+        url = d.get("duim")
+        if not isinstance(url, str):
+            return GEEN_DUIM
+        if not re.fullmatch(r"[!-~]+", url):
+            return "onleesbare gegevens"
+        if url == d["url"]:
+            if not url.startswith(UPLOAD):
+                return f"{ANDERE_HOST} ({_hostnaam(url)})"
+            breedte, hoogte, n = int(d["breedte"]), int(d["hoogte"]), int(d["bytes"])
+            if breedte > DUIM_BREEDTE:
+                return GEEN_DUIM
+            if n <= 0:
+                return "te klein"
+            if n > MAX_FOTO:
+                return "te groot"
+        else:
+            if not url.startswith((THUMB, UPLOAD)):
+                return f"{ANDERE_HOST} ({_hostnaam(url)})"
+            if not _is_duim(url) or int(d.get("duim_breedte")) != DUIM_BREEDTE:
+                return GEEN_DUIM
+            breedte, hoogte = DUIM_BREEDTE, int(d.get("duim_hoogte"))
+        return None if _genoeg(breedte, hoogte) else "te langgerekt"
+    except (TypeError, ValueError):
+        return "onleesbare gegevens"
+
+
 def _duim(d: dict) -> tuple[str, int | None] | None:
     """Wat set van een foto ophaalt: (url, bytes als die vooraf bekend zijn), of None als dat niet
-    kan. Meestal de thumbnail van DUIM_BREEDTE breed (bytes onbekend; haal stopt bij MAX_FOTO).
-    Is het origineel niet breder, dan geeft MediaWiki het origineel zelf als thumburl: ook goed
-    als het niet groter is dan MAX_FOTO (de grens van elke download; de bytes zijn dan vooraf
-    bekend). Hoe breed MediaWiki dan in thumbwidth zegt, telt niet: de maten van het origineel
-    gelden. Een groot origineel met een thumbnail mag: set haalt alleen die thumbnail."""
-    url = d.get("duim")
-    if not isinstance(url, str) or not url.startswith(UPLOAD) or not re.fullmatch(r"[!-~]+", url):
+    kan (_waarom_duim zegt waarom). Meestal de thumbnail van DUIM_BREEDTE breed (bytes onbekend;
+    haal stopt bij MAX_FOTO); van een origineel dat niet breder is het origineel zelf (de bytes
+    zijn dan vooraf bekend). Een groot origineel met een thumbnail mag: set haalt alleen die
+    thumbnail."""
+    if _waarom_duim(d) is not None:
         return None
-    if url == d["url"]:
+    url = d["duim"]
+    return (url, int(d["bytes"])) if url == d["url"] else (url, None)
+
+
+def _waarom(d: dict) -> str | None:
+    """Waarom set een kandidaat niet neemt: de eerste reden uit REDENEN die geldt, of None als hij
+    bruikbaar is. Op 45bb926 zei "maar 0 bruikbare foto's voor strand (400 kandidaten bekeken)"
+    niet waarom; nu staan de redenen met hun aantal in die regel (_afgevallen)."""
+    try:
+        if d["mime"] != "image/jpeg":
+            return "geen image/jpeg"
+        if not isinstance(d["url"], str) or not d["url"].startswith(UPLOAD):
+            return "origineel niet op upload"
+        bron_ = d["bron"]
+        if not isinstance(bron_, str) or not bron_.startswith(
+            "https://commons.wikimedia.org/wiki/File:"
+        ):
+            return "geen bestandspagina"
         breedte, hoogte, n = int(d["breedte"]), int(d["hoogte"]), int(d["bytes"])
-        if breedte > DUIM_BREEDTE or not 0 < n <= MAX_FOTO:
-            return None
-    else:
-        if not _is_duim(url) or int(d.get("duim_breedte")) != DUIM_BREEDTE:
-            return None
-        breedte, hoogte, n = DUIM_BREEDTE, int(d.get("duim_hoogte")), None
-    return (url, n) if _genoeg(breedte, hoogte) else None
+        if n <= 0 or min(breedte, hoogte) < MIN_ZIJDE:
+            return "te klein"
+        if breedte * hoogte > MAX_PIXELS:
+            return "te groot"
+        if MENS in d["P180"]:
+            return "mens erop"
+        if _licentie(d) is None:
+            return "licentie"
+    except (TypeError, ValueError):
+        return "onleesbare gegevens"
+    return _waarom_duim(d)
 
 
 def _bruikbaar(d: dict) -> bool:
-    try:
-        return (
-            d["mime"] == "image/jpeg"
-            and isinstance(d["url"], str)
-            and d["url"].startswith(UPLOAD)
-            and isinstance(d["bron"], str)
-            and d["bron"].startswith("https://commons.wikimedia.org/wiki/File:")
-            and int(d["bytes"]) > 0
-            and min(int(d["breedte"]), int(d["hoogte"])) >= MIN_ZIJDE
-            and int(d["breedte"]) * int(d["hoogte"]) <= MAX_PIXELS
-            and MENS not in d["P180"]
-            and _licentie(d) is not None
-            and _duim(d) is not None
-        )
-    except (TypeError, ValueError):
-        return False
+    return _waarom(d) is None
+
+
+MAX_REDENEN = 4  # zoveel redenen hooguit in een regel van een tekort
+
+
+def _afgevallen(redenen: dict[str, int]) -> str:
+    """Wat er afviel, voor de regel van een tekort: "; afgevallen: 371 thumbnail op een andere
+    host (thumb.wikimedia.org), 29 te klein". De MAX_REDENEN redenen die het vaakst voorkwamen,
+    de meeste eerst (bij een gelijk aantal op de tekst), en de rest samen als "N om een andere
+    reden"; leeg als er niets afviel."""
+    if not redenen:
+        return ""
+    rij = sorted(redenen.items(), key=lambda r: (-r[1], r[0]))
+    delen = [f"{n} {reden}" for reden, n in rij[:MAX_REDENEN]]
+    rest = sum(n for _, n in rij[MAX_REDENEN:])
+    if rest:
+        delen.append(f"{rest} om een andere reden")
+    return "; afgevallen: " + ", ".join(delen)
 
 
 # Hoeveel vragen een voorstel aan de API doet, en dus hoe lang het duurt op PAUZE_API_S (8 s).
@@ -1084,9 +1374,10 @@ class Voortgang:
         self._voor = {d: (_teller(d).vragen, _teller(d).n429, _teller(d).n5xx) for d in DIENSTEN}
 
     def haal(self, url: str, doel: Path, **kw) -> tuple[str, int]:
-        """haal, en onthoud wat er opgehaald wordt (voor de fout) en of het een origineel was."""
+        """haal als JPEG (jpeg: Accept: ACCEPT en de eerste bytes nagekeken), en onthoud wat er
+        opgehaald wordt (voor de fout) en of het een origineel was."""
         self.bezig = _soort(url)
-        uit = haal(url, doel, **kw)
+        uit = haal(url, doel, jpeg=True, **kw)
         self.bezig = None
         if not _is_duim(url):
             self.originelen += 1
@@ -1111,10 +1402,12 @@ class Voortgang:
         return f"{gehaald}; {self.verkeer()}"
 
     def verkeer(self) -> str:
-        """Per dienst van Commons de vragen sinds het begin van set (elke poging telt), hoe vaak
-        het antwoord 429 was (en 5xx, als dat er waren) en na hoeveel seconden de eerste 429 kwam,
-        en dan of de User-Agent een contact had, nooit het contact zelf. Bijvoorbeeld "API: 23
-        vragen, 17 keer 429, eerste 429 na 3 s; upload: 0 vragen; contact: nee"."""
+        """Per dienst van Commons (DIENSTEN: altijd alle drie, in die volgorde) de vragen sinds
+        het begin van set (elke poging telt, ook een vraag na een omleiding), hoe vaak het
+        antwoord 429 was (en 5xx, als dat er waren) en na hoeveel seconden de eerste 429 kwam, en
+        dan of de User-Agent een contact had, nooit het contact zelf. Bijvoorbeeld "API: 23
+        vragen, 17 keer 429, eerste 429 na 3 s; thumb: 0 vragen; upload: 0 vragen; contact:
+        nee"."""
         delen = []
         for dienst in DIENSTEN:
             teller = _teller(dienst)
@@ -1142,8 +1435,9 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
     """120 foto's volgens Keuze 83, en ze meteen ophalen (de sha256 komt van de download): van
     elke foto de thumbnail van DUIM_BREEDTE breed (_duim), nooit een groot origineel.
 
-    Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten in het
-    blok, en pas daarna volgt de fout. Zo laat één run alles zien wat Commons niet heeft."""
+    Een tekort stopt de keuze niet: elk tekort komt met het aantal bekeken kandidaten en waarom
+    ze afvielen (_afgevallen) in het blok, en pas daarna volgt de fout. Zo laat één run alles zien
+    wat Commons niet heeft, en waarom."""
     combis = combis if combis is not None else combinaties()
     voortgang = voortgang or Voortgang(len(CATEGORIEEN) * PER_CATEGORIE + len(ANDERE) * PER_ANDER)
     werk.set.mkdir(exist_ok=True)
@@ -1164,43 +1458,69 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
         rest = [c for c, q in CATEGORIEEN.items() if q in d["P180"] and c not in hoofd]
         return (*hoofd, *rest)
 
+    alle_qids = set(CATEGORIEEN.values())
+
+    def afval(pageid: int, d: dict, redenen: dict[str, int], *, anders: bool = False) -> bool:
+        """Valt deze kandidaat af? Zo ja, dan telt zijn reden (REDENEN) in redenen."""
+        if pageid in gebruikt:
+            reden = "al gekozen"
+        else:
+            reden = _waarom(d)
+            if reden is None and anders and d["P180"] & alle_qids:
+                reden = "beeldt een categorie af"
+        if reden is None:
+            return False
+        redenen[reden] = redenen.get(reden, 0) + 1
+        return True
+
     hoofd_telt = dict.fromkeys(CATEGORIEEN, 0)
     for a, b in combis:
         gezien = 0
+        redenen: dict[str, int] = {}
         for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b])):
             gezien += 1
-            if pageid not in gebruikt and _bruikbaar(d):
+            if not afval(pageid, d, redenen):
                 neem(pageid, d, f"{a}+{b}", cats_van(d, (a, b)))
                 hoofd_telt[a] += 1
                 break
         else:
             combi_tekort = True
-            tekort.append(f"geen bruikbare foto voor {a}+{b} ({gezien} kandidaten bekeken)")
+            tekort.append(
+                f"geen bruikbare foto voor {a}+{b} "
+                f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
+            )
     for naam, qid in CATEGORIEEN.items():
         nr = gezien = 0
+        redenen = {}
         for pageid, d in _kandidaten((qid,)):
             if hoofd_telt[naam] >= PER_CATEGORIE:
                 break
             gezien += 1
-            if pageid not in gebruikt and _bruikbaar(d):
+            if not afval(pageid, d, redenen):
                 nr += 1
                 neem(pageid, d, f"{naam}-{nr}", cats_van(d, (naam,)))
                 hoofd_telt[naam] += 1
         if hoofd_telt[naam] < PER_CATEGORIE:
             n = hoofd_telt[naam]
-            tekort.append(f"maar {n} bruikbare foto's voor {naam} ({gezien} kandidaten bekeken)")
-    alle_qids = set(CATEGORIEEN.values())
+            tekort.append(
+                f"maar {n} bruikbare foto's voor {naam} "
+                f"({gezien} kandidaten bekeken{_afgevallen(redenen)})"
+            )
     for naam, qid in ANDERE.items():
         nr = gezien = 0
+        redenen = {}
         for pageid, d in _kandidaten((qid,)):
             if nr >= PER_ANDER:
                 break
             gezien += 1
-            if pageid not in gebruikt and _bruikbaar(d) and not d["P180"] & alle_qids:
+            if not afval(pageid, d, redenen, anders=True):
                 nr += 1
                 neem(pageid, d, f"anders-{naam}-{nr}", ())
         if nr < PER_ANDER:
-            tekort.append(f"maar {nr} bruikbare foto's voor {naam} (anders; {gezien} bekeken)")
+            tekort.append(
+                f"maar {nr} bruikbare foto's voor {naam} "
+                f"(anders; {gezien} bekeken{_afgevallen(redenen)})"
+            )
     if not tekort:
         return gekozen
     # De keuze is klaar: een fout vanaf hier (ook bij het tellen van de reserves) zegt hoeveel
@@ -1213,14 +1533,24 @@ def stel_voor(werk: Werk, *, combis=None, voortgang: Voortgang | None = None) ->
         for a, b in RESERVE_COMBIS:
             if (a, b) in al:
                 continue
-            n = len(
-                {
-                    pageid
-                    for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b]), max_pagina=1)
-                    if _bruikbaar(d)
-                }
+            # elke kandidaat één keer (een foto kan onder beide licenties staan); "al gekozen"
+            # telt hier niet: een reserve staat los van wat er al in de set zit
+            goed: set[int] = set()
+            bekeken: set[int] = set()
+            redenen = {}
+            for pageid, d in _kandidaten((CATEGORIEEN[a], CATEGORIEEN[b]), max_pagina=1):
+                if pageid in bekeken:
+                    continue
+                bekeken.add(pageid)
+                reden = _waarom(d)
+                if reden is None:
+                    goed.add(pageid)
+                else:
+                    redenen[reden] = redenen.get(reden, 0) + 1
+            werk.meld(
+                f"BZ4 reserve {a}+{b}: {len(goed)} bruikbare foto's "
+                f"(eerste pagina per licentie{_afgevallen(redenen)})"
             )
-            werk.meld(f"BZ4 reserve {a}+{b}: {n} bruikbare foto's (eerste pagina per licentie)")
     raise Fout(f"Commons: {len(tekort)} tekort(en) voor de set; zie de regels BZ4 set hierboven")
 
 
@@ -1243,8 +1573,9 @@ def set_(werk: Werk, set_pad: Path, *, combis=None) -> int:
     Beide zeggen ook het verkeer met Commons (Voortgang.verkeer)."""
     # Alleen in het log, niet in het blok: het tempo, en of er een contact meegaat (nooit welk)
     print(
-        f"BZ4 set: de API van Commons hooguit één vraag per {_tussen('API'):.0f} s, upload één "
-        f"per {PAUZE_S:.0f} s; contact: {'nee' if _contact is None else 'ja'}",
+        f"BZ4 set: de API van Commons hooguit één vraag per {_tussen('API'):.0f} s, thumb één "
+        f"per {_tussen('thumb'):.0f} s, upload één per {_tussen('upload'):.0f} s; "
+        f"contact: {'nee' if _contact is None else 'ja'}",
         flush=True,
     )
     combis = combis if combis is not None else combinaties()

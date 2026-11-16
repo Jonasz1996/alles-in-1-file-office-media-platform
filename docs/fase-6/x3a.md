@@ -1225,3 +1225,218 @@ e-mailadres als waarde). `test_met_beeld_contact_alleen_naar_commons_en_nooit_in
 een vijfde geval in de vorm die `ci.yml` meestuurt (`https://github.com/<eigenaar>/<repo>`, met
 punt, liggend streepje en underscore). Uitzetten staat in het runbook
 ([analyse.md](../runbooks/analyse.md), "Een contact in de User-Agent").
+
+## CI op 45bb926
+
+`beeld-model` op `45bb926` (run 43787944528), de eerste run met de link naar het repository als
+contact (zie "Het contact aan"):
+
+| Stap | Uitkomst |
+|---|---|
+| BZ1 | huggingface.co, commons.wikimedia.org en upload.wikimedia.org HTTP 200; images-assets.nasa.gov HTTP 403. **Goed** |
+| BZ2 | twee omzettingen (8,1 en 7,5 s, maxrss 354 MiB) met dezelfde sha256 voor alle vijf bestanden; de omzetting met `--fp32` (18,8 s, 1607 MiB) ook. **Goed** |
+| BZ3, BZ6 en BZ7 | **goed**; BZ6 beeld int8 op één core 2609 foto's per minuut (poort ≥ 500), een vraag p95 19,5 ms (≤ 250 ms) |
+| BZ4 | niet gerekend: `set` (een voorstel, zonder `beeld.tsv`) liep van 01:45:53 tot 01:56:26 en stopte op "FOUT set: Commons: 30 tekort(en) voor de set; zie de regels BZ4 set hierboven (0 van 120 foto's opgehaald, 0,0 MB; API: 630 vragen, 0 keer 429; upload: 0 vragen; contact: ja)". **Rood** |
+
+**Niet de API: het voorstel nam niets.** Met contact vroeg `set` de API 630 keer in 10,5 minuten,
+één keer per seconde, en kreeg geen enkele 429: het tempo van "Het contact aan" hield. Maar van
+de kandidaten nam hij er geen: "geen bruikbare foto" voor alle 6 combinaties (5 tot 106
+kandidaten bekeken), "maar 0 bruikbare foto's" voor alle 12 categorieën (400 kandidaten bekeken,
+eten 294) en alle 12 andere onderwerpen (400; klok 272, gitaar 279, insect 377), en 0 voor alle 5
+reserves. Dus 30 tekorten, en niets opgehaald ("upload: 0 vragen"). Dezelfde keuze vond op
+`9ebf298` nog alle 120, toen als originelen. Sindsdien vraagt `details` de thumbnail van 1280 px
+(iiurlwidth), en nam `_duim` alleen een thumbnail op `UPLOAD` (zie "CI op 9ebf298"); op `3148c2f`
+kwam de keuze niet zover (de 429 van de API). Dit was dus de eerste run waarin `_duim` echte
+antwoorden zag. Waarom elke kandidaat afviel, zei het log niet: alleen hoeveel er bekeken waren.
+
+**Waarom, uit de tweede hand.** Wikimedia haalde de cache van de thumbnails uit het
+upload-cluster naar een eigen host, thumb.wikimedia.org: phabricator
+[T427465](https://phabricator.wikimedia.org/T427465), "Move thumbnail caching from upload cluster
+to text", uitgerold vanaf 2026-08-19 en "everywhere" sinds 2026-09-07. Het pad blijft hetzelfde
+(`/wikipedia/commons/thumb/<a>/<ab>/<naam>/<breedte>px-<naam>`), alleen de host verandert, en
+MediaWiki geeft die host nu in de thumburl van imageinfo
+([fuzheado/Wikipedia-AI-Skills, PR #26](https://github.com/fuzheado/Wikipedia-AI-Skills/pull/26),
+2026-09-03). De oude URL's op upload werken nog; een 301 naar thumb.wikimedia.org komt
+"eventually". De originelen blijven op upload; het pad van een origineel op thumb.wikimedia.org
+geeft een 301 naar https://commons.wikimedia.org/. Een verslag op dev.to ("Wikimedia thumbnails
+now: thumb.wikimedia.org, a fixed list of widths, and WebP only for some clients", nagekeken op
+2026-11-14) zegt verder: thumb.wikimedia.org geeft alleen de vaste maten (op een andere HTTP
+400); hij kiest het formaat op dezelfde URL (`.jpg`) naar de Accept van de vraag (met
+`image/webp,*/*`, en met de Accept van Chrome, WebP; zonder Accept, met `image/jpeg` of met
+`image/avif,*/*` JPEG), en het antwoord in WebP heeft geen `Vary`; met 1 s tussen twee vragen gaf
+hij geen 429. Al deze bronnen zijn uit de tweede hand: de sandbox komt niet bij Wikimedia, en
+niets ervan is hier nagemeten. Dat de thumburl in run 43787944528 op thumb.wikimedia.org stond,
+zegt het log ook niet; het is de verklaring die past bij alle 30 tekorten tegelijk (elke
+zoekopdracht, beide licenties, ook de reserves, terwijl de API zonder fout antwoordde). De
+volgende run zegt het: de regel van een tekort noemt nu de redenen (punt 5).
+
+Hersteld na de run (`tools/beeld/beeld_model.py`; de tests in
+`api/tests/analyse/test_beeld_tools.py`):
+
+1. **Thumbnails van thumb.wikimedia.org (`THUMB`).** `_duim` neemt een thumbnail van 1280 px op
+   `THUMB` of `UPLOAD` (het pad van `_is_duim`, thumbwidth 1280); geeft MediaWiki het origineel
+   zelf als thumburl (een origineel dat niet breder is), dan alleen op `UPLOAD`. Het voorstel
+   schrijft de URL in `beeld.tsv` precies zoals de API hem gaf, dus meestal op
+   thumb.wikimedia.org; de kolom bron blijft de bestandspagina. `lees_set` neemt een thumbnail van
+   1280 px op thumb of upload en een origineel alleen op upload; anders een fout met het
+   regelnummer: "url hoort bij https://thumb.wikimedia.org/ of https://upload.wikimedia.org/",
+   "url is een thumbnail, maar niet 1280 px" of "url op https://thumb.wikimedia.org/ is geen
+   thumbnail; een origineel hoort bij https://upload.wikimedia.org/". De nep van Commons in de
+   tests geeft de thumburl nu op zijn eigen thumb (`/duim/`), behalve voor vier foto's van boot
+   (de oude vorm, op upload). Tests: `test_ci_op_45bb926_de_thumbnails_staan_op_thumb_wikimedia_org`
+   (nieuw: een voorstel zonder tekort, 115 van de 120 op thumb en 5 op upload, elke URL precies
+   zoals de nep hem gaf), `test_de_thumbnail_van_een_goede_foto` (een geval "op
+   thumb.wikimedia.org" erbij), `test_een_foto_zonder_goede_thumbnail_valt_af` (6 gevallen erbij:
+   het origineel op thumb als thumburl en als url, een thumbnail op een vreemde host, op een host
+   met een liggend streepje en op een te lange host, en geen bestandspagina),
+   `test_een_geldige_set_komt_door_de_controle` (beide vormen van een thumbnail) en
+   `test_een_set_die_niet_klopt` (3 gevallen erbij: een thumbnail over http, een van 1024 px op
+   thumb, een origineel op thumb).
+2. **Een eigen dienst `thumb`.** Naast de API en upload is thumb.wikimedia.org een dienst van
+   Commons (`DIENSTEN`: API, thumb, upload): hooguit één vraag per `PAUZE_S` (1 s; het verslag op
+   dev.to zag bij 1 s geen 429), gemiddeld hooguit `BANDBREEDTE` (de rem is nu per host: thumb
+   en upload elk hun eigen), elke vraag geteld, en met `BEELD_CONTACT` het contact in de
+   User-Agent. Het verkeer in de regel van een goede set en in de fout van `set` heeft drie
+   diensten, altijd in die volgorde: "API: 90 vragen, 0 keer 429; thumb: 115 vragen, 0 keer 429;
+   upload: 5 vragen, 0 keer 429; contact: nee"; een dienst zonder vragen als "upload: 0 vragen",
+   één vraag als "1 vraag". De regel aan het begin van `set`: "BZ4 set: de API van Commons
+   hooguit één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja". Tests:
+   `test_tussen_twee_vragen_aan_commons_zit_een_pauze` (thumb erbij: 1 s, een eigen klok),
+   `test_van_upload_hooguit_bandbreedte_andere_hosts_niet` (thumb net zo) en elke test met het
+   verkeer in de regel of de fout (de nep telt `/duim/` als thumb).
+3. **Altijd JPEG.** Elke download van de set (een voorstel en met `beeld.tsv`) vraagt `Accept:
+   image/jpeg`, en `haal` kijkt de eerste bytes na (`FF D8 FF`). Is het iets anders, dan stopt
+   hij zodra hij 12 bytes heeft, met een fout met de sleutel: "kat-2.jpg: WebP in plaats van
+   JPEG" (RIFF … WEBP) of "kat-2.jpg: geen JPEG", en niets op schijf. Zonder dat zou een cache
+   die de `Vary` mist, de sha256 in `beeld.tsv` aan WebP kunnen binden, of WebP in de
+   kwaliteitstest zetten. De downloads van Hugging Face en de bron blijven zoals ze waren: geen
+   Accept en geen controle. Tests: `test_haal_met_jpeg_vraagt_jpeg_en_kijkt_de_eerste_bytes_na`
+   (nieuw: de nep geeft WebP op de Accept van een browser, zoals thumb.wikimedia.org; WebP op een
+   vraag om JPEG: een WebP van 3 MiB stopt na het eerste stuk, hooguit 1 MiB; HTML en een GIF van
+   6 bytes zijn "geen JPEG"; een JPEG van 4 bytes mag) en
+   `test_de_set_vraagt_elke_foto_als_jpeg` (nieuw: 240 downloads in een voorstel en een strenge
+   set, alle met `image/jpeg`, de API zonder; een cache die WebP geeft is "auto+sneeuw.jpg: WebP
+   in plaats van JPEG (bij foto 1 van 120, …" en `set/` blijft leeg). In
+   `test_streng_haalt_alleen_wat_ontbreekt_of_niet_klopt` houdt de opnieuw gemaakte thumbnail de
+   eerste vier bytes van een JPEG.
+4. **Omleidingen.** urllib volgt elke omleiding, ook naar een andere host, en neemt de
+   kopregels mee: met `BEELD_CONTACT` zou het contact dan meegaan naar die host, en de eigenaar
+   gaf alleen toestemming voor Wikimedia. Nu gaat elke vraag door `_opener` met `_Omleiding`:
+   - begon de vraag bij een dienst van Commons (de API, thumb of upload), dan volgt hij alleen een
+     omleiding naar https op commons.wikimedia.org, thumb.wikimedia.org of upload.wikimedia.org
+     (poort 443). Elke andere is een fout zonder vraag daarheen en zonder nieuwe poging: "HTTP 302
+     naar localhost, niet gevolgd (van Commons alleen naar https op commons.wikimedia.org,
+     thumb.wikimedia.org of upload.wikimedia.org)", met alleen de host (nooit de URL), en "een
+     onbekende host" als het geen gewone hostnaam is;
+   - de User-Agent komt per stap opnieuw van `_user_agent`, voor de nieuwe URL: het contact gaat
+     alleen naar een dienst van Commons. Accept gaat mee;
+   - de pauze en de telling, zo besloten: elke stap naar een dienst van Commons is een vraag als
+     elke andere. Hij wacht eerst `_pauze` van die dienst en telt bij die dienst (een 301 van
+     upload naar thumb telt één vraag bij upload en één bij thumb, en wacht de pauze van thumb).
+     Een stap naar een andere URL (commons.wikimedia.org buiten de API, zoals de 301 van het pad
+     van een origineel op thumb) wacht niet, telt niet en krijgt geen contact. Een 429 of 5xx na
+     een omleiding telt bij de dienst die hem gaf. De rem (`BANDBREEDTE`) geldt voor de host
+     die de bytes gaf;
+   - een vraag die elders begon (Hugging Face, dat naar zijn CDN omleidt) volgt hij zoals
+     urllib, zonder contact, pauze of telling.
+
+   Tests: `test_een_omleiding_van_commons_naar_elders_volgt_hij_nooit` (nieuw: thumb, de API en
+   upload elk naar elders, ook naar dezelfde host en poort over een ander schema; nooit een vraag
+   aan de tweede server, elke vraag één keer, niets op schijf),
+   `test_omleidingen_alleen_naar_https_op_de_hosts_van_commons` (nieuw: de echte hosts; http, een
+   andere poort, een andere host en een kapotte URL vallen erbuiten),
+   `test_een_omleiding_binnen_commons_volgt_hij_met_pauze_en_telling` (nieuw: de 301 van een oude
+   URL op upload naar thumb, met contact, Accept, de pauze van thumb en de telling; de 301 van een
+   origineel op thumb naar commons.wikimedia.org zonder contact, pauze of telling, en daar "geen
+   JPEG") en `test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact` (nieuw).
+5. **Waarom een kandidaat afviel.** `_waarom` geeft van elke kandidaat die de set niet neemt de
+   eerste reden uit een vaste reeks (`REDENEN`): geen image/jpeg, origineel niet op upload, geen
+   bestandspagina, te klein, te groot, mens erop, licentie, geen thumbnail van 1280 px,
+   thumbnail op een andere host, te langgerekt, onleesbare gegevens, en in de keuze zelf al
+   gekozen en (bij een ander onderwerp) beeldt een categorie af. Bij "thumbnail op een andere
+   host" staat de host erbij als het een gewone hostnaam is van hooguit 64 tekens (letters,
+   cijfers, liggende streepjes en punten), anders "een onbekende host"; nooit de URL. De regel
+   van een tekort en die van een reserve noemen de vier vaakste redenen met hun aantal, de
+   meeste eerst en bij een gelijk aantal op de tekst (dus elke run in dezelfde volgorde), en de
+   rest samen: "BZ4 set: Commons: maar 0 bruikbare foto's voor auto (24 kandidaten bekeken;
+   afgevallen: 14 thumbnail op een andere host (127.0.0.1), 2 geen image/jpeg, 2 licentie, 2 mens
+   erop, 4 om een andere reden)", "BZ4 reserve zonsondergang+strand: 0 bruikbare foto's (eerste
+   pagina per licentie; afgevallen: 1 thumbnail op een andere host (127.0.0.1))". Bij een reserve
+   telt elke kandidaat één keer en telt "al gekozen" niet. Op `45bb926` had de regel zo
+   "afgevallen: … thumbnail op een andere host (thumb.wikimedia.org)" gezegd. Tests:
+   `test_een_tekort_zegt_waarom_de_kandidaten_afvielen` (nieuw: de toestand van `45bb926` van de
+   andere kant, de tool verwacht thumb.wikimedia.org en de nep geeft de thumbnails elders; 29
+   tekorten, elk met redenen, precies voor auto+sneeuw, auto, fiets, bloem en een reserve, en
+   geen URL in het log), `test_waarom_een_foto_afvalt` (nieuw: de reden van elk geval van
+   `test_een_foto_zonder_goede_thumbnail_valt_af`, uit `REDENEN`, zonder URL, wachtwoord of poort),
+   `test_afgevallen_noemt_de_vier_vaakste_redenen` (nieuw) en
+   `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` (de redenen van kat+sneeuw,
+   eten en gitaar precies).
+6. **BZ1 noemt thumb.wikimedia.org**, na commons.wikimedia.org: de wortel
+   `https://thumb.wikimedia.org/`. Leidt een host om, dan zegt de regel waarheen en wat daar het
+   antwoord was (bijvoorbeeld "BZ1 thumb.wikimedia.org: bereikbaar (HTTP 301 naar
+   commons.wikimedia.org, daar HTTP 200)"), of dat de tool hem niet volgde ("bereikbaar (HTTP 302
+   naar …, niet gevolgd (…))"); wat de wortel van thumb.wikimedia.org antwoordt, is hier niet
+   bekend. Test:
+   `test_bereik_meldt_thumb_ook_als_de_wortel_omleidt` (nieuw: beide, en geen vraag aan de andere
+   host).
+
+Wat niet veranderde: de zoekvragen, de keuze, `PAUZE_API_S`, `PAUZE_S`, `BANDBREEDTE`,
+`MAX_WACHT_S`, `WACHT_TOTAAL_S`, de User-Agent, `BEELD_CONTACT` in `ci.yml` (alleen op `BZ1 bereik
+per host` en `BZ4 de 120 foto's`; de opmerkingen in `ci.yml` noemen geen hosts die nu niet meer
+kloppen, dus `ci.yml` is niet aangeraakt) en `test_beeld_ci.py`.
+
+Teruggedraaid getest (de `beeld_model.py` van `45bb926` terug, de nieuwe tests ongewijzigd; daarna
+de nieuwe weer terug, met `cmp` en `git status` nagekeken): in `test_beeld_tools.py` 58 rood en 100
+groen. Rood:
+- de 22 gevallen van `test_waarom_een_foto_afvalt` en
+  `test_afgevallen_noemt_de_vier_vaakste_redenen` (de oude gaf geen reden);
+- 8 tests van `set` op "Commons: 29 tekort(en) … (6 van 120 foto's opgehaald, …)", want de oude
+  `_duim` nam geen thumbnail op de thumb van de nep, met
+  `test_ci_op_45bb926_de_thumbnails_staan_op_thumb_wikimedia_org` voorop; om dezelfde reden
+  `test_een_fout_bij_het_tellen_van_de_reserves_zegt_hoeveel_er_kwamen` (6 in plaats van 116),
+  `test_een_tekort_stopt_de_keuze_niet_en_de_reserves_worden_geteld` en
+  `test_een_tekort_zegt_waarom_de_kandidaten_afvielen` (een tekort zonder "afgevallen: …");
+- 5 van `lees_set`: `test_een_geldige_set_komt_door_de_controle` ("regel 17: url hoort bij
+  https://upload.wikimedia.org/"), 3 gevallen van `test_een_set_die_niet_klopt` (de oude tekst) en
+  `test_de_thumbnail_van_een_goede_foto` "op thumb.wikimedia.org";
+- 11 met thumb in een regel: de regel aan het begin van `set` in de 2 gevallen van
+  `test_zonder_beeld_contact_gaat_er_geen_contact_mee` en de 5 van
+  `test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log`, het verkeer zonder "thumb: …"
+  in `test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout` en in de 3 gevallen van
+  `test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log`;
+- de 2 tests van BZ1; de pauze van thumb ("[8.0, 7.75, 1.0]": de vraag aan thumb zonder pauze) en
+  zijn rem (3,2 MB van thumb zonder wachten);
+- de 4 nieuwe tests van de omleidingen en van `haal` met `jpeg`.
+
+27 daarvan stopten op een naam of argument dat de oude tool niet had (`_waarom` 22 keer,
+`MAX_REDENEN`, `THUMB`, `ACCEPT`, en 2 keer `jpeg`). Groen op de oude tool, terecht:
+`test_een_foto_zonder_goede_thumbnail_valt_af` (de oude nam die gevallen ook niet) en
+`test_hugging_face_naar_zijn_cdn_volgt_hij_zonder_contact` (urllib deed dat al). Met alleen de
+nieuwe namen erbij in de oude tool (`THUMB`, `ACCEPT`, `JPEG_BEGIN`, `ALLEEN_COMMONS`,
+`MAX_HOSTNAAM`, `MAX_REDENEN`, `GEEN_DUIM`, `ANDERE_HOST`, `REDENEN`, en `DIENSTEN` met thumb, waar
+de oude `("API", "upload")` had): 55 rood en 103 groen. Groen werden alleen de 3 gevallen van
+`test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log`: de oude `verkeer`
+loopt over `DIENSTEN` en zei nu "thumb: 0 vragen", en het contact hield hij al uit het log. De 55
+blijven rood om de goede reden: 28 op een bewering over gedrag (geen thumbnail op thumb, de oude
+regels, geen pauze of rem voor thumb), 3 op het argument `jpeg` van `haal` en 24 op een functie die
+er niet was (`_waarom` 22 keer, `_afgevallen`, `_commons_hosts`). Met de nieuwe tool:
+`test_beeld_tools.py` 158 groen (met `test_beeld_ci.py` 167), `tests/analyse` 442 groen.
+
+### Open na 45bb926
+
+- **Of thumb.wikimedia.org de 120 geeft**, zegt de volgende run van `beeld-model` (`tools/beeld`
+  is een pad van de job). Dat de thumburl daar staat, is uit de tweede hand; staat hij ergens
+  anders, dan zegt de regel van elk tekort nu waar ("thumbnail op een andere host (…)").
+- **Of 1 s en `BANDBREEDTE` genoeg zijn voor thumb**, met 115 thumbnails na elkaar: het verslag
+  op dev.to zag bij 1 s geen 429, maar met hoeveel vragen staat er niet. Een 429 daar zegt de
+  fout nu met "thumb: … keer 429".
+- **WebP.** Of thumb.wikimedia.org of een cache ooit WebP geeft op een vraag om JPEG, is niet
+  gezien; gebeurt het, dan is `set` rood op die foto ("WebP in plaats van JPEG"), nooit stil.
+- **De 301 van upload naar thumb** ("eventually") volgt de tool, met de pauze en de telling van
+  thumb. Een `beeld.tsv` met oude URL's op upload blijft dan werken; de sha256 hoort bij de
+  bytes, niet bij de host.
+- **Of thumbnails de 429 van upload voorkomen** (zie "Open na 9ebf298") is niet meer de vraag:
+  de thumbnails komen nu van een andere host. Upload geeft alleen nog de originelen die niet
+  breder zijn dan 1280 px.
+- **Hoe lang BZ4 duurt** (de kwaliteitspoort in int8 en fp32) is nog nooit gemeten.

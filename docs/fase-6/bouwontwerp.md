@@ -2134,6 +2134,18 @@ Keuze 70–84 van X3.
       eigenaar. Die gaf Jonas op 2026-11-15 voor de link naar zijn openbare repository, en alleen
       die: `BZ1 bereik` en `BZ4 set` sturen hem mee, en `set` vraagt de API dan hooguit één keer
       per seconde. Uitleg in [x3a.md](x3a.md), "CI op 3148c2f" en "Het contact aan".
+      *Noot (CI op `45bb926`, 2026-11-16):* de API gaf met contact 630 antwoorden zonder 429, maar
+      het voorstel nam geen enkele kandidaat (30 tekorten). De thumbnails staan sinds september
+      2026 op thumb.wikimedia.org (phabricator T427465; volgens bronnen uit de tweede hand, de
+      sandbox komt niet bij Wikimedia), en de job nam alleen een thumbnail op upload. Nu neemt hij
+      de thumbnail van 1280 px op thumb.wikimedia.org of, in de oude vorm, op upload, en een
+      origineel alleen op upload; in `beeld.tsv` staat de URL zoals de API hem gaf. thumb is een
+      eigen dienst van Commons met hetzelfde tempo als upload (1 s, 20 Mbps) en het contact. Elke
+      foto wordt als JPEG gevraagd (`Accept: image/jpeg`; thumb.wikimedia.org geeft op dezelfde
+      URL ook WebP) en nagekeken op de eerste bytes. Een omleiding van een vraag aan Commons volgt
+      de job alleen naar https op de drie hosts van Commons, zodat het contact nooit elders komt.
+      De regel van een tekort zegt nu waarom de kandidaten afvielen. Uitleg in [x3a.md](x3a.md),
+      "CI op 45bb926".
     - **De poorten.** Vastgelegd vóór de eerste echte run. Lager alleen met een nieuwe keuze in dit
       ontwerp, nooit stil in de test.
 

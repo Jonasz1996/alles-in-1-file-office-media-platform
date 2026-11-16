@@ -187,15 +187,25 @@ van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads
 kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt.
 De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt (zolang
 `models.lock` de regels van SigLIP mist, is hij dat altijd); nooit een halve set, want een sleutel
-bewaart maar één keer. Van upload.wikimedia.org haalt de job gemiddeld hooguit 2,5 MB/s (20 Mbps;
-de robotregels staan 25 Mbps toe), en elke foto als thumbnail van 1280 px breed, niet als origineel
-(op de originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298").
-Is het origineel niet breder dan 1280, dan is het origineel zelf de thumbnail. De API van Commons
+bewaart maar één keer. Elke foto komt als thumbnail van 1280 px breed, niet als origineel (op de
+originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298"). De
+thumbnails staan sinds september 2026 op thumb.wikimedia.org (volgens bronnen uit de tweede hand;
+de oude URL's op upload.wikimedia.org werken nog; x3a.md, "CI op 45bb926"); `beeld.tsv` heeft de
+URL zoals de API hem gaf. Is het origineel niet breder dan 1280, dan is het origineel zelf de
+thumbnail, en dat staat altijd op upload.wikimedia.org. Van thumb.wikimedia.org en van
+upload.wikimedia.org haalt de job elk gemiddeld hooguit 2,5 MB/s (20 Mbps; de robotregels staan
+25 Mbps toe). Elke foto
+vraagt hij als JPEG (`Accept: image/jpeg`: thumb.wikimedia.org geeft op dezelfde URL ook WebP), en
+hij kijkt de eerste bytes na; is het geen JPEG, dan stopt `set` met `FOUT set: <sleutel>.jpg: WebP
+in plaats van JPEG` of `…: geen JPEG`, en die foto staat niet in `set/`. Een omleiding van een
+vraag aan Commons volgt de job alleen naar https op commons.wikimedia.org, thumb.wikimedia.org of
+upload.wikimedia.org; een andere is een fout (`HTTP 302 naar <host>, niet gevolgd (…)`), en
+daarheen gaat geen vraag. De API van Commons
 (commons.wikimedia.org) krijgt hooguit één vraag per 8 s, en ook een nieuwe poging na een 429
 telt: zonder contact in de User-Agent staat Wikimedia volgens wie de grenzen citeert (september
 2026) 10 vragen per minuut per IP toe (x3a.md, "CI op 3148c2f"). Een voorstel doet ±90 tot 200
 vragen aan de API en duurt daardoor ±12 tot 27 minuten; met `beeld.tsv` vraagt `set` de API
-niets. Upload krijgt hooguit één vraag per seconde.
+niets. Thumb en upload krijgen elk hooguit één vraag per seconde.
 Na een 429 of 503 vraagt de job nooit eerder opnieuw dan Retry-After zegt (seconden, ook met
 decimalen, of een HTTP-datum). Zegt die meer dan 600 s, is hij niet te lezen, of past het wachten
 niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij meteen,
@@ -205,19 +215,38 @@ log "beeld-model: draaien nee" met de reden.
 Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 
 - `BZ1 <host>: bereikbaar (HTTP …)` of `niet bereikbaar (…)`, voor huggingface.co,
-  commons.wikimedia.org, upload.wikimedia.org en images-assets.nasa.gov;
+  commons.wikimedia.org, thumb.wikimedia.org, upload.wikimedia.org en images-assets.nasa.gov.
+  Leidt de host om, dan staat erbij waarheen en wat daar het antwoord was (bijvoorbeeld `HTTP 301
+  naar commons.wikimedia.org, daar HTTP 200`), of dat de job hem niet volgde (`HTTP 302 naar
+  <host>, niet gevolgd (…)`);
 - `BZ2 …`: de commit; de tijd en maxrss van de twee omzettingen zoals de dienst (grens 1,5 GB),
   of die twee dezelfde sha256 geven en of ze kloppen met `models.lock`; en van de derde omzetting
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
 - `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons, … als origineel;
-  … MB in … s; API: … vragen, … keer 429; upload: … vragen, … keer 429; contact: ja)`, of het
-  voorstel (`… (… als origineel; … MB in … s; API: …)`): wat er van Commons kwam, hoeveel daarvan
-  als origineel in plaats van als thumbnail, hoe lang dat duurde, en het verkeer met Commons in
-  die stap: per dienst (de API en upload) de vragen, elke poging meegeteld, hoe vaak het antwoord
-  429 was (en `… keer 5xx` als dat er waren), na hoeveel seconden de eerste 429 kwam (`eerste 429
-  na … s`), en of de User-Agent een contact had (nooit welk). Een dienst zonder vragen staat er
-  als `upload: 0 vragen`;
+  … MB in … s; API: … vragen, … keer 429; thumb: … vragen, … keer 429; upload: … vragen, … keer
+  429; contact: ja)`, of het voorstel (`… (… als origineel; … MB in … s; API: …)`): wat er van
+  Commons kwam, hoeveel daarvan als origineel in plaats van als thumbnail, hoe lang dat duurde, en
+  het verkeer met Commons in die stap: per dienst, altijd in de volgorde API (de zoekvragen aan
+  commons.wikimedia.org), thumb (thumb.wikimedia.org: de thumbnails) en upload
+  (upload.wikimedia.org: de originelen, en thumbnails in de oude vorm), de vragen, elke poging en
+  elke gevolgde omleiding naar die dienst meegeteld, hoe vaak het antwoord 429 was (en `… keer
+  5xx` als dat er waren), na hoeveel seconden de eerste 429 kwam (`eerste 429 na … s`), en of de
+  User-Agent een contact had (nooit welk). Een dienst zonder vragen staat er als `upload: 0
+  vragen`, één vraag als `upload: 1 vraag`;
+- `BZ4 set: Commons: maar … bruikbare foto's voor <categorie> (… kandidaten bekeken; afgevallen:
+  …)`, `geen bruikbare foto voor <a>+<b> (…)` of `… voor <onderwerp> (anders; … bekeken;
+  afgevallen: …)`, en bij een tekort aan combinaties `BZ4 reserve <a>+<b>: … bruikbare foto's
+  (eerste pagina per licentie; afgevallen: …)`: een tekort, met waarom de kandidaten afvielen.
+  Hooguit de vier vaakste redenen met hun aantal, de meeste eerst (bij een gelijk aantal op de
+  tekst), en de rest als `… om een andere reden`. De redenen: `geen image/jpeg`, `origineel niet
+  op upload`, `geen bestandspagina`, `te klein`, `te groot`, `mens erop`, `licentie`, `geen
+  thumbnail van 1280 px`, `thumbnail op een andere host (<host>)`, `te langgerekt`, `onleesbare
+  gegevens`, `al gekozen` en `beeldt een categorie af`. De host staat er alleen als het een
+  gewone hostnaam is van hooguit 64 tekens, anders `een onbekende host`; nooit een URL. Zeggen
+  bijna alle kandidaten `thumbnail op een andere host`, dan geeft de API de thumbnails op een
+  host die de job niet kent: kijk in x3a.md ("CI op 45bb926") en pas `THUMB` in
+  `tools/beeld/beeld_model.py` aan;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
   (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
@@ -225,10 +254,10 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   afdrukbare ASCII en hooguit 160 tekens. Herhaalt het antwoord de User-Agent met
   `BEELD_CONTACT`, dan staat daar `[contact]`. Bij `set` staat erachter hoe ver hij kwam, wat hij
   ophaalde en het verkeer met Commons, bijvoorbeeld `(bij foto 37 van 120, een thumbnail van
-  1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; upload: 37 vragen, 0 keer 429;
-  contact: ja)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij weinig vragen en een
-  `eerste 429 na` van een paar seconden, dan was het budget van het IP van de runner al op voordat
-  de job begon (ander verkeer op dat IP);
+  1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; thumb: 36 vragen, 0 keer 429; upload:
+  1 vraag, 0 keer 429; contact: ja)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij
+  weinig vragen en een `eerste 429 na` van een paar seconden, dan was het budget van het IP van
+  de runner al op voordat de job begon (ander verkeer op dat IP);
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel.
@@ -236,8 +265,8 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 Het hele verslag staat bij de run als artifact `beeld-model` (`kort.txt`, `bz3.json`, `bz4.json`,
 `bz6.json`, `bz7.json`, de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
 het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van Commons hooguit
-één vraag per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar het repository als
-contact; zonder contact `… per 8 s, …; contact: nee`).
+één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar
+het repository als contact; zonder contact `… per 8 s, …; contact: nee`).
 
 ### Een contact in de User-Agent (`BEELD_CONTACT`, in de CI aan)
 
@@ -249,7 +278,9 @@ in de User-Agent, zoals de richtlijn van Wikimedia voor de User-Agent vraagt, is
 minuut; dan vraagt de tool de API hooguit één keer per seconde.
 
 `tools/beeld/beeld_model.py` stuurt dat contact mee als de omgevingsvariabele `BEELD_CONTACT`
-gezet is, en alleen naar Commons (de API en upload; Hugging Face en andere hosts nooit).
+gezet is, en alleen naar Commons (de API, thumb.wikimedia.org en upload.wikimedia.org; Hugging Face
+en andere hosts nooit). Ook na een omleiding: de User-Agent komt per stap opnieuw, en een omleiding
+van een vraag aan Commons naar een andere host volgt de tool niet.
 
 **Zo staat het nu.** Jonas vond op 2026-11-15 goed dat de CI de link naar zijn openbare
 repository als contact naar Wikimedia stuurt, en alleen dat (geen e-mail, geen naam). Daarom
