@@ -35,6 +35,11 @@ Eerst de foto's, dan aanzetten: groeperen (full) gaat zodra de rij van de eigena
 een full binnenkomt, groepeert de ronde van elk uur (docs/fase-6/x2b.md, Vormen), en zo lang wacht
 deze test niet.
 
+Daarna **/over** (I2; Keuze 29 en K1-13) met de analyse aan, voor Bram: Account → Tab tot
+"Bronnen en licenties" → Enter. De pagina noemt de bronnen van de kaart en de modellen van de
+analyse (YuNet, SFace, SigLIP 2) en de pakketten in het image, elk met de licentie, en vraagt de
+API niets.
+
 **Zonder de analyse** (de server van de sessie, zoals 0.8.0): de gebruiker en de beheerder zien
 niets nieuws, en de web vraagt geen enkele route van gezichten.
 """
@@ -647,6 +652,65 @@ def test_gezichten_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> 
     expect(toestaan).to_be_focused()
     eva_stand = server.call(eva, "GET", f"{API}/me/photo-settings", expect=200).json()
     assert (eva_stand["faces"], eva_stand["faces_forbidden"]) == ("uit", False)
+
+
+# De regels op /over, in de volgorde van de pagina (web/src/about/sources.ts; about.test.ts legt
+# elke naam, versie en licentie naast haar bron in de repo)
+OVER = (
+    "Plaatsnamen: GeoNames cities1000 (als rg_cities1000.csv uit reverse_geocoder 1.5.1), "
+    "CC BY 4.0.",
+    "Landen: Natural Earth 1:10m admin-0 v5.1.2 (publiek domein).",
+    "De wereldkaart: Natural Earth 1:110m admin-0 (publiek domein).",
+    "Gezichten vinden: YuNet 2026may van opencv_zoo, MIT, Copyright (c) 2020 Shiqi Yu.",
+    "Gezichten herkennen: SFace 2021dec van opencv_zoo, Apache-2.0.",
+    "Zoeken op beeld: SigLIP 2 B/32-256 van Google (google/siglip2-base-patch32-256), Apache-2.0.",
+    "onnxruntime 1.31.1: MIT",
+    "numpy 2.5.4: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "protobuf 7.36.2: BSD-3-Clause",
+    "flatbuffers 25.12.19: Apache-2.0",
+    "packaging 26.3: Apache-2.0 OR BSD-2-Clause",
+)
+
+
+@pytest.mark.analyse
+def test_over_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> None:
+    """Account → Tab tot "Bronnen en licenties" (onderaan, na Apparaten en sessies) → Enter: /over
+    met de focus op de kop, de regels van de kaart, de modellen en de pakketten, de plek van de
+    licentieteksten, en geen vraag aan de API (vaste gegevens; ook geen route van gezichten)."""
+    page = aan.context_as(wereld.bram).new_page()
+    verkeer = Verkeer(page)
+    page.goto("/account")
+    link = page.get_by_role("region", name="Over dit platform", exact=True).get_by_role(
+        "link", name="Bronnen en licenties", exact=True
+    )
+    expect(link).to_have_attribute("href", "/over")
+    verkeer.stil()
+    tab_to(page, link, limit=80)
+    gevraagd: list[str] = []
+
+    def vraag(r: Any) -> None:
+        pad = r.url.split("?", 1)[0]
+        if "/api/" in pad and not pad.endswith("/api/v1/events"):
+            gevraagd.append(f"{r.method} {pad}")
+
+    page.on("request", vraag)
+    page.keyboard.press("Enter")
+    expect(page).to_have_url(re.compile(r"/over$"))
+    kop = page.get_by_role("heading", name="Over dit platform", level=1)
+    expect(kop).to_be_focused()
+    expect(page).to_have_title("Over dit platform · Platform")
+    main = page.get_by_role("main")
+    expect(main.get_by_role("listitem").filter(has_not=page.get_by_role("link"))).to_have_text(
+        list(OVER)
+    )
+    expect(main).to_contain_text(
+        "De volledige licentieteksten staan naast de modellen (standaard in "
+        "/opt/platform/modellen) en in de broncode, in api/app/analyse/licenties/."
+    )
+    for naam in ("Kaart en plaatsen", "Gezichten en zoeken op beeld", "Pakketten van de analyse"):
+        expect(main.get_by_role("region", name=naam, exact=True)).to_be_visible()
+    verkeer.stil()
+    assert gevraagd == [] and verkeer.gezichten == []
 
 
 # --- 2. zonder de analyse: precies 0.8.0 ------------------------------------------------------
