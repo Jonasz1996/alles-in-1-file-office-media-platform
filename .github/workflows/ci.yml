@@ -135,10 +135,11 @@ jobs:
       # test_group_perf.py 1 en de drie scenario's met group tegen de echte worker in
       # test_analyse_contract_real.py); van de samenvoeging van golf 6: 1 (zoeken_naast_werk tegen
       # de echte worker, nu group en rank allebei gebouwd zijn), 1 (test_geheugen_samen.py, BZ5
-      # met de nepmodellen), 1 (herladen laat het oude bestand los) en 1 (de voorbewerking van de
-      # worker); gedeselecteerd: de 11 tests van de job beeld-model. Noem
+      # met de nepmodellen), 1 (herladen laat het oude bestand los), 1 (de voorbewerking van de
+      # worker) en 1 (test_group_perf.py: de meting telt de piek van pytest niet mee);
+      # gedeselecteerd: de 11 tests van de job beeld-model. Noem
       # hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "262"
+      ANALYSE_TESTS: "263"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4

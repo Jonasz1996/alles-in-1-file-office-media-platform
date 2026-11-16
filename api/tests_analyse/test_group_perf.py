@@ -5,7 +5,11 @@ recall ≥ 0,95.
 
 Het proces doet wat het kind werk doet: de invoer in een verzegelde memfd, group.run met een Job,
 de uitkomst in uit. De tijd is die van group.run; de maxrss is die van het hele proces (de import
-van numpy erbij). De set: tests_analyse/groep_maak.py.
+van numpy erbij): VmHWM, de piek van dat proces sinds exec. Niet ru_maxrss: Linux geeft bij fork
+(en vfork) en exec de piek van de ouder door, en dan telde de piek van pytest mee (419 MB na de
+samenvoeging van golf 6, waar het proces zelf 256 MB was; zie
+test_de_meting_telt_de_piek_van_pytest_niet_mee, en tests/search/test_geheugen_0010.py). De set:
+tests_analyse/groep_maak.py.
 """
 
 from __future__ import annotations
@@ -29,9 +33,21 @@ OPEN = 60_000
 BEKEND = 6_000
 GRENS_S = 60.0
 GRENS_MB = 400.0
+MB = 1024 * 1024
 
-KIND = r"""
-import json, os, resource, sys, time
+# De piek van dit proces sinds exec, in MB (zie boven: niet ru_maxrss)
+PIEK = r"""
+def piek_mb():
+    for regel in open("/proc/self/status"):
+        if regel.startswith("VmHWM:"):
+            return int(regel.split()[1]) / 1024
+    raise SystemExit("geen VmHWM")
+"""
+
+KIND = (
+    PIEK
+    + r"""
+import json, os, sys, time
 from app.analyse import wire
 from app.analyse.worker.child import Job, StopFlag
 from app.analyse.worker.ops import group
@@ -45,9 +61,27 @@ took = time.perf_counter() - start
 size = os.fstat(out).st_size
 with open(sys.argv[2], "wb") as f:
     f.write(os.pread(out, size, 0))
-rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-print(json.dumps({"s": took, "maxrss_mb": rss, "n": answer["n"]}))
+print(json.dumps({"s": took, "maxrss_mb": piek_mb(), "n": answer["n"]}))
 """
+)
+
+
+def test_de_meting_telt_de_piek_van_pytest_niet_mee():
+    """Houdt pytest 256 MB vast, dan meet een kind dat zelf weinig doet toch alleen zijn eigen
+    piek; ru_maxrss van datzelfde kind (de oude meting) neemt de 256 MB van pytest mee."""
+    blok = np.ones(256 * MB // 8)  # aangeraakt: 256 MB in de RSS van pytest
+    try:
+        kind = PIEK + "import resource\n"
+        kind += "print(piek_mb(), resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)\n"
+        done = subprocess.run(
+            [sys.executable, "-c", kind], cwd=API, capture_output=True, text=True, timeout=60
+        )
+    finally:
+        del blok
+    assert done.returncode == 0, done.stderr[-2000:]
+    piek, oud = map(float, done.stdout.split())
+    assert oud >= 256, (piek, oud)
+    assert piek < 64, (piek, oud)
 
 
 def test_60000_gezichten_binnen_60_s_en_400_mb(tmp_path):
