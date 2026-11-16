@@ -500,6 +500,16 @@ container zonder netwerk en gooit de bron daarna weg; het model zelf is ±400 MB
 `curl … | BEELD=uit bash` (een model dat er al staat, blijft staan). Meer:
 `docs/runbooks/analyse.md`, "Zoeken op beeld".
 
+Wat gebruikers ermee krijgen, komt met 0.8.1; tot dan staat het uit, en zonder `ANALYSE=aan`
+ziet niemand iets nieuws. Elke gebruiker zet zoeken op beeld zelf aan bij Account → Foto's
+(standaard uit). Dan bekijkt de container op de achtergrond alleen de eigen foto's van die
+gebruiker, en vindt hij ze op `/zoeken` in de stand "Wat er op de foto staat" met woorden ("hond
+op het strand"), of vanuit een eigen foto met "Meer zoals deze" in het infopaneel. Er gaat niets
+naar buiten. Is het te traag of draait de container niet, dan krijgt hij de treffers van gewoon
+zoeken met een melding. Op `/beheer` → Zoeken en foto's staat de stand, met de knoppen om het voor
+iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, meet
+`dc exec -T platform python -m app.cli beeld-bench` (het runbook, BZ9).
+
 **Uit:** hetzelfde commando met `ANALYSE=uit`. Dan geen download en geen container meer; de
 modellen blijven in `/opt/platform/modellen` tot je die map zelf weggooit. Terug naar 0.8.0
 (hierboven) gaat ook met de analyse aan: het script van 0.8.0 haalt de container weg, en de
