@@ -53,6 +53,10 @@ import "./people.css";
 
 const PersonFaces = lazyWithAreas<PersonFacesProps>(() => import("../faces/PersonFaces"), ["photos_faces"]);
 
+/** Zo lang wacht het dialoog "Wissen" hooguit op GET /me/photo-settings; daarna komt het zonder
+ * de zin over gezichten (de stand is dan onbekend). */
+const SETTINGS_WAIT_MS = 3000;
+
 /** De tekst van het dialoog "Wissen". Staan gezichten voor jou aan (X2: de server kan het, de
  * beheerder verbiedt het niet en jij zette ze aan), dan erbij dat de gezichten die je als deze
  * persoon bevestigde, gewist worden (de trigger person_bd_face). Anders, of zonder stand (s null:
@@ -95,6 +99,7 @@ function PersonView({ params }: RouteProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [count, setCount] = useState(0);
   const [merging, setMerging] = useState(false);
+  const asking = useRef(false);
   const wrap = useRef<HTMLDivElement>(null);
   const control = useRef<GridControl | null>(null);
   const { columns, cellWidth } = useColumns(wrap, MIN_CELL, GAP);
@@ -187,13 +192,20 @@ function PersonView({ params }: RouteProps): JSX.Element {
   }
 
   async function remove() {
-    if (!person) return;
-    const settings = await photoSettings().catch(() => null);
+    // Eén vraag tegelijk: tussen de toets en het dialoog zit nu GET /me/photo-settings
+    if (!person || asking.current) return;
+    asking.current = true;
+    const settings = await Promise.race([
+      photoSettings().catch(() => null),
+      new Promise<null>((done) => setTimeout(() => done(null), SETTINGS_WAIT_MS)),
+    ]);
     const ok = await confirm({
       title: t("photos_people.personPage.delete"),
       message: deleteMessage(person.name, settings),
       confirm: t("photos_people.personPage.delete"),
       danger: true,
+    }).finally(() => {
+      asking.current = false;
     });
     if (!ok) return;
     try {

@@ -47,7 +47,10 @@ describe("het dialoog Wissen van een persoon", () => {
   });
 
   it("vraagt de stand pas bij het wissen, uit de api van personen (niet uit src/photos/faces/)", () => {
-    expect(personPage).toContain("const settings = await photoSettings().catch(() => null);");
+    expect(personPage).toContain("photoSettings().catch(() => null),");
+    expect(personPage).toContain("setTimeout(() => done(null), SETTINGS_WAIT_MS)");
+    // Eén vraag tegelijk (een tweede Shift+Delete tijdens de vraag opent geen tweede dialoog)
+    expect(personPage).toContain("if (!person || asking.current) return;");
     expect(personPage).toContain("message: deleteMessage(person.name, settings),");
     expect(personPage).not.toMatch(/from "\.\.\/faces\/(?!PersonFaces")/);
     // Eén plek vraagt de instellingen: in remove(), voor het dialoog
