@@ -6,6 +6,10 @@
 //
 // Z0b (review contract F3): de plek van X2, PersonFaces ("Misschien ook Anna"), lazy met het
 // gebied photos_faces. Z6 houdt hem; src/lazySlots.test.ts eist hem.
+//
+// I2 (0.8.1): het dialoog "Wissen" zegt erbij dat de bevestigde gezichten gewist worden, alleen
+// als gezichten voor jou aanstaan (deleteMessage). Het vraagt GET /me/photo-settings (van 0.8.0)
+// pas bij het wissen, uit ./api: zo blijft src/photos/faces/ buiten dit chunk.
 
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReloadOn } from "../../events";
@@ -36,17 +40,28 @@ import {
   mergePerson,
   people,
   personPhotos,
+  photoSettings,
   unhideMemories,
   updatePerson,
 } from "./api";
 import type { ComboOption } from "./combo";
 import { pagedIds } from "./filters";
 import { PersonCombo } from "./PersonCombo";
-import { PEOPLE_CHANGED, type Person } from "./types";
+import { PEOPLE_CHANGED, type Person, type PhotoSettings } from "./types";
 import "../photos.css";
 import "./people.css";
 
 const PersonFaces = lazyWithAreas<PersonFacesProps>(() => import("../faces/PersonFaces"), ["photos_faces"]);
+
+/** De tekst van het dialoog "Wissen". Staan gezichten voor jou aan (X2: de server kan het, de
+ * beheerder verbiedt het niet en jij zette ze aan), dan erbij dat de gezichten die je als deze
+ * persoon bevestigde, gewist worden (de trigger person_bd_face). Anders, of zonder stand (s null:
+ * de vraag mislukte), de zin van 0.8.0: uit is onzichtbaar. */
+export function deleteMessage(name: string, s: PhotoSettings | null): string {
+  const text = t("photos_people.personPage.deleteText", { name });
+  const facesOn = s !== null && s.faces_available && !s.faces_forbidden && s.faces === "aan";
+  return facesOn ? `${text} ${t("photos_people.personPage.deleteFaces", { name })}` : text;
+}
 
 /** Een pagina van /people/{id}/photos zoals het raster hem leest. */
 async function page(id: string, after: string | null) {
@@ -173,9 +188,10 @@ function PersonView({ params }: RouteProps): JSX.Element {
 
   async function remove() {
     if (!person) return;
+    const settings = await photoSettings().catch(() => null);
     const ok = await confirm({
       title: t("photos_people.personPage.delete"),
-      message: t("photos_people.personPage.deleteText", { name: person.name }),
+      message: deleteMessage(person.name, settings),
       confirm: t("photos_people.personPage.delete"),
       danger: true,
     });

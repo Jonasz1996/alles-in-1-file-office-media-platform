@@ -58,6 +58,7 @@ const en: Translation<typeof nl> = {
     hiddenNote: "Hidden: this person is not in the list and not in the suggestions.",
     delete: "Delete",
     deleteText: "{name} disappears from all your photos. The photos themselves stay.",
+    deleteFaces: "The faces you confirmed as {name} are erased and not suggested again.",
     deleted: "{name} was deleted.",
     memories: "Not in memories",
     memoriesBack: "Back in memories",
