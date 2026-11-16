@@ -2322,7 +2322,8 @@ pytest: `bz3` 4 goed, `bz4` 2 fout en 4 goed, `bz4r` 5 goed in 262,4 s, `bz6` 1 
   0,454 (int8) en van 0,463 naar 0,442 (fp32), en fp32 combinaties van 6/6 naar 5/6. Een grens
   precies op één meting zou rood worden op de volgende set.~~ [2026-11-16: "Toch uitbrengen";
   de ondergrenzen staan in "Keuze 85" hieronder.]
-- **De pins van `VERSIE` 3** gaan met X3b in `models.lock` (ongewijzigd, ook op deze CPU).
+- ~~**De pins van `VERSIE` 3** gaan met X3b in `models.lock` (ongewijzigd, ook op deze CPU).~~
+  Gedaan in de review van golf 6 (`c921c66`; x3b.md, De review, G6-2).
 - **BZ6 op een trage runner:** op deze CPU zonder VNNI 82,8 ms. Of er runners zijn die trager
   zijn, zegt pas een run op een andere CPU; de regel van BZ6 noemt ze nu.
 
@@ -2353,6 +2354,67 @@ in int8 2 van 5, in fp32 soms 1. De andere poorten blijven.
 - **Nagerekend zonder model:** de twee tests met de getallen van `ffac665` zijn goed; met 'stad' op
   0 van 5, met 'boot' hernoemd in de vragen, of met "meer zoals deze" 0,399 (of 0,271, per tensor)
   zijn ze rood.
-- **Nog te doen:** de volgende run van `beeld-model` (die draait omdat `test_beeld_kwaliteit.py`
-  verandert) moet BZ4 groen geven op een nieuwe set. De uitleg bij de schakelaar in Account →
-  Foto's (wat je mag verwachten, met 'bergen' en 'boot') komt met X3b.
+- **Nog te doen:** ~~de volgende run van `beeld-model` (die draait omdat `test_beeld_kwaliteit.py`
+  verandert) moet BZ4 groen geven op een nieuwe set.~~ [Gedaan op `502f4c3`, run 43870814179; zie
+  "CI op 502f4c3" hieronder. De set van die run staat sinds `d1c29e0` als `beeld.tsv` op de tak
+  van golf 6.] ~~De uitleg bij de schakelaar in Account → Foto's (wat je mag verwachten, met
+  'bergen' en 'boot') komt met X3b.~~ [Gedaan in `5e24f80`.]
+
+## CI op 502f4c3
+
+`beeld-model` op `502f4c3` (run 43870814179), de eerste run met de ondergrenzen van Keuze 85, op
+een Xeon 6975P-C met VNNI en AMX. Alle poorten goed. De job werd alleen rood op zijn laatste stap,
+"Uitslag (rood zolang models.lock of beeld.tsv een voorstel is)": op `origin` had `models.lock` de
+regels van SigLIP niet, en `beeld.tsv` was een voorstel. Beide staan nu op de tak van golf 6: de
+pins sinds `c921c66` (x3b.md, De review, G6-2), `beeld.tsv` sinds `d1c29e0`. Of die stap na de push
+groen is, zegt CI.
+
+- **BZ1:** huggingface.co, commons.wikimedia.org, thumb.wikimedia.org en upload.wikimedia.org
+  bereikbaar; images-assets.nasa.gov 403, zoals eerder.
+- **BZ2:** twee omzettingen met dezelfde sha256 voor alle vijf bestanden (8,9 en 8,5 s, maxrss
+  354 MiB), ook met `--fp32` (16,5 s, 1.608 MiB). Het voorstel noemt precies de vijf pins van
+  "CI op 669f03c", die sinds `c921c66` in `models.lock` staan (`beeld.int8.onnx` `ddc76fc0…`
+  102.609.072 B, `tekst.int8.onnx` `258337db…` 284.248.004 B, `tokenizer.bin` `1516dde1…`,
+  `meta.json` `dfb3d153…` 2.376 B, de licentie `0d542e0c…`).
+- **BZ3 en BZ7:** de lijst 27 rijen en 2.000 zinnen, 0 verschillen; `tokenizer.bin` laden 0,109 s,
+  0,0 MB erbij.
+- **BZ4 set:** 120 foto's met 1 tweede keus (`kat+sneeuw`), `beeld_niet.tsv` sloeg 49 kandidaten
+  over; 43,6 MB in 287 s, 0 keer 429. Dat voorstel is `beeld.tsv` geworden (`d1c29e0`).
+- **BZ4:** goed met de grenzen van Keuze 85. Elk getal van de kwaliteit (per vraag, per categorie,
+  de varianten) is gelijk aan dat op `669f03c`; alleen de tijden verschillen. Het verschil met
+  toen zit dus alleen in de poorten.
+- **BZ6:** 35,9 ms per foto op één core (1.671 per minuut, poort ≥ 500); een vraag p50 23,1 ms,
+  p95 23,4 ms (≤ 250 ms), met laden 515 ms, maxrss 864 MiB.
+
+| | int8 | fp32 | poort (Keuze 85) |
+|---|---|---|---|
+| nl precisie@5 | 0,692 | 0,692 | ≥ 0,6, goed |
+| slechtste vraag buiten 'bergen' en 'boot' | 2/5 | 1/5 (`personenauto`, `stad`) | ≥ 1, goed (int8) |
+| 'bergen', 'boot' | 0/5, 0/5 | 0/5, 1/5 | mogen 0/5 |
+| int8 zakt | 0,000 | | ≤ 0,05, goed |
+| combinaties | 6/6 | 6/6 | ≥ 5, goed |
+| meer zoals deze (top 4) | 0,475 | 0,463 | ≥ 0,40, goed (doel 0,7) |
+| kleuren | 3/3 | | 3/3, goed |
+
+Uit het log (`kort.txt`), letterlijk:
+
+```
+BZ4 nl: precisie@5 0.692 (poort ≥ 0.6), slechtste vraag 2/5 buiten de bekend zwakke (poort ≥ 1; Keuze 85: bergen 0/5, boot 0/5) — goed
+BZ4 combinaties: 6/6 in de top 10 (poort ≥ 5), plekken [4, 1, 2, 3, 1, 6] — goed
+BZ4 int8 tegen fp32: precisie@5 0.692 tegen 0.692, zakt 0.000 (poort ≤ 0.05) — goed
+BZ4 meer zoals deze: 0.475 van de top 4 (poort ≥ 0.40, Keuze 85; doel 0.7) — goed
+BZ4 zelftest kleuren: 3/3 bovenaan — goed
+BZ6 beeld int8 op 1 core(s): 35.9 ms per foto uit 256.webp, 1671 per minuut (poort ≥ 500) — goed; cpu Intel(R) Xeon(R) 6975P-C, vnni ja, amx ja
+BZ6 vraag (tokenizer + tekst int8): p50 23.1 ms, p95 23.4 ms (voorwaarde ≤ 250 ms), eerste 24.2 ms, met laden 515 ms; maxrss 864 MiB — goed
+UITSLAG models.lock mist de regels van SigLIP (voorstel: voorstel-models.lock)
+UITSLAG zet die regels pas samen met X3b in models.lock: zonder de stap BEELD van install.sh maakt niemand de omzetting, en meldt de container ze als ontbrekend (models_missing)
+UITSLAG beeld.tsv ontbreekt (voorstel: voorstel-beeld.tsv)
+```
+
+pytest: `bz3` 4 goed, `bz4` 6 goed in 36,9 s, `bz4r` 5 goed in 170,1 s, `bz6` 1 goed.
+
+### Open na 502f4c3
+
+- **BZ4 streng** (met de pins en `beeld.tsv`, de set uit `beeld.tsv` in plaats van een voorstel)
+  en de stap "Uitslag": in CI na de push van golf 6.
+- **BZ6 op een trage runner** blijft zoals in "Open na ffac665".

@@ -2288,7 +2288,7 @@ Keuze 70–85 van X3.
       beantwoordt die vraag niet). De uitleg bij de schakelaar in Account → Foto's zegt wat je mag
       verwachten: één woord vindt meestal een paar goede foto's bovenaan, sommige woorden vinden
       weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel), en "Meer zoals deze" geeft ongeveer de
-      helft uit hetzelfde onderwerp. Die tekst komt met X3b.
+      helft uit hetzelfde onderwerp. Die tekst komt met X3b. [Gedaan in `5e24f80`.]
     - **Later.** Beter kan met het grotere model B/16 (Vraag 10c) of met een vaste vorm van de vraag
       ("een foto van …"); geen van beide is gemeten. Haalt een latere run de poorten van Keuze 83
       weer, dan kan een nieuwe keuze ze terugzetten. Lager dan hier kan alleen met een nieuwe keuze.

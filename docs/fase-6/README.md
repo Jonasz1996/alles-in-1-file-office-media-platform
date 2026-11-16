@@ -138,8 +138,11 @@ Per punt waar het bewezen is (in de sandbox, in CI of op de LXC): [integratie.md
   afgeschermde container, `analyse`, zonder netwerk en zonder je bestanden. Daarvoor komen eerst
   die container en de migraties 0011 en 0012 (een nieuwe stand van de tabellen).
 - **Zoeken op wat er op een foto staat** ("strand", "hond"). Dit staat ook gepland voor 0.8.1,
-  maar het kan naar een aparte fase 6b schuiven als het uitloopt (zie [Planning](#planning)). Per
-  gebruiker standaard uit (Vraag 11).
+  ~~maar het kan naar een aparte fase 6b schuiven als het uitloopt (zie [Planning](#planning))~~.
+  [16 november 2026: het blijft in 0.8.1. Je koos "Toch uitbrengen" (Keuze 85 in het
+  [bouwontwerp](bouwontwerp.md)), ook al vinden een paar woorden weinig ('bergen' en 'boot';
+  'berg' en 'bootje' wel). De uitleg bij de schakelaar zegt wat je mag verwachten.] Per gebruiker
+  standaard uit (Vraag 11; die heb je nog niet beantwoord).
 - Met de gezichten komen ook de pagina `/over` met de bronvermeldingen, en de reparatie van het
   kader van een persoon bij een nieuwe versie van een foto (migratie 0011; zie
   [Bekende grenzen](#bekende-grenzen)).
@@ -205,7 +208,8 @@ Dat betekent:
 - **Gezichten automatisch: ja**, in fase 6 (gepland voor 0.8.1). Per gebruiker staat het
   standaard uit.
 - **Zoeken op wat er op een foto staat** ("strand", "hond"): ja, in fase 6 (gepland voor 0.8.1;
-  het kan naar een fase 6b schuiven). Dat volgt uit "alles"; het kaartje noemde het niet apart.
+  ~~het kan naar een fase 6b schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]). Dat
+  volgt uit "alles"; het kaartje noemde het niet apart.
   Daarom staat het per gebruiker standaard uit (Vraag 11).
 - **De kaart: geen tegels van buiten.** Alleen landsgrenzen. Er gaat niets naar een kaartdienst.
 - **Plaatsnamen en landsgrenzen downloaden bij de installatie** (de oude Vraag 5 en 6): de kaartjes
@@ -235,8 +239,9 @@ Wat daarvan in 0.8.0 zit en wat er gemeten is: [Klaar als](#klaar-als).
   bestanden van anderen.
 - Tekst lezen gebeurt in de afgeschermde mediaworker van fase 5 als media aan staat, anders in de
   app zelf (`/beheer` zegt welke). OCR draait alleen in de mediaworker, dus alleen met media aan.
-- **Gezichten** (vanaf 0.8.1) **en zoeken op beeld** (gepland voor 0.8.1; het kan naar een fase 6b
-  schuiven) rekenen in een eigen container, `analyse`. Die heeft geen netwerk en kan niet bij je
+- **Gezichten** (vanaf 0.8.1) **en zoeken op beeld** (gepland voor 0.8.1; ~~het kan naar een fase
+  6b schuiven~~ [16 november 2026: het blijft in 0.8.1, Keuze 85]) rekenen in een eigen container,
+  `analyse`. Die heeft geen netwerk en kan niet bij je
   bestanden: de app geeft hem alleen een klein voorbeeld van een foto. numpy en onnxruntime staan alleen daar; de app zelf gebruikt ze nooit.
 - **Gezichten** (vanaf 0.8.1) geven voorstellen ("Is dit Eva?"). Niets wordt vanzelf bevestigd.
   De getallen die het platform van elk gezicht maakt (de vectoren), zijn versleuteld, met een
@@ -265,8 +270,8 @@ In 0.8.0 (gemeten, of geschat waar dat erbij staat):
 | zoeken | binnen 200 ms (p95) |
 
 In 0.8.1 komt erbij, met gezichten en zoeken op beeld (gemeten in de sandbox, of berekend uit die
-metingen; [haalbaarheid.md](haalbaarheid.md)). Zoeken op beeld kan naar een fase 6b schuiven; dan
-komt dat deel later:
+metingen; [haalbaarheid.md](haalbaarheid.md)). ~~Zoeken op beeld kan naar een fase 6b schuiven; dan
+komt dat deel later.~~ [16 november 2026: zoeken op beeld blijft in 0.8.1 (Keuze 85).]
 
 | Wat | Hoeveel |
 |---|---|
@@ -291,7 +296,8 @@ laat zien hoe ver het is.
 Kies je één oplevering, dan is het ±41 werkdagen. Het stappenplan gaf 3 weken; dat was zonder
 gezichten en beeld, en zonder review per golf. Loopt het uit, dan schuift eerst zoeken met woorden
 op beeld, dan beeld helemaal (naar een fase 6b), dan de groepen "Wie is dit?" van gezichten. Geen
-privacyregel schuift.
+privacyregel schuift. [16 november 2026: zoeken op beeld is gebouwd en blijft in 0.8.1 (Keuze
+85).]
 
 ## Privacy en de wet
 
@@ -505,6 +511,11 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
   [x3a.md](x3a.md)). Voor jou is er nog niets te zien: zonder `ANALYSE=aan` doet `install.sh`
   precies wat 0.8.0 deed, en de app doet nog niets met de container.
 - **Golf 6** (16 november): gezichten in de app (X2b, [x2b.md](x2b.md)) en zoeken op beeld in de
-  app (X3b, [x3b.md](x3b.md)) zijn gebouwd en samengevoegd. Nog niet: de integratie I2 en 0.8.1;
-  zoeken op beeld kan nog naar een fase 6b schuiven. Voor jou is er nog niets te zien: zonder
-  `ANALYSE=aan` doet het platform wat 0.8.0 deed. Zie [Wat komt in 0.8.1](#wat-komt-in-081).
+  app (X3b, [x3b.md](x3b.md)) zijn gebouwd, samengevoegd en nagekeken (review en nacontrole), en
+  wat er intussen op GitHub stond, is erbij gehaald. Zoeken op beeld komt in 0.8.1: je koos "Toch
+  uitbrengen" (Keuze 85), en de uitleg bij de schakelaar zegt nu wat je mag verwachten. In CI was
+  de kwaliteitspoort van zoeken op beeld met die keuze goed (run 43870814179); de job zelf bleef
+  rood omdat de vaste set foto's en de regels van het model in `models.lock` daar nog ontbraken.
+  Die staan nu op de branch. Golf 6 moet nog naar GitHub; daarna zegt CI of alles groen is. Nog
+  niet: de integratie I2 en 0.8.1. Voor jou is er nog niets te zien: zonder `ANALYSE=aan` doet het
+  platform wat 0.8.0 deed. Zie [Wat komt in 0.8.1](#wat-komt-in-081).
