@@ -419,6 +419,39 @@ def test_zoeken_op_beeld_met_alleen_het_toetsenbord(x3: X3App, x3_browsers: Bewa
     expect(veld(page)).to_be_focused()
 
 
+# Elk frame een halve seconde later, zoals op een drukke machine: wat de pagina een frame later
+# doet, valt dan na de volgende toets
+TRAAG_FRAME = """
+(() => {
+  const echt = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = (cb) => echt(() => setTimeout(() => cb(performance.now()), 500));
+})();
+"""
+
+
+def test_esc_vlak_na_de_viewer_blijft_in_het_veld(x3: X3App, x3_browsers: Bewaakt) -> None:
+    """Esc direct na het sluiten van de viewer zet de focus in het veld, en daar blijft hij, ook als
+    elk frame een halve seconde later komt. Zette het raster de focus een frame later op de foto,
+    dan viel dat na deze Esc en sprong de focus terug (zo werd de test hierboven eens rood in
+    slim.sh)."""
+    page = x3_browsers.context_as(x3.eva).new_page()
+    page.add_init_script(TRAAG_FRAME)
+    page.goto("/zoeken?mode=image&q=strand")
+    eerste = cellen(page).nth(0)
+    expect(eerste).to_be_visible()
+    tab_to(page, eerste)
+    page.keyboard.press("Enter")
+    viewer = page.get_by_role("dialog")
+    expect(viewer).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    expect(eerste).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(veld(page)).to_be_focused()
+    page.wait_for_timeout(1500)  # langer dan één traag frame
+    expect(veld(page)).to_be_focused()
+
+
 # --- 2. "Meer zoals deze" ----------------------------------------------------------------------
 
 

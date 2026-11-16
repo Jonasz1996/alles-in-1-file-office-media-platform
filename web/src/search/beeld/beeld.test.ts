@@ -219,6 +219,13 @@ describe("de pijlen in het raster (Keuze 81)", () => {
     expect(beeldResultsSource).toContain('role="row" aria-rowindex={r + 1}');
     expect(beeldResultsSource).toContain('role="gridcell" data-index={index} tabIndex={tabbable ? 0 : -1}');
   });
+
+  it("de focus gaat meteen naar de foto, niet een frame later (dan viel hij na een Esc terug)", () => {
+    expect(beeldResultsSource).toMatch(
+      /const moveTo = useCallback\(\(i: number\) => \{\s*setFocus\(i\);\s*grid\.current\?\.querySelector<HTMLElement>\(`\[data-index="\$\{i\}"\]`\)\?\.focus\(\);\s*\}, \[\]\);/,
+    );
+    expect(beeldResultsSource).not.toContain("requestAnimationFrame");
+  });
 });
 
 describe("de meldingen in role=status (Keuze 81)", () => {

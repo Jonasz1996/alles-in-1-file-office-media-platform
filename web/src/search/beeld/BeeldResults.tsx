@@ -206,9 +206,12 @@ function Grid({ hits, label, jump }: { hits: readonly Hit[]; label: string; jump
     return () => observer.disconnect();
   }, []);
 
+  // De focus meteen: elke cel staat al in de pagina (het raster is geen virtuele lijst). Een focus
+  // een frame later kon na de volgende toets vallen: Esc vlak na het sluiten van de viewer zette
+  // de focus in het veld, en dat frame zette hem terug op de foto
   const moveTo = useCallback((i: number) => {
     setFocus(i);
-    requestAnimationFrame(() => grid.current?.querySelector<HTMLElement>(`[data-index="${i}"]`)?.focus());
+    grid.current?.querySelector<HTMLElement>(`[data-index="${i}"]`)?.focus();
   }, []);
 
   // Kwam je hier zonder focus (vanuit "Meer zoals deze" in de viewer ging de viewer dicht, en
