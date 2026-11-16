@@ -12,10 +12,12 @@
 # bron en de uitvoermap alleen zoals de container ze ziet: via de map zelf (een fd, zoals een
 # bind-mount), als 10004. Het controleert:
 # - want_beeld: alleen aan of uit; een andere waarde stopt install.sh op de eerste regel;
-# - .env: zonder ANALYSE of met uit komt er geen regel BEELD bij (ook niet met BEELD=uit of aan
-#   gevraagd); bij aan BEELD=aan, één keer; een gevraagde BEELD vervangt hem; een versie zonder de
-#   regels van zoeken op beeld in models.lock zet geen BEELD; .env.example heeft alleen
-#   `# BEELD=aan`;
+# - .env: zonder ANALYSE (de standaard aan, sinds 0.8.1) of met aan komt BEELD=aan erbij, één
+#   keer, als laatste van vijf nieuwe regels; met uit, of met ANALYSE_STANDAARD=uit (zo was het
+#   tot en met 0.8.0) en zonder ANALYSE, komt er geen regel BEELD bij (ook niet met BEELD=uit of
+#   aan gevraagd); een gevraagde BEELD vervangt hem, de eerste keer aan met BEELD=uit geeft
+#   BEELD=uit; een versie zonder de regels van zoeken op beeld in models.lock zet geen BEELD;
+#   .env.example heeft alleen `# BEELD=aan`;
 # - de regels van models.lock (ook de echte: vijf bronnen, vijf bestanden van de uitkomst en de
 #   ruimte die dat vraagt); een regel die niet klopt, haalt niets;
 # - BEELD=uit haalt niets en zet niets om (geen curl, geen omzetter, geen map);
@@ -33,9 +35,13 @@
 # - te weinig ruimte (df op MODELLEN_ROOT en op DATA_ROOT, K2-19): niets gehaald, niet fataal;
 # - een doel dat een symlink of geen map is, of een bestand erin dat een symlink is: geweigerd,
 #   zonder het te raken (K1-06);
-# - main zonder ANALYSE doet precies wat install.sh van 0.8.0 doet, ook met de regels van zoeken
-#   op beeld in models.lock; met ANALYSE=uit dezelfde aanroepen, .env en mappen, en niets over
-#   beeld;
+# - main met ANALYSE_STANDAARD=uit en zonder ANALYSE doet precies wat install.sh van 0.8.0 doet,
+#   ook met de regels van zoeken op beeld in models.lock; met ANALYSE=uit dezelfde aanroepen en
+#   mappen, de .env van 0.8.0 met alleen ANALYSE=uit erbij (met ANALYSE_STANDAARD=uit dezelfde
+#   .env), en niets over beeld;
+# - main zonder ANALYSE op een .env van 0.8.0 (de update naar 0.8.1): de stap BEELD loopt, en de
+#   eindtekst zegt dat elke gebruiker gezichten en zoeken op beeld zelf aanzet; de eerste keer met
+#   BEELD=uit: BEELD=uit in .env, geen stap, alleen het model van gezichten, en het blijft uit;
 # - main met aan: de stap na de app en vóór de container analyse, die met --force-recreate start
 #   als het model nieuw is; de eindtekst; een omzetting die mislukt of te weinig ruimte: exit 0,
 #   Klaar., de container start toch; BEELD=uit: geen stap, het model blijft; terug naar 0.8.0 en
@@ -322,6 +328,9 @@ run_main() {
     for a in "$@"; do export "${a?}"; done
     # shellcheck source=/dev/null
     . "$script"
+    # TEST_STANDAARD=uit: zoals tot en met 0.8.0 (ANALYSE_STANDAARD=uit), alleen in deze shell
+    # shellcheck disable=SC2030
+    [ -z "${TEST_STANDAARD-}" ] || ANALYSE_STANDAARD=$TEST_STANDAARD
     fakes
     set -e
     main
@@ -394,14 +403,34 @@ echo "== instellingen: BEELD alleen met de analyse aan"
 fresh
 cp "$ENV_FILE" "$work/env.voor"
 check "beeld_supported: compose.analyse.yaml en de regels van $M in models.lock" beeld_supported
+{
+  cat "$work/env.voor"
+  echo ANALYSE=uit
+} >"$work/env.uit"
+# Sinds 0.8.1 (ANALYSE_STANDAARD=aan): een .env van 0.8.0 zonder ANALYSE krijgt de analyse aan
 instellingen "" "" "" "" "" >/dev/null
-check "zonder ANALYSE: .env byte voor byte gelijk" cmp -s "$ENV_FILE" "$work/env.voor"
+check "zonder ANALYSE (een .env van 0.8.0, de standaard): ANALYSE=aan, de sleutel, de twee mappen en BEELD=aan, als laatste van vijf nieuwe regels" eval 'has_line ANALYSE=aan &&
+  [[ $(value ANALYSE_WORKER_KEY) =~ ^[0-9a-f]{64}$ ]] && has_line "MODELLEN_ROOT=$PLATFORM_ROOT/modellen" && has_line "SLEUTELS_ROOT=$PLATFORM_ROOT/sleutels/gezichten" &&
+  [ "$(wc -l <"$ENV_FILE")" = 13 ] && [ "$(tail -n 1 "$ENV_FILE")" = BEELD=aan ] && [ "$(head -n 8 "$ENV_FILE")" = "$(cat "$work/env.voor")" ]'
+base_env
 instellingen "" "" "" "" uit >/dev/null
-check "zonder ANALYSE, BEELD=uit gevraagd: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
-instellingen "" "" "" "" aan >/dev/null
-check "zonder ANALYSE, BEELD=aan gevraagd: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
+check "zonder ANALYSE (aan), BEELD=uit gevraagd: BEELD=uit, één regel" eval 'has_line ANALYSE=aan && has_line BEELD=uit && [ "$(grep -c "^BEELD=" "$ENV_FILE")" = 1 ]'
+base_env
 instellingen "" "" "" uit aan >/dev/null
-check "ANALYSE=uit gevraagd (zonder regel), BEELD=aan: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
+check "ANALYSE=uit gevraagd (zonder regel), BEELD=aan: alleen ANALYSE=uit, geen regel BEELD" cmp -s "$ENV_FILE" "$work/env.uit"
+# Met ANALYSE_STANDAARD=uit (zo was het tot en met 0.8.0)
+base_env
+ANALYSE_STANDAARD=uit
+instellingen "" "" "" "" "" >/dev/null
+check "met ANALYSE_STANDAARD=uit, zonder ANALYSE: .env byte voor byte gelijk" cmp -s "$ENV_FILE" "$work/env.voor"
+instellingen "" "" "" "" uit >/dev/null
+check "met ANALYSE_STANDAARD=uit, zonder ANALYSE, BEELD=uit gevraagd: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
+instellingen "" "" "" "" aan >/dev/null
+check "met ANALYSE_STANDAARD=uit, zonder ANALYSE, BEELD=aan gevraagd: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
+instellingen "" "" "" uit aan >/dev/null
+check "met ANALYSE_STANDAARD=uit, ANALYSE=uit gevraagd (zonder regel), BEELD=aan: geen regel" cmp -s "$ENV_FILE" "$work/env.voor"
+ANALYSE_STANDAARD=aan
+base_env
 instellingen "" "" "" aan "" >/dev/null
 check "ANALYSE=aan: BEELD=aan erbij, als laatste van vijf nieuwe regels" eval 'has_line BEELD=aan && [ "$(wc -l <"$ENV_FILE")" = 13 ] &&
   [ "$(tail -n 1 "$ENV_FILE")" = BEELD=aan ] && [ "$(head -n 8 "$ENV_FILE")" = "$(cat "$work/env.voor")" ]'
@@ -425,6 +454,9 @@ cp "$work/lock.zonder" "$LOCK"
 check "zonder de regels van $M in models.lock: beeld_supported is nee" not beeld_supported
 instellingen "" "" "" aan "" >/dev/null
 check "een versie zonder zoeken op beeld (golf 5): ANALYSE=aan zonder BEELD" eval 'has_line ANALYSE=aan && ! grep -q "^BEELD=" "$ENV_FILE"'
+base_env
+instellingen "" "" "" "" "" >/dev/null
+check "een versie zonder zoeken op beeld, zonder ANALYSE (de standaard): ANALYSE=aan zonder BEELD" eval 'has_line ANALYSE=aan && ! grep -q "^BEELD=" "$ENV_FILE"'
 write_lock
 rm -f "$SRC/infra/single/compose.analyse.yaml"
 check "zonder compose.analyse.yaml (0.8.0): beeld_supported is nee" not beeld_supported
@@ -640,7 +672,7 @@ check "zonder de symlink: weer omgezet" eval '[ "$BEELD_STATE" = nieuw ] && mode
 check "elke curl en de omzetter krijgen </dev/null" eval '[ -z "$(grep -n "curl -fsSL --retry 3" "$install_sh" | grep -v "</dev/null")" ] && grep -qF "run --rm --no-deps -T analyse-omzetten </dev/null" "$install_sh"'
 
 # ============================================================================================
-echo "== main zonder ANALYSE (met de regels van zoeken op beeld in models.lock): precies 0.8.0"
+echo "== main met ANALYSE_STANDAARD=uit en zonder ANALYSE (met de regels van zoeken op beeld in models.lock): precies 0.8.0"
 fresh
 run_main "$work/install-080.sh"
 cp "$work/main.out" "$work/main.080"
@@ -650,31 +682,69 @@ tree >"$work/tree.080"
 check "0.8.0 loopt (exit 0, Klaar.)" eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op"'
 for b in "" BEELD=aan BEELD=uit; do
   fresh
-  run_main "$install_sh" ${b:+"$b"}
-  check "deze versie${b:+ met $b}: exit 0, dezelfde uitvoer, Docker, .env en mappen, geen curl" eval '[ "$MAIN_RC" = 0 ] && cmp -s "$work/main.out" "$work/main.080" && cmp -s "$LOG" "$work/docker.080" &&
+  run_main "$install_sh" TEST_STANDAARD=uit ${b:+"$b"}
+  check "deze versie met ANALYSE_STANDAARD=uit${b:+ en $b}: exit 0, dezelfde uitvoer, Docker, .env en mappen, geen curl" eval '[ "$MAIN_RC" = 0 ] && cmp -s "$work/main.out" "$work/main.080" && cmp -s "$LOG" "$work/docker.080" &&
     cmp -s "$ENV_FILE" "$work/env.080" && tree | cmp -s - "$work/tree.080" && [ ! -s "$work/curl.log" ] && [ ! -s "$work/omzet.log" ]'
 done
 
-echo "== main met ANALYSE=uit: niets over beeld"
+echo "== main met ANALYSE_STANDAARD=uit en ANALYSE=uit: niets over beeld"
 fresh
-run_main "$install_sh" ANALYSE=uit BEELD=aan
+run_main "$install_sh" TEST_STANDAARD=uit ANALYSE=uit BEELD=aan
 check "exit 0, dezelfde aanroepen van Docker, .env en mappen als 0.8.0, geen curl" eval '[ "$MAIN_RC" = 0 ] && cmp -s "$LOG" "$work/docker.080" && cmp -s "$ENV_FILE" "$work/env.080" &&
   tree | cmp -s - "$work/tree.080" && [ ! -s "$work/curl.log" ]'
 check "nergens beeld" eval '! grep -qi beeld "$work/main.out" "$LOG" "$ENV_FILE"'
 
+echo "== main met ANALYSE=uit (de standaard aan): dezelfde aanroepen en mappen als 0.8.0, alleen ANALYSE=uit erbij, niets over beeld"
+{
+  cat "$work/env.080"
+  echo ANALYSE=uit
+} >"$work/env.080.uit"
+for b in "" BEELD=aan BEELD=uit; do
+  fresh
+  run_main "$install_sh" ANALYSE=uit ${b:+"$b"}
+  check "ANALYSE=uit${b:+ en $b}: exit 0, dezelfde aanroepen van Docker en mappen als 0.8.0, de .env van 0.8.0 met alleen ANALYSE=uit, geen curl, geen omzetter" eval '[ "$MAIN_RC" = 0 ] &&
+    cmp -s "$LOG" "$work/docker.080" && cmp -s "$ENV_FILE" "$work/env.080.uit" && tree | cmp -s - "$work/tree.080" && [ ! -s "$work/curl.log" ] && [ ! -s "$work/omzet.log" ]'
+  check "ANALYSE=uit${b:+ en $b}: nergens beeld" eval '! grep -qi beeld "$work/main.out" "$LOG" "$ENV_FILE"'
+done
+
 # ============================================================================================
+dc_files="-f $SRC/infra/single/compose.yaml -f $SRC/infra/single/compose.analyse.yaml -f $SRC/infra/single/compose.analyse-limits.yaml"
+dc="docker compose --project-directory $SRC/infra/single --env-file $ENV_FILE $dc_files"
+eindtekst_gezichten="Gezichten (de container analyse): aan; elke gebruiker zet het zelf aan (Account → Foto's)."
+eindtekst_beeld="Zoeken op beeld: het model staat klaar; elke gebruiker zet het zelf aan."
+echo "== main zonder ANALYSE op een .env van 0.8.0 (de update naar 0.8.1): de stap BEELD loopt"
+for b in "" BEELD=aan; do
+  fresh
+  run_main "$install_sh" ${b:+"$b"}
+  check "zonder ANALYSE${b:+, met $b}: exit 0, Klaar., ANALYSE=aan en BEELD=aan in .env" eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op" && has_line ANALYSE=aan && has_line BEELD=aan'
+  check "zonder ANALYSE${b:+, met $b}: de stap BEELD, het model staat er (curl: het model van gezichten en de twee bronnen; de omzetter één keer)" eval 'said "== Zoeken op beeld (het model)" &&
+    said "Zoeken op beeld: het model staat klaar ($MODELLEN_ROOT/$M)." && model_ok && no_tmp && [ "$(grep -c "^curl " "$work/curl.log")" = 3 ] && [ "$(omzet_calls)" = 1 ]'
+  check "zonder ANALYSE${b:+, met $b}: de container analyse met --force-recreate" logged "$dc_files up -d --no-deps --force-recreate analyse"
+  check "zonder ANALYSE${b:+, met $b}: de eindtekst van gezichten en van zoeken op beeld" eval 'said "$eindtekst_gezichten" && said "$eindtekst_beeld"'
+  check "zonder ANALYSE${b:+, met $b}: geen Let op" not said_part "Let op: "
+done
+
+echo "== main de eerste keer met BEELD=uit (de analyse aan): BEELD=uit in .env, alleen het model van gezichten"
+fresh
+run_main "$install_sh" BEELD=uit
+check "exit 0, Klaar.; ANALYSE=aan en BEELD=uit in .env" eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op" && has_line ANALYSE=aan && has_line BEELD=uit'
+check "geen stap, geen omzetter, geen map van zoeken op beeld; alleen a.onnx gehaald" eval '! said_part "== Zoeken op beeld" && [ "$(omzet_calls)" = 0 ] && [ ! -e "$MODELLEN_ROOT/$M" ] &&
+  [ "$(grep -c "^curl " "$work/curl.log")" = 1 ] && grep -qE " $base/a\.onnx$" "$work/curl.log"'
+check "de container analyse start; de eindtekst: gezichten aan, zoeken op beeld uit" eval 'logged "$dc_files up -d --no-deps --force-recreate analyse" && said "$eindtekst_gezichten" &&
+  said "Zoeken op beeld: uit (BEELD=uit); er wordt niets opgehaald of omgezet." && ! said "$eindtekst_beeld"'
+run_main "$install_sh"
+check "de run daarna zonder BEELD: blijft uit, geen stap, niets gehaald" eval '[ "$MAIN_RC" = 0 ] && has_line BEELD=uit && ! said_part "== Zoeken op beeld" && [ "$(omzet_calls)" = 0 ] && [ ! -s "$work/curl.log" ]'
+
 echo "== main met ANALYSE=aan: de eerste keer"
 fresh
 run_main "$install_sh" ANALYSE=aan
-dc_files="-f $SRC/infra/single/compose.yaml -f $SRC/infra/single/compose.analyse.yaml -f $SRC/infra/single/compose.analyse-limits.yaml"
-dc="docker compose --project-directory $SRC/infra/single --env-file $ENV_FILE $dc_files"
 check "exit 0, Klaar." eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op"'
 check ".env: BEELD=aan" has_line BEELD=aan
 check "de stap, en het model staat er" eval 'said "== Zoeken op beeld (het model)" && said "Zoeken op beeld: het model staat klaar ($MODELLEN_ROOT/$M)." && model_ok && no_tmp'
 check "de omzetter met dezelfde compose-bestanden als de app" logged "$dc --profile omzetten run --rm --no-deps -T analyse-omzetten"
 check "de volgorde: app, omzetter, container (--force-recreate), stand" eval '[ "$(grep -E "up -d --build|omzetten run|up -d --no-deps|analyse-status" "$LOG" | sed -E "s/.* (up -d --build|omzetten run|up -d --no-deps --force-recreate|up -d --no-deps|analyse-status).*/\1/" | tr "\n" ,)" = "up -d --build,omzetten run,up -d --no-deps --force-recreate,analyse-status," ]'
 check "de stap na Media en vóór Analyse starten" eval '[ "$(grep -E "^== (Platform bouwen|Zoeken op beeld|Analyse starten)" "$work/main.out" | cut -c4-12 | tr "\n" ,)" = "Platform ,Zoeken op,Analyse s," ]'
-check "de eindtekst" eval 'said "Zoeken op beeld: het model staat klaar; elke gebruiker zet het zelf aan." &&
+check "de eindtekst" eval 'said "$eindtekst_beeld" && said "$eindtekst_gezichten" &&
   said "  Uit (geen download meer; het model blijft staan): curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | BEELD=uit bash"'
 check "geen Let op" not said_part "Let op: "
 check "de sleutel nergens in de uitvoer of de aanroepen, en niet in de omgeving van de omzetter" eval '! grep -qF "$(value ANALYSE_WORKER_KEY)" "$work/main.out" "$LOG" "$work/omzet.log" &&

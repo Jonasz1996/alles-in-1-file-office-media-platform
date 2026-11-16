@@ -14,10 +14,12 @@
 # Plaatsnamen en landen bij foto's (fase 6): het script haalt twee bronnen op. Uit: curl … |
 # PLAATSEN=uit bash. Vóór elke update maakt het een reservekopie van de database in
 # <data>/backup (zonder gezichten en beeld); lukt die niet, dan stopt het vóór er iets verandert.
-# Gezichten (fase 6, de container analyse) staan tot 0.8.1 uit: zonder ANALYSE in .env doet het
-# script niets met de analyse (ANALYSE_STANDAARD hieronder). Aan: curl … | ANALYSE=aan bash.
-# Met de analyse aan haalt het ook het model voor zoeken op beeld op (SigLIP 2, ±1,55 GB) en zet
-# het één keer om. Zonder: curl … | BEELD=uit bash.
+# Gezichten en zoeken op beeld (fase 6, de container analyse) staan sinds 0.8.1 standaard aan
+# (ANALYSE_STANDAARD hieronder): zonder ANALYSE in .env zet het script ANALYSE=aan erbij, haalt
+# het de modellen van gezichten op (±39 MB) en start het de container analyse. Elke gebruiker zet
+# gezichten en zoeken op beeld daarna zelf aan (Account → Foto's). Uit: curl … | ANALYSE=uit bash.
+# Met de analyse aan haalt het ook één keer het model voor zoeken op beeld op (SigLIP 2, ±1,55 GB)
+# en zet het om. Zonder: curl … | BEELD=uit bash.
 #
 # Voor tests (Jonas heeft ze niet nodig): PLATFORM_REPO (ook een lokaal pad of file://),
 # PLATFORM_SRC_REF (een commit of tag in plaats van de branch) en PLATFORM_ROOT (in plaats van
@@ -40,10 +42,13 @@ OFFICE_DIGEST=sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7
 OFFICE_MIN_FREE_GB=8
 # Het project heet "platform" (compose.yaml)
 PROJECT=platform
-# De analyse (gezichten, fase 6, Keuze 56–58) als ANALYSE niet in .env en niet in de omgeving
-# staat. Tot 0.8.1 uit: dan doet dit script precies wat 0.8.0 deed (geen download, geen container,
-# geen compose.analyse.yaml en geen nieuwe regel in .env). I2 zet hem op aan.
-ANALYSE_STANDAARD=uit
+# De analyse (gezichten en zoeken op beeld, fase 6, Keuze 56–58 en 84) als ANALYSE niet in .env
+# en niet in de omgeving staat. Sinds 0.8.1 aan (I2; bouwontwerp §3.11: ANALYSE=aan in .env): een
+# .env van 0.8.0 zonder ANALYSE krijgt ANALYSE=aan, de sleutel, de twee mappen en BEELD=aan
+# (merge_analyse_env). Tot en met 0.8.0 stond hij op uit, en deed dit script zonder ANALYSE precies
+# wat 0.8.0 deed; met ANALYSE=uit doet het dat nog steeds (dezelfde aanroepen van Docker, dezelfde
+# mappen, geen download), met ANALYSE=uit in .env en de regels over de analyse in de uitvoer.
+ANALYSE_STANDAARD=aan
 
 stap() { printf '\n== %s\n' "$1"; }
 
@@ -181,8 +186,11 @@ merge_media_env() {
 # .env, of ANALYSE_STANDAARD), dan komen ANALYSE=aan, de sleutel van de worker en de twee mappen
 # erbij, en als de versie zoeken op beeld heeft BEELD=aan (Keuze 84). ANALYSE_WORKER_KEY
 # (compose.analyse.yaml) komt er één keer bij, zoals MEDIA_WORKER_KEY, en wordt nooit vervangen;
-# ook niet als de analyse daarna uit en weer aan gaat. Anders verandert er niets, behalve een
-# gevraagde uit op een regel die er al is: een ontbrekende ANALYSE blijft ontbreken (tot 0.8.1).
+# ook niet als de analyse daarna uit en weer aan gaat. Anders komt er alleen een gevraagde uit in
+# .env, en verder niets (geen sleutel, geen map): op een regel die er al is, of als er geen regel
+# is en de standaard aan is (sinds 0.8.1). Zonder die regel zou de volgende run zonder ANALYSE de
+# analyse weer aanzetten. Met ANALYSE_STANDAARD=uit (tot en met 0.8.0) blijft een ontbrekende
+# ANALYSE ontbreken, ook bij een gevraagde uit (review golf 5, uitrol F4).
 # $2 is een gevraagde BEELD: die vervangt een regel BEELD die er is, en komt er nooit bij zonder
 # de analyse aan.
 merge_analyse_env() {
@@ -195,7 +203,8 @@ merge_analyse_env() {
     add_key MODELLEN_ROOT "$PLATFORM_ROOT/modellen"
     add_key SLEUTELS_ROOT "$PLATFORM_ROOT/sleutels/gezichten"
     if beeld_supported; then add_key BEELD aan; fi
-  elif [ -n "$1" ] && grep -q '^ANALYSE=' "$ENV_FILE"; then
+  elif [ -n "$1" ] && { [ "$ANALYSE_STANDAARD" = aan ] || grep -q '^ANALYSE=' "$ENV_FILE"; }; then
+    add_key ANALYSE "$1"
     set_key ANALYSE "$1"
   fi
   if [ -n "${2-}" ] && grep -q '^BEELD=' "$ENV_FILE"; then set_key BEELD "$2"; fi
@@ -404,7 +413,8 @@ geo_load_running() {
 
 # --- de analyse (fase 6, Keuze 56–58; K1-06) --------------------------------------------------
 # Zegt het script iets over de analyse? Alleen als de versie hem heeft en ANALYSE in .env (of de
-# omgeving) staat, of de standaard aan is. Zonder ANALYSE (tot 0.8.1): geen regel uitvoer.
+# omgeving) staat, of de standaard aan is (sinds 0.8.1). Met ANALYSE_STANDAARD=uit en zonder
+# ANALYSE (zo was het tot en met 0.8.0): geen regel uitvoer.
 analyse_shown() {
   analyse_supported && { [ -n "${ANALYSE-}" ] || [ "$ANALYSE_STANDAARD" = aan ]; }
 }
@@ -640,8 +650,8 @@ modellen_ophalen() {
 # mappen en dan de modellen. Breekt nooit af: weigert het script een map, dan draait het platform
 # deze keer zonder analyse; mist er een model, dan start de container en zegt hij models_missing.
 # Een andere waarde dan aan of uit in .env (met de hand bewerkt): uit, met uitleg. Uit zegt waar
-# het vandaan komt: .env, of alleen de aanroep (ANALYSE=uit bij een .env zonder regel ANALYSE:
-# merge_analyse_env schrijft die niet; review golf 5, uitrol F4).
+# het vandaan komt: .env, of alleen de aanroep (ANALYSE=uit bij een .env zonder regel ANALYSE: met
+# ANALYSE_STANDAARD=uit schrijft merge_analyse_env die niet; review golf 5, uitrol F4).
 decide_analyse() {
   ANALYSE_ON=0 ANALYSE_REASON="" MODELS_CHANGED=0 MODELS_FAILED=""
   analyse_shown || return 0
@@ -665,6 +675,7 @@ decide_analyse() {
     return 0
   fi
   modellen_ophalen
+  gezichten_ruimte
   ANALYSE_ON=1
   [ -z "$MODELS_FAILED" ] || ANALYSE_REASON="niet alle modellen zijn er ($MODELS_FAILED); gezichten wachten tot de volgende installatie"
 }
@@ -672,8 +683,9 @@ decide_analyse() {
 # --- zoeken op beeld (fase 6, X3b; Keuze 73 en 84; K1-05, K1-06, K2-19) ------------------------
 # Het model staat in MODELLEN_ROOT/BEELD_MAP. Alleen met de analyse aan, en alleen als de versie
 # het heeft: compose.analyse.yaml (de dienst analyse-omzetten) en regels van BEELD_MAP in
-# models.lock (de vijf bronnen en de uitkomst van de omzetter). Zonder ANALYSE, met ANALYSE=uit
-# of met BEELD=uit doet het niets: geen download, geen omzetting, geen map.
+# models.lock (de vijf bronnen en de uitkomst van de omzetter). Met ANALYSE=uit (of, met
+# ANALYSE_STANDAARD=uit, zonder ANALYSE) of met BEELD=uit doet het niets: geen download, geen
+# omzetting, geen map.
 beeld_supported() {
   analyse_supported && [ -f "$SRC/api/app/analyse/models.lock" ] &&
     grep -Eq "^[0123456789abcdef]{64}[[:space:]]+[0123456789]+[[:space:]]+$BEELD_MAP/" "$SRC/api/app/analyse/models.lock"
@@ -695,6 +707,23 @@ want_beeld() {
 BEELD_DATA=1000000000
 BEELD_MARGE=100000000
 BEELD_MISLUKT="Zoeken op beeld: het model is niet geladen. De volgende run probeert het opnieuw."
+
+# De ruimte die DATA_ROOT vrij hoort te hebben voor de gezichten (K2-19; x2b.md, Open 7): de
+# bovenkant van bouwontwerp §3.1a "Ruimte", ±90 MB per 100.000 gezichten plus ±15 MB voor
+# face_scan per 100.000 foto's. Minder vrij: een waarschuwing, nooit een stop; de analyse gaat
+# door (/beheer toont de ruimte van de gezichten).
+GEZICHTEN_DATA=105000000
+
+# Een waarschuwing als DATA_ROOT minder dan GEZICHTEN_DATA vrij heeft, of df niets bruikbaars
+# zegt. Altijd return 0: het script stopt hier nooit (set -e), ook niet als df mislukt.
+gezichten_ruimte() {
+  local avail
+  avail=$(df --output=avail -B1 -- "$DATA_ROOT" 2>/dev/null | tail -n 1 | tr -d ' ') || avail=""
+  if ! [[ $avail =~ ^[0-9]+$ ]] || [ "$avail" -lt "$GEZICHTEN_DATA" ]; then
+    echo "Let op: weinig ruimte in $DATA_ROOT voor de gezichten ($((GEZICHTEN_DATA / 1000000)) MB aangeraden; ±90 MB per 100.000 gezichten). De analyse gaat door."
+  fi
+  return 0
+}
 
 # De regels van BEELD_MAP uit models.lock: BEELD_BRON (sha256 bytes naam url, de bronnen in
 # BEELD_MAP/bron/) en BEELD_UIT (sha256 bytes naam, de uitkomst in BEELD_MAP/, url -), en
@@ -1254,8 +1283,10 @@ ENV
   fi
   if analyse_supported; then
     merge_analyse_env "$want_a" "$want_b"
-  elif [ "$want_a" = aan ] || { [ -n "$want_a" ] && grep -q '^ANALYSE=' "$ENV_FILE"; }; then
-    # Een versie zonder analyse (terugrollen naar 0.8.0): de wens bewaren, verder niets
+  elif [ -n "$want_a" ] && { [ "$want_a" = aan ] || [ "$ANALYSE_STANDAARD" = aan ] || grep -q '^ANALYSE=' "$ENV_FILE"; }; then
+    # Een versie zonder analyse (terugrollen naar 0.8.0): de wens bewaren, verder niets. Een
+    # gevraagde uit komt er ook zonder regel bij als de standaard aan is (zoals in
+    # merge_analyse_env): anders zet de volgende run met een nieuwere versie de analyse aan.
     add_key ANALYSE "$want_a"
     set_key ANALYSE "$want_a"
   fi
@@ -1338,7 +1369,8 @@ main() {
     echo "Media: uit ($MEDIA_REASON)"
   fi
 
-  # De analyse (fase 6): zonder ANALYSE in .env (tot 0.8.1) geen stap en geen regel uitvoer
+  # De analyse (fase 6): alleen met ANALYSE_STANDAARD=uit en zonder ANALYSE (zo was het tot en met
+  # 0.8.0) geen stap en geen regel uitvoer
   if analyse_shown; then stap "Analyse (gezichten)"; fi
   decide_analyse
   if [ "$ANALYSE_ON" = 1 ]; then
@@ -1491,13 +1523,15 @@ slot_search() {
   [ -z "${BACKUP_FILE-}" ] || echo "Reservekopie van vóór deze run: $BACKUP_FILE"
 }
 
-# De regels over de analyse in de eindtekst: aan, of waarom niet, en hoe het verder kan. Zonder
-# ANALYSE in .env (tot 0.8.1), of zonder decide_analyse (een test die alleen slot draait): niets.
+# De regels over de analyse in de eindtekst: aan, of waarom niet, en hoe het verder kan. Met
+# ANALYSE_STANDAARD=uit en zonder ANALYSE (tot en met 0.8.0), of zonder decide_analyse (een test
+# die alleen slot draait): niets. Aan zegt, zoals zoeken op beeld, dat elke gebruiker het zelf
+# aanzet: per gebruiker staan gezichten standaard uit (api/app/prefs.py).
 slot_analyse() {
   local script=$1 pre=$2
   [ -n "${ANALYSE_ON+x}" ] && analyse_shown || return 0
   if [ "$ANALYSE_ON" = 1 ] && [ -z "$ANALYSE_REASON" ]; then
-    echo "Gezichten (de container analyse): aan."
+    echo "Gezichten (de container analyse): aan; elke gebruiker zet het zelf aan (Account → Foto's)."
     echo "  Uit: $script | ${pre}ANALYSE=uit bash"
   elif [ "$ANALYSE_ON" = 1 ]; then
     echo "Gezichten (de container analyse): aan, maar $ANALYSE_REASON."
