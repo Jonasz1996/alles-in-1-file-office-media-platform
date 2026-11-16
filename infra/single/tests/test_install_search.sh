@@ -1121,7 +1121,10 @@ NEP
 # De installatietest van Z7 (bouwontwerp fase 6, §3.10 en Keuze 52, 53), zoals
 # test_install_media.sh: de echte install.sh in een container met Debian 12 (de "LXC"), met de
 # docker-socket en de docker-cli van de host, en de werkmap op hetzelfde absolute pad. Office
-# blijft uit (OFFICE=uit; office over een update bewijst test_install_update.sh). De stappen:
+# blijft uit (OFFICE=uit; office over een update bewijst test_install_update.sh). De analyse ook
+# (ANALYSE=uit bij elke stap): sinds 0.8.1 staat die standaard aan, en deze test haalt geen
+# modellen; de analyse over een update bewijzen test_install_analyse.sh en test_install_beeld.sh.
+# Het script van 0.7.1 kent ANALYSE niet. De stappen:
 #
 #   | Stap | Wat | Wat de test nakijkt |
 #   |---|---|---|
@@ -1570,7 +1573,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
       -v "$(command -v docker)":/usr/bin/docker:ro \
       -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
       -v "$WORK:$WORK" \
-      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit \
+      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit -e ANALYSE=uit \
       -e GIT_CONFIG_GLOBAL="$WORK/gitconfig" -e SHIM_LOG="$WORK/shim/log" -e SHIM_NET="$WORK/net" \
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \

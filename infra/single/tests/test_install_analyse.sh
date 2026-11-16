@@ -8,15 +8,23 @@
 # sudo -n): de mappen, de eigenaars en de symlinks van "de app" (uid 10001, met de echte setpriv)
 # zijn echt. Docker is een nepfunctie met een logboek; curl is echt, tegen een eigen HTTP-server op
 # 127.0.0.1 met nepmodellen en een eigen models.lock. Het controleert:
-# - ANALYSE_STANDAARD is uit (tot 0.8.1, I2); ANALYSE uit de omgeving: alleen aan of uit, een
+# - ANALYSE_STANDAARD is aan (sinds 0.8.1, I2); ANALYSE uit de omgeving: alleen aan of uit, een
 #   andere waarde stopt install.sh op de eerste regel;
-# - .env: zonder ANALYSE, of met uit, komt er niets bij; bij aan ANALYSE=aan, een sleutel van
-#   64 hex (één keer, nooit vervangen, ook niet na uit en weer aan) en de twee mappen; een lege
-#   sleutel vullen zet hem in de argv van geen enkel proces (een PATH met nep-commando's), en
-#   set_key neemt de waarde letterlijk;
-# - main zonder ANALYSE doet precies wat install.sh van 0.8.0 doet (dezelfde uitvoer, dezelfde
-#   aanroepen van Docker, dezelfde .env, geen nieuwe map), en met ANALYSE=uit dezelfde aanroepen,
-#   .env en mappen, en de reden zegt dat de uit van de aanroep komt (.env heeft geen regel);
+# - .env: zonder ANALYSE (de standaard) of met aan komen ANALYSE=aan, een sleutel van 64 hex (één
+#   keer, nooit vervangen, ook niet na uit en weer aan) en de twee mappen erbij; met uit alleen
+#   ANALYSE=uit, ook zonder regel (de run daarna zonder ANALYSE blijft uit); met
+#   ANALYSE_STANDAARD=uit (zo was het tot en met 0.8.0) komt er zonder ANALYSE of met uit niets
+#   bij; een lege sleutel vullen zet hem in de argv van geen enkel proces (een PATH met
+#   nep-commando's), en set_key neemt de waarde letterlijk;
+# - main met ANALYSE_STANDAARD=uit en zonder ANALYSE doet precies wat install.sh van 0.8.0 doet
+#   (dezelfde uitvoer, dezelfde aanroepen van Docker, dezelfde .env, geen nieuwe map); met
+#   ANALYSE=uit dezelfde aanroepen en mappen, de .env van 0.8.0 met alleen ANALYSE=uit erbij, en
+#   de run daarna zonder ANALYSE blijft uit; met ANALYSE_STANDAARD=uit en ANALYSE=uit dezelfde
+#   .env als 0.8.0, en de reden zegt dat de uit van de aanroep komt (.env heeft geen regel);
+# - main zonder ANALYSE op een .env van 0.8.0 (de update naar 0.8.1): de analyse aan, met de
+#   stap, de modellen, de container en de eindtekst ("elke gebruiker zet het zelf aan");
+# - de ruimte voor de gezichten op DATA_ROOT (K2-19): minder dan GEZICHTEN_DATA (105 MB) vrij,
+#   of df zonder getal of dat faalt, geeft een waarschuwing, nooit een stop, ook niet in main;
 # - de mappen (K1-06): MODELLEN_ROOT 0755 van root, SLEUTELS_ROOT 0700 van 10001; weigert een pad
 #   in DATA_ROOT (of DATA_ROOT erin), een symlink, een map die niet van root is of die anderen
 #   mogen beschrijven, een relatief pad, . of .., en de ene map in de andere; dan niets
@@ -243,6 +251,9 @@ run_main() {
     for a in "$@"; do export "${a?}"; done
     # shellcheck source=/dev/null
     . "$script"
+    # TEST_STANDAARD=uit: zoals tot en met 0.8.0 (ANALYSE_STANDAARD=uit), alleen in deze shell
+    # shellcheck disable=SC2030
+    [ -z "${TEST_STANDAARD-}" ] || ANALYSE_STANDAARD=$TEST_STANDAARD
     fakes
     set -e
     main
@@ -257,7 +268,9 @@ models_sum() { (cd "$1" && find . -type f -printf '%p %u %m\n' -exec sha256sum {
 
 # ============================================================================================
 echo "== ANALYSE_STANDAARD en want_analyse"
-check "ANALYSE_STANDAARD=uit (tot 0.8.1; I2 zet hem op aan)" test "$(grep -c '^ANALYSE_STANDAARD=uit$' "$install_sh")" = 1
+check "ANALYSE_STANDAARD=aan (sinds 0.8.1, I2), één keer" test "$(grep -c '^ANALYSE_STANDAARD=' "$install_sh"):$(grep -c '^ANALYSE_STANDAARD=aan$' "$install_sh")" = 1:1
+# shellcheck disable=SC2031  # run_main zet hem alleen in zijn eigen shell
+check "ANALYSE_STANDAARD na het laden van install.sh: aan" test "$ANALYSE_STANDAARD" = aan
 check "zonder ANALYSE: leeg" test "$(want_analyse)" = ""
 check "ANALYSE=aan" test "$(ANALYSE=aan want_analyse)" = aan
 check "ANALYSE=uit" test "$(ANALYSE=uit want_analyse)" = uit
@@ -286,13 +299,24 @@ check "geen enkel commando aangeroepen" test ! -s "$work/calls.log"
 check ".env onveranderd" cmp -s "$ENV_FILE" "$work/env.voor"
 
 # ============================================================================================
-echo "== instellingen: zonder ANALYSE of met uit komt er niets bij; bij aan de sleutel één keer"
+echo "== instellingen: zonder ANALYSE aan (sinds 0.8.1), uit wordt bewaard, de sleutel één keer"
 fresh
 cp "$ENV_FILE" "$work/env.voor"
+{
+  cat "$work/env.voor"
+  echo ANALYSE=uit
+} >"$work/env.uit"
 instellingen "" "" "" "" >/dev/null
-check "zonder ANALYSE: .env byte voor byte gelijk" cmp -s "$ENV_FILE" "$work/env.voor"
+key=$(value ANALYSE_WORKER_KEY)
+check "zonder ANALYSE (een .env van 0.8.0, de standaard): ANALYSE=aan, een sleutel van 64 hex en de twee mappen" eval 'has_line ANALYSE=aan && [[ $key =~ ^[0-9a-f]{64}$ ]] &&
+  has_line "MODELLEN_ROOT=$PLATFORM_ROOT/modellen" && has_line "SLEUTELS_ROOT=$PLATFORM_ROOT/sleutels/gezichten"'
+check "zonder ANALYSE: precies die vier regels erbij (geen BEELD: de nep-lock heeft geen regels van zoeken op beeld), de rest staat er nog" eval '[ "$(wc -l <"$ENV_FILE")" = 12 ] && [ "$(head -n 8 "$ENV_FILE")" = "$(cat "$work/env.voor")" ]'
+base_env
 instellingen "" "" "" uit >/dev/null
-check "ANALYSE=uit gevraagd zonder regel: nog steeds gelijk (geen nieuwe regel)" cmp -s "$ENV_FILE" "$work/env.voor"
+check "ANALYSE=uit gevraagd zonder regel: alleen ANALYSE=uit erbij (geen sleutel, geen map)" cmp -s "$ENV_FILE" "$work/env.uit"
+instellingen "" "" "" "" >/dev/null
+check "de run daarna zonder ANALYSE: blijft uit, er komt niets bij" cmp -s "$ENV_FILE" "$work/env.uit"
+base_env
 instellingen "" "" "" aan >/dev/null
 key=$(value ANALYSE_WORKER_KEY)
 check "aan: ANALYSE=aan" has_line "ANALYSE=aan"
@@ -339,15 +363,31 @@ check "set_key: letterlijk (| & \\), alleen die sleutel, rechten en een laatste 
   ENV_FILE=$work/set_key.env set_key ANALYSE "a|b&c\\d" && ENV_FILE=$work/set_key.env set_key LAATSTE "nu" &&
   [ "$(cat "$work/set_key.env"; echo .)" = "$(printf "ANALYSE_X=1\nANALYSE=a|b&c\\\\d\nLAATSTE=nu.")" ] &&
   [ "$(stat -c %a "$work/set_key.env")" = 640 ] && [ -z "$(ls "$work" | grep "^set_key.env.")" ]'
+# Met ANALYSE_STANDAARD=uit (zo was het tot en met 0.8.0): een ontbrekende ANALYSE blijft
+# ontbreken, ook bij een gevraagde uit (review golf 5, uitrol F4)
 base_env
-check "met ANALYSE_STANDAARD=aan (I2): een ontbrekende ANALYSE wordt aan" eval '
-  ANALYSE_STANDAARD=aan; instellingen "" "" "" "" >/dev/null; ANALYSE_STANDAARD=uit; has_line "ANALYSE=aan" && [ -n "$(value ANALYSE_WORKER_KEY)" ]'
+ANALYSE_STANDAARD=uit
+instellingen "" "" "" "" >/dev/null
+check "met ANALYSE_STANDAARD=uit, zonder ANALYSE: .env byte voor byte gelijk" cmp -s "$ENV_FILE" "$work/env.voor"
+instellingen "" "" "" uit >/dev/null
+check "met ANALYSE_STANDAARD=uit, ANALYSE=uit gevraagd zonder regel: nog steeds gelijk (geen nieuwe regel)" cmp -s "$ENV_FILE" "$work/env.voor"
+instellingen "" "" "" aan >/dev/null
+check "met ANALYSE_STANDAARD=uit, aan gevraagd: ANALYSE=aan en een sleutel" eval 'has_line "ANALYSE=aan" && [[ $(value ANALYSE_WORKER_KEY) =~ ^[0-9a-f]{64}$ ]]'
+ANALYSE_STANDAARD=aan
 base_env
 without_analyse
 instellingen "" "" "" "" >/dev/null
 check "een versie zonder analyse (0.8.0) zonder vraag: niets" cmp -s "$ENV_FILE" "$work/env.voor"
 instellingen "" "" "" aan >/dev/null
 check "een versie zonder analyse bewaart de wens aan, zonder sleutel" eval 'has_line "ANALYSE=aan" && ! grep -q "^ANALYSE_WORKER_KEY=" "$ENV_FILE"'
+base_env
+instellingen "" "" "" uit >/dev/null
+check "een versie zonder analyse bewaart een gevraagde uit, ook zonder regel (anders zet een nieuwere versie hem aan)" cmp -s "$ENV_FILE" "$work/env.uit"
+base_env
+ANALYSE_STANDAARD=uit
+instellingen "" "" "" uit >/dev/null
+check "met ANALYSE_STANDAARD=uit: een versie zonder analyse schrijft een uit zonder regel niet" cmp -s "$ENV_FILE" "$work/env.voor"
+ANALYSE_STANDAARD=aan
 make_src
 
 echo "== compose_files: het vierde argument"
@@ -527,7 +567,42 @@ rm -rf "$MODELLEN_ROOT/siglip2-b32-256" "$net/siglip2-b32-256" "$work/beeld.int8
 write_lock
 
 # ============================================================================================
-echo "== main zonder ANALYSE: precies wat 0.8.0 doet"
+echo "== gezichten_ruimte: weinig ruimte op DATA_ROOT is een waarschuwing, nooit een stop (K2-19)"
+# De drempel: de bovenkant van bouwontwerp §3.1a "Ruimte" (±70–90 MB per 100.000 gezichten, plus
+# ±15 MB voor face_scan per 100.000 foto's); x2b.md, Open 7
+check "GEZICHTEN_DATA is 105 MB (90 + 15 MB)" test "$GEZICHTEN_DATA" = 105000000
+warn="Let op: weinig ruimte in $DATA_ROOT voor de gezichten (105 MB aangeraden; ±90 MB per 100.000 gezichten). De analyse gaat door."
+# shellcheck disable=SC2329  # gezichten_ruimte roept hem aan
+df() {
+  printf '%s\n' "$*" >>"$work/df.log"
+  case "${*: -1}" in
+    "$DATA_ROOT") printf 'Avail\n%s\n' "$DF_DATA" ;;
+    *) printf 'Avail\n999999999999\n' ;;
+  esac
+}
+DF_DATA=$((GEZICHTEN_DATA - 1))
+: >"$work/df.log"
+code=0
+out=$(gezichten_ruimte 2>&1) || code=$?
+check "één byte te weinig: return 0, de waarschuwing" eval '[ "$code" = 0 ] && [ "$out" = "$warn" ]'
+check "df op DATA_ROOT, één keer" test "$(cat "$work/df.log")" = "--output=avail -B1 -- $DATA_ROOT"
+DF_DATA=$GEZICHTEN_DATA
+check "precies genoeg: geen uitvoer" eval 'out=$(gezichten_ruimte 2>&1) && [ -z "$out" ]'
+DF_DATA=garbage
+check "df zonder getal: return 0, de waarschuwing" eval 'out=$(gezichten_ruimte 2>&1) && [ "$out" = "$warn" ]'
+unset -f df
+# df die faalt, in een eigen bash met set -euo pipefail (zoals main): het script gaat door
+code=0
+out=$(env PLATFORM_ROOT="$PLATFORM_ROOT" INSTALL_LIB=1 DATA_ROOT="$DATA_ROOT" bash -c '
+  set -euo pipefail
+  . "$1"
+  df() { return 1; }
+  gezichten_ruimte
+  echo verder' sh "$install_sh" 2>&1) || code=$?
+check "df faalt onder set -euo pipefail: de waarschuwing, en het script gaat verder" eval '[ "$code" = 0 ] && [ "$out" = "$(printf "%s\nverder" "$warn")" ]'
+
+# ============================================================================================
+echo "== main met ANALYSE_STANDAARD=uit en zonder ANALYSE: precies wat 0.8.0 doet"
 fresh
 run_main "$work/install-080.sh"
 cp "$work/main.out" "$work/main.080"
@@ -536,7 +611,7 @@ cp "$ENV_FILE" "$work/env.080"
 tree >"$work/tree.080"
 check "0.8.0 loopt (exit 0, Klaar.)" eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op"'
 fresh
-run_main "$install_sh"
+run_main "$install_sh" TEST_STANDAARD=uit
 check "deze versie: exit 0" test "$MAIN_RC" = 0
 check "dezelfde uitvoer" cmp -s "$work/main.out" "$work/main.080"
 check "dezelfde aanroepen van Docker" cmp -s "$LOG" "$work/docker.080"
@@ -545,9 +620,27 @@ check "dezelfde mappen en bestanden (geen modellen, geen sleutels)" eval 'tree |
 check "geen curl" test ! -s "$work/curl.log"
 check "nergens analyse" eval '! grep -qi analyse "$work/main.out" "$LOG" "$ENV_FILE"'
 
-echo "== main met ANALYSE=uit (uit de omgeving): dezelfde aanroepen, .env en mappen"
+echo "== main met ANALYSE=uit (uit de omgeving): dezelfde aanroepen en mappen, en alleen ANALYSE=uit erbij"
+{
+  cat "$work/env.080"
+  echo ANALYSE=uit
+} >"$work/env.080.uit"
 fresh
 run_main "$install_sh" ANALYSE=uit
+check "exit 0" test "$MAIN_RC" = 0
+check "dezelfde aanroepen van Docker als 0.8.0" cmp -s "$LOG" "$work/docker.080"
+check ".env: die van 0.8.0 met alleen ANALYSE=uit erbij (geen sleutel, geen map)" cmp -s "$ENV_FILE" "$work/env.080.uit"
+check "dezelfde mappen en bestanden" eval 'tree | cmp -s - "$work/tree.080"'
+check "geen curl" test ! -s "$work/curl.log"
+check "de reden: ANALYSE=uit in .env (daar staat hij nu)" said "Analyse: uit (ANALYSE=uit in $ENV_FILE)"
+check "de uitvoer: alleen de regels over de analyse erbij" eval 'grep -vxF -e "== Analyse (gezichten)" -e "Analyse: uit (ANALYSE=uit in $ENV_FILE)" -e "Gezichten (de container analyse): uit (ANALYSE=uit)." "$work/main.out" | grep -vE "^  Aan: .*ANALYSE=aan bash$" | sed "/^$/N;/^\n$/D" | cmp -s - <(sed "/^$/N;/^\n$/D" "$work/main.080")'
+run_main "$install_sh"
+check "de run daarna zonder ANALYSE: blijft uit, dezelfde aanroepen van Docker als 0.8.0, geen curl, .env en mappen gelijk" eval '[ "$MAIN_RC" = 0 ] && said "Analyse: uit (ANALYSE=uit in $ENV_FILE)" &&
+  cmp -s "$LOG" "$work/docker.080" && [ ! -s "$work/curl.log" ] && cmp -s "$ENV_FILE" "$work/env.080.uit" && tree | cmp -s - "$work/tree.080"'
+
+echo "== main met ANALYSE_STANDAARD=uit en ANALYSE=uit: dezelfde aanroepen, .env en mappen als 0.8.0"
+fresh
+run_main "$install_sh" TEST_STANDAARD=uit ANALYSE=uit
 check "exit 0" test "$MAIN_RC" = 0
 check "dezelfde aanroepen van Docker als 0.8.0" cmp -s "$LOG" "$work/docker.080"
 check "dezelfde .env (geen nieuwe regel)" cmp -s "$ENV_FILE" "$work/env.080"
@@ -558,11 +651,40 @@ check "de reden: uit bij de aanroep, niet in .env" said "Analyse: uit (ANALYSE=u
 check "de uitvoer: alleen de regels over de analyse erbij" eval 'grep -vxF -e "== Analyse (gezichten)" -e "Analyse: uit (ANALYSE=uit bij de aanroep; $ENV_FILE heeft geen regel ANALYSE)" -e "Gezichten (de container analyse): uit (ANALYSE=uit)." "$work/main.out" | grep -vE "^  Aan: .*ANALYSE=aan bash$" | sed "/^$/N;/^\n$/D" | cmp -s - <(sed "/^$/N;/^\n$/D" "$work/main.080")'
 
 # ============================================================================================
+dc_files="-f $SRC/infra/single/compose.yaml -f $SRC/infra/single/compose.analyse.yaml -f $SRC/infra/single/compose.analyse-limits.yaml"
+eindtekst_aan="Gezichten (de container analyse): aan; elke gebruiker zet het zelf aan (Account → Foto's)."
+echo "== main zonder ANALYSE op een .env van 0.8.0 (de update naar 0.8.1): de analyse aan"
+fresh
+run_main "$install_sh"
+key=$(value ANALYSE_WORKER_KEY)
+check "exit 0, Klaar." eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op"'
+check ".env: die van 0.8.0 met ANALYSE=aan, een sleutel van 64 hex en de twee mappen erbij" eval 'has_line ANALYSE=aan && [[ $key =~ ^[0-9a-f]{64}$ ]] &&
+  has_line "MODELLEN_ROOT=$PLATFORM_ROOT/modellen" && has_line "SLEUTELS_ROOT=$PLATFORM_ROOT/sleutels/gezichten" &&
+  grep -vE "^(ANALYSE|ANALYSE_WORKER_KEY|MODELLEN_ROOT|SLEUTELS_ROOT)=" "$ENV_FILE" | cmp -s - "$work/env.080"'
+check "de stap en de stand" eval 'said "== Analyse (gezichten)" && said "Analyse: aan (modellen in $PLATFORM_ROOT/modellen)"'
+check "de modellen geladen (twee keer curl)" eval '[ "$(grep -c "^curl " "$work/curl.log")" = 2 ] && cmp -s "$PLATFORM_ROOT/modellen/a.onnx" "$net/a.onnx" && cmp -s "$PLATFORM_ROOT/modellen/map/b.onnx" "$net/map/b.onnx"'
+check "de container: --no-deps, --force-recreate, daarna analyse-status" eval 'logged "$dc_files up -d --no-deps --force-recreate analyse" && logged "$dc_files exec -T platform python -m app.cli analyse-status --wait 20"'
+check "de eindtekst: aan, elke gebruiker zet het zelf aan, en hoe het uit gaat" eval 'said "$eindtekst_aan" && said_part "| ANALYSE=uit bash"'
+check "geen Let op" not said_part "Let op: "
+
+echo "== main met weinig ruimte op DATA_ROOT voor de gezichten: de waarschuwing, de analyse gaat door"
+fresh
+# shellcheck disable=SC2329  # gezichten_ruimte roept hem aan
+df() {
+  case "${*: -1}" in
+    "$DATA_ROOT") printf 'Avail\n1000\n' ;;
+    *) command df "$@" ;;
+  esac
+}
+run_main "$install_sh"
+unset -f df
+check "exit 0, Klaar., de waarschuwing" eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op" && said "$warn"'
+check "de analyse aan, de container start, de eindtekst zonder maar" eval 'said "Analyse: aan (modellen in $PLATFORM_ROOT/modellen)" && logged "$dc_files up -d --no-deps --force-recreate analyse" && said "$eindtekst_aan"'
+
 echo "== main met ANALYSE=aan: de eerste keer"
 fresh
 run_main "$install_sh" ANALYSE=aan
 key=$(value ANALYSE_WORKER_KEY)
-dc_files="-f $SRC/infra/single/compose.yaml -f $SRC/infra/single/compose.analyse.yaml -f $SRC/infra/single/compose.analyse-limits.yaml"
 check "exit 0, Klaar." eval '[ "$MAIN_RC" = 0 ] && said_part "Klaar. Het platform draait op"'
 check ".env: aan, een sleutel, de mappen" eval 'has_line ANALYSE=aan && [[ $key =~ ^[0-9a-f]{64}$ ]] && has_line "MODELLEN_ROOT=$PLATFORM_ROOT/modellen"'
 check "de stap en de stand" eval 'said "== Analyse (gezichten)" && said "Analyse: aan (modellen in $PLATFORM_ROOT/modellen)"'
@@ -573,7 +695,7 @@ check "daarna de container: --no-deps, --force-recreate (nieuwe modellen)" logge
 check "daarna analyse-status --wait 20" logged "$dc_files exec -T platform python -m app.cli analyse-status --wait 20"
 check "de volgorde: app, container, stand" eval '[ "$(grep -n "" "$LOG" | grep -E "up -d --build|up -d --no-deps|analyse-status" | cut -d: -f2- | sed -E "s/.* (up -d --build|up -d --no-deps|analyse-status).*/\1/" | tr "\n" ,)" = "up -d --build,up -d --no-deps,analyse-status," ]'
 check "de stand in de uitvoer" said "Analyse: ok"
-check "de eindtekst" eval 'said "Gezichten (de container analyse): aan." && said_part "  Uit: curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=uit bash"'
+check "de eindtekst" eval 'said "$eindtekst_aan" && said_part "  Uit: curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=uit bash"'
 check "geen Let op" not said_part "Let op: "
 models_sum "$PLATFORM_ROOT/modellen" >"$work/modellen.voor"
 setpriv --reuid=10001 --regid=10001 --clear-groups -- sh -c 'umask 077 && printf geheim >"$1/eigenaar-1.key"' sh "$PLATFORM_ROOT/sleutels/gezichten"

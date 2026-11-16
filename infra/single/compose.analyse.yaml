@@ -1,7 +1,8 @@
 # Analyse (fase 6, Keuze 56–59, 73): gezichten en beeld in een eigen container, zonder netwerk en
 # zonder data. De app geeft elke preview als open file descriptor over de socket in analyse-run.
-# install.sh neemt dit bestand alleen mee met ANALYSE=aan in /opt/platform/.env (tot 0.8.1 staat
-# de analyse uit als ANALYSE ontbreekt; install.sh, ANALYSE_STANDAARD).
+# install.sh neemt dit bestand alleen mee met ANALYSE=aan in /opt/platform/.env. Sinds 0.8.1 is
+# dat de standaard: zonder regel ANALYSE zet install.sh die erbij (install.sh, ANALYSE_STANDAARD).
+# Met ANALYSE=uit niet.
 #
 # ANALYSE_WORKER_KEY (64 hex; install.sh maakt hem één keer en vervangt hem nooit) gaat naar de
 # app en naar analyse, maar nooit in `command` en nooit naar analyse-omzetten (K1-05). Zonder
