@@ -17,6 +17,7 @@ houdt de bestanden hier gelijk met de code en met het ontwerp:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from app.analyse import runtime
+from app.analyse.worker import caps, server
 from app.analyse.worker import child as kids
 
 yaml = pytest.importorskip("yaml")
@@ -225,3 +227,17 @@ def test_docker_compose_config_zonder_omzet_variabelen(tmp_path, profile):
             "/nonexistent/omzet-bron",
             "/nonexistent/omzet-uit",
         ]
+
+
+def test_de_containertest_kent_precies_de_opdrachten_van_built():
+    """test_analyse_container.sh (de job analyse-image) kijkt twee keer naar de opdrachten van de
+    echte worker: de regel `opdrachten:` van analyse-status en caps.built van pid 1. Beide moeten
+    precies caps.built(server.BUILT) zijn. Na X2b staat group erbij; het script vroeg nog de lijst
+    zonder group, en analyse-image werd rood (review golf 6, G6-1)."""
+    script = (SINGLE / "tests" / "test_analyse_container.sh").read_text(encoding="utf-8")
+    want = caps.built(server.BUILT)
+    status = re.findall(r'\[ "\$opdrachten" = "([a-z_ ]*)" \]', script)
+    assert status == [" ".join(want) + " "]
+    proef = re.findall(r"sorted\(caps\.built\) == \[([^\]]*)\]", script)
+    assert len(proef) == 1
+    assert [s.strip().strip('"') for s in proef[0].split(",")] == want

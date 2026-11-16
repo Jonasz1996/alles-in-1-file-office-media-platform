@@ -274,7 +274,7 @@ models="$(grep -c '^  model .*: klopt$' <<< "$stand" || true)"
 if [ "$LIMITS" = 1 ]; then grenzen="  grenzen: 1 cpus, 3072 MB geheugen"; else grenzen="  grenzen: geen (de container heeft geen cgroup-grenzen)"; fi
 opdrachten="$(sed -n 's/^  opdrachten: //p' <<< "$stand" | tr -d ' ' | tr ',' '\n' | sort | tr '\n' ' ')"
 if [ "$(head -n 1 <<< "$stand")" = "Analyse: ok" ] && [ "$models" = 2 ] && grep -qxF "$grenzen" <<< "$stand" \
-  && [ "$opdrachten" = "cancel caps embed_image embed_text faces forget rank " ] && [ "$(wc -l <<< "$stand" | tr -d ' ')" = 5 ]; then
+  && [ "$opdrachten" = "cancel caps embed_image embed_text faces forget group rank " ] && [ "$(wc -l <<< "$stand" | tr -d ' ')" = 5 ]; then
   goed "analyse-status: $(tr '\n' ';' <<< "$stand")"
 else
   fout "analyse-status: $(tr '\n' ';' <<< "$stand")"
@@ -511,9 +511,9 @@ async def faces(settings, previews):
 
 async def proef(settings):
     caps = await client.caps(settings)
-    check("caps: beide modellen ok, de opdrachten van X2a en X3b, geen beeld zonder SigLIP",
+    check("caps: beide modellen ok, de opdrachten van X2a, X2b en X3b, geen beeld zonder SigLIP",
           [m.state for m in caps.models] == ["ok", "ok"] and caps.beeld is None
-          and sorted(caps.built) == ["cancel", "caps", "embed_image", "embed_text", "faces", "forget", "rank"],
+          and sorted(caps.built) == ["cancel", "caps", "embed_image", "embed_text", "faces", "forget", "group", "rank"],
           f"{[(m.name, m.state) for m in caps.models]}, {caps.built}, grenzen {caps.limits}")
     jpeg = io.BytesIO()
     landschap(800, 600).save(jpeg, "JPEG")
