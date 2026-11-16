@@ -11,15 +11,17 @@ ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0 229738 face_det
 #
 # SigLIP 2 B/32-256 (Apache-2.0, google/siglip2-base-patch32-256 op een vaste commit; Keuze 73 en
 # 84): de vijf bronbestanden van huggingface.co, en de uitkomst van de omzetter (url -) zoals de
-# job beeld-model hem twee keer gelijk maakte. install.sh haalt de bronnen alleen met BEELD=aan,
-# zet ze om in analyse-omzetten, kijkt de uitkomst na op grootte en sha256, en gooit de bron weg.
+# job beeld-model hem twee keer gelijk maakte: VERSIE 3 van bouw.py (per token), het voorstel van
+# BZ2 in de run op 669f03c. Gaat VERSIE omhoog, dan horen hier de regels van een run met die
+# VERSIE (test_lock_siglip.py). install.sh haalt de bronnen alleen met BEELD=aan, zet ze om in
+# analyse-omzetten, kijkt de uitkomst na op grootte en sha256, en gooit de bron weg.
 7d241bb3becad218f211f480487f491df4f8c0a472ecf7afdec5615815a301f1 1507473288 siglip2-b32-256/bron/model.safetensors https://huggingface.co/google/siglip2-base-patch32-256/resolve/94dffa8cb1179de3e03f091dbc3917e5d5a9ae84/model.safetensors
 52deee7a2d6fb2e73c45720d9c4056f0e4dc582ef84524aac229c6d5aa348dee 298 siglip2-b32-256/bron/config.json https://huggingface.co/google/siglip2-base-patch32-256/resolve/94dffa8cb1179de3e03f091dbc3917e5d5a9ae84/config.json
 d14ba2ee3fd816f3de8abaddc31953565128eaf37c73ad4bed32101a98465aff 394 siglip2-b32-256/bron/preprocessor_config.json https://huggingface.co/google/siglip2-base-patch32-256/resolve/94dffa8cb1179de3e03f091dbc3917e5d5a9ae84/preprocessor_config.json
 cb9140fae3ac5122c972d37adf83e1248471a38147ad76f8215c8872c6fd8322 34363039 siglip2-b32-256/bron/tokenizer.json https://huggingface.co/google/siglip2-base-patch32-256/resolve/94dffa8cb1179de3e03f091dbc3917e5d5a9ae84/tokenizer.json
 14afe629fe4959b9e0d51e1852b8d9f7ad074f90a1a7125a4fcdd17f06e78fc8 47164 siglip2-b32-256/bron/tokenizer_config.json https://huggingface.co/google/siglip2-base-patch32-256/resolve/94dffa8cb1179de3e03f091dbc3917e5d5a9ae84/tokenizer_config.json
-e2a9f0f3adfa915f8ff3e91f1e885feabc1b0024218ead7c0807b5009d046b11 102672680 siglip2-b32-256/beeld.int8.onnx -
-c8d75acac5b3f947073ec106077fca63d1c8b0e49d8d23be941d7ced5d5fe08f 284307578 siglip2-b32-256/tekst.int8.onnx -
+ddc76fc08a1c30bd0d0b8fa997f5f8fa44c0cbe25b9f04d81859fa41cb877a5b 102609072 siglip2-b32-256/beeld.int8.onnx -
+258337dbc659cfebc72850ca0ce8fdec4c50c726da35790893569eb8a10bfd1a 284248004 siglip2-b32-256/tekst.int8.onnx -
 1516dde1739c181c24fcaef51d49e49ae26bea112490ff57799f945e7666b8ec 12414446 siglip2-b32-256/tokenizer.bin -
-0e99ac4a9cda73e6ba1701ac9fc4afa7e5b86fda223e2264fce7fb3814e73268 2135 siglip2-b32-256/meta.json -
+dfb3d153f941cd0ea549922f34c584f81730a43708539fff879e6d85a6d49af1 2376 siglip2-b32-256/meta.json -
 0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594 10174 siglip2-b32-256/siglip2-Apache-2.0.txt -

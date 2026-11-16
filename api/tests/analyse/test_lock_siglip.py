@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -286,23 +287,39 @@ PINS = [
         "bron/tokenizer_config.json",
     ),
     (
-        "e2a9f0f3adfa915f8ff3e91f1e885feabc1b0024218ead7c0807b5009d046b11",
-        102672680,
+        "ddc76fc08a1c30bd0d0b8fa997f5f8fa44c0cbe25b9f04d81859fa41cb877a5b",
+        102609072,
         "beeld.int8.onnx",
     ),
     (
-        "c8d75acac5b3f947073ec106077fca63d1c8b0e49d8d23be941d7ced5d5fe08f",
-        284307578,
+        "258337dbc659cfebc72850ca0ce8fdec4c50c726da35790893569eb8a10bfd1a",
+        284248004,
         "tekst.int8.onnx",
     ),
     ("1516dde1739c181c24fcaef51d49e49ae26bea112490ff57799f945e7666b8ec", 12414446, "tokenizer.bin"),
-    ("0e99ac4a9cda73e6ba1701ac9fc4afa7e5b86fda223e2264fce7fb3814e73268", 2135, "meta.json"),
+    ("dfb3d153f941cd0ea549922f34c584f81730a43708539fff879e6d85a6d49af1", 2376, "meta.json"),
     (
         "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
         10174,
         "siglip2-Apache-2.0.txt",
     ),
 ]
+
+# De VERSIE van de omzetter (bouw.py) in de run waaruit de drie uitkomsten hierboven komen
+# (beeld.int8.onnx, tekst.int8.onnx en meta.json; BZ2 op 669f03c, x3a.md "CI op 669f03c").
+PINS_OMZETTER = 3
+BOUW = ROOT / "api" / "app" / "analyse" / "worker" / "omzetten" / "bouw.py"
+
+
+def test_de_uitkomst_in_models_lock_is_van_de_versie_van_de_omzetter():
+    """meta.json noemt "omzetter": VERSIE, en een andere VERSIE geeft andere int8-bytes. Gaat
+    VERSIE in bouw.py omhoog, dan kloppen de drie uitkomsten in models.lock niet meer: beeld-model
+    wordt rood, en install.sh met BEELD=aan haalt elke run 1,5 GB, zet om en gooit de uitkomst
+    weg. Dan horen er de regels van een run met die VERSIE in (runbook analyse, stap 5), en hier
+    PINS_OMZETTER mee. Een samenvoeging hield de regels van VERSIE 1 stil vast terwijl de omzetter
+    al op 3 stond (review golf 6, G6-2). bouw.py importeert numpy, dus de versie uit de bron."""
+    versie = re.findall(r"^VERSIE = (\d+)$", BOUW.read_text(encoding="utf-8"), re.MULTILINE)
+    assert versie == [str(PINS_OMZETTER)]
 
 
 def test_de_pins_in_models_lock():
