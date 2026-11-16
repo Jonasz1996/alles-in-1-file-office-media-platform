@@ -15,8 +15,9 @@ runbook [gezichten.md](../runbooks/gezichten.md); wat het voor Jonas betekent: d
 `PLATFORM_ANALYSE_ENABLED` uit, zoals 0.8.0) ziet een gebruiker of beheerder niets nieuws: geen
 schakelaar, geen regel, geen raster, geen rij in de viewer, op `/beheer` het blok van 0.8.0;
 geen job in de rij `analyse`, geen bestand onder `DATA_ROOT`, geen regel in `.env`, en elke
-route van 0.8.0 antwoordt zoals in 0.8.0. De nieuwe routes geven dan `409 faces_unavailable`.
-Bewezen met `test_faces_off.py` (6), `faces.test.ts` ("uit is onzichtbaar") en
+route van 0.8.0 antwoordt zoals in 0.8.0. De routes van gezichten geven dan na de inlog `501
+not_built("X2")`, zoals de stubs van 0.8.0 (sinds de samenvoeging, `dcd6bc1`; `409
+faces_unavailable` alleen met de analyse aan zonder de map met sleutels). Bewezen met `test_faces_off.py` (6), `faces.test.ts` ("uit is onzichtbaar") en
 `e2e/test_zoek_gezichten.py::test_zonder_analyse_ziet_niemand_iets_nieuws`. Tests en CI zetten
 het aan met `ANALYSE=aan` (of `PLATFORM_ANALYSE_ENABLED` en een map met sleutels).
 
@@ -146,7 +147,9 @@ Wat het ontwerp open liet, en hoe het nu is.
    of geen `PLATFORM_FACES_KEYS`), dan geeft elke nieuwe route na de inlog `409
    faces_unavailable` (eerst `401` zonder inlog, `403 guest` voor een gast). In 0.8.0 waren het
    stubs met `501`; de web van 0.8.0 vraagt ze niet. Met gezichten uit voor de eigenaar: `409
-   faces_off` (behalve de stand en `wipe-unnamed`).
+   faces_off` (behalve de stand en `wipe-unnamed`). Sinds de samenvoeging (`dcd6bc1`) is het met
+   de analyse uit weer `501 not_built("X2")`, zoals 0.8.0; `409 faces_unavailable` blijft voor
+   de analyse aan zonder `PLATFORM_FACES_KEYS` (De samenvoeging).
 2. **De schakelaar bestaat alleen als gezichten draaien.** `GET /me/photo-settings` geeft
    `faces_available` (van Z0b); zonder de analyse staat onder Account het vinkje van Z6 met "Nog
    niet beschikbaar op deze server." (0.8.0), met de analyse de schakelaar van X2 met zijn
@@ -204,7 +207,7 @@ onder het slot).
 | de initiële JS (0 B erbij) | `npm run budget`, rij "eerste lading JS", tegen een build van `625e946` in een eigen worktree | 98.039 → 98.050 B gzip; de ruwe bytes van de shell gelijk (90.787 B), en na het gelijk maken van de hashes in de namen ook de inhoud; de 11 B zijn gzip van andere hashnamen |
 | `e2e/test_zoek_gezichten.py` | onder het slot, `taskset -c 0-2`, met `-m ""` | 2 passed in 63,7 s (de lange test 49,2 s, die zonder de analyse 7,7 s) |
 | de echte scan (`test_zoek_gezichten_echt.py`) | tegen een stand-in van het image (de Dockerfile zonder de web-stap en apt) met de echte modellen | 1 passed in 7,94 s (de eerste run faalde op de namen van de modellen in de test; zie Gedraaid) |
-| de tijd per foto met de echte modellen | `test_models_real.py` van X2a (laag 3) en `analyse-bench` | ongewijzigd t.o.v. X2a; `analyse-bench` op de LXC: het runbook zegt hoe |
+| de tijd per foto met de echte modellen | `test_models_real.py` van X2a (laag 3) en `analyse-bench` | ongewijzigd t.o.v. X2a; `analyse-bench` op de LXC: het runbook zegt hoe. [Nacontrole golf 6: "ongewijzigd" was geen meting. Op `9228eb6` gemeten: 28,1 ms per foto zonder gezicht, 29,4 ms per gezicht, 1.043 foto's per minuut per core met één gezicht (poort ≥ 250), maxrss van `werk` 224 MB; X2a had 1.070 als root op `e609341` (De nacontrole, Gedraaid)] |
 
 ## Afwijkingen
 
@@ -287,7 +290,7 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Regel uit het ontwerp | Bewijs | Uitkomst |
 |---|---|---|
 | Bouwt: `face`, `face_person`, `face_scan`, `face_owner` gevuld door de app | `test_faces_scan.py` (19), `test_faces_group_app.py` (8), `test_faces_verdicts.py` (12) | groen |
-| Bouwt: groeperen per eigenaar in `werk`, met `GROUP_MAX` 60.000 | `tests_analyse/test_worker_group.py` (14), `test_group_perf.py` (1) | groen |
+| Bouwt: groeperen per eigenaar in `werk`, met `GROUP_MAX` 60.000 | `tests_analyse/test_worker_group.py` (14), `test_group_perf.py` (2; sinds `c2be5fc` ook `test_de_meting_telt_de_piek_van_pytest_niet_mee`) | groen |
 | Bouwt: bevestigen, afwijzen en samenvoegen met Z6 als bron | `test_faces_verdicts.py` (12, met `test_de_haken_van_z6`) | groen |
 | Bouwt: de privacyregels, de versleuteling, Keuze 69 | zie Privacy hieronder | groen |
 | Bouwt: de rij `analyse` pas na de backfill | `test_faces_scan.py::test_eerst_de_backfill_van_de_index` (`10c1c7d`; zonder de wachter in `plan_job` rood); `tests/test_jobs_lanes.py` (de rij van elke job) | groen |
@@ -298,7 +301,7 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Tests: `test_faces_scan.py` | 19 (met de parameters; sinds `10c1c7d` ook de backfill) | groen |
 | Tests: `test_faces_group_app.py` | 8 (sinds `7050cb6` ook de ronde van elk uur) | groen |
 | Tests: `test_faces_verdicts.py` | 12 | groen |
-| Tests: `test_faces_off.py` | 6 (ook: zonder de analyse elke route `409 faces_unavailable`, `/me/photo-settings` en `/beheer` zoals 0.8.0, geen job of bestand) | groen |
+| Tests: `test_faces_off.py` | 6 (ook: zonder de analyse elke route van gezichten `501 not_built("X2")` zoals 0.8.0 (`dcd6bc1`), met de analyse aan zonder sleutels `409 faces_unavailable`, `/me/photo-settings` en `/beheer` zoals 0.8.0, geen job of bestand) | groen |
 | Tests: `test_faces_wipe_bytes.py` (0 merktekens) | 5 | groen |
 | Tests: `test_faces_no_vector.py` | 1 (alle routes uit OpenAPI, caplog, gebeurtenissen) | groen; als nobody alleen met `-u SSL_CERT_FILE` (de variabele van de sandbox wijst naar een map van root; CI heeft hem niet) |
 | Tests: `test_faces_privacy.py` (ook Keuze 69) | 5 | groen |
@@ -316,7 +319,7 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Tests: `e2e/test_zoek_gezichten_echt.py` | 1 test | stand-in groen; `analyse-image` in CI na de push |
 | Tests: `test_faces_perf.py` (`zoek-perf`) | p95 46,5 / 35,7 / 10,0 / 31,7 ms | gehaald lokaal; in CI na de push |
 | Klaar als: `/beheer` toont de juiste stand bij ok, down, models_missing en off | `facesBlock.test.ts::de regel Analyse` (ok, off, elke reden van down, models_missing met de namen); `test_faces_meten.py`; de e2e: "werkt" met de nep-worker, en zonder de analyse het blok van 0.8.0 (Vormen 3) | groen |
-| Klaar als: de lagen 1 en 2 groen (scan, groeperen, keuzes, levensloop, kopieën, versie) | `tests/people/faces/` (94, en 1 perf), `test_worker_group.py` (14) | groen |
+| Klaar als: de lagen 1 en 2 groen (scan, groeperen, keuzes, levensloop, kopieën, versie) | `tests/people/faces/` (96, en 1 perf; 94 bij X2b, sinds de samenvoeging ook `test_faces_naast_beeld.py` (2)), `test_worker_group.py` (14) | groen |
 | Klaar als: privacy (`off`, `wipe_bytes`, `no_vector`, `privacy`, `crypto`, `backup`, `test_db_pragmas.py`) | in de volle suite, en `tests/people/faces` als nobody | groen (zie Gedraaid) |
 | Klaar als: poort 60.000 gezichten ≤ 60 s en ≤ 400 MB | `test_group_perf.py` | 23,5 s, 254 MB |
 | Klaar als: de kwaliteit op echte gezichten, de drempels in `drempels.py`; tot dan "niet gemeten" in de README en op `/beheer` | `drempels.py` (0,50, 0,45, voorlopig); README; `facesBlock.test.ts` en de e2e ("niet gemeten") | het deel tot de meting: groen; de meting zelf open (Open 4) |
@@ -432,3 +435,75 @@ van bestanden).
 | Punt | Wat er gedaan is | Test |
 |---|---|---|
 | **G6-1** (moet) `infra/single/tests/test_analyse_container.sh` (job `analyse-image`) vroeg bij `analyse-status` en bij `caps.built` de lijst opdrachten zonder `group`; `server.BUILT` heeft `group` sinds X2b, dus de job werd rood | Klopt. Beide lijsten in het script noemen nu `group`: `analyse-status` met `cancel caps embed_image embed_text faces forget group rank`, en de proef in de container met `sorted(caps.built)` gelijk aan die acht (`8d0809c`) | `tests/test_compose_analyse.py::test_de_containertest_kent_precies_de_opdrachten_van_built` legt beide lijsten in het script vast op `caps.built(server.BUILT)`: zonder de wijziging rood, nu groen; `bash -n` en shellcheck schoon. Het script zelf draait alleen in de job `analyse-image` (CI na de push) |
+
+## De nacontrole (golf 6)
+
+Op de kop van de review (`b14009e`), op 16 november 2026, in een losse worktree. Hoe er gewerkt
+is, wat X3b raakt (en de herstellingen `9228eb6`: uit en wissen van beeld vergaten de lijsten van
+60 s in de app, en `a453869`: `test_install_beeld.sh` rekende nog met de uitkomst van `VERSIE` 1)
+en de hele tabel van wat er gedraaid is, staan in "De nacontrole (golf 6)" in
+[x3b.md](x3b.md); hier wat X2b raakt. Niets gepusht, geen tag; de versie blijft 0.8.0.
+
+### G6-1 weggehaald
+
+| Commit (punt) | Wat weggehaald | Rood | Oordeel |
+|---|---|---|---|
+| `8d0809c` (G6-1) | `analyse-status` in `test_analyse_container.sh` weer zonder `group` | 1: `tests/test_compose_analyse.py::test_de_containertest_kent_precies_de_opdrachten_van_built` | gezien |
+| | de proef met `sorted(caps.built)` in de container weer zonder `group` | 1, dezelfde test | gezien |
+
+Na elke mutatie `git checkout` van het script, en dezelfde test weer groen. Dat het script in de
+container echt `group` ziet, zegt alleen `analyse-image` (CI na de push).
+
+### Klaar als, nagelopen
+
+Elke test die Klaar als en "Wat stap 2 in de keten vond" noemen, bestaat, met de genoemde naam.
+Wat niet meer klopte, is in de tekst zelf verbeterd:
+
+- de alinea bovenaan, Vormen 1 en de rij van `test_faces_off.py` zeiden dat de routes van
+  gezichten zonder de analyse `409 faces_unavailable` geven. Sinds `dcd6bc1` is dat `501
+  not_built("X2")` zoals 0.8.0, en 409 alleen met de analyse aan zonder de map met sleutels
+  (`test_faces_off.py::test_elke_route_van_gezichten_antwoordt_als_in_080` en
+  `::test_analyse_aan_zonder_sleutelmap_is_ook_uit`);
+- `tests/people/faces/` telt 96 tests en 1 met `zoek_perf` (94 bij X2b): `test_faces_naast_beeld.py`
+  (2) kwam erbij bij de samenvoeging;
+- `test_group_perf.py` heeft sinds `c2be5fc` 2 tests;
+- `api-analyse` telt sinds G6-3 329 en 16 (x3b.md, De review). De 229 onder Gebouwd en Open 1 is
+  die van X2b alleen, en blijft daar staan als geschiedenis.
+
+"Ongewijzigd t.o.v. X2a" in Metingen (de tijd per foto met de echte modellen) was geen meting:
+`ops/faces.py` is sinds `625e946` niet veranderd (`git log`), maar met de echte modellen was bij
+X2b niets gemeten. De nacontrole heeft het gemeten (hieronder); de rij in Metingen zegt het erbij.
+
+### Gedraaid
+
+Op `9228eb6`, in de keten van x3b.md (De nacontrole, Gedraaid), onder het slot met `taskset -c
+0-2`; daar staan ook de volle api-suite (6.844 groen), `tests_analyse` (329 groen, 16 niet
+gekozen), de run als nobody (912 groen, met `tests/people/faces`), de web, `slim.sh` en de
+e2e-set. Wat gezichten raakt:
+
+| Wat | Hoe | Uitkomst |
+|---|---|---|
+| de routes bij 60.000 gezichten (poort p95 ≤ 100 ms, de stand ≤ 50 ms) | `tests/people/faces/test_faces_perf.py`, marker `zoek_perf`, `-s`; N = 100.000, SQLite 3.53.1 | voorstellen p95 39,4 ms, groepen 38,6 ms, een foto 13,0 ms, de stand 33,8 ms: gehaald (de boom met 60.000 gezichten klaar in 73,7 s) |
+| groeperen, 60.000 open en 6.000 bevestigd (poort ≤ 60 s, ≤ 400 MB) | `tests_analyse/test_group_perf.py` (2), `-s` | 26,2 s, maxrss 256 MB, zuiverheid 1,0000, recall 0,986 |
+| de tijd per foto met de echte modellen (poort ≥ 250 foto's per minuut per core met één gezicht) | `tests_analyse/test_models_real.py::test_de_tijd_per_foto_en_de_maxrss_van_het_kind`, `-s`, `ANALYSE_MODELLEN` met de YuNet en SFace van `models.lock` | 28,1 ms per foto zonder gezicht, 29,4 ms per gezicht, 1.043 foto's per minuut per core; maxrss van `werk` 224 MB |
+| e2e | `test_zoek_gezichten.py` en `test_zoek_gezichten_echt.py` met `-m "" -rs` (samen met `test_zoek_beeld.py`) | `test_zoek_gezichten.py` groen (10 groen met beeld); `test_zoek_gezichten_echt.py` overgeslagen: geen image, alleen in `analyse-image` |
+| het chunk van gezichten (begroting 12.000 B gzip) | `npm run budget` | 11.837 B |
+| `test_install_analyse.sh` | als root | 128 controles groen |
+| `test_compose_analyse.py` (G6-1) | in de volle api-suite en als nobody | groen |
+
+### Klaar als, na de nacontrole
+
+Elke rij van Klaar als noemt een test die bestaat en hier groen was, zegt dat het bewijs in CI
+na de push komt (`api-analyse`, `zoek-perf`, `analyse-image`) of op de LXC (`analyse-bench`), of
+staat open met zijn nummer: de kwaliteit op echte gezichten (Open 4), §4.5 met X2 aan (Open 5);
+`test_faces_quality.py` is niet gebouwd (Afwijkingen 3). Wat niet klopte, is hierboven
+verbeterd.
+
+### Open na de nacontrole
+
+- **Alleen in CI, na de push:** `analyse-image` (G6-1: `test_analyse_container.sh` met `group` in
+  de container; `test_zoek_gezichten_echt.py` met het echte image), `api-analyse` (exact 329 en
+  16), `zoek-perf` (ook `test_faces_perf.py`) en de rest uit x3b.md, "Open na de nacontrole".
+- **Op de LXC:** `analyse-bench` met de echte modellen (het runbook zegt hoe).
+- **`test_install_update.sh`** is niet gedraaid (de schijf; x3b.md) en staat niet in CI (x2a.md,
+  Open 8).

@@ -87,7 +87,7 @@ Keuze 73 en K2-12 noemen drie delen; §5 vraagt deel 1 en BZ1. Wat er nu van bew
 |---|---|
 | 1. De kleine vorm rekent als een eigen numpy-versie | gehaald (X3a, opnieuw gemeten in de nacontrole van golf 5) |
 | 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | gehaald in `beeld-model` op `26c49ca` (x3a.md, CI op 26c49ca) |
-| 3. De kwaliteitspoort (BZ4) | **niet gehaald, niet gedaan**: op `26c49ca` niet gerekend (HTTP 429 van Commons). Streng wordt BZ4 pas in een run van `beeld-model` met de pins in `models.lock` én `api/tests/analyse/sets/beeld.tsv`. De pins staan er (`0a90be0`), `beeld.tsv` niet: die zet de lead, uit het voorstel van een run. **Of BZ4 groen is, is het oordeel van CI na de push**, niet van deze tak |
+| 3. De kwaliteitspoort (BZ4) | **niet gehaald, niet streng gedaan**: op `26c49ca` niet gerekend (HTTP 429 van Commons). [Nacontrole golf 6: op `669f03c` wel gerekend, op de set uit het voorstel (`voorstel-beeld.tsv`, 120 foto's) en met de omzetter van `VERSIE` 3: twee poorten rood, "slechtste vraag 0/5" (poort ≥ 1) en "meer zoals deze 0,475" (poort ≥ 0,7), in fp32 ook; nagelezen in het log van run 43850620942; x3a.md, "CI op 669f03c".] Streng wordt BZ4 pas in een run van `beeld-model` met de pins in `models.lock` én `api/tests/analyse/sets/beeld.tsv`. De pins van `VERSIE` 3 staan er sinds G6-2 (`c921c66`), `beeld.tsv` niet: die zet de lead, uit het voorstel van een run. **Of BZ4 groen is, is het oordeel van CI na de push**, niet van deze tak |
 
 Volgens x3a.md ("De go/no-go na CI") gaat X3b door met BZ4 streng als poort van X3b: een rode
 BZ4 met de pins en de set houdt X3b tegen. Dat is hier niet anders gemaakt. Niets is hier beslist
@@ -117,7 +117,10 @@ Met het echte model (uit `beeld-model` op `26c49ca`, x3a.md): `embed_image` 39,8
 `tokenizer.bin` laden 0,135 s. Samen met de 51–77 ms van het pad zonder tekstmodel is een warme
 vraag bij 100.000 foto's naar verwachting ±90–115 ms, onder de 250 ms; dat is een optelsom, geen
 meting. BZ6 als geheel (het pad met het echte model, `werk` vol, tijdens de backfill) en BZ9 zijn
-niet gemeten.
+niet gemeten. [Nacontrole golf 6: dit zijn de getallen van `VERSIE` 1. De pins van nu zijn die van
+`VERSIE` 3; in `beeld-model` op `669f03c` 32,4 ms per foto (1.852 per minuut) en een vraag p95
+20,4 ms (log van run 43850620942), op een Xeon 6975P-C met VNNI; x3a.md, "Open na 669f03c", zegt
+wat een tragere runner kan geven.]
 
 ## Afwijkingen
 
@@ -240,15 +243,15 @@ Jonas.
 | `test_tokenizer.py` en BZ3 groen | X3a (`test_tokenizer.py`, 95); `beeld-model` | van X3a, hier niet geraakt; BZ3 met de nieuwe lijst: in CI |
 | De omzetter gelijk aan numpy, twee keer dezelfde sha256 | X3a (`test_beeld_omzetten.py`) | gehaald (x3a.md) |
 | De go/no-go na X3a | x3a.md, "De go/no-go na CI" | deel 1 en 2 gehaald, deel 3 (BZ4) niet; niet beslist |
-| De echte omzetting (BZ2) in `beeld-model`, de sha256's in `models.lock` | `beeld-model` op `26c49ca`; `0a90be0` | gedaan; de pins van de uitkomst moeten na de samenvoeging opnieuw (Open 2) |
-| De opdrachten in de container met nepmodellen; `rank` gelijk aan brute force | `tests_analyse/test_beeld_ops.py` (13), `test_beeld_cache.py` (9) | groen in de volle `tests_analyse` van stap 1; in CI (`api-analyse`, 235) |
+| De echte omzetting (BZ2) in `beeld-model`, de sha256's in `models.lock` | `beeld-model` op `26c49ca` en `669f03c`; `0a90be0`, `c921c66`; `test_lock_siglip.py` (9) | gedaan; de pins van de uitkomst zijn sinds G6-2 die van `VERSIE` 3 uit de run op `669f03c`, in de nacontrole regel voor regel tegen het log van die run gelezen; streng (dezelfde sha256 na de push) in CI |
+| De opdrachten in de container met nepmodellen; `rank` gelijk aan brute force | `tests_analyse/test_beeld_ops.py` (13), `test_beeld_cache.py` (10; sinds `c1b2939` ook het herladen) | groen in de volle `tests_analyse` van stap 1 en van de nacontrole; in CI (`api-analyse`, nu 329 en 16) |
 | Zoeken: alleen eigen, levende foto's; elk filter; de terugval; geen vector en geen score; schone logs; `429`; een nieuwe vraag stopt de oude | `test_beeld_search.py`, `test_beeld_access.py`, `test_beeld_never_out.py`, `test_search_logs.py`, `test_beeld_events.py::test_beeld_fallback` | groen in stap 1 (zie Gedraaid); in CI |
-| Uit en wissen: 0 rijen, geen bestand, `forget`; `blob_embed` niet in de reservekopie; de beheerder kan uitzetten | `test_beeld_off.py`, `test_beeld_events.py` (`off`, `wipe`, `admin_off`), `test_backup_gezichten.py` (A0); `e2e/test_zoek_beeld.py` (schakelaar, beheerder) | API: groen in stap 1 en in de volle suite op `4924b30` (Gedraaid); e2e: groen op `4e286b9` |
+| Uit en wissen: 0 rijen, geen bestand, `forget`; `blob_embed` niet in de reservekopie; de beheerder kan uitzetten | `test_beeld_off.py`, `test_beeld_events.py` (`off`, `on_again`, `wipe`, `admin_off`), `test_backup_gezichten.py` (A0); `e2e/test_zoek_beeld.py` (schakelaar, beheerder) | API: groen in stap 1 en in de volle suite op `4924b30` (Gedraaid); e2e: groen op `4e286b9`. **Tot `9228eb6` niet helemaal**: de lijsten van 60 s in de app bleven staan, en na uit en weer aan of na wissen gaf een vraag nog foto's uit de gewiste vectoren (De nacontrole) |
 | De kwaliteitspoort (BZ4) groen | `test_beeld_kwaliteit.py` in `beeld-model` | **open**: in CI na de push, met `beeld.tsv` (Open 1) |
-| De tijden: p95 ≤ 100 ms zonder tekstmodel; ≤ 250 ms warm met het echte model, ook bij 100.000 en de eerste vraag; ≥ 500 foto's per minuut | `test_beeld_perf.py`; `test_beeld_echt_perf.py` in `beeld-model` | ≤ 100 ms: groen, eens rood in 9 (Metingen, Open 6); ≥ 500 per minuut: 1.508 op `26c49ca`; ≤ 250 ms met het echte model: in CI |
-| Het geheugen (BZ5) | — | **open** (Open 3) |
+| De tijden: p95 ≤ 100 ms zonder tekstmodel; ≤ 250 ms warm met het echte model, ook bij 100.000 en de eerste vraag; ≥ 500 foto's per minuut | `test_beeld_perf.py`; `test_beeld_echt_perf.py` in `beeld-model` | ≤ 100 ms: groen, eens rood in 9 (Metingen, Open 6); ≥ 500 per minuut: 1.508 op `26c49ca` (`VERSIE` 1), 1.852 op `669f03c` (`VERSIE` 3, de pins van nu); een vraag met het echte model p95 20,4 ms op `669f03c`; ≤ 250 ms voor het geheel met het echte model: in CI |
+| Het geheugen (BZ5) | `tests_analyse/test_geheugen_samen.py` (De samenvoeging) | met de nepmodellen gehaald (De samenvoeging; opnieuw in de nacontrole); met de echte modellen en `memory.peak` van de cgroup **open**: in CI of op de LXC (Open 3) |
 | BZ10 gemeten | `beeld-kwaliteit --personen` | **op de LXC**, niet gedaan (Open 5) |
-| `test_install_beeld.sh` groen in `infra`; `BEELD=uit` werkt; een mislukking is niet fataal | `test_install_beeld.sh` | 120 controles groen hier (stap 1); in CI |
+| `test_install_beeld.sh` groen in `infra`; `BEELD=uit` werkt; een mislukking is niet fataal | `test_install_beeld.sh` | 120 controles groen hier (stap 1). **Van `c921c66` tot `a453869` rood** (1 van 120: de ruimte rekende nog met de uitkomst van `VERSIE` 1); sinds `a453869` weer 120 groen (De nacontrole); in CI |
 | De web: vitest en e2e met alleen het toetsenbord groen; de eerste lading +0 B; het raster ≤ 15 kB; `toetsenbord-x3.md` | `beeld.test.ts` (45), `e2e/test_zoek_beeld.py` (8), `npm run budget` | groen op `4e286b9` (Gedraaid); +0 B ruw, 10.883 B en 2.558 B (Metingen); de vinkjes in `toetsenbord-x3.md` |
 | Het blok op `/beheer`, het runbook, de README en het document | `BeeldBlock.tsx`, `searchTab.test.ts`, `beeld.test.ts`; dit document | gedaan |
 | `e2e/slim.sh` groen, alle bestaande jobs groen (ook `zoek-perf` met 200 ms) | `slim.sh`, de e2e-set van CI hier; de rest in CI | `slim.sh` en de e2e-set groen op `4e286b9` (Gedraaid); `zoek-perf` en de andere jobs in CI |
@@ -258,11 +261,11 @@ Jonas.
 | # | Waar | Uitkomst |
 |---|---|---|
 | BZ1 | `beeld-model` op `26c49ca` | huggingface.co, commons.wikimedia.org en upload.wikimedia.org bereikbaar; images-assets.nasa.gov 403 (x3a.md) |
-| BZ2 | idem | twee omzettingen gelijk, maxrss 354 MiB (grens 1.536); de pins in `models.lock` (Open 2) |
+| BZ2 | idem, en op `669f03c` | twee omzettingen gelijk, maxrss 354 MiB (grens 1.536); op `669f03c` (`VERSIE` 3) weer gelijk, maxrss 352 MiB; die pins in `models.lock` sinds G6-2 (`c921c66`) |
 | BZ3 | idem | 0 verschillen op 2.000 zinnen; de lijst had 8 rijen met U+E000/U+E001 (hersteld in `e92b1c1`); in CI |
-| BZ4 | `beeld-model` | **open**: in CI, met `beeld.tsv` |
-| BZ5 | — | **open**: na X2b, in CI of op de LXC |
-| BZ6 | `beeld-model` (het model), `test_beeld_perf.py` (het pad) | het model: 1.508 foto's per minuut, een vraag p95 35,5 ms; het pad zonder tekstmodel ≤ 100 ms hier; het geheel: in CI of op de LXC |
+| BZ4 | `beeld-model` | **open**: op `669f03c` met de set uit het voorstel twee poorten rood (slechtste vraag 0/5, meer zoals deze 0,475; fp32 ook); streng in CI, met `beeld.tsv` |
+| BZ5 | `tests_analyse/test_geheugen_samen.py` | met de nepmodellen gehaald (De samenvoeging); met de echte modellen en de cgroup **open**: in CI of op de LXC |
+| BZ6 | `beeld-model` (het model), `test_beeld_perf.py` (het pad) | het model: op `26c49ca` (`VERSIE` 1) 1.508 foto's per minuut, een vraag p95 35,5 ms; op `669f03c` (`VERSIE` 3) 1.852 per minuut, p95 20,4 ms; het pad zonder tekstmodel ≤ 100 ms hier; het geheel: in CI of op de LXC |
 | BZ7 | `beeld-model` op `26c49ca` | 0,135 s, 0,0 MB erbij |
 | BZ8 | `test_beeld_gen.py::test_bz8_…` (de kosten); `test_triggers_beeld.py` van A0 (de werking, ook op 3.46.1 in de stap "triggers" van `zoek-perf`) | 1,011 en 0,993 (grens 1,10) hier; in CI |
 | BZ9 | `beeld-bench` | **op de LXC**, niet gedaan |
@@ -482,7 +485,7 @@ de herhaling van alleen die tests.
 
 ### Open na de samenvoeging
 
-- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (263 en 11, met BZ5),
+- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (263 en 11, met BZ5; sinds G6-3 329 en 16),
   `e2e` (met `test_uit080.py`), `analyse-image` en `beeld-model` (BZ4 streng, Open 1 en 2).
 - **`e2e/test_uit080.py` hangt aan de vorm van `aria_snapshot`.** De opname is gemaakt met
   Playwright 1.65.2; de job `e2e` haalt Playwright met `uv run --with playwright`, zonder versie.
@@ -531,3 +534,144 @@ groen in 164 s; lokaal met de Chromium van de sandbox, in CI die van 1.65.2), ru
 `test_beeld_other_uploader` rood, 180 groen) en met `rows = list(rows)` in plaats van het filter
 van §3.9 (alleen `test_beeld_replace` rood, 180 groen), telkens hersteld en `search.py` weer gelijk
 aan de kop. De rest draait de nacontrole.
+
+## De nacontrole (golf 6)
+
+Op de kop van de review (`b14009e`), op 16 november 2026, in een losse worktree (`git worktree add
+--detach`). Wat X2b raakt (G6-1 en de getallen van gezichten), staat in "De nacontrole (golf 6)"
+in [x2b.md](x2b.md); hier de rest, en alles wat er gedraaid is. Niets gepusht, geen tag; de versie
+blijft 0.8.0.
+
+### De reparaties weggehaald
+
+Per commit één regel van de herstelling tegelijk terug naar wat er vóór stond (een script in het
+kladblok: de regel vervangen, de test van dat punt draaien, `git checkout` van het bestand, de
+test weer draaien en de worktree schoon).
+
+| Commit (punt) | Wat weggehaald | Rood | Oordeel |
+|---|---|---|---|
+| `c921c66` (G6-2) | de regel `beeld.int8.onnx` in `models.lock` weer die van `VERSIE` 1 (`e2a9f0f3…`, 102.672.680) | 1: `test_lock_siglip.py::test_de_pins_in_models_lock` (8 groen) | gezien |
+| | `tekst.int8.onnx` weer die van `VERSIE` 1 | 1, dezelfde test | gezien |
+| | `meta.json` weer die van `VERSIE` 1 | 1, dezelfde test | gezien |
+| | `VERSIE = 4` in `bouw.py`: de omzetter verandert, de pins niet | 1: `test_de_uitkomst_in_models_lock_is_van_de_versie_van_de_omzetter` (`['4'] == ['3']`) | gezien |
+| | niets weggehaald: `test_install_beeld.sh` naast de nieuwe pins | al rood op de kop: 1 van 120 | **niet af**: hersteld in `a453869` (hieronder) |
+| `e004d24` (G6-3) | de telling: de `grep` van de stap in `api-analyse`, letterlijk uit `ci.yml`, op de laatste regel van de volle `tests_analyse` van de nacontrole | geen regel om terug te zetten; op `329 passed, 16 deselected, 2 warnings in 206.85s`: met 329 en 16 goed; met 263 en 11 (vóór G6-3), 282 en 16 (`ffac665`), 330 en 16, en 329 en 15 fout | gezien |
+| `2566acb` (G6-4) | `_select` zonder `text(beeld_rows.origin_ok("n"))` | 1: `test_beeld_other_uploader` | gezien |
+| `2566acb` (G6-5) | `rows = list(rows)` in plaats van het filter van §3.9 | 1: `test_beeld_replace` | gezien |
+| `7abdbfa` (G6-6) | Chromium installeren zonder `==1.65.2` | 1: `tests/uit080/test_uit080_ci.py` (de eerste `--with`) | gezien |
+| | de e2e zonder versie | 1 (de tweede) | gezien |
+| | de marker `office` zonder versie | 1 (de derde) | gezien |
+| `a05bbd5`, `b14009e` (G6-7, De review) | alleen tekst | — | nagelezen: `caps.py` kreeg in `58263d6` de regels van `models.lock` en het blok `beeld`; de regelnummers 128 en 230 van de review wijzen naar de beweringen van G6-4 en G6-5 |
+
+**De pins van G6-2, nagelezen.** In het log van run 43850620942 (job `beeld-model` op `669f03c`)
+noemt het voorstel van BZ2 voor `beeld.int8.onnx`, `tekst.int8.onnx`, `tokenizer.bin` en
+`meta.json` precies de sha256 en grootte die nu in `models.lock` staan; twee omzettingen gaven
+daar dezelfde sha256 voor alle vijf bestanden (8,5 en 8,0 s, maxrss 352 MiB). Tussen `669f03c` en
+de kop zijn `app/analyse/worker/omzetten/`, `app/analyse/onnxw.py`, de Dockerfiles, `uv.lock` en
+`pyproject.toml` niet veranderd (`git diff`), dus de pins horen bij de omzetter van de kop.
+
+### Wat de nacontrole vond: uit en wissen vergaten de lijsten van 60 s (`9228eb6`)
+
+Bij het nalopen van de rij "Uit en wissen" in Klaar als: `app/beeld/cache.py` heeft
+`forget(user_id=None)` ("alles van deze gebruiker weg (uit, wissen)"), maar niets riep het aan. De
+sleutel van een gerangschikte lijst is (gebruiker, vraag of foto, `gen`), en `gen` van
+`beeld_owner` gaat alleen omhoog bij de triggers van `node` (`TRIGGERS_0012`), niet bij het wissen
+van vectoren. Na uit en weer aan, of na "Beeldindex wissen", had het volgende bestand dus
+dezelfde `gen` als het oude, en een vraag binnen 60 s kwam uit de oude lijst: foto's gevonden uit
+vectoren die al gewist waren. Een proef met de nep-worker: na het wissen gaf "rood" nog de rode
+foto, terwijl het bestand 0 rijen had en de voortgang 0,0 was. Uit wist dus niet alles wat alleen
+voor jou bewaard is (K1-08, Keuze 82), en wissen wiste niet alles.
+
+Nu roept `off_job` na `forget` naar de container ook `bcache.forget(user_id)` aan, en `wipe_job`
+`bcache.forget()`. De jobs draaien in het proces van de app (`jobs.start_runners` in de
+lifespan), dus dat is dezelfde cache als die van `GET /search?mode=image`. "Zet uit voor iedereen"
+wist niets (de vectoren blijven tot wissen, `test_beeld_admin_off`) en zoeken geeft dan `409
+beeld_off`; daar hoeft de cache niet weg.
+
+`test_beeld_on_again` en `test_beeld_wipe` zoeken nu eerst, zodat de lijst in de cache staat, en
+eisen na uit en aan, of na wissen, met dezelfde `gen` en 0 rijen in het bestand: geen treffer;
+daarna de vectoren opnieuw en weer gevonden. Zonder de regel in `off_job` is `test_beeld_on_again`
+rood (twee foto's in plaats van geen), zonder die in `wipe_job` `test_beeld_wipe` (één); met beide
+16 groen. Geen contract, geen migratie, geen test losser.
+
+### Wat de nacontrole nog vond: G6-2 liet `test_install_beeld.sh` op `VERSIE` 1 (`a453869`)
+
+In de keten hieronder was `test_install_beeld.sh` op `9228eb6` rood: 1 van 120 controles, "de
+echte lock: de ruimte is de bron plus twee keer de uitkomst (±2,3 GB)". Die controle eist voor
+`BEELD_NODIG` (de vrije ruimte die `install.sh` met `BEELD=aan` vraagt) exact de bronnen plus twee
+keer de uitkomst, en had de som van de uitkomst van `VERSIE` 1 (399.407.013 B). G6-2 zette
+`beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` op die van `VERSIE` 3 (de vijf bestanden van
+de uitkomst samen 399.284.072 B) en draaide `test_lock_siglip.py`, niet deze test. Na de push was
+de job `infra` dus rood geworden. `install.sh` zelf rekende goed: het leest de groottes uit
+`models.lock`. Alleen het getal in de test was oud.
+
+Nu dezelfde controle, nog steeds exact, met de vijf groottes uit `models.lock` uitgeschreven
+(`1541884183 + 2 * (102609072 + 284248004 + 12414446 + 2376 + 10174)`). Met de drie regels van
+`VERSIE` 1 terug in `models.lock` (in de kladworktree) is die controle rood (1 van 120); met de
+regels van nu 120 van 120 groen.
+
+### Klaar als, nagelopen
+
+Elke test die Klaar als, "Met de analyse uit", "Bewijs BZ1–BZ10" en "De gebeurtenissen" noemen,
+bestaat, met de genoemde naam. Wat niet meer klopte, is in de tekst zelf verbeterd:
+
+- de go/no-go (deel 3) en de rij BZ4 zeiden alleen "op `26c49ca` niet gerekend": op `669f03c` is
+  BZ4 wel gerekend, op de set uit het voorstel, met twee poorten rood (slechtste vraag 0/5, meer
+  zoals deze 0,475, in fp32 ook). Streng is het nog niet: `beeld.tsv` staat er niet;
+- de rij BZ2 en "De echte omzetting" zeiden dat de pins na de samenvoeging opnieuw moesten: dat
+  is G6-2, nagelezen hierboven;
+- BZ5 stond op "open": met de nepmodellen gemeten bij de samenvoeging (en opnieuw hieronder); met
+  de echte modellen en de cgroup blijft het open;
+- de tijden van het echte model waren die van `VERSIE` 1 (`26c49ca`); die van de pins van nu
+  (`669f03c`) staan erbij;
+- `test_beeld_cache.py` telt 10 tests (9 bij X3b), `api-analyse` 329 en 16;
+- de rij "Uit en wissen" zegt dat de lijsten van 60 s tot `9228eb6` bleven staan;
+- de rij `test_install_beeld.sh` zei "120 controles groen": van `c921c66` tot `a453869` was er
+  één rood (hierboven).
+
+De getallen in Metingen zijn van de runs die daar staan; de optelsom onder Metingen staat er als
+optelsom, niet als meting.
+
+### Gedraaid
+
+Eenmaal, op `9228eb6` in de worktree van de nacontrole, in twee ketens naast elkaar; elke zware
+stap onder het slot van het kladblok, één tegelijk, met `taskset -c 0-2`. `a453869` veranderde
+daarna alleen `test_install_beeld.sh`; wat dat raakt, is op `a453869` opnieuw gedraaid (de laatste
+twee rijen).
+
+| Wat | Hoe | Uitkomst |
+|---|---|---|
+| ruff | `ruff check .` en `ruff format --check .` in `api/` | schoon; 793 bestanden al opgemaakt |
+| de volle api-suite | `pytest -q -p no:randomly` | 6.844 groen, 2 overgeslagen, 241 niet gekozen, in 3.081 s |
+| `tests_analyse` | `.venv-analyse`, `-m "not beeld_echt"`, `-rs`, `ANALYSE_MODELLEN` met de echte YuNet en SFace | 329 groen, 16 niet gekozen, niets overgeslagen, in 206,9 s; de `grep` van `api-analyse` op die regel: goed |
+| als nobody | `/tmp/ci-nobody/run.sh` met `tests/analyse`, `tests/beeld`, `tests/people/faces`, `tests/uit080`, de tests van zoeken die de analyse raken, `test_compose_analyse.py`, `test_jobs_lanes.py`, `test_cli_db.py`, `test_db_pragmas.py` en `test_conftest_volgorde.py` | 912 groen, 1 niet gekozen, in 492 s |
+| de web | `npm run typecheck`, `npm test`, `npm run build`, `npm run check:i18n -- --strict`, `npm run budget` | 123 bestanden met 1.343 tests groen; 0 meldingen in 293 bestanden; binnen het budget: eerste lading JS 98.030 B (100.000), CSS 3.403 B, faces 11.837 B (12.000), beeld 10.904 B (15.000), likeRow 2.556 B (3.000) |
+| `e2e/slim.sh` | `SLIM_CPUS=0-2` | groen in 1.204 s: zoek en triggers in python:3.12-slim met SQLite 3.46.1, 1.309 groen (909 s); de web was bij; e2e met de marker `zoek`, 111 groen (295 s) |
+| de e2e-set van CI | `uv run --with playwright==1.65.2 python -m pytest ../e2e` met de marker-uitdrukking van de job | 249 groen, 136 niet gekozen, in 1.140 s |
+| e2e gezichten en beeld | `-m "" -rs` op `test_zoek_gezichten.py`, `test_zoek_gezichten_echt.py` en `test_zoek_beeld.py` | 10 groen, 1 overgeslagen: `test_zoek_gezichten_echt.py` (geen image; `E2E_ANALYSE_IMAGE` zet de job `analyse-image`), in 93,5 s |
+| de installatietests | `test_install_env.sh`, `_media`, `_search`, `_analyse`, `_beeld` | env (137 controles), media (127), search (209) en analyse (128) groen; beeld 1 rood van 120 (hierboven) |
+| groeperen, 60.000 open en 6.000 bevestigd (poort ≤ 60 s, ≤ 400 MB) | `tests_analyse/test_group_perf.py`, `-s` | 26,2 s, maxrss 256 MB, zuiverheid 1,0000, recall 0,986 |
+| zoeken op beeld zonder tekstmodel (poort p95 ≤ 100 ms) | `tests_analyse/test_beeld_perf.py`, `-s` | warm bij 55.000: p95 60,2 ms; warm bij 100.000: p95 63,7 ms; de eerste vraag na het opwarmen bij 100.000: p95 60,5 ms |
+| BZ5 met de nepmodellen (poort 2,5 GB) | `tests_analyse/test_geheugen_samen.py`, `-s` | pid 1 36 MB, `werk` 277 MB, `zoeken` 506 MB; som van de maxrss 819 MB, hoogste som tegelijk 792 MB; met wat de echte modellen meer kosten 1.648 MB: gehaald, als bij De samenvoeging |
+| de routes van gezichten, en de tijd per foto met de echte modellen | `test_faces_perf.py`, `test_models_real.py` | in x2b.md (De nacontrole, Gedraaid) |
+| `test_install_beeld.sh` op `a453869` | als root, onder het slot | 120 van 120 groen |
+| yamllint, shellcheck, `bash -n`, compose, de links op `a453869` | `yamllint -s .`; shellcheck met de lijst van de job `infra`; `docker compose config -q` zoals de job `infra` (`.env.example`, met eenmalige geheimen, met office en de grenzen, met de analyse met en zonder `--profile omzetten`); `links.py` uit het kladblok | schoon; de links ook na deze tekst |
+
+### Open na de nacontrole
+
+- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (exact 329 en 16),
+  `zoek-perf`, `e2e` (met `test_uit080.py` en Playwright 1.65.2), `infra` (met
+  `test_install_beeld.sh` en `--stappen`), `analyse-image` (G6-1: het script in de container;
+  `test_zoek_gezichten_echt.py`) en `beeld-model` (BZ2: dezelfde sha256 als de pins; BZ4 met
+  `beeld.tsv`, Open 1).
+- **BZ4** is niet beslist: op `669f03c` twee poorten rood (Bewijs BZ1–BZ10).
+- **BZ5 met de echte modellen** en `memory.peak` van de cgroup: CI (`analyse-image`) of de LXC.
+- **`test_install_search.sh --stappen` en `test_install_update.sh`** zijn ook nu niet gedraaid:
+  de schijf van de sandbox had 3,7 GB vrij, de tests vragen er 8 en 12. De job `infra` draait
+  `--stappen` na de push; `test_install_update.sh` staat niet in CI (x2a.md, Open 8).
+- **`origin` is verder dan deze kop:** `b65eeb1` (e2e m6), `d0d25d8` (x3a.md) en `502f4c3` (BZ4,
+  van de lead) staan op `origin/claude/stappenplan-uitwerken-lu4uv3` en niet hier. Ze raken
+  `docs/fase-5/m6.md`, `e2e/test_media_m6.py`, `docs/fase-6/x3a.md`, `docs/fase-6/bouwontwerp.md`
+  en `tests_analyse/test_beeld_kwaliteit.py`; in dat laatste blijven dezelfde tests met de marker
+  `beeld_echt`, dus de telling van `api-analyse` verandert er niet door. Samenvoegen vóór de push
+  is aan de lead.
