@@ -59,8 +59,9 @@ PADEN = [
     # die lijst verandert, draait de job ook
     "tests/analyse/sets/beeld_niet.tsv",
 ]
-# Paden die nog niet hoeven te bestaan: beeld.tsv komt met de vaste set van X3b
-LATER = ("/beeld.tsv",)
+# Paden die nog niet hoeven te bestaan. Leeg sinds beeld.tsv er staat (de set van de run op
+# 502f4c3, Keuze 85): elk pad bestaat
+LATER: tuple[str, ...] = ()
 
 
 def _stappen() -> list[dict]:

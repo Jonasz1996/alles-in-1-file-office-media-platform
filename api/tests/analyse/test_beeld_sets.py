@@ -6,8 +6,8 @@
   de tekst na normaliseren (kleine letters per teken, spatie wordt ▁; de bytes als UTF-8). Dat
   vangt een tikfout in de lijst al hier; de ids komen pas in de job beeld-model, uit het echte
   bestand. Deze test gebruikt tokenizer.py niet: de lijst mag nooit van onze tokenizer komen;
-- beeld.tsv bestaat nog niet: dan stelt de job hem voor (en is hij rood). Staat hij er, dan komt
-  hij door dezelfde strenge controle als in de job;
+- beeld.tsv (de set van de run op 502f4c3, Keuze 85) komt door dezelfde strenge controle als in
+  de job. Zonder beeld.tsv stelt de job hem voor (en is hij rood);
 - beeld_niet.tsv (runbook analyse, stap 4): de foto's die een voorstel nooit neemt. Hij komt door
   dezelfde strenge controle als in de job, heeft geen combinatie van beeld_vragen.tsv (die staan
   in x3a.md, "De set strenger", om na te kijken), en met beeld.tsv staat er geen foto van
