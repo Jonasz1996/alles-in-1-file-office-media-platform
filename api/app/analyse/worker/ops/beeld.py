@@ -396,7 +396,10 @@ class Cache:
         need = need_bytes(head.count, head.dim)
         if need > self.limit:
             raise OpFailed(Code.TOO_BIG, "meer foto's dan de cache van de container kan houden")
-        self.drop(owner)  # het oude bestand van deze eigenaar eerst weg (minder geheugen tegelijk)
+        # Het oude bestand van deze eigenaar eerst weg (minder geheugen tegelijk): uit de cache én
+        # uit found, anders blijft zijn matrix bestaan tot na het laden (BZ5: +307 MB bij 100.000)
+        found = None
+        self.drop(owner)
         self._room(need)
         nums, mat, sha = load(fd, head, job)
         self.loads += 1

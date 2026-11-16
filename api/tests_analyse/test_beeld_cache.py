@@ -9,6 +9,7 @@ opnieuw. Ook: zonder model geen bestand lezen (model_missing).
 from __future__ import annotations
 
 import os
+import weakref
 
 import numpy as np
 import pytest
@@ -107,6 +108,29 @@ def test_opwarmen_na_een_nieuw_bestand(modellen, tmp_path):
     bestand(path, list(range(301)), rows(301, 6), 3)
     ask(modellen, cache, path, owner=EVA, gen=3, k=0)
     assert cache.loads == 2 and cache.entries[EVA].gen == 3
+
+
+def test_herladen_laat_het_oude_bestand_los_voor_het_laden(modellen, tmp_path, monkeypatch):
+    """BZ5: bij een nieuw bestand van dezelfde eigenaar is de oude matrix weg vóórdat het nieuwe
+    bestand geladen wordt; anders staan ze even allebei in het geheugen (+307 MB bij 100.000
+    foto's, bovenop een volle cache)."""
+    cache = B.Cache()
+    path = tmp_path / "eva.vec"
+    bestand(path, list(range(50)), rows(50, 40), 1)
+    ask(modellen, cache, path, owner=EVA, gen=1, k=0)
+    oud = weakref.ref(cache.entries[EVA].mat)
+    nog_daar: list[bool] = []
+    laad = B.load
+
+    def load(fd, head, job):
+        nog_daar.append(oud() is not None)
+        return laad(fd, head, job)
+
+    monkeypatch.setattr(B, "load", load)
+    bestand(path, list(range(60)), rows(60, 41), 2)
+    ask(modellen, cache, path, owner=EVA, gen=2, k=0)
+    assert nog_daar == [False]
+    assert cache.entries[EVA].gen == 2 and cache.loads == 2
 
 
 def test_forget_haalt_alleen_die_eigenaar_weg(modellen, tmp_path):
