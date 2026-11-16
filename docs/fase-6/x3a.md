@@ -324,31 +324,40 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    voor X3b, en `beeld_model.py uitslag` zegt nu dat de regels pas samen met X3b in
    `models.lock` horen.]
    [Golf 6: caps telt nooit een bron en een regel in `siglip2-b32-256/` pas als die map er is (`caps.py`, `counted`, X3b; `test_lock_siglip.py`), en de pins kwamen met de stap `BEELD` (`0a90be0`).]
-2. **De pins**: na de eerste run zet een mens de regels uit `voorstel-models.lock` in
+2. ~~**De pins**: na de eerste run zet een mens de regels uit `voorstel-models.lock` in
    `app/analyse/models.lock` en `voorstel-beeld.tsv` als `api/tests/analyse/sets/beeld.tsv` (zie
    de runbook). In dezelfde commit krijgt `test_models_lock.py::test_de_twee_modellen_van_gezichten`
    de nieuwe exacte lijst (nu staan daar alleen de twee regels van de gezichten). Daarna moet
-   `beeld-model` groen zijn; dat is de go/no-go.
-3. **`MIN_TEKST` en `MIN_FOTO`**: BZ4 geeft de verdeling van de kansen (`bz4.json`); X3b zet de
-   grenzen in een test.
+   `beeld-model` groen zijn; dat is de go/no-go.~~ [I2: de pins staan sinds `c921c66` in
+   `models.lock` en `beeld.tsv` sinds `d1c29e0`; `beeld-model` was op `dc5dfe5` helemaal groen,
+   ook de stap "Uitslag" (zie "CI op dc5dfe5 en e535332" onderaan).]
+3. ~~**`MIN_TEKST` en `MIN_FOTO`**: BZ4 geeft de verdeling van de kansen (`bz4.json`); X3b zet de
+   grenzen in een test.~~ [I2: in P3 (`eed4c00`) staan beide vast op 0, met een test
+   (`test_beeld_drempels.py`); x3b.md, Afwijkingen.]
 4. ~~**De voorbewerking in de worker** (X3b) moet `meta.json` volgen zoals `beeld_echt.voorbewerk`:
    RGB, resize naar (breedte, hoogte) met de resample van Pillow uit `meta.json`, × schaal,
    (x − gemiddelde) / std, NCHW.~~
    [Golf 6: `test_beeld_echt_hulp.py::test_de_worker_voorbewerkt_zoals_voorbewerk` (`210f665`): dezelfde float32, byte voor byte.]
-5. **`padding_side`** (zie Afwijkingen): bewezen door BZ4, niet door een test hier.
+5. ~~**`padding_side`** (zie Afwijkingen): bewezen door BZ4, niet door een test hier.~~ [I2: BZ4
+   is groen op `dc5dfe5` met de pins van nu; dat is het bewijs dat dit punt vroeg.]
 6. ~~**BZ1 kan zeggen dat de runner niet bij huggingface.co of Commons komt.** Dan gaat BZ2–BZ6 naar
    de LXC (`beeld-kwaliteit`, `beeld-bench`, trust-on-first-use; R41). Die commando's zijn van X3b.~~
    [Golf 6: BZ1 kwam er op `26c49ca` bij beide (CI op 26c49ca), en `beeld-kwaliteit` en `beeld-bench` zijn gebouwd (X3b, `app/beeld/cli.py`).]
 7. ~~**De job `api-analyse`** is van X2a; de tests in `tests_analyse` van X3a (ook
    `test_beeld_omzetten.py`, de go/no-go deel 1) draaien in CI pas als die job er is.~~ [Golf 5:
    de job is er en telt de 81 van X3a mee (188 en 11, `ac6950c`); in CI na de push.]
-8. **BZ2 op twee runners** (Afwijkingen): of een andere x86-CPU dezelfde bytes geeft, bewijst pas
-   een tweede run op een andere runner, of de LXC (de sha256 in `models.lock` vangt het).
+8. ~~**BZ2 op twee runners** (Afwijkingen): of een andere x86-CPU dezelfde bytes geeft, bewijst pas
+   een tweede run op een andere runner, of de LXC (de sha256 in `models.lock` vangt het).~~ [I2:
+   op `ffac665` gaf een AMD EPYC 7763 zonder VNNI precies dezelfde vijf pins als de Xeon (zie "CI op
+   ffac665"); de LXC vangt een verschil nog altijd met de sha256.]
 9. **De dienst `analyse-omzetten`** (compose van X2a) draait als `omzetten` (10004) met groep
    `analyse`, `read_only` en een `/tmp` van 64 MB. De omzetter schrijft alleen in `/uit` en gebruikt
    geen `/tmp`; met de echte bron in de container is hij nog niet gestart (X3b, `install.sh`).
    [Golf 5: met de kleine vorm wel, via de dienst zelf (`test_analyse_container.sh`, zie De
    samenvoeging); met de echte bron blijft het van X3b.]
+   [I2: P7 maakt er een stap van in `analyse-image`: de echte bron in de dienst
+   `analyse-omzetten`, zoals `install.sh` hem op de LXC omzet (`test_omzetter_echt.sh`, achter een
+   eigen poort). ⟦I2: run en uitslag van de stap X3 in analyse-image⟧.]
 
 ## Klaar als
 
@@ -2415,6 +2424,24 @@ pytest: `bz3` 4 goed, `bz4` 6 goed in 36,9 s, `bz4r` 5 goed in 170,1 s, `bz6` 1 
 
 ### Open na 502f4c3
 
-- **BZ4 streng** (met de pins en `beeld.tsv`, de set uit `beeld.tsv` in plaats van een voorstel)
-  en de stap "Uitslag": in CI na de push van golf 6.
+- ~~**BZ4 streng** (met de pins en `beeld.tsv`, de set uit `beeld.tsv` in plaats van een voorstel)
+  en de stap "Uitslag": in CI na de push van golf 6.~~ [I2: groen op `dc5dfe5`; zie hieronder.]
 - **BZ6 op een trage runner** blijft zoals in "Open na ffac665".
+
+## CI op dc5dfe5 en e535332
+
+Golf 6 gepusht als `dc5dfe5` (run 43888472609): `beeld-model` helemaal groen, ook de stap
+"Uitslag", met de pins van `VERSIE` 3 in `models.lock` en `beeld.tsv` op de tak. BZ2 gaf twee keer
+precies de pins. BZ4 op de 120 foto's van `beeld.tsv`, met de ondergrenzen van Keuze 85: Nederlands
+0,692 (fp32 0,692), de slechtste vraag buiten 'bergen' en 'boot' 2 van 5, combinaties 6 van 6, int8
+zakt 0,000, "Meer zoals deze" 0,475, kleuren 3 van 3. BZ6 34,7 ms per foto, op een Xeon 6975P-C met
+VNNI. Daarmee is BZ4 rond.
+
+Op `e535332` (run 43892193604) waren alle 19 jobs groen, en `beeld-model` gaf dezelfde pins: BZ6
+33,8 ms per foto, een vraag p95 22,2 ms. Wat er op `dc5dfe5` verder rood was (drie tests die alleen
+in CI draaien) en hoe het hersteld is, staat in [x3b.md](x3b.md), "CI op dc5dfe5".
+
+### Open na e535332
+
+- **BZ6 op een trage runner** blijft zoals in "Open na ffac665".
+- **De echte bron in `analyse-omzetten`** (Open 9): de stap van P7 in I2.
