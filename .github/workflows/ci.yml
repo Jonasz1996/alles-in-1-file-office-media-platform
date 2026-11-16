@@ -129,11 +129,13 @@ jobs:
       # decoderen en uitlijnen), 2 (de schalen van int8) en 1 (BUILT en de handlers gelijk);
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
       # invoer van SFace in NCHW); en van CI op 7569d48: 5 (int8 zonder VNNI: het model van
-      # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); gedeselecteerd: de 11 tests van de
-      # job beeld-model. Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
+      # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); en van CI op 3a9b07d: 37 (het
+      # int8-rapport van BZ4: zonder opties dezelfde bytes 2, de opties van de omzetter en de
+      # rooktest van het rapport 35); gedeselecteerd: de 16 tests van de job beeld-model (5 van
+      # het rapport). Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
       # één keer noemt (-m)
-      ANALYSE_TESTS: "216"
-      ANALYSE_DESELECTED: "11"
+      ANALYSE_TESTS: "253"
+      ANALYSE_DESELECTED: "16"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
