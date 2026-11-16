@@ -2130,8 +2130,10 @@ Keuze 70–84 van X3.
       8 s, ook bij een nieuwe poging; een voorstel duurt daardoor ±12 tot 27 minuten
       (`timeout-minutes` van `beeld-model` is nu 90). De fout en de regel van `set` zeggen hoeveel
       vragen de API en upload kregen en hoe vaak het antwoord 429 of 5xx was. Een contact in de
-      User-Agent (`BEELD_CONTACT`; dan 200 per minuut) kan, maar alleen met toestemming van de
-      eigenaar, en staat uit. Uitleg in [x3a.md](x3a.md), "CI op 3148c2f".
+      User-Agent (`BEELD_CONTACT`; dan 200 per minuut) kan alleen met toestemming van de
+      eigenaar. Die gaf Jonas op 2026-11-15 voor de link naar zijn openbare repository, en alleen
+      die: `BZ1 bereik` en `BZ4 set` sturen hem mee, en `set` vraagt de API dan hooguit één keer
+      per seconde. Uitleg in [x3a.md](x3a.md), "CI op 3148c2f" en "Het contact aan".
     - **De poorten.** Vastgelegd vóór de eerste echte run. Lager alleen met een nieuwe keuze in dit
       ontwerp, nooit stil in de test.
 

@@ -12,7 +12,9 @@ Leest ci.yml als tekst, zoals test_media_ci.py en test_zoek_ci.py:
 - de omzetter start zoals de dienst analyse-omzetten (compose van X2a);
 - BZ1, BZ2, BZ3, BZ4, BZ6 en BZ7 hebben elk een stap; de tests met marker beeld_echt draaien
   alleen hier, BZ6 onder taskset -c 0;
-- het verslag via upload-artifact, en als laatste stap het blok `=== kort ===`.
+- het verslag via upload-artifact, en als laatste stap het blok `=== kort ===`;
+- BEELD_CONTACT (de link naar het repository als contact in de User-Agent naar Wikimedia, met
+  toestemming van de eigenaar, 2026-11-15) staat alleen op de twee stappen die Commons vragen.
 """
 
 from __future__ import annotations
@@ -223,3 +225,41 @@ def test_beeld_echt_draait_nergens_anders():
             assert regels.count("beeld_echt") == regels.count('-m "not beeld_echt"') == 1
             continue
         assert "beeld_echt" not in regels, naam
+
+
+# Wat Wikimedia als contact krijgt: de pagina van dit repository, nooit een e-mail of een naam
+REPO_LINK = "${{ github.server_url }}/${{ github.repository }}"
+COMMONS_STAPPEN = [
+    "BZ1 bereik per host",
+    "BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)",
+]
+
+
+def test_alleen_bz1_en_bz4_set_geven_wikimedia_de_link_naar_het_repository():
+    """De eigenaar vond op 2026-11-15 goed dat de CI de link naar zijn (openbare) repository als
+    contact in de User-Agent naar Wikimedia stuurt, en alleen dat. Dus: BEELD_CONTACT precies
+    REPO_LINK, alleen in de eigen env: van de twee stappen die Commons vragen (de stappen die
+    beeld_model.py bereik en set draaien), nergens anders: niet op een job of workflow (dan staat
+    het bovenaan elke stap), niet in een andere stap, niet uit een secret, niet in run of with."""
+    gevonden = []
+    for workflow in sorted(CI.parent.iterdir()):
+        tekst = workflow.read_text(encoding="utf-8")
+        assert "secrets.BEELD_CONTACT" not in tekst, workflow.name
+        doc = yaml.safe_load(tekst)
+        assert "BEELD_CONTACT" not in (doc.get("env") or {}), workflow.name
+        for naam, job_ in doc["jobs"].items():
+            assert "BEELD_CONTACT" not in (job_.get("env") or {}), naam
+            for stap in job_.get("steps", []):
+                assert "BEELD_CONTACT" not in str(stap.get("run", "")), stap.get("name")
+                assert "BEELD_CONTACT" not in str(stap.get("with", "")), stap.get("name")
+                env = stap.get("env") or {}
+                if "BEELD_CONTACT" in env:
+                    assert env["BEELD_CONTACT"] == REPO_LINK, stap["name"]
+                    gevonden.append((workflow.name, naam, stap["name"]))
+    assert gevonden == [("ci.yml", "beeld-model", naam) for naam in COMMONS_STAPPEN]
+    commons = [
+        s["name"]
+        for s in _stappen()
+        if re.search(r"beeld_model\.py (bereik|set) ", str(s.get("run", "")))
+    ]
+    assert commons == COMMONS_STAPPEN

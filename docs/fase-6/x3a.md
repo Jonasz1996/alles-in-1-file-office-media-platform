@@ -1188,14 +1188,40 @@ R1), 114 groen; alleen de letterlijke vorm van het contact 2 rood, 113 groen; de
 
 ### Open na 3148c2f
 
-- **Of 8 s genoeg is**, zegt de volgende run van `beeld-model` (`tools/beeld` is een pad van de
-  job). Het budget hoort bij het IP van de runner, en GitHub deelt runners en hun IP's: wat ander
-  verkeer al opmaakte, ziet de job niet. Was het al op, dan zegt de fout dat nu, bijvoorbeeld "API:
-  6 vragen, 6 keer 429, eerste 429 na 0 s". Helpt 8 s niet, dan blijven een langere pauze (bij
-  12 s duurt een voorstel van 200 vragen 40 minuten) of een contact in de User-Agent over.
-- **`BEELD_CONTACT` staat uit.** Het mechanisme is er, maar een contact meesturen kan alleen met
-  toestemming van de eigenaar; tot dan blijft de User-Agent algemeen en de API op 8 s.
+- **Of het contact genoeg is**, zegt de volgende run van `beeld-model` (`tools/beeld` is een pad
+  van de job). Sinds "Het contact aan" hieronder vraagt de CI de API met contact, op 1 s; de 8 s
+  zijn de terugval zonder contact. Het budget hoort bij het IP van de runner (of, met contact,
+  bij de User-Agent), en GitHub deelt runners en hun IP's: wat ander verkeer al opmaakte, ziet de
+  job niet. Was het al op, dan zegt de fout dat nu, bijvoorbeeld "API: 6 vragen, 6 keer 429,
+  eerste 429 na 0 s; …; contact: ja". Dan blijft een langere pauze over.
+- ~~**`BEELD_CONTACT` staat uit.**~~ Aan sinds 2026-11-15, zie hieronder.
 - **Of thumbnails de 429 van upload voorkomen**, is nog open (zie "Open na 9ebf298"): deze run
   kwam niet tot de eerste foto.
 - **Hoe lang BZ4 duurt** (de kwaliteitspoort in int8 en fp32) is nog nooit gemeten; de ruimte in
   `timeout-minutes: 90` voor de rest van de job is een schatting.
+
+### Het contact aan (2026-11-15)
+
+Jonas vond op 2026-11-15 goed dat de CI de link naar zijn openbare repository als contact in de
+User-Agent naar Wikimedia stuurt, en alleen dat: geen e-mail, geen naam. Daarom zet `ci.yml` in de
+job `beeld-model` `BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}` in een eigen
+`env:` van precies de twee stappen die Commons vragen, `BZ1 bereik per host` en `BZ4 de 120 foto's
+(beeld.tsv, of een voorstel uit Commons)`; niet op de job, zodat het niet bovenaan elke stap staat
+en een fout erin `bron`, `vergelijk` en `uitslag` niet tegenhoudt. De User-Agent naar Commons is
+dan `beeld-model-meting/1.0 (https://github.com/<eigenaar>/<repository>; CI van een zelf-gehost
+fotoplatform)`, naar Hugging Face en NASA blijft hij algemeen, en `set` vraagt de API hooguit één
+keer per seconde (`PAUZE_S`; met contact is de grens volgens de bronnen 200 per minuut). De tool
+schrijft het contact nooit in het log of in `kort.txt` ("contact: ja"); GitHub toont de waarde wel
+bovenaan die twee stappen, en voor een openbare link is dat geen probleem.
+
+Tests: `test_zonder_beeld_contact_gaat_er_geen_contact_mee` eiste dat geen workflow
+`BEELD_CONTACT` noemt; die eis is weg (de test kijkt nog steeds de tool zonder contact na). In de
+plaats daarvan eist `test_alleen_bz1_en_bz4_set_geven_wikimedia_de_link_naar_het_repository` in
+`test_beeld_ci.py` precies deze waarde op precies die twee stappen, en nergens anders: niet op een
+workflow of job, niet in een andere stap, niet uit een secret, niet in `run` of `with`; en dat die
+twee stappen precies de stappen zijn die `beeld_model.py bereik` en `set` draaien. Rood
+nagekeken op drie mutaties van `ci.yml` (het contact weg bij `set`, erbij bij `bron`, een
+e-mailadres als waarde). `test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log` heeft
+een vijfde geval in de vorm die `ci.yml` meestuurt (`https://github.com/<eigenaar>/<repo>`, met
+punt, liggend streepje en underscore). Uitzetten staat in het runbook
+([analyse.md](../runbooks/analyse.md), "Een contact in de User-Agent").

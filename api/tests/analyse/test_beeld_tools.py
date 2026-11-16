@@ -1604,9 +1604,10 @@ def _set(werk, tmp_path) -> int:
 def test_zonder_beeld_contact_gaat_er_geen_contact_mee(
     nep, commons, werk, tmp_path, monkeypatch, capsys, waarde
 ):
-    """De eigenaar heeft Wikimedia geen contact gegeven. Zonder BEELD_CONTACT (niet gezet of
-    leeg) is de User-Agent precies UA, zonder persoon, e-mail of repository; de API krijgt hooguit
-    één vraag per PAUZE_API_S; het log zegt "contact: nee". En geen workflow zet BEELD_CONTACT."""
+    """Zonder BEELD_CONTACT (niet gezet of leeg) is de User-Agent precies UA, zonder persoon,
+    e-mail of repository; de API krijgt hooguit één vraag per PAUZE_API_S; het log zegt "contact:
+    nee". Waar ci.yml BEELD_CONTACT wel zet (alleen BZ1 en BZ4 set, met toestemming van de
+    eigenaar), kijkt test_beeld_ci.py na."""
     if waarde is not None:
         monkeypatch.setenv("BEELD_CONTACT", waarde)
     _nepklok(monkeypatch)
@@ -1625,19 +1626,21 @@ def test_zonder_beeld_contact_gaat_er_geen_contact_mee(
     ]
     tijden = _api_tijden(nep)
     assert _kortste(tijden) == bm.PAUZE_API_S
-    for workflow in (ROOT / ".github" / "workflows").iterdir():
-        assert "BEELD_CONTACT" not in workflow.read_text(encoding="utf-8"), workflow.name
 
 
 GELDIG = [
     "https://example.org/beeld-model",
+    # de vorm die ci.yml meestuurt: ${{ github.server_url }}/${{ github.repository }}
+    "https://github.com/Eigenaar-1/een_repo.met-punten",
     "https://beeld.example.org:8443/over?wie=ci#contact",
     "beeld-model+ci@example.org",
     "https://example.org/" + "a" * 180,  # precies MAX_CONTACT tekens
 ]
 
 
-@pytest.mark.parametrize("contact", GELDIG, ids=["URL", "URL met poort", "e-mail", "200 tekens"])
+@pytest.mark.parametrize(
+    "contact", GELDIG, ids=["URL", "repository op GitHub", "URL met poort", "e-mail", "200 tekens"]
+)
 def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     nep, commons, werk, tmp_path, monkeypatch, capsys, contact
 ):
@@ -1680,6 +1683,7 @@ def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     for tekst in teksten:
         assert contact not in tekst
         assert "example.org" not in tekst
+        assert "Eigenaar-1" not in tekst and "een_repo" not in tekst
 
 
 HERHAALD = (

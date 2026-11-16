@@ -211,7 +211,7 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   met `--fp32` (alleen voor BZ4) de tijd en maxrss zonder grens, en of hij dezelfde vijf bestanden
   geeft;
 - `BZ4 set: 120 foto's kloppen met beeld.tsv (… uit de cache, … van Commons, … als origineel;
-  … MB in … s; API: … vragen, … keer 429; upload: … vragen, … keer 429; contact: nee)`, of het
+  … MB in … s; API: … vragen, … keer 429; upload: … vragen, … keer 429; contact: ja)`, of het
   voorstel (`… (… als origineel; … MB in … s; API: …)`): wat er van Commons kwam, hoeveel daarvan
   als origineel in plaats van als thumbnail, hoe lang dat duurde, en het verkeer met Commons in
   die stap: per dienst (de API en upload) de vragen, elke poging meegeteld, hoe vaak het antwoord
@@ -226,7 +226,7 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   `BEELD_CONTACT`, dan staat daar `[contact]`. Bij `set` staat erachter hoe ver hij kwam, wat hij
   ophaalde en het verkeer met Commons, bijvoorbeeld `(bij foto 37 van 120, een thumbnail van
   1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; upload: 37 vragen, 0 keer 429;
-  contact: nee)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij weinig vragen en een
+  contact: ja)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij weinig vragen en een
   `eerste 429 na` van een paar seconden, dan was het budget van het IP van de runner al op voordat
   de job begon (ander verkeer op dat IP);
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
@@ -236,50 +236,54 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 Het hele verslag staat bij de run als artifact `beeld-model` (`kort.txt`, `bz3.json`, `bz4.json`,
 `bz6.json`, `bz7.json`, de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
 het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van Commons hooguit
-één vraag per 8 s, upload één per 1 s; contact: nee`.
+één vraag per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar het repository als
+contact; zonder contact `… per 8 s, …; contact: nee`).
 
-### Een contact in de User-Agent (`BEELD_CONTACT`, standaard uit)
+### Een contact in de User-Agent (`BEELD_CONTACT`, in de CI aan)
 
-De User-Agent van de job is algemeen: `beeld-model-meting/1.0 (CI van een zelf-gehost
-fotoplatform)`, zonder persoon, e-mail of repository. Wikimedia telt zo'n client als niet
-geïdentificeerd: 10 vragen per minuut aan de API, per IP (zo geciteerd in september 2026; x3a.md,
-"CI op 3148c2f"). Daarom vraagt `set` de API hooguit één keer per 8 s. Met contactgegevens in de
-User-Agent, zoals de richtlijn van Wikimedia voor de User-Agent vraagt, is de grens 200 per
-minuut; dan vraagt de job de API hooguit één keer per seconde.
+Zonder contact is de User-Agent van de tool algemeen: `beeld-model-meting/1.0 (CI van een
+zelf-gehost fotoplatform)`, zonder persoon, e-mail of repository. Wikimedia telt zo'n client als
+niet geïdentificeerd: 10 vragen per minuut aan de API, per IP (zo geciteerd in september 2026;
+x3a.md, "CI op 3148c2f"). Dan vraagt `set` de API hooguit één keer per 8 s. Met contactgegevens
+in de User-Agent, zoals de richtlijn van Wikimedia voor de User-Agent vraagt, is de grens 200 per
+minuut; dan vraagt de tool de API hooguit één keer per seconde.
 
-`tools/beeld/beeld_model.py` kan dat contact meesturen als de omgevingsvariabele `BEELD_CONTACT`
-gezet is. Het zijn gegevens van de eigenaar, en Wikimedia ziet ze in elke vraag aan Commons (de
-API en upload; Hugging Face en andere hosts nooit). De eigenaar heeft daar niet mee ingestemd:
-`ci.yml` zet `BEELD_CONTACT` niet, en dat blijft zo tot hij het zelf besluit. Wil hij het, dan:
+`tools/beeld/beeld_model.py` stuurt dat contact mee als de omgevingsvariabele `BEELD_CONTACT`
+gezet is, en alleen naar Commons (de API en upload; Hugging Face en andere hosts nooit).
 
-1. Kies wat Wikimedia mag zien: een https://-URL (bijvoorbeeld de pagina van het repository) of
-   een e-mailadres. Alleen afdrukbare ASCII, zonder `;`, `(` of `)`, hooguit 200 tekens. Iets
-   anders geeft bij de start van de stap een fout (`FOUT set: BEELD_CONTACT: …`, zonder de
-   waarde), en dan gaat er niets weg.
-2. Zet het in `.github/workflows/ci.yml` in de job `beeld-model` op de twee stappen die Commons
-   vragen, `BZ1 bereik per host` en `BZ4 de 120 foto's (beeld.tsv, of een voorstel uit
-   Commons)`, elk met een eigen `env:`. Niet op de job: dan staat het bovenaan elke stap van de
-   job in het log, en kijkt elke stap van `beeld_model.py` het na, zodat een fout erin ook
-   `bron`, `vergelijk` en `uitslag` tegenhoudt. Bijvoorbeeld de pagina van het repository:
+**Zo staat het nu.** Jonas vond op 2026-11-15 goed dat de CI de link naar zijn openbare
+repository als contact naar Wikimedia stuurt, en alleen dat (geen e-mail, geen naam). Daarom
+zet `.github/workflows/ci.yml` in de job `beeld-model` op de twee stappen die Commons vragen,
+`BZ1 bereik per host` en `BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)`, elk in een
+eigen `env:`:
 
-   ```yaml
-   - name: BZ1 bereik per host
-     if: steps.poort.outputs.draaien == 'ja'
-     env:
-       BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
-     run: python3 -I ../tools/beeld/beeld_model.py bereik --werk "$WERK"
-   ```
+```yaml
+- name: BZ1 bereik per host
+  if: steps.poort.outputs.draaien == 'ja'
+  env:
+    BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
+  run: python3 -I ../tools/beeld/beeld_model.py bereik --werk "$WERK"
+```
 
-   en dezelfde regel onder `env:` van de stap `BZ4 de 120 foto's`. Een e-mailadres hoort in een
-   secret, niet in `ci.yml`: `BEELD_CONTACT: ${{ secrets.BEELD_CONTACT }}`.
-3. `test_zonder_beeld_contact_gaat_er_geen_contact_mee` in
-   `api/tests/analyse/test_beeld_tools.py` eist dat geen workflow `BEELD_CONTACT` noemt. Die eis
-   gaat in dezelfde commit bewust mee om, met in de boodschap dat de eigenaar het besloot.
+Niet op de job: dan staat het bovenaan elke stap van de job in het log, en kijkt elke stap van
+`beeld_model.py` het na, zodat een fout erin ook `bron`, `vergelijk` en `uitslag` tegenhoudt.
+`test_alleen_bz1_en_bz4_set_geven_wikimedia_de_link_naar_het_repository` in
+`api/tests/analyse/test_beeld_ci.py` eist precies dit: die waarde, op die twee stappen, nergens
+anders (niet op een job, niet uit een secret, niet in `run` of `with`).
+
+Regels voor de waarde: een https://-URL of een e-mailadres, alleen afdrukbare ASCII, zonder `;`,
+`(` of `)`, hooguit 200 tekens. Iets anders geeft bij de start van de stap een fout (`FOUT set:
+BEELD_CONTACT: …`, zonder de waarde), en dan gaat er niets weg. Iets anders dan de link naar het
+repository (bijvoorbeeld een e-mailadres) vraagt eerst opnieuw toestemming van Jonas, en hoort
+dan in een secret, niet in `ci.yml`: `BEELD_CONTACT: ${{ secrets.BEELD_CONTACT }}`; de test
+hierboven gaat dan bewust mee om.
 
 De tool schrijft het contact nooit in het log of in het verslag, alleen `contact: ja` of
-`contact: nee`. GitHub zelf toont de waarden onder `env:` wel bovenaan die twee stappen in het
-log, behalve wat uit een secret komt (dan `***`). Uitzetten: de regel weer weghalen; zonder
-`BEELD_CONTACT`, of met een lege, is alles weer zoals hierboven.
+`contact: nee`; herhaalt een foutpagina de User-Agent, dan staat daar `[contact]`. GitHub zelf
+toont de waarden onder `env:` wel bovenaan die twee stappen in het log; voor de link naar een
+openbaar repository is dat geen probleem. Uitzetten: de twee regels weer weghalen (en de test
+mee aanpassen); zonder `BEELD_CONTACT`, of met een lege, gaat er geen contact mee en vraagt `set`
+de API weer hooguit één keer per 8 s.
 
 ### Na de eerste run: de regels vastzetten
 

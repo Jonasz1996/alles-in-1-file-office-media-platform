@@ -1420,8 +1420,11 @@ jobs:
     # gemeten) te weinig ruimte voor een voorstel met tekorten; 90 min draagt ±450 vragen aan de
     # API (nieuwe pogingen meegeteld) naast 15 min wachten en 15 min voor de rest.
     # Het uiterste van de code (750 vragen, 100 min) past niet: dan heeft Commons bijna niets
-    # bruikbaars, en is de set toch rood. Een contact in de User-Agent zet deze job bewust niet:
-    # dat kan alleen met toestemming van de eigenaar (docs/runbooks/analyse.md)
+    # bruikbaars, en is de set toch rood. Sinds de eigenaar het op 2026-11-15 goedvond, geven BZ1
+    # en BZ4 set de link naar dit repository als contact in de User-Agent (BEELD_CONTACT, op die
+    # twee stappen; docs/runbooks/analyse.md). Dan vraagt set de API hooguit één keer per seconde
+    # (PAUZE_S; de grens met contact is 200 per minuut), en zijn de 8 s hierboven alleen nog de
+    # terugval zonder contact. 90 min blijft
     timeout-minutes: 90
     env:
       UV_PROJECT_ENVIRONMENT: .venv-analyse
@@ -1480,8 +1483,13 @@ jobs:
         run: |
           uv sync --frozen --extra analyse
           echo "cores: $(nproc)"
+      # Alleen BZ1 en BZ4 set vragen Commons, en alleen die twee stappen geven Wikimedia de link naar
+      # dit repository als contact in de User-Agent (BEELD_CONTACT; met toestemming van de eigenaar,
+      # 2026-11-15; geen e-mail, geen naam). Niet op de job: dan staat het bovenaan elke stap
       - name: BZ1 bereik per host
         if: steps.poort.outputs.draaien == 'ja'
+        env:
+          BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
         run: python3 -I ../tools/beeld/beeld_model.py bereik --werk "$WERK"
       # Code 3: een voorstel (nog geen regels in models.lock); de job gaat door, de uitslag is rood
       - name: BZ2 de vijf bronbestanden van SigLIP 2
@@ -1531,6 +1539,8 @@ jobs:
       - name: BZ4 de 120 foto's (beeld.tsv, of een voorstel uit Commons)
         id: set
         if: ${{ !cancelled() && steps.poort.outputs.draaien == 'ja' }}
+        env:
+          BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
         run: python3 -I ../tools/beeld/beeld_model.py set --werk "$WERK" || [ $? -eq 3 ]
       # Direct na set, ook als de job daarna rood eindigt: alleen als set alle foto's van
       # beeld.tsv goed heeft (nooit een halve set: een sleutel bewaart maar één keer) en de cache

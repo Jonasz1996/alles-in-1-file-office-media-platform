@@ -4,7 +4,8 @@
 Alleen de standaardbibliotheek; draait op de runner met `python3 -I`, nooit in het image. Alles
 wat hij ophaalt, is onvertrouwd: eerst naar een .part, dan grootte en sha256, en pas dan op zijn
 plek. De User-Agent is algemeen: geen persoon, geen e-mail, geen repository. Alleen als
-BEELD_CONTACT gezet is (standaard niet; zie UA_MET_CONTACT) krijgt Wikimedia een contact mee.
+BEELD_CONTACT gezet is (zie UA_MET_CONTACT; in de CI de link naar het repository) krijgt Wikimedia
+een contact mee.
 
     beeld_model.py bereik   --werk W              BZ1: per host bereikbaar of niet
     beeld_model.py bron     --werk W --lock L     de vijf bronbestanden van SigLIP 2 (BZ2)
@@ -71,8 +72,9 @@ UA = "beeld-model-meting/1.0 (CI van een zelf-gehost fotoplatform)"
 # Wikimedia voor de User-Agent ("naam/versie (contactgegevens) ..."; een e-mailadres of een URL).
 # Alleen als de omgevingsvariabele BEELD_CONTACT gezet en niet leeg is (_zet_contact), en alleen
 # naar Commons (de API en upload), nooit naar Hugging Face. Het contact is van de eigenaar en
-# Wikimedia ziet het in elke vraag: ci.yml zet het niet, het runbook zegt hoe het met zijn
-# toestemming kan. Het log zegt alleen "contact: ja" of "contact: nee", nooit het contact zelf
+# Wikimedia ziet het in elke vraag: alleen met zijn toestemming. ci.yml zet sinds 2026-11-15 de
+# link naar het repository, alleen op BZ1 en BZ4 set (runbook analyse.md). Het log zegt alleen
+# "contact: ja" of "contact: nee", nooit het contact zelf
 UA_MET_CONTACT = "beeld-model-meting/1.0 ({contact}; CI van een zelf-gehost fotoplatform)"
 MAX_CONTACT = 200  # tekens
 _CONTACT_URL = re.compile(r"https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:[0-9]{1,5})?(/[!-~]*)?")
