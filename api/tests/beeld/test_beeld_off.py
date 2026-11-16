@@ -27,6 +27,16 @@ from tests.beeld.nep import foto
 
 pytestmark = pytest.mark.anyio
 
+# De soorten jobs van beeld, met hun rij en grens (de pomp van de rij analyse is van
+# analysis.register_step). tests/test_jobs_lanes.py houdt de soorten zonder de analyse vast.
+SOORTEN = {
+    analysis.pump_type(bjobs.LANE): ("analyse", analysis.PUMP_TIMEOUT),
+    bjobs.VEC: ("index", 600.0),
+    bjobs.ON: ("default", 600.0),
+    bjobs.OFF: ("default", 600.0),
+    bjobs.WIPE: ("default", 600.0),
+}
+
 
 async def test_zonder_keuze_is_beeld_uit(client, mensen, beeld):
     (eva, eva_id), _ = mensen
@@ -73,6 +83,7 @@ async def test_met_de_analyse_uit_niets_van_beeld(client, admin, settings):
     assert bjobs.enabled() is None
     assert Step.EMBED not in analysis.registered()
     assert "beeld" not in prefs._switches
+    assert not set(SOORTEN) & set(jobs._kinds)
     await bjobs.sweep(settings)
 
     for method, path, params in (
@@ -116,3 +127,16 @@ async def test_met_de_analyse_uit_niets_van_beeld(client, admin, settings):
     assert not [t for t in types if jobs.lane_of(t) == bjobs.LANE]
     assert not settings.beeld_dir.exists()
     assert not any(p.name.startswith("beeld") for p in (settings.data_dir / "cache").glob("*"))
+
+
+async def test_de_soorten_alleen_zolang_beeld_aangemeld_is(beeld):
+    """Met beeld aangemeld: precies deze soorten, in deze rijen, met deze grenzen. disable()
+    haalt ze weer weg, zodat een volgende test (ook tests/test_jobs_lanes.py) 0.8.0 ziet: in
+    de volle suite bleef beeld.on anders staan na de tests van beeld."""
+    gezien = {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in SOORTEN}
+    assert gezien == SOORTEN
+    bjobs.disable()
+    assert not set(SOORTEN) & set(jobs._kinds)
+    assert {jobs.lane_of(t) for t in SOORTEN} == {"default"}
+    assert bjobs.enable(beeld[1])
+    assert {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in SOORTEN} == SOORTEN

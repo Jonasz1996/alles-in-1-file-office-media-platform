@@ -586,6 +586,10 @@ def disable() -> None:
     with contextlib.suppress(ValueError):
         previews._ready.remove(on_preview_ready)
     jobs.forget_housekeeping(SWEEP)
+    for kind in (VEC, ON, OFF, WIPE):
+        jobs._kinds.pop(kind, None)
+    if not any(r.lane == LANE for r in analysis._steps.values()):
+        jobs._kinds.pop(analysis.pump_type(LANE), None)
     _searched.clear()
 
 
