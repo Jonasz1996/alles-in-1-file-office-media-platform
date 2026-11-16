@@ -787,6 +787,16 @@ jobs:
         run: |
           uv run python ../e2e/perf/zoek_samen.py --kort \
             --kort-uit "$E2E_PERF_OUT/zoek-samen-kort.txt" || echo "zoek_samen gaf exitcode $?"
+      # 0.8.1 (I2, §4.5 stap 2 met de analyse aan): hetzelfde met --analyse nep, de
+      # FakeAnalyseWorker van A0 op een eigen core. Het verloop (foto's van 1024, beeld klaar vóór
+      # stap 1, de beeldvraag om de 5 s, de wachter van VmHWM), niet de echte tijden: altijd een
+      # rapport. De meting met de echte modellen: de docstring van zoek_samen.py
+      - name: Zoeken naast media met de analyse (0.8.1; rapport, zoek_samen --kort --analyse nep)
+        if: always()
+        run: |
+          uv run python ../e2e/perf/zoek_samen.py --kort --analyse nep \
+            --kort-uit "$E2E_PERF_OUT/zoek-samen-analyse-kort.txt" \
+            || echo "zoek_samen --analyse nep gaf exitcode $?"
       # Fase 6 (Z2, §4.5): de snelheid van de backfill van de tekst, klein (500 documenten, 1
       # keer per soort), als rapport; de poort van 1.000 per minuut per core meet de sandbox
       - name: De backfill van de tekst (fase 6, Z2; rapport, zoek_backfill)
@@ -804,7 +814,7 @@ jobs:
           path: media-perf-results
           if-no-files-found: warn
       # De logs tonen alleen de staart: het korte blok van zoeken staat daarom als laatste
-      - name: Kort (zoek_samen en zoek_backfill)
+      - name: Kort (zoek_samen, ook met --analyse nep, en zoek_backfill)
         if: always()
         run: |
           d="$E2E_PERF_OUT"
@@ -813,6 +823,12 @@ jobs:
             grep -v '^=== kort ===$' "$d/zoek-samen-kort.txt"
           else
             echo "zoek_samen: liep niet tot het eind (zie de stap hierboven)"
+          fi
+          if [ -s "$d/zoek-samen-analyse-kort.txt" ]; then
+            echo "zoek_samen --analyse nep:"
+            grep -v '^=== kort ===$' "$d/zoek-samen-analyse-kort.txt" | sed 's/^/  /'
+          else
+            echo "zoek_samen --analyse nep: liep niet tot het eind (zie de stap hierboven)"
           fi
           if grep -qs '^=== kort ===$' "$d/zoek-backfill.txt"; then
             sed -n '/^=== kort ===$/,$p' "$d/zoek-backfill.txt" | tail -n +2 \
