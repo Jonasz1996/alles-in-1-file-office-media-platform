@@ -2,8 +2,9 @@
 // gedeeld door het raster, de schakelaar in Account → Foto's en "Meer zoals deze" in de viewer.
 //
 // Met de analyse uit kent de server zoeken op beeld niet (501 not_built, zoals in 0.8.0): dan is
-// de stand "off" en tonen de drie plekken precies wat 0.8.0 toonde. Zo blijft golf 6 onzichtbaar
-// tot de beheerder de container analyse aanzet.
+// de stand "off" en tonen de drie plekken wat 0.8.0 toonde, op één zin na: het raster zegt sinds
+// 0.8.1 dat zoeken op beeld uitstaat op deze server, waar 0.8.0 zei dat het later komt. Zo blijft
+// golf 6 onzichtbaar tot de beheerder de container analyse aanzet.
 //
 // Eén vraag per halve minuut (de server warmt bij elke vraag hooguit eens per minuut je bestand op
 // in de container); "off" blijft tien minuten (de analyse gaat pas aan na een herstart van de

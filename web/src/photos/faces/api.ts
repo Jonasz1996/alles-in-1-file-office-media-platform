@@ -1,8 +1,8 @@
 // De aanroepen van gezichten automatisch (fase 6, X2; de API van X2), vastgelegd in Z0b (Keuze
 // 55): precies de routes onder /people/faces en /files/{id}/faces, met de vorm van ./types. Losse
-// functies via api.request, zodat een chunk alleen meeneemt wat het gebruikt. Nog geen scherm
-// roept ze aan; tot X2 er is, geven ze 501 not_built. Aan- en uitzetten gaat via PATCH
-// /me/photo-settings (updatePhotoSettings in ../people/api).
+// functies via api.request, zodat een chunk alleen meeneemt wat het gebruikt. De schermen van X2b
+// roepen ze aan; met de analyse uit geven ze 501 not_built("X2"), zoals in 0.8.0. Aan- en uitzetten
+// gaat via PATCH /me/photo-settings (updatePhotoSettings in ../people/api).
 
 import { api } from "../../api";
 import { seg, wireQuery } from "../../search/wire";

@@ -12,7 +12,7 @@
 // Z0b (Keuze 55): onder het deel van Z7 de blokken "Gezichten" (FacesBlock.tsx, van X2) en "Zoeken
 // op beeld" (BeeldBlock.tsx, van X3), in dezelfde chunk. Beheer.tsx laadt de gebieden
 // photos_faces en beeld met de tab. Z7 houdt de twee blokken onderaan staan en geeft ze hun stand
-// mee (null zolang X2 of X3 er niet is).
+// mee (null met de analyse uit, zoals in 0.8.0).
 //
 // Alles met het toetsenbord: gewone knoppen; na een knop blijft de focus op die knop, of gaat hij
 // naar de kop van zijn deel als de knop weg is (docs/fase-6/toetsenbord-z7.md).

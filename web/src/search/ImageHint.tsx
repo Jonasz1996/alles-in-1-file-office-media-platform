@@ -2,19 +2,20 @@
 // met aria-describedby naar (imageDescribedBy).
 //
 // Kent de server zoeken op beeld niet, dan hoort bij die beschrijving ook de zin dat het uitstaat
-// (I1, review R4; tot 0.8.1: dat het later komt). Zichtbaar staat die zin in BeeldResults, maar dat is een lazy chunk
-// die meestal pas komt als de focus al in het veld staat (Keuze 81): een schermlezer hoorde hem
-// dan niet. Daarom staat hij hier nog eens, met de tekst uit het gebied search (dat laadt met de
-// pagina, dus zonder te wachten) en met hidden: aria-describedby leest een verborgen element wel,
-// en wie de pagina doorleest, hoort de zin maar één keer (die van BeeldResults). Hij komt vóór de
-// uitleg, omdat hij het belangrijkste zegt.
+// op deze server (I1, review R4; in 0.8.0 zei hij dat het later komt). Zichtbaar staat die zin in
+// BeeldResults, maar dat is een lazy chunk die meestal pas komt als de focus al in het veld staat
+// (Keuze 81): een schermlezer hoorde hem dan niet. Daarom staat hij hier nog eens, met de tekst
+// uit het gebied search (dat laadt met de pagina, dus zonder te wachten) en met hidden:
+// aria-describedby leest een verborgen element wel, en wie de pagina doorleest, hoort de zin maar
+// één keer (die van BeeldResults). Hij komt vóór de uitleg, omdat hij het belangrijkste zegt.
 //
 // Eén schakelaar: IMAGE_SEARCH_READY, de stand bij het laden. X3 (X3b) liet hem op false: of
 // zoeken op beeld er is, zegt pas de server (GET /photos/beeld; met de analyse uit 501, zoals in
 // 0.8.0). ImageHint vraagt die stand zelf, met dezelfde gedeelde vraag als het raster
 // (search/beeld/status.ts, één keer per halve minuut). Kent de server zoeken op beeld, dan zet
 // setImageSearchReady(true) hem om: de verborgen zin valt weg en alleen de uitleg beschrijft het
-// veld. Met de analyse uit blijft alles zoals in 0.8.0.
+// veld. Met de analyse uit blijft alles zoals in 0.8.0, op de zin na (sinds 0.8.1: dat het
+// uitstaat op deze server).
 //
 // status.ts komt met een dynamische import: een gewone import (ook vanuit het raster) maakte er
 // een eigen chunk van naast SearchPage, met een regel erbij in de eerste lading.

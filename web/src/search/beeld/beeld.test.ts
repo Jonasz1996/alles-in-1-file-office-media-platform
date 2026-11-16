@@ -1,7 +1,8 @@
 // Zoeken op beeld in de web (fase 6, X3b; Keuze 78–82): de vraag aan GET /search, de URL heen en
 // terug, de pijlen in het raster, de meldingen, de teksten (alleen tekst, nooit HTML, geen
 // versienummer), de foutcodes, de stand van GET /photos/beeld, de schakelaar, "Meer zoals deze" en
-// het blok op /beheer. En met de analyse uit (501): precies wat 0.8.0 toonde.
+// het blok op /beheer. En met de analyse uit (501): wat 0.8.0 toonde, met de zinnen van 0.8.1 dat
+// het uitstaat op deze server.
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

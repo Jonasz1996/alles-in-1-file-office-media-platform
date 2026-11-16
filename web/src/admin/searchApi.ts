@@ -114,9 +114,9 @@ export interface AdminSearch {
   places: { loaded: boolean; source: string | null; date: string | null };
   /** De uitkomst van app.cli bench --los, of null */
   bench: { at: string; p95_owner_ms: number; p95_all_ms: number } | null;
-  /** Het blok "Gezichten" (X2); null zolang X2 er niet is */
+  /** Het blok "Gezichten" (X2); null met de analyse uit (zoals 0.8.0) */
   faces: AdminFaces | null;
-  /** Het blok "Zoeken op beeld" (X3); null zolang X3 er niet is */
+  /** Het blok "Zoeken op beeld" (X3); null met de analyse uit (zoals 0.8.0) */
   beeld: AdminBeeld | null;
   /** De laatste wekelijkse search-check (I1): wanneer, hoeveel nodes vergeleken en bij hoeveel
    * een verschil met de bron (elk bestand één keer); null zolang er geen was */
