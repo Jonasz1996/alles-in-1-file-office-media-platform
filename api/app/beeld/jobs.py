@@ -7,10 +7,9 @@ preview.ready, de schakelaar beeld in de foto-instellingen en het deel beeld van
 erbij. Zonder: geen rij in analysis voor embed, geen job in de rij analyse, geen bestand onder
 DATA_ROOT, en elke route van X3 antwoordt zoals in 0.8.0.
 
-- **write_embed()** is de enige schrijver van blob_embed (zoals write_text, Keuze 3): eerst een
-  SELECT, dan een gewone INSERT of één UPDATE. In dezelfde transactie gaat beeld_owner.gen + 1
-  voor elke eigenaar van een beeldbestand met die sha (gewone INSERT … WHERE NOT EXISTS en UPDATE,
-  zoals de triggers van 0012). tests/beeld/test_embed_step.py houdt dat vast met een AST-test.
+- **De rijen zelf** (write_embed, de enige schrijver van blob_embed, en de vragen van Keuze 69
+  die ook de prullenbak en elke eigenaar zien) staan in app/beeld_rows.py, zoals app/photo_rows.py:
+  buiten app/beeld/, waar de wachter van test_own_live elke lezing aan own_live houdt.
 - **De stap embed** (Step.EMBED, rij analyse, batches van PLATFORM_BEELD_BATCH): eligible zegt
   alleen "dit is een foto" (mime.ftype); run_batch beslist de rest. Wijkt (jobs.Defer) als de
   beheerder beeld uit heeft, zolang de index nog een backfill heeft (K2-07: de tekst gaat vóór),
@@ -46,10 +45,10 @@ from itertools import batched
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import bindparam, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import analysis, jobs, mime, prefs, previews
+from app import analysis, beeld_rows, jobs, mime, prefs, previews
 from app.analyse import client, monitor, wire
 from app.analyse.wire import Op
 from app.analysis import Outcome, Step
@@ -57,7 +56,7 @@ from app.beeld import types as vt
 from app.beeld import vecfile
 from app.config import Settings
 from app.db import get_engine
-from app.models import Analysis, BeeldOwner, BlobEmbed, Job, Setting, now
+from app.models import Analysis, BeeldOwner, Job, Setting, now
 from app.search import hooks as search_hooks
 from app.storage import BlobStore
 
@@ -153,38 +152,6 @@ def _wait(found: monitor.AnalyseStatus) -> jobs.Defer | None:
     return None
 
 
-# --- write_embed (Keuze 76) ----------------------------------------------------------------------
-
-_BUMP_NEW = text(
-    "INSERT INTO beeld_owner (user_id, gen, built_gen, built_rows) "
-    "SELECT DISTINCT n.owner_id, 0, 0, 0 FROM node AS n "
-    "WHERE n.blob_id = :sha AND n.kind = 'file' AND n.ftype = 'image' "
-    "AND NOT EXISTS (SELECT 1 FROM beeld_owner AS b WHERE b.user_id = n.owner_id)"
-)
-_BUMP = text(
-    "UPDATE beeld_owner SET gen = gen + 1 WHERE user_id IN (SELECT n.owner_id FROM node AS n "
-    "WHERE n.blob_id = :sha AND n.kind = 'file' AND n.ftype = 'image')"
-)
-
-
-async def write_embed(db: AsyncSession, sha: str, vec: bytes, model: str = vt.MODEL) -> None:
-    """De vector van een inhoud (768 × float16, L2 = 1), in de transactie van de aanroeper (die
-    commit; één korte transactie per blob). De enige schrijver van blob_embed."""
-    if len(vec) != vt.DIM * 2:
-        raise ValueError("een vector heeft dim × 2 bytes")
-    version = analysis.VERSIONS[Step.EMBED]
-    found = await db.scalar(select(BlobEmbed.id).where(BlobEmbed.blob_sha == sha))
-    values = {"model": model, "version": version, "vec": vec, "updated_at": now()}
-    if found is None:
-        await db.execute(BlobEmbed.__table__.insert().values(blob_sha=sha, **values))
-    else:
-        await db.execute(
-            BlobEmbed.__table__.update().where(BlobEmbed.__table__.c.id == found).values(**values)
-        )
-    await db.execute(_BUMP_NEW, {"sha": sha})
-    await db.execute(_BUMP, {"sha": sha})
-
-
 # --- de stap embed (Keuze 77) --------------------------------------------------------------------
 
 
@@ -194,25 +161,6 @@ def eligible(sha: str, mime_type: str | None) -> bool:
 
 def batch_size(settings: Settings) -> int:
     return settings.beeld_batch
-
-
-def _in(sql: str) -> Any:
-    return text(sql).bindparams(bindparam("shas", expanding=True))
-
-
-def _wanted_sql() -> str:
-    return (
-        "SELECT DISTINCT n.blob_id FROM node AS n WHERE n.blob_id IN :shas "
-        "AND n.kind = 'file' AND n.ftype = 'image' AND n.dead = 0 "
-        f"AND n.owner_id IN ({vecfile.on_users_sql()}) AND {vecfile.origin_ok()}"
-    )
-
-
-def _owners_sql() -> str:
-    return (
-        "SELECT DISTINCT n.owner_id FROM node AS n WHERE n.blob_id IN :shas "
-        f"AND n.kind = 'file' AND n.ftype = 'image' AND n.owner_id IN ({vecfile.on_users_sql()})"
-    )
 
 
 async def _index_busy(db: AsyncSession) -> bool:
@@ -254,7 +202,7 @@ async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
     assert found.caps is not None and found.caps.beeld is not None
     model = found.caps.beeld.model
     async with maker() as db:
-        wanted = set((await db.execute(_in(_wanted_sql()), {"shas": shas})).scalars())
+        wanted = await beeld_rows.wanted(db, shas)
     outcomes: dict[str, Outcome] = {}
     todo: list[str] = []
     fds: list[int] = []
@@ -302,7 +250,7 @@ async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
         vec = raw[i * size : (i + 1) * size]
         if code == "ok" and len(vec) == size and any(vec):
             async with maker() as db:
-                await write_embed(db, sha, vec, model)
+                await beeld_rows.write_embed(db, sha, vec, model)
                 await db.commit()
             outcomes[sha] = Outcome("done")
         elif code in FINAL:
@@ -312,8 +260,7 @@ async def run_batch(settings: Settings, shas: list[str]) -> dict[str, Outcome]:
     done = [sha for sha, o in outcomes.items() if o.state == "done"]
     if done:
         async with maker() as db:
-            owners = (await db.execute(_in(_owners_sql()), {"shas": done})).scalars().all()
-            for owner in owners:
+            for owner in await beeld_rows.owners(db, done):
                 await queue_vec(db, _uuid(owner), settings)
             await db.commit()
     return outcomes
@@ -445,40 +392,10 @@ async def forget(settings: Settings, user_id: uuid.UUID) -> None:
 # --- aan, uit en wissen --------------------------------------------------------------------------
 
 
-def _mine_sql() -> str:
-    """De inhoud van de beeldbestanden van :me, en van de beeldbestanden die :me in de map van
-    een ander zette (Keuze 69: die horen bij zijn keuze)."""
-    return (
-        "SELECT n.blob_id FROM node AS n WHERE n.kind = 'file' AND n.ftype = 'image' "
-        "AND n.blob_id IS NOT NULL AND (n.owner_id = :me OR EXISTS (SELECT 1 FROM node_origin "
-        "AS o WHERE o.node_id = n.id AND o.created_by = :me AND o.via_link = 0))"
-    )
-
-
-def _wanted_exists(sha: str) -> str:
-    """Een eigenaar met beeld aan wil deze inhoud nog (Keuze 69), ook in de prullenbak."""
-    return (
-        f"EXISTS (SELECT 1 FROM node AS n WHERE n.blob_id = {sha} AND n.kind = 'file' "
-        f"AND n.ftype = 'image' AND n.owner_id IN ({vecfile.on_users_sql()}) "
-        f"AND {vecfile.origin_ok()})"
-    )
-
-
-_OTHERS = (
-    "SELECT DISTINCT n.owner_id FROM node AS n JOIN node_origin AS o ON o.node_id = n.id "
-    "WHERE o.created_by = :me AND o.via_link = 0 AND n.owner_id != :me "
-    "AND n.kind = 'file' AND n.ftype = 'image'"
-)
-
-
 async def _bump_others(db: AsyncSession, user_id: uuid.UUID, settings: Settings) -> None:
     """De eigenaren in wier map deze gebruiker foto's zette: hun bestand opnieuw (Keuze 69: of
     die foto's meetellen, hangt van zijn keuze af)."""
-    await db.execute(
-        text(f"UPDATE beeld_owner SET gen = gen + 1 WHERE user_id IN ({_OTHERS})"),
-        {"me": user_id.hex},
-    )
-    for owner in (await db.execute(text(_OTHERS), {"me": user_id.hex})).scalars().all():
+    for owner in await beeld_rows.bump_others(db, user_id):
         await queue_vec(db, _uuid(owner), settings)
 
 
@@ -496,7 +413,7 @@ async def on_job(settings: Settings, payload: dict[str, Any]) -> None:
                 "UPDATE analysis SET state = 'wait', tries = 0, code = NULL, "
                 "queued_at = :at, updated_at = :at WHERE step = :step "
                 "AND state IN ('skip', 'none', 'failed') "
-                f"AND blob_sha IN ({_mine_sql()} AND n.dead = 0)"
+                f"AND blob_sha IN ({beeld_rows.mine_sql()} AND n.dead = 0)"
             ),
             {"me": user_id.hex, "at": at, "step": Step.EMBED.value},
         )
@@ -517,21 +434,9 @@ async def off_job(settings: Settings, payload: dict[str, Any]) -> None:
     async with maker() as db:
         if await user_on(db, user_id):
             return  # intussen weer aan
-        shas = (
-            (
-                await db.execute(
-                    text(
-                        f"SELECT e.blob_sha FROM blob_embed AS e WHERE e.blob_sha IN "
-                        f"({_mine_sql()}) AND NOT {_wanted_exists('e.blob_sha')}"
-                    ),
-                    {"me": user_id.hex},
-                )
-            )
-            .scalars()
-            .all()
-        )
+        shas = await beeld_rows.unwanted_of(db, user_id)
         for chunk in batched(shas, CHUNK):
-            await db.execute(BlobEmbed.__table__.delete().where(BlobEmbed.blob_sha.in_(chunk)))
+            await beeld_rows.delete_embeds(db, chunk)
             await db.execute(
                 update(Analysis)
                 .where(Analysis.step == Step.EMBED.value, Analysis.blob_sha.in_(chunk))
@@ -553,7 +458,7 @@ async def wipe_job(settings: Settings, payload: dict[str, Any]) -> None:
     container. De stappen gaan terug op wait: staat beeld aan, dan begint de backfill opnieuw."""
     maker = _maker(settings)
     async with maker() as db:
-        await db.execute(BlobEmbed.__table__.delete())
+        await beeld_rows.delete_all(db)
         await db.execute(
             update(Analysis)
             .where(Analysis.step == Step.EMBED.value, Analysis.state.in_(("done", "failed")))
@@ -603,7 +508,7 @@ async def sweep(settings: Settings) -> None:
     if _settings is None:
         return
     maker = _maker(settings)
-    on = f"SELECT b.user_id FROM beeld_owner AS b WHERE b.user_id IN ({vecfile.on_users_sql()})"
+    on = f"SELECT b.user_id FROM beeld_owner AS b WHERE b.user_id IN ({beeld_rows.on_users_sql()})"
     async with maker() as db:
         owners = [_uuid(owner) for owner in (await db.execute(text(on))).scalars().all()]
         stale = [owner for owner in owners if await _behind(db, owner, settings)]

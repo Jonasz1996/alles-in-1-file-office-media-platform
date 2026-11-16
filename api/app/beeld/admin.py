@@ -22,14 +22,14 @@ from typing import Any
 from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import analysis, jobs
+from app import analysis, beeld_rows, jobs
 from app.analyse import lock, monitor
 from app.analysis import Step
 from app.beeld import jobs as bjobs
 from app.beeld import search as bsearch
 from app.beeld import vecfile
 from app.config import Settings
-from app.models import Analysis, BlobEmbed
+from app.models import Analysis
 from app.search import hooks as search_hooks
 from app.search.types import (
     AdminBeeld,
@@ -95,11 +95,7 @@ async def block(db: AsyncSession) -> AdminBeeld:
         .group_by(Analysis.code)
         .order_by(Analysis.code)
     )
-    rows, vec_bytes = (
-        await db.execute(
-            select(func.count(), func.coalesce(func.sum(func.length(BlobEmbed.vec)), 0))
-        )
-    ).one()
+    rows, vec_bytes = await beeld_rows.totals(db)
     bench = quality = None
     cache = 0
     if settings is not None:
@@ -125,7 +121,7 @@ async def block(db: AsyncSession) -> AdminBeeld:
         failed_by_code=[CodeCount(code=code, n=int(n)) for code, n in failed.all()],
         hour=bsearch.hour(),
         space=BeeldSpace(
-            db_bytes=int(vec_bytes) + int(rows) * ROW_OVERHEAD,
+            db_bytes=vec_bytes + rows * ROW_OVERHEAD,
             cache_bytes=cache,
             models_bytes=models_bytes(),
         ),

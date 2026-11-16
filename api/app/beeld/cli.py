@@ -53,6 +53,7 @@ from app.beeld import vecfile
 from app.config import Settings
 from app.db import get_engine
 from app.models import User
+from app.search.live import OWN_LIVE_SQL
 
 COMMANDS = ("beeld-status", "beeld-bench", "beeld-kwaliteit")
 BENCH_QUERIES = ("hond op het strand", "zonsondergang", "een rode auto", "sneeuw in de bergen")
@@ -258,8 +259,8 @@ async def bench(settings: Settings, fotos: int, vragen: int, embed: int) -> int:
 _PEOPLE_SQL = text(
     "SELECT fp.person_id, n.num FROM face_person AS fp JOIN face AS f ON f.id = fp.face_id "
     "JOIN node AS n ON n.id = f.node_id "
-    "WHERE fp.owner_id = :me AND fp.verdict = 'ja' AND n.owner_id = :me AND n.dead = 0 "
-    "AND n.ftype = 'image'"
+    "WHERE fp.owner_id = :me AND fp.verdict = 'ja' AND n.ftype = 'image' AND "
+    + OWN_LIVE_SQL.format(n="n")
 )
 
 

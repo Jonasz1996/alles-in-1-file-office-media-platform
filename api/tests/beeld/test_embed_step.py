@@ -1,8 +1,9 @@
 """De stap embed en write_embed() (bouwontwerp fase 6, X3; Keuzes 69, 76, 77; K2-07; X3b).
 
-- write_embed() is de enige schrijver van blob_embed (een AST- en tekstscan van app/, zoals die
-  van write_text in tests/search/test_search_no_replace.py), eerst een SELECT, dan een gewone
-  INSERT of één UPDATE, en zet gen + 1 voor elke eigenaar van een beeldbestand met die inhoud;
+- write_embed() (app/beeld_rows.py) is de enige schrijver van blob_embed (een AST- en tekstscan
+  van app/, zoals die van write_text in tests/search/test_search_no_replace.py), eerst een SELECT,
+  dan een gewone INSERT of één UPDATE, en zet gen + 1 voor elke eigenaar van een beeldbestand met
+  die inhoud;
 - eligible: alleen beelden; run_batch: alleen een eigenaar met beeld aan die hem zelf uploadde,
   of door iemand met beeld aan (Keuze 69; de link: test_beeld_events.test_beeld_other_uploader);
 - pas na de backfill van de index (K2-07), niet bij ≥ 2 omzettingen (Keuze 50), niet zonder
@@ -29,7 +30,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 
-from app import analysis, jobs, previews
+from app import analysis, beeld_rows, jobs, previews
 from app.analyse import monitor, wire
 from app.analyse.wire import Op
 from app.analysis import Step
@@ -46,7 +47,7 @@ from tests.search.test_search_no_replace import _functies, _naam, _tabel
 pytestmark = pytest.mark.anyio
 
 APP = Path(__file__).resolve().parents[2] / "app"
-SCHRIJVER = ("beeld/jobs.py", "write_embed")
+SCHRIJVER = ("beeld_rows.py", "write_embed")
 SQL_SCHRIJFT = re.compile(
     r"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|REPLACE\s+INTO)\s+"
     r"""(?:main\.)?["'`\[]?blob_embed\b""",
@@ -180,19 +181,19 @@ async def test_write_embed_een_rij_en_gen_van_elke_eigenaar(client, mensen, beel
     eerste = nep.pack(nep.vector((1, 0, 0)))
     tweede = nep.pack(nep.vector((0, 1, 0)))
     async with nep.maker(settings)() as db:
-        await bjobs.write_embed(db, sha, eerste)
+        await beeld_rows.write_embed(db, sha, eerste)
         await db.commit()
         rij = await db.scalar(sa.select(BlobEmbed.id).where(BlobEmbed.blob_sha == sha))
     assert await _gens(settings, eva_id, bram_id) == [g + 1 for g in voor]
     async with nep.maker(settings)() as db:
-        await bjobs.write_embed(db, sha, tweede)
+        await beeld_rows.write_embed(db, sha, tweede)
         await db.commit()
         rijen = (await db.execute(sa.select(BlobEmbed.id, BlobEmbed.vec, BlobEmbed.version))).all()
     assert rijen == [(rij, tweede, analysis.VERSIONS[Step.EMBED])]
     assert await _gens(settings, eva_id, bram_id) == [g + 2 for g in voor]
     async with nep.maker(settings)() as db:
         with pytest.raises(ValueError):
-            await bjobs.write_embed(db, sha, eerste[:-2])
+            await beeld_rows.write_embed(db, sha, eerste[:-2])
 
 
 def test_eligible_alleen_beelden():

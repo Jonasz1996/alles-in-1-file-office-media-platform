@@ -7,9 +7,11 @@ inhoud altijd een nieuwe inode (zijn cache onthoudt de sha256 per inode, K2-23).
 
 - **Wat erin staat**: elke node van die eigenaar met kind file en ftype image en een vector van de
   versie van nu, ook in de prullenbak (de vraag filtert met own_live, Keuze 78), op num. Niet wat
-  Keuze 69 uitsluit (origin_ok): een upload via een link nooit, die van een ander alleen als die
-  ander zelf beeld aan heeft. Een node zonder rij in node_origin (van vóór 0011) telt als door de
-  eigenaar zelf geüpload (Vraag 9).
+  Keuze 69 uitsluit (beeld_rows.origin_ok): een upload via een link nooit, die van een ander
+  alleen als die ander zelf beeld aan heeft. Een node zonder rij in node_origin (van vóór 0011)
+  telt als door de eigenaar zelf geüpload (Vraag 9). De SQL daarvan (beeld_rows.file_rows)
+  staat in app/beeld_rows.py, buiten de wachter van own_live: het bestand bevat ook de
+  prullenbak.
 - **Eén momentopname**: het aantal, gen uit beeld_owner en de rijen komen uit één leestransactie;
   de kop klopt dus altijd met de inhoud. Per CHUNK rijen gelezen (op num), nooit alles tegelijk.
 - **Per rij ook het begin van de sha256 van de inhoud** (types.py): prefixes() geeft dat voor de
@@ -38,46 +40,16 @@ from pathlib import Path
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app import beeld_rows
 from app.analysis import VERSIONS, Step
 from app.beeld import types as vt
 from app.models import BeeldOwner, now
-from app.prefs import PHOTO_PREFS
 
 log = logging.getLogger("platform.beeld")
 
 CHUNK = 2000  # rijen per keer lezen (Keuze 76)
 SUFFIX = ".vec"
 TMP_STALE_S = 3600.0  # een tijdelijk bestand dat zo oud is, is van een gestopte build
-
-
-def on_users_sql() -> str:
-    """De gebruikers met beeld aan, als subquery. NULL in photo_pref.beeld is de standaard van
-    PHOTO_PREFS (Vraag 11: uit); zo verandert een ander antwoord alleen de code."""
-    if PHOTO_PREFS["beeld"] == "aan":
-        return (
-            'SELECT u.id FROM "user" AS u LEFT JOIN photo_pref AS pp ON pp.user_id = u.id '
-            "WHERE pp.beeld IS NULL OR pp.beeld = 'aan'"
-        )
-    return "SELECT pp.user_id FROM photo_pref AS pp WHERE pp.beeld = 'aan'"
-
-
-def origin_ok(n: str = "n") -> str:
-    """Keuze 69 voor beeld, als voorwaarde op node {n}: geen rij in node_origin (Vraag 9), of
-    niet via een link en neergezet door de eigenaar zelf of door iemand met beeld aan."""
-    return (
-        f"(NOT EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = {n}.id) "
-        f"OR EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = {n}.id "
-        f"AND o.via_link = 0 AND o.created_by IS NOT NULL "
-        f"AND (o.created_by = {n}.owner_id OR o.created_by IN ({on_users_sql()}))))"
-    )
-
-
-def _base(me_param: str = ":me") -> str:
-    return (
-        "FROM node AS n JOIN blob_embed AS e ON e.blob_sha = n.blob_id "
-        f"WHERE n.owner_id = {me_param} AND n.kind = 'file' AND n.ftype = 'image' "
-        f"AND e.version = :v AND length(e.vec) = :size AND {origin_ok()}"
-    )
 
 
 def path_for(directory: Path, user_id: uuid.UUID) -> Path:
@@ -148,7 +120,9 @@ async def build(
     try:
         async with maker() as db:
             # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname
-            count = int(await db.scalar(text(f"SELECT count(*) {_base()}"), params) or 0)
+            count = int(
+                await db.scalar(text(f"SELECT count(*) {beeld_rows.file_rows()}"), params) or 0
+            )
             gen = int(
                 await db.scalar(
                     text("SELECT gen FROM beeld_owner WHERE user_id = :me"), {"me": user_id.hex}
@@ -163,8 +137,8 @@ async def build(
                 rows = (
                     await db.execute(
                         text(
-                            f"SELECT n.num, e.vec, n.blob_id {_base()} AND n.num > :last "
-                            "ORDER BY n.num LIMIT :chunk"
+                            f"SELECT n.num, e.vec, n.blob_id {beeld_rows.file_rows()} "
+                            "AND n.num > :last ORDER BY n.num LIMIT :chunk"
                         ),
                         {**params, "last": last, "chunk": CHUNK},
                     )

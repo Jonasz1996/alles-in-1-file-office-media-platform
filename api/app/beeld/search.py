@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.selectable import Join
 
-from app import errors
+from app import beeld_rows, errors
 from app.analyse import client, monitor, wire
 from app.analyse.wire import Code, Op
 from app.beeld import cache as bcache
@@ -217,7 +217,7 @@ def _select(p: SearchParams, user: User) -> Any:
     sel = (
         select(n.c.id, n.c.owner_id, n.c.num, n.c.blob_id)
         .select_from(_CrossJoin(r, n, n.c.num == r.c.value))
-        .where(own_live(n, user.id), n.c.ftype == "image", text(vecfile.origin_ok("n")))
+        .where(own_live(n, user.id), n.c.ftype == "image", text(beeld_rows.origin_ok("n")))
         .order_by(r.c.key)
     )
     return filters.apply_all(sel, n, p, user)
