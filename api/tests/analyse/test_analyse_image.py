@@ -287,7 +287,20 @@ def test_test_omzetter_echt_draait_beeld_model_van_install_sh():
         f"cap_drop {','.join(omzet['cap_drop'])} {','.join(omzet['security_opt'])} "
     )
     assert omzet["read_only"] is True and omzet["network_mode"] == "none"
-    assert f'"{verwacht}"*)' in script
+    # en de grenzen precies, niet met * erachter (review I2, U5): die van
+    # compose.analyse-limits.yaml als docker ze kan geven, anders geen
+    limits = ROOT / "infra" / "single" / "compose.analyse-limits.yaml"
+    omzet_grenzen = yaml.safe_load(limits.read_text())["services"]["analyse-omzetten"]
+    assert (omzet_grenzen["mem_limit"], omzet_grenzen["cpus"]) == ("3g", 1.0)
+    assert f'"{verwacht}"*)' not in script
+    assert f'"{verwacht}$grenzen")' in script
+    docker_kan = "if [ \"$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}' 2>/dev/null)\""
+    kan = script.index(docker_kan + ' = "true true" ]; then\n')
+    assert (
+        script.index('    grenzen="mem_limit 3072MiB cpus 1" waar=""\n', kan)
+        < script.index('    grenzen="mem_limit geen cpus geen" waar=', kan)
+        < script.index(f'"{verwacht}$grenzen")', kan)
+    )
     # de uitkomst tegen models.lock: de regels van siglip2-b32-256 met url -, zonder bron/
     assert "lock=$SRC/api/app/analyse/models.lock" in script
     assert '"$BEELD_MAP"/bron/*) continue ;;' in script
