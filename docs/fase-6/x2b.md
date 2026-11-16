@@ -395,12 +395,22 @@ De groepsronde van 60.000 plus 6.000 in `werk` naast een volle cache en een herl
 beeldmodel erbij (§3.11) 666 MB, onder de 1 GiB van `RLIMIT_DATA`
 (`tests_analyse/test_geheugen_samen.py`; x3b.md).
 
+**De poort van groeperen meet de piek van het kind** (`c2be5fc`). Op de samengevoegde kop was
+`test_group_perf.py` rood: maxrss 419 MB, grens 400 MB. Het kind zelf had een piek van 255,7 MB
+(`VmHWM`). De test las `ru_maxrss`, en Linux geeft bij fork en exec de piek van de ouder door:
+die van pytest, dat op de samengevoegde kop eerst ook BZ5 en de andere nieuwe tests draait. Op
+X2b alleen was de piek van pytest kleiner dan die van het kind, en zag de meting hierboven
+(254 MB) dus wel het kind. Nu leest het kind `VmHWM`, zijn eigen piek sinds exec;
+`test_de_meting_telt_de_piek_van_pytest_niet_mee` toetst dat met 256 MB in pytest. De grens
+blijft 400 MB; op de kop 24,6 s en 255,7 MB.
+
 **Open, per punt:**
 
-- Open 9 (samenvoegen met X3b): gedaan. `ANALYSE_TESTS` is 262 en `ANALYSE_DESELECTED` 11
-  (`df8d56b`, nageteld met `--collect-only`); het runbook van de analyse heeft "Wat er nog niet
-  is" van beide; `infra/single/README.md` noemt beide schakelaars; `server.BUILT` en
-  `child.handlers()` hebben de regels van beide (`dcafcea`), met de nieuwe exacte lijsten.
+- Open 9 (samenvoegen met X3b): gedaan. `ANALYSE_TESTS` is 263 en `ANALYSE_DESELECTED` 11
+  (`df8d56b` en `c2be5fc`, nageteld met `--collect-only`); het runbook van de analyse heeft
+  "Wat er nog niet is" van beide; `infra/single/README.md` noemt beide schakelaars;
+  `server.BUILT` en `child.handlers()` hebben de regels van beide (`dcafcea`), met de nieuwe
+  exacte lijsten.
 - x2a.md Open 3 (wat X2b moest bouwen): gebouwd, op `df` na (Open 7 hieronder).
 - Open 1 (CI), 2 (de zin bij persoon wissen, I2), 3 (`/over`, I2), 4 (de kwaliteit op de LXC),
   5 (§4.5 met X2 aan, I2), 6 (`analyse-bench` op de LXC), 7 (`df` voor de vectoren van
@@ -409,5 +419,5 @@ beeldmodel erbij (§3.11) 666 MB, onder de 1 GiB van `RLIMIT_DATA`
 ### Open na de samenvoeging
 
 - **Alleen in CI, na de push:** `api` (met `tests/uit080` en `test_faces_naast_beeld.py`),
-  `api-analyse` (262 en 11), `zoek-perf`, `e2e` (met `test_uit080.py`) en `analyse-image` (de
+  `api-analyse` (263 en 11), `zoek-perf`, `e2e` (met `test_uit080.py`) en `analyse-image` (de
   echte scan, en BZ5 met de echte modellen: zie x3b.md).

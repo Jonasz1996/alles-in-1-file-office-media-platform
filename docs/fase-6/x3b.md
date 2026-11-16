@@ -328,6 +328,9 @@ versie blijft 0.8.0. Wat X2b raakt, staat in "De samenvoeging (golf 6)" in [x2b.
 | `c1b2939` | BZ5 met de nepmodellen (`tests_analyse/test_geheugen_samen.py`), en `Cache.get` laat het oude bestand los vóór het laden |
 | `210f665` | de voorbewerking van de worker is die van `beeld_echt.voorbewerk` (x3a.md, Open 4) |
 | `df8d56b` | `ANALYSE_TESTS` 262; `infra/single/README.md` noemt beide schakelaars (Open 7); het runbook zegt Account → Foto's |
+| `6a98579` | de wandeling van 0.8.0 draait in een nieuw proces: een eerdere lifespan liet `app.state.started_at` staan (Gedraaid hieronder) |
+| `c2be5fc` | de poort van groeperen meet `VmHWM` van het kind, niet `ru_maxrss` met de piek van pytest erin; `ANALYSE_TESTS` 263 (Gedraaid hieronder) |
+| `b74e1ae` | `test_search_rebuild.py`: de twee tests met een grens van 1 s bevriezen de heap van pytest (`frozen_heap`; Gedraaid hieronder) |
 
 **Gezichten en beeld samen.** Allebei werken in de rij `analyse`, en `faces`, `group` en
 `embed_image` gaan naar hetzelfde kind `werk`. `test_faces_naast_beeld.py` draait één nep-worker
@@ -407,15 +410,74 @@ gebruikt de getallen van §3.11 (B6), geen meting met de echte modellen.
 - x3a.md Open 4 (de voorbewerking): `test_beeld_echt_hulp.py::test_de_worker_voorbewerkt_zoals_voorbewerk`
   zet `ops/beeld.preprocess` naast `beeld_echt.voorbewerk` met `meta.json` in de vorm van
   `bouw.py`, op een beeld dat niet vierkant is: dezelfde float32, byte voor byte (`210f665`).
-- De telling van `api-analyse`: 262 en 11 (`--collect-only`: 273, waarvan 11 `beeld_echt`).
+- De telling van `api-analyse`: 263 en 11 (`--collect-only`: 274, waarvan 11 `beeld_echt`).
   Erbij sinds de som van beide (258, die op deze boom 259 was door `zoeken_naast_werk`): BZ5, het
-  herladen en de voorbewerking.
+  herladen, de voorbewerking en de meting van de poort van groeperen (`c2be5fc`, hieronder).
 - Open 1, 2, 4, 5, 6 en 8 blijven staan. Geen contract van A0 of Z0b veranderd, geen migratie,
   geen pakket, geen nieuwe action; de pins van SigLIP zijn niet aangeraakt.
 
+### Gedraaid op de samengevoegde kop
+
+Elke controle één keer, achter het slot van de zware runs en op drie cores (`taskset -c 0-2`).
+Eerst op `3c3ab61`; wat daar rood was, staat onder de tabel, met de oorzaak, de herstelling en
+de herhaling van alleen die tests.
+
+| Controle | Kop | Uitkomst |
+|---|---|---|
+| `ruff check` en `ruff format --check` | `3c3ab61` | schoon (790 bestanden) |
+| yamllint (`ci.yml` en de hele repo) en shellcheck | `3c3ab61` | schoon |
+| `uv.lock` en `web/package-lock.json` | `3c3ab61` | gelijk aan `45bb926` |
+| `docker compose config -q` | `3c3ab61` | vier varianten: zonder analyse, office met grenzen, analyse met grenzen, profiel omzetten |
+| web: typecheck, vitest, i18n strikt, build, budget | `3c3ab61` | 1343 tests groen; i18n 0 vondsten in 293 bestanden; binnen het budget |
+| `api` vol | `3c3ab61` | 6746 groen, 2 rood (hieronder), 2 overgeslagen, 241 niet gekozen (3098 s) |
+| `tests_analyse` (de venv van de analyse) | `3c3ab61` | 261 groen, 1 rood (hieronder), 11 niet gekozen |
+| `tests_analyse` | `c2be5fc` | 263 groen, 11 niet gekozen (202 s) |
+| `/tmp/ci-nobody/run.sh` | `3c3ab61` | 785 groen, 1 rood (de wandeling, hieronder) |
+| `SLIM_CPUS=0-2 e2e/slim.sh` | `3c3ab61` | groen in 1215 s (stap 1: 1309 groen; de e2e van zoeken: 111 groen) |
+| e2e, de set van CI (met `test_uit080.py`) | `3c3ab61` | 249 groen, 136 niet gekozen (1141 s) |
+| e2e `test_zoek_gezichten.py` en `test_zoek_beeld.py` | `3c3ab61` | 10 groen, 1 overgeslagen (`test_zoek_gezichten_echt` vraagt `E2E_ANALYSE_IMAGE`) |
+| `infra/single/tests/test_install_{env,media,search,analyse,beeld}.sh` | `c2be5fc` | alle controles geslaagd (media 127, search 209, analyse 128, beeld 120) |
+| `test_install_search.sh --stappen` en `test_install_update.sh` | `c2be5fc` | niet gedraaid: de test stopt zelf, 6 GB vrij voor Docker en hij vraagt er 8 en 12 (Open hieronder) |
+
+**Rood op `3c3ab61`, en waarom.**
+
+- `tests_analyse/test_group_perf.py::test_60000_gezichten_binnen_60_s_en_400_mb`: maxrss 419 MB,
+  grens 400. Niet het groeperen: het kind zelf had een piek van 255,7 MB (`VmHWM`), op deze kop
+  en op X2b. De test las `ru_maxrss` van het kind, en Linux geeft bij fork en exec de piek van
+  de ouder door: dat was de piek van pytest (BZ5 en de andere tests draaien ervoor in hetzelfde
+  proces). Nu leest het kind `VmHWM`, zijn eigen piek sinds exec, en
+  `test_de_meting_telt_de_piek_van_pytest_niet_mee` toetst dat met 256 MB in pytest: `VmHWM`
+  onder 64 MB, `ru_maxrss` erboven (`c2be5fc`). De grens blijft 400 MB; gemeten 24,6 s en
+  255,7 MB.
+- `tests/uit080/test_wandeling.py` in de volle suite en als nobody: `GET /admin/status` anders dan
+  in 0.8.0 (de melding `jobs_stopped`, `started_at` en `uptime_s`). Niet de code van golf 6:
+  `main.lifespan` zet `app.state.started_at` en ruimt het niet op, en een test die eerder in
+  hetzelfde proces de lifespan draait (`tests/test_rate_limits.py`) laat het staan; dan zegt
+  `system_info` dat de jobs stil staan. In een vers proces is het antwoord gelijk. De wandeling
+  draait nu in een nieuw proces (`wandel.in_een_nieuw_proces`, `6a98579`), met dezelfde
+  beweringen. Met de tests van de lifespan ervoor: 63 groen; als nobody 44 groen.
+- `tests/search/test_search_rebuild.py::test_een_upload_wacht_hooguit_1_s_en_de_index_klopt`:
+  een upload wachtte 1145 ms (grens 1000; 7 stukken, het langste 33 ms, dus niet de
+  schrijfpoort). Op die plek in de suite volgt de gc van pytest 1,25–1,39 miljoen objecten (deze
+  test alleen: 244.000; de nieuwe tests van golf 6 brachten er ±234.000 bij), en een volle ronde
+  daarover kost 0,6–1,5 s (68 rondes gemeten met een spion op `gc.callbacks`, 12 boven 1 s). Valt
+  zo'n ronde in een upload, dan wacht die de ronde plus ±60 ms. Gemeten met een plugin in het
+  kladblok die in een upload een volle ronde afdwingt, op de bestanden 1–114 van de suite en dan
+  deze test: zonder bevroren heap 768–840 ms per ronde (de upload 823–909 ms), met 150.000 oude
+  lijsten in een kring als afval 933 ms (de upload 990 ms, de test rood met 1089 ms); met de
+  fixture 3–6 ms (de uploads 30–54 ms), met hetzelfde afval 62 ms (101 ms). Beide tests met een
+  grens van 1 s hebben nu de fixture `frozen_heap` (`gc.freeze`, zoals `serve.freeze_heap` in de
+  app en `frozen_heap` in `test_media_loadtest.py` en `tests/beeld/test_beeld_gen.py`;
+  `b74e1ae`). De grens en de beweringen blijven gelijk; alleen 9 groen. De rode run had geen
+  meting van de gc of van `fsync`, dus een trage `fsync` (z1.md, F4) is voor die ene run niet
+  uitgesloten: een meting van `fdatasync` op 4 KiB, elke 200 ms van 08:26 tot 10:26, zag een
+  mediaan van 0,5–0,8 ms per minuut en drie keer meer dan 500 ms (753, 529 en 1191 ms, rond
+  de installatietests met Docker, 09:36–09:48). Daarvoor blijft de grens van z1.md: 1 s houdt
+  tot ±200 ms extra per `fsync`.
+
 ### Open na de samenvoeging
 
-- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (262 en 11, met BZ5),
+- **Alleen in CI, na de push:** `api` (met `tests/uit080`), `api-analyse` (263 en 11, met BZ5),
   `e2e` (met `test_uit080.py`), `analyse-image` en `beeld-model` (BZ4 streng, Open 1 en 2).
 - **`e2e/test_uit080.py` hangt aan de vorm van `aria_snapshot`.** De opname is gemaakt met
   Playwright 1.65.2; de job `e2e` haalt Playwright met `uv run --with playwright`, zonder versie.
@@ -423,3 +485,15 @@ gebruikt de getallen van §3.11 (B6), geen meting met de echte modellen.
   opnieuw opnemen met de web van 0.8.0 (`3fca440`; de test zegt hoe), niet de vergelijking
   losser maken.
 - **BZ5 met de echte modellen** en `memory.peak` van de cgroup: CI (`analyse-image`) of de LXC.
+- **`test_install_search.sh --stappen` en `test_install_update.sh`** zijn op deze kop niet
+  gedraaid: de schijf van de sandbox heeft 6 GB vrij voor Docker en de tests vragen er 8 en 12
+  (de vier images die blijven, en de build-cache van andere sessies). X3b veranderde
+  `install.sh` (`BEELD`); `test_install_analyse.sh` en `test_install_beeld.sh` gaan terug naar
+  0.8.0 en weer vooruit, en waren hier groen (128 en 120 controles). De job `infra` draait
+  `--stappen` na de push; `test_install_update.sh` staat niet in CI (x2a.md, Open 8).
+- **Andere metingen van het geheugen met `ru_maxrss`** nemen ook de piek van pytest mee, en zijn
+  dan te ruim of zeggen niets: `_MEET_RSS` in `tests/beeld/test_tokenizer.py` en
+  `tests_analyse/test_beeld_tokenizer_echt.py` (`na - voor` binnen pytest),
+  `test_beeld_omzetten.py` (`wait4` van een kind) en `test_beeld_echt_perf.py` (`RUSAGE_SELF`
+  van pytest). Niet veranderd: ze waren groen en zijn van X3a en X3b; dezelfde aanpak als
+  `c2be5fc` (`VmHWM` in het kind) past ook daar.
