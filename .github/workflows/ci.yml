@@ -130,15 +130,18 @@ jobs:
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
       # invoer van SFace in NCHW); en van CI op 7569d48: 5 (int8 zonder VNNI: het model van
       # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); en van CI op 3a9b07d: 37 (het
-      # int8-rapport van BZ4: zonder opties dezelfde bytes 2, de opties van de omzetter en de
+      # int8-rapport van BZ4: de bytes van de standaard, ook met de opties expliciet op hun
+      # standaard, 2 (sinds CI op 011bf2d die van VERSIE 3), de opties van de omzetter en de
       # rooktest van het rapport 35); en van de review daarvan: 15 (per_token tegen numpy 6 en
       # met q boven 64 2, de varianten van het rapport 2, een rapport dat faalt 4, een verslag
       # dat heel blijft 1); en van CI op 011bf2d: 10 (per token de standaard: per tensor geeft
       # de bytes van VERSIE 2 1, een schaal per kolom en |q| tot 64 in beide vormen 2; de nieuwe
-      # regels van het rapport met nepvectoren 4 en een deel dat faalt 3); gedeselecteerd: de 16
-      # tests van de job beeld-model (5 van het rapport). Noem hun marker hier niet:
-      # test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "278"
+      # regels van het rapport met nepvectoren 4 en een deel dat faalt 3); en van de review
+      # daarvan: 3 (de fp32-kant van die regels 1, geen vector in kort.txt 1, een rij van
+      # nullen per token 1); gedeselecteerd: de 16 tests van de job beeld-model (5 van het
+      # rapport). Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies één
+      # keer noemt (-m)
+      ANALYSE_TESTS: "281"
       ANALYSE_DESELECTED: "16"
     steps:
       - uses: actions/checkout@v4
