@@ -22,6 +22,7 @@ niet, het is een uitschieter per kanaal. Dan de rooktest van het rapport zelf
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 from pathlib import Path
@@ -36,6 +37,7 @@ from app.analyse.worker import omzetten
 from app.analyse.worker.omzetten import OmzetFout, bouw
 from app.analyse.worker.omzetten.safetensors import Safetensors
 from tests_analyse import siglip_klein as klein
+from tests_analyse import test_beeld_kwaliteit as kwaliteit
 from tests_analyse.beeld_echt import Model, Verslag, vragen
 from tests_analyse.test_beeld_int8_lagen import (
     GLAD,
@@ -45,6 +47,7 @@ from tests_analyse.test_beeld_int8_lagen import (
     gewicht,
     kort_label,
     linears,
+    probeer,
 )
 from tests_analyse.test_beeld_kwaliteit import _rapport_int8
 from tests_analyse.test_beeld_omzetten import (
@@ -653,6 +656,101 @@ def test_de_varianten_stoppen_na_de_tijd(km, tmp_path, monkeypatch):
     for regel in regels[2:]:
         assert "overgeslagen: " in regel, regel
     assert not r._glad  # niets geijkt: geen variant gebouwd
+
+
+# --- een rapport dat faalt, is een regel (de review, S4) ---------------------------------------
+
+
+def test_een_variant_die_faalt_stopt_de_rest_niet(km, tmp_path, monkeypatch):
+    r = _rapport(km, tmp_path, monkeypatch, tijd_s=600)
+    gebouwd = []
+
+    def variant(naam, beeld, tekst, ref) -> dict:
+        gebouwd.append(naam)
+        if naam == "fc2 fp32":
+            raise RuntimeError("stuk")
+        return {"variant": naam}
+
+    monkeypatch.setattr(r, "_variant", variant)
+    r.regel_varianten()
+    lijst = r.lijst()
+    te_bouwen = [naam for naam, _, _, reden in lijst if reden is None]
+    assert te_bouwen.index("fc2 fp32") < len(te_bouwen) - 1  # er komen er nog na
+    assert gebouwd == te_bouwen
+    regels = _kort(tmp_path)
+    assert regels[0].startswith("BZ4 variant fp32 (rapport): nl ")
+    assert regels[1].startswith("BZ4 variant zoals nu (rapport): nl ")
+    assert [x for x in regels if "mislukt" in x] == [
+        "BZ4 variant fc2 fp32 (rapport): mislukt (RuntimeError)"
+    ]
+    uit = json.loads((tmp_path / "bz4r.json").read_text(encoding="utf-8"))["varianten"]
+    namen = [n for n, *_ in lijst]
+    assert [x["variant"] for x in uit] == ["fp32", "zoals nu", *namen]
+    assert uit[2 + namen.index("fc2 fp32")] == {"variant": "fc2 fp32", "mislukt": "RuntimeError"}
+
+
+def test_probeer_maakt_van_een_fout_een_regel(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    verslag = Verslag("bz4r")
+    gedaan = []
+
+    def faalt() -> None:
+        gedaan.append("gewicht")
+        raise ValueError("stuk")
+
+    probeer(verslag, "cpu", lambda: gedaan.append("cpu"))
+    probeer(verslag, "gewicht int8", faalt)
+    assert gedaan == ["cpu", "gewicht"]
+    assert _kort(tmp_path) == ["BZ4 gewicht int8 (rapport): mislukt (ValueError)"]
+
+
+def test_een_int8_rapport_dat_faalt_is_een_regel_en_geen_uitslag(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    verslag = Verslag("bz4")
+    verslag.zet("nl", {"int8": 0.6})
+    gekregen = []
+
+    def faalt(v, **kw) -> dict:
+        gekregen.append((v, kw))
+        raise RuntimeError("stuk")
+
+    monkeypatch.setattr(kwaliteit, "_rapport_int8", faalt)
+    kwaliteit._rapport_veilig(verslag, int8="m8", rijen={"nl": []})
+    assert gekregen == [(verslag, {"int8": "m8", "rijen": {"nl": []}})]
+    assert _kort(tmp_path) == ["BZ4 int8-rapport (rapport): mislukt (RuntimeError)"]
+    pad = tmp_path / "bz4.json"
+    assert json.loads(pad.read_text(encoding="utf-8")) == {"nl": {"int8": 0.6}}
+    # zonder fout: het rapport in het verslag en geen regel
+    monkeypatch.setattr(kwaliteit, "_rapport_int8", lambda v, **kw: {"torens": {}})
+    kwaliteit._rapport_veilig(verslag)
+    assert json.loads(pad.read_text(encoding="utf-8"))["int8_rapport"] == {"torens": {}}
+    assert len(_kort(tmp_path)) == 1
+
+
+def test_de_fixture_uitkomst_rekent_het_int8_rapport_alleen_veilig():
+    """`_rapport_int8` alleen in `_rapport_veilig` (met de try), en `uitkomst` roept dat aan."""
+    boom = ast.parse(Path(kwaliteit.__file__).read_text(encoding="utf-8"))
+    roept: dict[str, set[str]] = {}
+    for f in boom.body:
+        if isinstance(f, ast.FunctionDef):
+            for n in ast.walk(f):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+                    roept.setdefault(n.func.id, set()).add(f.name)
+    assert roept["_rapport_int8"] == {"_rapport_veilig"}
+    assert roept["_rapport_veilig"] == {"uitkomst"}
+
+
+def test_een_waarde_die_geen_json_is_bederft_het_verslag_niet(tmp_path, monkeypatch):
+    """De review, N4: een zet die faalt, laat het verslag (en de volgende zet) zoals het was."""
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    verslag = Verslag("bz4")
+    verslag.zet("nl", 0.6)
+    with pytest.raises(TypeError):
+        verslag.zet("int8_rapport", {"torens": np.float32(0.5)})
+    pad = tmp_path / "bz4.json"
+    assert json.loads(pad.read_text(encoding="utf-8")) == {"nl": 0.6}
+    verslag.zet("en", 0.5)
+    assert json.loads(pad.read_text(encoding="utf-8")) == {"nl": 0.6, "en": 0.5}
 
 
 def test_het_int8_rapport_van_bz4_op_het_kleine_model(km, tmp_path, monkeypatch):

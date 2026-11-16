@@ -26,8 +26,8 @@ MIN_FOTO (goed tegen niet goed). "Meer zoals deze": elke foto met een categorie 
 zelf telt niet mee, en een buur is goed als hij een categorie met de vraag deelt.
 
 Ook alleen een rapport, sinds CI op 3a9b07d (x3a.md): waar int8 het verlies maakt (`_rapport_int8`;
-in bz4.json onder int8_rapport). Het rekent met wat de poort al heeft, binnen een try: een fout
-geeft een regel `mislukt`, nooit een andere uitslag van een poort.
+in bz4.json onder int8_rapport). Het rekent met wat de poort al heeft, binnen de try van
+`_rapport_veilig`: een fout geeft een regel `mislukt`, nooit een andere uitslag van een poort.
 """
 
 from __future__ import annotations
@@ -120,6 +120,15 @@ def _buren_uit_de_batch(e: np.ndarray, cats: list[set]) -> tuple[float, float]:
         batch = min(n, (i // BATCH + 1) * BATCH) - (i // BATCH) * BATCH
         toeval.append((batch - 1) / (n - 1))
     return float(np.mean(deel)), float(np.mean(toeval))
+
+
+def _rapport_veilig(verslag: Verslag, **kw) -> None:
+    """Het int8-rapport in het verslag; een fout wordt één regel `mislukt`, nooit een andere uitslag
+    van een poort (de review, S4; test_beeld_int8_klein.py faalt het met opzet)."""
+    try:
+        verslag.zet("int8_rapport", _rapport_int8(verslag, **kw))
+    except Exception as e:  # alleen een rapport: nooit een andere uitslag van een poort
+        verslag.kort(f"BZ4 int8-rapport (rapport): mislukt ({type(e).__name__})")
 
 
 def _rapport_int8(
@@ -427,25 +436,19 @@ def uitkomst() -> dict:
         f"BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 {v['foto_cos_zelfde'].get('p5')}, "
         f"anders p95 {v['foto_cos_anders'].get('p95')}"
     )
-    try:
-        verslag.zet(
-            "int8_rapport",
-            _rapport_int8(
-                verslag,
-                int8=int8,
-                fp32=fp32,
-                pixels=klein,
-                e8=e8,
-                e32=e32,
-                t8=t8,
-                t32=t32,
-                rijen={"nl": nl, "c": combi, "en": en},
-                cats=cats,
-                sleutels=sleutels,
-            ),
-        )
-    except Exception as e:  # alleen een rapport: nooit een andere uitslag van een poort
-        verslag.kort(f"BZ4 int8-rapport (rapport): mislukt ({type(e).__name__})")
+    _rapport_veilig(
+        verslag,
+        int8=int8,
+        fp32=fp32,
+        pixels=klein,
+        e8=e8,
+        e32=e32,
+        t8=t8,
+        t32=t32,
+        rijen={"nl": nl, "c": combi, "en": en},
+        cats=cats,
+        sleutels=sleutels,
+    )
     del klein
     return u
 

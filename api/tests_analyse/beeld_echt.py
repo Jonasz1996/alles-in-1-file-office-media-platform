@@ -157,8 +157,11 @@ class Verslag:
         self.inhoud: dict = {}
 
     def zet(self, sleutel: str, waarde) -> None:
-        self.inhoud[sleutel] = waarde
-        self.pad.write_text(json.dumps(self.inhoud, indent=2, ensure_ascii=False) + "\n")
+        # eerst json.dumps: een waarde die geen JSON is, laat het verslag zoals het was (review N4)
+        inhoud = {**self.inhoud, sleutel: waarde}
+        tekst = json.dumps(inhoud, indent=2, ensure_ascii=False) + "\n"
+        self.inhoud = inhoud
+        self.pad.write_text(tekst)
 
     def kort(self, regel: str) -> None:
         print(regel, flush=True)
