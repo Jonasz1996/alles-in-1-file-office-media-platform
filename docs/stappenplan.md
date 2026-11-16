@@ -689,9 +689,9 @@ Deel B: mediabeheer (wat de *arr-apps doen)
   persoon; een limiet per week; melding als het klaarstaat
 
 - [ ] Bronnen (Prowlarr, Jackett): eenmaal toevoegen op `/beheer`, daarna per bibliotheek
-  kiezen waar ze gebruikt worden. Zelf gebouwde clients voor de open standaarden Newznab
-  (usenet) en Torznab (torrents); RSS elke 15 minuten nalopen plus gericht zoeken; test-
-  knop en foutteller per bron. Geen FlareSolverr: een bron die dat nodig heeft valt af
+  kiezen waar ze gebruikt worden. Alleen torrents (keuze van Jonas, zie onder): een zelf
+  gebouwde client voor de open standaard Torznab; RSS elke 15 minuten nalopen plus gericht
+  zoeken; testknop en foutteller per bron. Geen usenet en dus geen Newznab. Geen FlareSolverr: een bron die dat nodig heeft valt af
 
 - [ ] Kwaliteit en voorkeuren (de profielen van Sonarr en Radarr, plus wat Recyclarr en
   Profilarr synchroniseren): de bestandsnaam-parser uit fase 5 uitgebreid voor
@@ -737,11 +737,11 @@ kijkgeschiedenis naar Trakt; die kunnen later als aparte backlogpunten.
 Keuzes en open vragen voor Jonas (de rest volgt de vaste keuzes):
 
 1. Downloaders, besloten door Jonas op 15-11-2026: een bestaand downloadprogramma
-   koppelen (qBittorrent of Transmission voor torrents, SABnzbd of NZBGet voor usenet), in
-   een eigen container ernaast, door de app volledig aangestuurd. De downloader zelf
+   koppelen, in een eigen container ernaast, door de app volledig aangestuurd. De downloader zelf
    bouwen we niet; de interface laat een eigen downloader later nog toe.
-2. Welke soorten bronnen: alleen usenet, alleen torrents of allebei? Dit bepaalt welke
-   client er als eerste komt.
+2. Soort bronnen, besloten door Jonas op 16-11-2026: alleen torrents, geen usenet. De
+   downloader wordt dus qBittorrent (via zijn web-API); SABnzbd en NZBGet vallen af.
+   Transmission kan later via dezelfde interface als iemand dat liever heeft.
 3. Mogen gezinsleden zonder goedkeuring aanvragen, of keurt de beheerder alles goed?
    Voorstel: goedkeuren door de beheerder, per persoon aan te zetten.
 
