@@ -76,7 +76,8 @@ export const routes: readonly RouteDef[] = [
   route("/fotos/personen/:id", () => import("./photos/people/PersonPage"), people, "photos_people.person", "photos", own),
   route("/dubbel", () => import("./dupes/DupesPage"), ["dupes"], "dupes.title", "files", own),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
-  // Account linkt naar /over (I2): daarom ook het gebied about, met alleen die twee zinnen erbij
+  // Account linkt naar /over (I2): daarom ook het gebied about (het woordenboek van /over; de link
+  // gebruikt er twee zinnen van)
   route("/account", () => import("./Account"), ["account", "about"], "account.title", "account"),
   // Fase 6 (I2, Keuze 29 en K1-13): de bronnen en licenties. Voor iedereen die is ingelogd, ook een
   // gast, en met de analyse aan of uit; een eigen chunk zonder aanroepen (about/AboutPage.tsx)
