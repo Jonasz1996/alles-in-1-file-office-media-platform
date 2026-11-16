@@ -1471,3 +1471,141 @@ veranderd.
   de thumbnails komen nu van een andere host. Upload geeft alleen nog de originelen die niet
   breder zijn dan 1280 px.
 - **Hoe lang BZ4 duurt** (de kwaliteitspoort in int8 en fp32) is nog nooit gemeten.
+
+## CI op 3a9b07d
+
+`beeld-model` op `3a9b07d` (run 43816803103, job 133130593723), de eerste run waarin BZ4 rekende:
+`set` gaf de 120 foto's (een voorstel), de job duurde 299,5 s. BZ2, BZ3 en BZ6 goed; BZ4 rood op
+drie poorten. Uit het log:
+
+```
+BZ4 nl: precisie@5 0.442 (poort ≥ 0.6), slechtste vraag 0/5 (poort ≥ 1) — FOUT
+BZ4 int8 tegen fp32: precisie@5 0.442 tegen 0.692, zakt 0.250 (poort ≤ 0.05) — FOUT
+BZ4 meer zoals deze: 0.258 van de top 4 (poort ≥ 0.7) — FOUT
+BZ4 engels (rapport): precisie@5 0.833
+BZ4 MIN_TEKST (rapport): kans goed p5 0.0, niet goed p95 0.0002
+BZ4 MIN_FOTO (rapport): cos zelfde categorie p5 0.557, anders p95 0.7832
+BZ6 beeld int8 op 1 core(s): 22.0 ms per foto uit 256.webp, 2726 per minuut (poort ≥ 500) — goed
+BZ6 vraag (tokenizer + tekst int8): p50 16.0 ms, p95 16.2 ms (voorwaarde ≤ 250 ms), eerste 17.6 ms, met laden 464 ms; maxrss 844 MiB — goed
+```
+
+Wat daaruit volgt, en wat niet:
+
+- **Het verlies zit in de int8-knopen.** De int8-bestanden zijn precies de pins (beeld
+  `96c602da`, tekst `afc9dd55`, meta `cc84a88b`), en de fp32-grafen uit dezelfde bron en dezelfde
+  omzetter halen 0,692. Bron, structuur, voorbewerking, tokenizer (BZ3) en pooling kloppen dus.
+- **Breed, niet twee slechte woorden.** int8 heeft 53 van de 120 treffers, fp32 83. "kat" (5 naar
+  1) en "poes" (5 naar 0) zijn er 9 van de 30; de andere 21 liggen verspreid, ongeveer één per
+  vraag. Combinaties 5/6, op plek 1, 4, 3, 58, 10 en 2.
+- **Welke toren het verlies draagt, zegt deze run niet.** Engels 0,833 heeft geen getal in fp32,
+  "meer zoals deze" en MIN_FOTO evenmin. MIN_TEKST p5 0,0 is voor SigLIP gewoon (de bias is sterk
+  negatief) en geen bewijs tegen de tekstkant. De set zelf drukt ook fp32 (34 rijen zijn objecten
+  uit het Met, 10 daarvan in een categorie, en er zijn verkeerd gelabelde rijen); dat is werk aan
+  de set (`beeld_niet.tsv`), niet aan int8.
+
+### De analyse
+
+Elke Linear van beide torens (53 in `beeld`, 49 in `tekst`) is een `DynamicQuantizeMatMul`:
+onnxruntime kwantiseert de invoer per aanroep naar uint8 met **één schaal voor de hele tensor**,
+in BZ4 16 items × 64 tokens × alle kanalen. Eén grote waarde ergens in die tensor maakt de stap
+grof voor alle andere. De patch-Conv, de LayerNorms, softmax en GELU zijn fp32; de token-embedding
+is int8 per rij (127) zonder integer-matmul. Proeven in de sandbox, met de echte omzetter
+(onnxruntime 1.31.1, numpy 2.5.4; een CPU met AVX512-VNNI, dus tijden alleen onderling):
+
+| Proef | Wat | Uitkomst |
+|---|---|---|
+| E1 | één `DynamicQuantizeMatMul` 768→3072 | Een item alleen 1,8 % fout; één waarde van 300 in een buur uit de batch: 34,5 %. Een invoer zoals die van fc2 met twee neuronen van 100 op token 0: 62 % van de andere tokens valt op het nulpunt |
+| E3 | waar de fout vandaan komt | Gewichten met \|q\| ≤ 64 1,53 %, met 127 0,77 %; activaties per tensor 1,12 %, per token 0,77 %. `MatMulInteger` weigert een nulpunt per rij, dus per token is symmetrisch, met één nulpunt 128. Met 300 in item 3 is de fout van item 0 34,6 % zoals nu en 1,7 % per token. Per token kost ±17 ms per foto en per vraag |
+| E4 | welke uitschieter wat herstelt | Per token herstelt een uitschieter op één token (0,35 naar 0,008), niet op één kanaal (0,23); glad (SmoothQuant, α 0,5) herstelt het kanaal (0,04). Samen dekken ze beide |
+| E5 | gewichten in 8 bit via uint8 met nulpunt 128 | Fout 1,93 naar 1,41 %, maar 9× trager: valt af |
+| E6 | het kleine model van de tests | Blind voor uitschieters (Gaussische gewichten): één neuron van laag 0 × 30 geeft cos 0,986, × 100 0,885. Hetzelfde beeld alleen of naast een dambord: cos 0,99978, dus een vector hangt af van zijn buren in de batch |
+
+Q_MAX 64 kost echt iets (de fout per Linear twee keer zo groot), maar 1 tot 2 % per Linear
+verklaart geen 0,25; fouten van 10 tot 50 % in een paar Linears wel. Volgorde van de verklaringen:
+de activaties per tensor met uitschieters (de waarschijnlijkste); de koppeling in de batch (BZ4
+rekent vragen per 16, `embed_text` één, en een opgeslagen vector hangt af van welke foto's in zijn
+batch zaten); Q_MAX 64; de twee koppen; Nederlands als versterker; de embedding en een fout in de
+omzetter zijn onwaarschijnlijk.
+
+### Wat er gebouwd is: alleen meten
+
+Niets hiervan verandert een poort, een pin of de bytes van de omzetter.
+
+- **Haken in `bouw.py`** (`df61042`), alle uit: `Bouwer(..., fp32_als=, per_token=, glad=,
+  q_max=, meet=)`, `per_kolom(wt, q_max)` en in `tekst_graaf` `embedding_fp32`. `omzet()`,
+  `siglip.py`, de CLI en `VERSIE` bleven gelijk. Dat de bytes gelijk bleven, legt
+  `test_zonder_opties_dezelfde_bytes_als_voor_de_opties` vast met de sha256 van alle zeven
+  bestanden van het kleine model, uitgerekend vóór de haken (`f007837`), en
+  `test_varianten_uit_dezelfde_bytes` met de opties expliciet op hun standaard.
+- **Rapportregels in BZ4** (`e595153`): `_rapport_int8` in `test_beeld_kwaliteit.py`, binnen
+  try/except, met de grafen die BZ4 al laadt; de uitkomst in `bz4.json` onder `int8_rapport`. De
+  asserts zijn niet veranderd.
+- **De module `test_beeld_int8_lagen.py`** (marker `beeld_echt`, `5e9a7b1`): de CPU, de fout van
+  de gewichten, een probe van de invoer van elke Linear, de afwijking per laag en de varianten;
+  geen assert op een getal, alleen dat `bz4r.json` er is. Met `test_beeld_int8_klein.py` (35 tests
+  in de sandbox: elke haak, elke variant op het kleine model, en het rapport van begin tot eind);
+  `api-analyse` telt nu 253 tests en 16 gedeselecteerd.
+- **Een eigen stap in `beeld-model`** (`b2cdac7`): `BZ4 rapport int8 per laag en varianten (geen
+  poort)`, na BZ6 en vóór de uitslag, met `continue-on-error: true` en `timeout-minutes: 15`, zonder
+  netwerk (de bron en de set van eerder in de job). De uitslag leest hem niet.
+
+Op het kleine model met de haken (de grootste |verschil| tussen alleen en in een batch, en naast
+een vreemde buur): per token **0 voor beide torens**, zoals nu 0,0079 en 0,0045 (beeld) en 0,0055
+en 0,0051 (tekst). E6 met een neuron × 100, cos tegen fp32 (alleen / in de batch):
+
+| Variant | Alleen | Batch | Alleen tegen batch |
+|---|---|---|---|
+| zoals nu | 0,885 | 0,856 | 0,068 |
+| per token | 0,868 | 0,868 | 0 |
+| per token + glad | 0,863 | 0,863 | 0 |
+| fc2 van laag 0 in fp32 | 0,9956 | 0,9955 | 0,018 |
+
+Per token haalt de batch eruit, maar herstelt een kanaal-uitschieter niet; fp32 op die ene Linear
+wel. Glad wint hier niets, omdat E6 de invoer én het gewicht van hetzelfde kanaal × 100 zet: glad
+verdeelt de last tussen die twee, en beide zijn even groot.
+
+### Wat de volgende run meet
+
+In de stap BZ4 (`kort.txt`, `bz4.json` onder `int8_rapport`):
+
+- `BZ4 torens (rapport)`: precisie@5 met de tekst in int8 en de beelden in fp32, en omgekeerd;
+- `BZ4 fp32 (rapport)`: engels, meer zoals deze, MIN_FOTO, MIN_TEKST en de plekken van de
+  combinaties in fp32;
+- `BZ4 cos int8 tegen fp32 (rapport)`: p5, mediaan en de laagste vraag en foto;
+- `BZ4 één per keer (rapport)`: de vragen en de foto's elk alleen, zoals `embed_text` en de worker;
+- `BZ4 buren uit dezelfde batch (rapport)`: welk deel van de top 4 uit de eigen batch van 16 kwam,
+  tegen toeval;
+- `BZ4 nl per vraag` en `BZ4 en per vraag (rapport)`: per vraag int8, fp32 en de twee wissels.
+
+In de nieuwe stap (`bz4r.txt`, `bz4r.json`): `BZ4 cpu (rapport)` (model, VNNI), `BZ4 gewicht int8
+<toren> (rapport)`, `BZ4 invoer <toren> (rapport; …)` (de drie slechtste Linears: max/rms, token en
+kanaal, en de fout per tensor in de batch, per tensor alleen, per token en per token na glad),
+`BZ4 afwijking per laag <toren> (rapport)` en `BZ4 variant <naam> (rapport)` voor per token, fc2
+fp32, kop fp32, per token + kop fp32, mlp fp32, aandacht fp32, de eerste en laatste vier lagen in
+fp32, per token + glad (geijkt op synthetische foto's en vaste zinnen, nooit op de set), Q_MAX 127
+(alleen met VNNI) en embedding fp32. Na 8 minuten zegt een variant `overgeslagen: tijd`. Verwacht:
+4 tot 5,5 minuten erbij.
+
+### Zo lees je de uitkomst
+
+| Wat je ziet | Wat het betekent | Daarna |
+|---|---|---|
+| tekst fp32 + beeld int8 ≥ 0,64 en tekst int8 + beeld fp32 ≈ 0,44 | De teksttoren draagt het verlies | Alleen `tekst` herstellen |
+| Andersom | De beeldtoren draagt het | Alleen `beeld` herstellen |
+| meer zoals deze in fp32 onder 0,5 | De set begrenst die poort; geen herstel van int8 haalt 0,7 | Werk aan de set, niet aan int8 |
+| één per keer wijkt meer dan 0,02 af van de batch, of de buren uit de eigen batch liggen ver boven toeval | De koppeling in de batch telt | Per token, en beslissen of BZ4 vragen meet zoals de dienst |
+| Een Linear met max/rms ≥ 50 en een fout per tensor ≥ 0,1, per token klein | Uitschieters op tokens | Per token |
+| Ook per token hoog, na glad laag | Uitschieters op kanalen | Glad, of fp32 voor die Linears |
+| De afwijking per laag springt bij laag k | Een laag met uitschieters | fp32 of glad bij laag k |
+| Een variant zakt ≤ 0,05 | Een kandidaat | De goedkoopste nemen |
+| Niets behalve alles in fp32 helpt | Onverwacht | Een fout zoeken: losse int8-Linears in de fp32-graaf zetten |
+
+### Open na 3a9b07d
+
+- **Het herstel zelf** komt na die run. Elk herstel verandert de bytes van `beeld.int8.onnx` en/of
+  `tekst.int8.onnx`: `VERSIE` 2 naar 3, nieuwe pins, en de tabel met nieuwe pins in "CI op
+  9ebf298" is dan oud. Factoren voor glad horen dan in een vastgelegde tabel bij de sha256 van de
+  bron, niet uit een numpy-forward in de omzetter.
+- **Of BZ4 vragen één voor één meet** zoals `embed_text`, is een keuze voor Keuze 83, nooit stil.
+- **Hoe lang de varianten op de runner duren**, is niet bekend; de tijdgrens van 8 minuten en de
+  15 minuten van de stap houden de job binnen zijn tijd.

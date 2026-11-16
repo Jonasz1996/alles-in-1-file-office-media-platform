@@ -261,11 +261,35 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   weinig vragen en een `eerste 429 na` van een paar seconden, dan was het budget van het IP van
   de runner al op voordat de job begon (ander verkeer op dat IP);
 - `BZ3`, `BZ4`, `BZ6`, `BZ7`: de uitkomsten van de tests, met `goed` of `FOUT`;
+- `BZ4 … (rapport)`: regels zonder poort. Ze veranderen nooit een uitkomst, en mislukt er een, dan
+  zegt hij `… (rapport): mislukt (<soort>)`. Waar int8 het verlies maakt (x3a.md, "CI op
+  3a9b07d", met hoe je ze leest), uit de stap BZ4, in `bz4.json` onder `int8_rapport`:
+  - `BZ4 torens (rapport)`: precisie@5 met de tekst in int8 en de beelden in fp32, en omgekeerd;
+  - `BZ4 fp32 (rapport)`: engels, meer zoals deze, MIN_FOTO, MIN_TEKST en de plekken van de
+    combinaties, nu in fp32;
+  - `BZ4 cos int8 tegen fp32 (rapport)`, `BZ4 één per keer (rapport)` (elke vraag en foto alleen,
+    zoals de dienst) en `BZ4 buren uit dezelfde batch (rapport)` (tegen toeval);
+  - `BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 1/3: …` (drie regels) en `BZ4 en
+    per vraag (rapport, int8/fp32): …`;
+
+  en uit de eigen stap `BZ4 rapport int8 per laag en varianten (geen poort)`, in `bz4r.json` (die
+  stap mag falen, heeft hooguit 15 minuten en de uitslag leest hem niet):
+  - `BZ4 cpu (rapport): <model>; vnni ja|nee`;
+  - `BZ4 gewicht int8 <toren> (rapport)`: de fout van de gewichten per Linear, met |q| ≤ 64 en
+    met 127;
+  - `BZ4 invoer <toren> (rapport; …)`: de drie Linears met de grootste fout per tensor, met max/rms,
+    het token en het kanaal van de max, en de fout per tensor in de batch, per tensor alleen, per
+    token en per token na glad;
+  - `BZ4 afwijking per laag <toren> (rapport)`: cos tussen int8 en fp32 na elke laag;
+  - `BZ4 variant <naam> (rapport)`: nl (en hoeveel die zakt tegen fp32), engels, combinaties, meer
+    zoals deze, cos, en de grootte en tijd van de grafen. Na 8 minuten `overgeslagen: tijd`;
+    `Q_MAX 127` zonder VNNI `overgeslagen: geen VNNI`;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
-- per pytest-stap de laatste regel.
+- per pytest-stap de laatste regel (`bz3`, `bz4`, `bz4r`, `bz6`).
 
 Het hele verslag staat bij de run als artifact `beeld-model` (`kort.txt`, `bz3.json`, `bz4.json`,
-`bz6.json`, `bz7.json`, de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
+`bz4r.json`, `bz6.json`, `bz7.json`, de uitvoer van pytest (`bz3.txt`, `bz4.txt`, `bz4r.txt`,
+`bz6.txt`), de voorstellen en de logs van de omzetter, en `uit1/meta.json`). Alleen in
 het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van Commons hooguit
 één vraag per 1 s, thumb één per 1 s, upload één per 1 s; contact: ja` (in de CI, met de link naar
 het repository als contact; zonder contact `… per 8 s, …; contact: nee`).
