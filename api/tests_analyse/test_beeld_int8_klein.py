@@ -761,30 +761,47 @@ def test_een_waarde_die_geen_json_is_bederft_het_verslag_niet(tmp_path, monkeypa
     assert json.loads(pad.read_text(encoding="utf-8")) == {"nl": 0.6, "en": 0.5}
 
 
-def test_het_int8_rapport_van_bz4_op_het_kleine_model(km, tmp_path, monkeypatch):
-    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+def _lijsten(x) -> list[int]:
+    """De lengte van elke lijst in een JSON-waarde, van getallen of niet."""
+    if isinstance(x, dict):
+        return [n for v in x.values() for n in _lijsten(v)]
+    if isinstance(x, list):
+        return [len(x)] + [n for v in x for n in _lijsten(v)]
+    return []
+
+
+@pytest.fixture(scope="module")
+def bz4_kw(km) -> dict:
+    """Wat de fixture uitkomst van test_beeld_kwaliteit.py aan _rapport_int8 geeft, op het kleine
+    model en de synthetische set."""
     uit = km.basis / "uit"
     int8, fp32 = Model(uit), Model(uit, fp32=True)
     pixels, sleutels, cats = _set()
     rijen = vragen()
     soorten = {"nl": "nl", "c": "combinatie", "en": "en"}
     per = {s: [x for x in rijen if x["soort"] == soort] for s, soort in soorten.items()}
-    e8, e32 = int8.beelden(pixels), fp32.beelden(pixels)
-    t8 = {s: int8.teksten([x["vraag"] for x in rs]) for s, rs in per.items()}
-    t32 = fp32.teksten([x["vraag"] for x in per["nl"]])
-    r = _rapport_int8(
-        Verslag("bz4"),
-        int8=int8,
-        fp32=fp32,
-        pixels=pixels,
-        e8=e8,
-        e32=e32,
-        t8=t8,
-        t32=t32,
-        rijen=per,
-        cats=cats,
-        sleutels=sleutels,
-    )
+    return {
+        "int8": int8,
+        "fp32": fp32,
+        "pixels": pixels,
+        "e8": int8.beelden(pixels),
+        "e32": fp32.beelden(pixels),
+        "t8": {s: int8.teksten([x["vraag"] for x in rs]) for s, rs in per.items()},
+        "t32": fp32.teksten([x["vraag"] for x in per["nl"]]),
+        "rijen": per,
+        "cats": cats,
+        "sleutels": sleutels,
+    }
+
+
+NL_NAMEN = ["strand", "hond", "kat", "sneeuw", "auto", "fiets", "berg", "bos", "stad", "eten"]
+NL_NAMEN += ["boot", "zonsondergang"]
+
+
+def test_het_int8_rapport_van_bz4_op_het_kleine_model(bz4_kw, tmp_path, monkeypatch):
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    r = _rapport_int8(Verslag("bz4"), **bz4_kw)
+    per, sleutels, cats = bz4_kw["rijen"], bz4_kw["sleutels"], bz4_kw["cats"]
     json.dumps(r)
     assert set(r) == {
         "torens",
@@ -794,8 +811,13 @@ def test_het_int8_rapport_van_bz4_op_het_kleine_model(km, tmp_path, monkeypatch)
         "buren_uit_de_batch",
         "nl_per_vraag",
         "en_per_vraag",
+        "meer_zoals_per_categorie",
+        "zwakke_vragen",
+        "meer_zoals_top1",
     }
     regels = _kort(tmp_path)
+    zwak = r["zwakke_vragen"]
+    n_zwak = min(zwak["aantal"], 24) + (zwak["aantal"] > 24) or 1
     verwacht = [
         "BZ4 torens (rapport): precisie@5 nl tekst int8 + beeld fp32 ",
         "BZ4 fp32 (rapport): engels ",
@@ -806,6 +828,13 @@ def test_het_int8_rapport_van_bz4_op_het_kleine_model(km, tmp_path, monkeypatch)
         "BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 2/3: ",
         "BZ4 nl per vraag (rapport, int8/fp32/tekst-fp32/beeld-fp32) 3/3: ",
         "BZ4 en per vraag (rapport, int8/fp32): beach ",
+        # 12 categorieën, 3 per regel
+        "BZ4 meer zoals deze per categorie (rapport, int8/fp32) 1/4: strand ",
+        "BZ4 meer zoals deze per categorie (rapport, int8/fp32) 2/4: sneeuw ",
+        "BZ4 meer zoals deze per categorie (rapport, int8/fp32) 3/4: berg ",
+        "BZ4 meer zoals deze per categorie (rapport, int8/fp32) 4/4: eten ",
+        *["BZ4 zwakke vragen (rapport)"] * n_zwak,
+        "BZ4 meer zoals deze top 1 (rapport): int8 ",
     ]
     assert len(regels) == len(verwacht)
     for regel, begin in zip(regels, verwacht, strict=True):
@@ -817,3 +846,152 @@ def test_het_int8_rapport_van_bz4_op_het_kleine_model(km, tmp_path, monkeypatch)
     assert r["fp32"]["combinaties_top"] == sum(p <= 10 for p in r["fp32"]["combinaties_plekken"])
     assert r["cos"]["beeld_laagste"] in sleutels
     assert max(_getallen(r)) <= 24
+    assert max(_lijsten(r)) <= 24  # ook de lijsten van sleutels en vragen
+
+    # per categorie: elke categorie van de vragen, met zijn foto's (2 eigen en de combinaties)
+    m = r["meer_zoals_per_categorie"]
+    assert list(m) == NL_NAMEN
+    for naam, w in m.items():
+        assert w["n"] == sum(naam in c for c in cats)
+        for kant in ("fout_int8", "fout_fp32"):
+            assert len(w[kant]) <= 3
+            assert set(w[kant]) <= set(NL_NAMEN) | {"leeg"}  # leeg-31 heet leeg
+            assert list(w[kant].values()) == sorted(w[kant].values(), reverse=True)
+    # de zwakke vragen: precies die met ≤ 1 in int8 of fp32, uit de getallen per vraag
+    alle = [*r["nl_per_vraag"], *r["en_per_vraag"]]
+    assert zwak["aantal"] == sum(min(x["int8"], x["fp32"]) <= 1 for x in alle)
+    assert len(zwak["vragen"]) == min(zwak["aantal"], 24)
+    for z in zwak["vragen"]:
+        assert len(z["top5_int8"]) == len(z["top5_fp32"]) == 5
+        assert set(z["top5_int8"]) | set(z["top5_fp32"]) <= set(sleutels)
+        assert min(z["int8"], z["fp32"]) <= 1 and z["soort"] in ("nl", "en")
+    t = r["meer_zoals_top1"]
+    assert t["n"] == sum(bool(c) for c in cats) == 30
+    assert t["int8"] == round(t["int8_goed"] / 30, 4) and t["fp32"] == round(t["fp32_goed"] / 30, 4)
+
+
+DELEN = [
+    ("_meer_per_categorie", "meer zoals deze per categorie", "meer_zoals_per_categorie"),
+    ("_zwakke_vragen", "zwakke vragen", "zwakke_vragen"),
+    ("_top1", "meer zoals deze top 1", "meer_zoals_top1"),
+]
+
+
+@pytest.mark.parametrize(("functie", "naam", "sleutel"), DELEN)
+def test_een_nieuw_deel_dat_faalt_is_een_regel_en_raakt_de_poort_niet(
+    bz4_kw, tmp_path, monkeypatch, functie, naam, sleutel
+):
+    """Een deel van "CI op 011bf2d" dat faalt: precies één regel `mislukt` voor dat deel, de andere
+    delen en het rapport gaan door, en wat de poort in bz4.json zette, blijft zoals het was."""
+    monkeypatch.setenv("BEELD_RAPPORT", str(tmp_path))
+    verslag = Verslag("bz4")
+    poort = {"nl": {"int8": 0.6, "fp32": 0.7, "min": 1}, "int8_zakt": 0.1}
+    for k, v in poort.items():
+        verslag.zet(k, v)
+
+    def faalt(*a, **kw):
+        raise RuntimeError("stuk")
+
+    monkeypatch.setattr(kwaliteit, functie, faalt)
+    kwaliteit._rapport_veilig(verslag, **bz4_kw)
+    regels = _kort(tmp_path)
+    assert f"BZ4 {naam} (rapport): mislukt (RuntimeError)" in regels
+    assert [x for x in regels if "mislukt" in x] == [
+        f"BZ4 {naam} (rapport): mislukt (RuntimeError)"
+    ]
+    assert not [x for x in regels if x.startswith(f"BZ4 {naam} (rapport") and "mislukt" not in x]
+    for _, ander, _ in DELEN:
+        if ander != naam:
+            assert [x for x in regels if x.startswith(f"BZ4 {ander} (rapport")], ander
+    assert regels[-1].startswith("BZ4 meer zoals deze top 1 (rapport)")
+    bz4 = json.loads((tmp_path / "bz4.json").read_text(encoding="utf-8"))
+    assert {k: bz4[k] for k in poort} == poort
+    assert set(bz4) == {*poort, "int8_rapport"}
+    assert bz4["int8_rapport"][sleutel] == {"mislukt": "RuntimeError"}
+    assert "nl_per_vraag" in bz4["int8_rapport"]
+    for _, _, ander in DELEN:
+        assert "mislukt" not in bz4["int8_rapport"][ander] or ander == sleutel
+
+
+def _hoeken(*graden: float) -> np.ndarray:
+    """Eenheidsvectoren in het vlak: de cosinus is die van het verschil in hoek."""
+    h = np.radians(np.asarray(graden, np.float64))
+    return np.stack([np.cos(h), np.sin(h)], axis=1).astype(np.float32)
+
+
+# a-1, a-2, a+b, anders-x-1, b-1, b-2, anders-x-2 op 0, 10, 22, 33, 60, 72 en 180 graden
+NEP_SLEUTELS = ["a-1", "a-2", "a+b", "anders-x-1", "b-1", "b-2", "anders-x-2"]
+NEP_CATS = [{"a"}, {"a"}, {"a", "b"}, set(), {"b"}, {"b"}, set()]
+NEP = _hoeken(0, 10, 22, 33, 60, 72, 180)
+
+
+def test_meer_zoals_deze_per_categorie_met_nepvectoren():
+    """Met MEER_TOP 4: a-1 en a-2 hebben a-2/a-1, a+b, anders-x-1 en b-1 (2 van 4); a+b heeft
+    anders-x-1, a-2, a-1 en b-1 (3 van 4, b-1 deelt b); b-1 en b-2 hebben b-2/b-1, anders-x-1, a+b
+    en a-2 (2 van 4). Een combinatie vraagt bij allebei: a 7/12, b 7/12."""
+    m = kwaliteit._meer_per_categorie(NEP, NEP_CATS, NEP_SLEUTELS, ["b", "a", "c"])
+    assert m == {
+        "b": {"n": 3, "deel": round(7 / 12, 4), "fout": {"anders-x": 3, "a": 2}},
+        "a": {"n": 3, "deel": round(7 / 12, 4), "fout": {"anders-x": 3, "b": 2}},
+    }
+    # gemiddeld over de vragende foto's is het de poort (_meer_zoals): 2+2+3+2+2 van 20
+    assert np.mean(kwaliteit._meer_zoals(NEP, NEP_CATS)) == pytest.approx(11 / 20)
+
+
+def test_de_drie_vaakste_herkomsten_en_bij_gelijk_op_naam():
+    """a-1 (0) heeft c-1, d-1, e-1 en anders-y-1 als buren, a-2 (180) c-2, f-1, d-2 en
+    anders-y-2: c, d en anders-y elk 2, e en f 1; de drie vaakste, bij gelijk op naam."""
+    sleutels = ["a-1", "c-1", "d-1", "e-1", "anders-y-1", "a-2", "c-2", "f-1", "d-2", "anders-y-2"]
+    cats = [{"a"}, {"c"}, {"d"}, {"e"}, set(), {"a"}, {"c"}, {"f"}, {"d"}, set()]
+    e = _hoeken(0, 5, 8, 11, 14, 180, 175, 172, 169, 166)
+    m = kwaliteit._meer_per_categorie(e, cats, sleutels, ["a"])
+    assert m == {"a": {"n": 2, "deel": 0.0, "fout": {"anders-y": 2, "c": 2, "d": 2}}}
+    assert kwaliteit._herkomst(set(), "anders-vogel-12") == ["anders-vogel"]
+    assert kwaliteit._herkomst({"sneeuw", "auto"}, "auto+sneeuw") == ["auto", "sneeuw"]
+
+
+def test_meer_zoals_deze_top_1_met_nepvectoren():
+    """De naaste buur: a-1 a-2, a-2 a-1, a+b anders-x-1 (11 graden, a-2 12), b-1 b-2, b-2 b-1:
+    4 van de 5 foto's met een categorie (de afleiders vragen niet)."""
+    assert kwaliteit._top1(NEP, NEP_CATS) == (4, 5)
+
+
+def test_de_zwakke_vragen_met_nepvectoren():
+    """Drie vragen. bb (naar b) op 65 graden in int8: b-1, b-2, anders-x-1, a+b, a-2 (3 goed); op
+    268 in fp32: anders-x-2, a-1, a-2, a+b, anders-x-1 (1 goed). cc (naar a) op 0 in allebei: 3
+    goed, niet zwak. aa (naar a) op 180 in allebei: anders-x-2, b-2, b-1, anders-x-1, a+b (1
+    goed). De zwakste eerst: aa (1 en 1) voor bb (3 en 1)."""
+    rijen = [
+        {"soort": "en", "vraag": "bb", "categorieen": "b"},
+        {"soort": "nl", "vraag": "cc", "categorieen": "a"},
+        {"soort": "nl", "vraag": "aa", "categorieen": "a"},
+    ]
+    t8, t32 = _hoeken(65, 0, 180), _hoeken(268, 0, 180)
+    top8 = kwaliteit._top5(t8, NEP, NEP_SLEUTELS)
+    top32 = kwaliteit._top5(t32, NEP, NEP_SLEUTELS)
+    assert top8[0] == ["b-1", "b-2", "anders-x-1", "a+b", "a-2"]
+    assert top8[2] == top32[2] == ["anders-x-2", "b-2", "b-1", "anders-x-1", "a+b"]
+    assert top32[0] == ["anders-x-2", "a-1", "a-2", "a+b", "anders-x-1"]
+    n8 = kwaliteit._precisie(t8, NEP, rijen, NEP_CATS)
+    n32 = kwaliteit._precisie(t32, NEP, rijen, NEP_CATS)
+    assert (n8, n32) == ([3, 3, 1], [1, 3, 1])
+    zwak = kwaliteit._zwakke_vragen(rijen, n8, n32, top8, top32)
+    assert zwak == [
+        {
+            "vraag": "aa",
+            "soort": "nl",
+            "int8": 1,
+            "fp32": 1,
+            "top5_int8": top8[2],
+            "top5_fp32": top32[2],
+        },
+        {
+            "vraag": "bb",
+            "soort": "en",
+            "int8": 3,
+            "fp32": 1,
+            "top5_int8": top8[0],
+            "top5_fp32": top32[0],
+        },
+    ]
+    assert kwaliteit._zwakke_vragen(rijen, [2, 3, 5], [2, 5, 2], top8, top32) == []
