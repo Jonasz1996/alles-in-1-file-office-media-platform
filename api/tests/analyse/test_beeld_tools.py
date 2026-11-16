@@ -3235,3 +3235,37 @@ def test_zonder_lijst_is_het_voorstel_als_vroeger(nep, commons, werk, tmp_path):
         == "BZ4 set: beeld_niet.tsv: 0 foto's op de lijst, als kandidaat overgeslagen: 0"
     )
     assert len(_kort(werk2)) == len(_kort(werk)) + 1
+
+
+def test_het_voorstel_zelf_gaat_nog_eens_langs_de_lijst(nep, commons, werk, tmp_path, monkeypatch):
+    """De review (N6): stel_voor slaat een foto van de lijst al over; set_ kijkt het voorstel
+    daarna nog eens na (_niet_in_set), voor het geval stel_voor er toch een doorlaat. Met een
+    _op_lijst die nooit iets ziet, is dat de fout, en ligt er geen voorstel."""
+    g = _goede_katten(commons)
+    bm.NIET.parent.mkdir()
+    bm.NIET.write_text(_lijst((_bron(g[0]), "persoon", "kat-1 op 3a9b07d")))
+    monkeypatch.setattr(bm, "_op_lijst", lambda _d, _niet: False)
+    with pytest.raises(
+        bm.Fout,
+        match=r"^voorstel-beeld\.tsv: regel \d+ \(kat-1\) staat in beeld_niet\.tsv regel 3 "
+        r"\(persoon\); zet er een andere foto voor in de plaats",
+    ):
+        bm.set_(werk, tmp_path / "beeld.tsv")
+    assert not werk.voorstel_set.exists()
+
+
+def test_een_opgegeven_lijst_die_er_niet_is_is_een_fout(nep, commons, werk, tmp_path):
+    """De review (N7): alleen de standaard (NIET) mag ontbreken. Een --niet die er niet is (een
+    tikfout) is een fout vóór de eerste vraag, geen stille "geen lijst". Zonder --niet en zonder
+    het bestand (_zonder_lijst) gaat set gewoon."""
+    weg = tmp_path / "beeld_niet.tsv"
+    argv = ["set", "--werk", str(werk.map), "--set", str(tmp_path / "geen.tsv")]
+    assert bm.main([*argv, "--niet", str(weg)]) == 1
+    assert _kort(werk) == [f"FOUT set: beeld_niet.tsv: {weg} is er niet (--niet)"]
+    assert not nep.vragen
+    with pytest.raises(bm.Fout, match=r"is er niet \(--niet\)$"):
+        bm.set_(werk, tmp_path / "geen.tsv", niet_pad=weg)
+    assert not nep.vragen and not bm.NIET.exists()
+    werk2 = bm.Werk(tmp_path / "werk2")
+    assert bm.main(["set", "--werk", str(werk2.map), "--set", str(tmp_path / "geen.tsv")]) == 3
+    assert not any("beeld_niet.tsv" in r for r in _kort(werk2))

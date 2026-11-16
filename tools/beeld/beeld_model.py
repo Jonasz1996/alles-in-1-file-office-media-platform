@@ -2074,8 +2074,9 @@ def set_(werk: Werk, set_pad: Path, *, combis=None, niet_pad: Path | None = None
     (120). De regel van een goede set zegt hoeveel er als origineel kwamen, de bytes en de tijd.
     Beide zeggen ook het verkeer met Commons (Voortgang.verkeer).
 
-    niet_pad (standaard NIET): beeld_niet.tsv. Een voorstel neemt er nooit een foto uit; met
-    beeld.tsv is een foto uit die lijst een fout, vóór er iets wordt opgehaald."""
+    niet_pad (None: NIET, dat mag ontbreken; een opgegeven pad dat er niet is, is een fout):
+    beeld_niet.tsv. Een voorstel neemt er nooit een foto uit; met beeld.tsv is een foto uit die
+    lijst een fout, vóór er iets wordt opgehaald."""
     # Alleen in het log, niet in het blok: het tempo, en of er een contact meegaat (nooit welk)
     print(
         f"BZ4 set: de API van Commons hooguit één vraag per {_tussen('API'):.0f} s, thumb één "
@@ -2084,6 +2085,10 @@ def set_(werk: Werk, set_pad: Path, *, combis=None, niet_pad: Path | None = None
         flush=True,
     )
     combis = combis if combis is not None else combinaties()
+    # Alleen de standaard mag ontbreken; een opgegeven lijst die er niet is (een tikfout), is
+    # geen stille "geen lijst" (de review, N7)
+    if niet_pad is not None and not niet_pad.is_file():
+        raise Fout(f"beeld_niet.tsv: {niet_pad} is er niet (--niet)")
     niet = _lees_niet_pad(niet_pad if niet_pad is not None else NIET)
     if set_pad.is_file():
         fotos = lees_set(set_pad.read_text(encoding="utf-8"), combis)
@@ -2158,7 +2163,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--werk", type=Path, required=True, help="de werkmap ($RUNNER_TEMP/beeld)")
     p.add_argument("--lock", type=Path, default=LOCK, help="models.lock")
     p.add_argument("--set", type=Path, default=SET, help="beeld.tsv")
-    p.add_argument("--niet", type=Path, default=NIET, help="beeld_niet.tsv (set)")
+    p.add_argument(
+        "--niet", type=Path, help="beeld_niet.tsv (set); zonder: de standaard, die mag ontbreken"
+    )
     p.add_argument("--uit", type=Path, action="append", default=[], help="een uitvoermap")
     p.add_argument("--log", type=Path, action="append", default=[], help="stderr van de omzetter")
     p.add_argument("--uit-fp32", type=Path, help="de uitvoermap van de omzetting met --fp32 (BZ4)")
