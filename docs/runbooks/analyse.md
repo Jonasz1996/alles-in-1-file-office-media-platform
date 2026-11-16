@@ -206,7 +206,7 @@ staat er al (…)` en haalt het niets. Een symlink of iets anders dan een map op
 
 Uit: `curl … | BEELD=uit bash`. Dan haalt het niets meer op; een model dat er al staat, blijft
 staan (gooi `MODELLEN_ROOT/siglip2-b32-256` zelf weg als je de ruimte terug wilt). Aan:
-`curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op beeld daarna zelf aan bij Instellingen.
+`curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op beeld daarna zelf aan bij Account → Foto's.
 
 ### De job `beeld-model`
 

@@ -480,7 +480,8 @@ OpenCV (YuNet, MIT, en SFace, Apache-2.0) staan in `/opt/platform/modellen`; de 
 alleen lezen.
 
 **Aan, om te proberen** (vóór 0.8.1 nog niet vrijgegeven; elke gebruiker ziet dan onder Account
-de schakelaar voor gezichten, en wat dat bewaart staat in `docs/runbooks/gezichten.md`):
+de schakelaars voor gezichten en voor zoeken op beeld; wat die bewaren staat in
+`docs/runbooks/gezichten.md` en `docs/runbooks/analyse.md`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=aan bash
