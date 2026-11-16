@@ -15,7 +15,7 @@ import pytest
 
 from app.analyse.tokenizer import Tokenizer
 from tests_analyse import siglip_klein
-from tests_analyse.beeld_echt import kwantielen, voorbewerk
+from tests_analyse.beeld_echt import cpu, kwantielen, voorbewerk
 from tests_analyse.test_beeld_kwaliteit import _meer_zoals, _precisie, _volgorde
 from tests_analyse.test_beeld_tokenizer_echt import (
     Echt,
@@ -70,6 +70,21 @@ def test_voorbewerking_volgt_meta():
 def test_kwantielen():
     assert kwantielen(range(101))["p50"] == 50.0
     assert kwantielen([]) == {}
+
+
+def test_cpu_leest_naam_vnni_en_amx(tmp_path):
+    """De regels van BZ4 en BZ6 zeggen op welke CPU ze liepen (CI op 669f03c)."""
+    info = tmp_path / "cpuinfo"
+    info.write_text(
+        "processor\t: 0\nmodel name\t: Xeon A\nflags\t\t: fpu avx2 avx512_vnni amx_int8\n\n"
+        "processor\t: 1\nmodel name\t: Xeon B\nflags\t\t: fpu\n"
+    )
+    assert cpu(info) == {"model": "Xeon A", "vnni": True, "amx": True}
+    info.write_text("model name\t: Epyc\nflags\t\t: fpu avx_vnni\n")
+    assert cpu(info) == {"model": "Epyc", "vnni": True, "amx": False}
+    info.write_text("model name\t: Oud\nflags\t\t: fpu avx2 amx_tile\n")
+    assert cpu(info) == {"model": "Oud", "vnni": False, "amx": False}
+    assert cpu(tmp_path / "weg") == {"model": "onbekend", "vnni": False, "amx": False}
 
 
 @pytest.fixture

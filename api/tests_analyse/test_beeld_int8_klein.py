@@ -89,13 +89,17 @@ KOP_Q = "vision_model.head.attention.q"  # de vraag van de MAP-kop: een constant
 ALLEEN = 1e-6  # een foto of vraag alleen tegen in een batch, met per_token
 
 
-def _sessie(g):
+def _sessie(g, zonder: tuple[str, ...] = ()):
+    """zonder: optimizers van onnxruntime die uit staan (disabled_optimizers)."""
     import onnxruntime
 
     o = onnxruntime.SessionOptions()
     o.intra_op_num_threads = 1
     o.inter_op_num_threads = 1
-    return onnxruntime.InferenceSession(Onnx(g).to_bytes(), o, providers=["CPUExecutionProvider"])
+    kw = {"disabled_optimizers": list(zonder)} if zonder else {}
+    return onnxruntime.InferenceSession(
+        Onnx(g).to_bytes(), o, providers=["CPUExecutionProvider"], **kw
+    )
 
 
 def _laad(bron: Path) -> tuple[Safetensors, bouw.Vorm]:
@@ -415,10 +419,17 @@ def _rest_tekst(km) -> list[np.ndarray]:
     return uit
 
 
+# De meetgraaf heeft extra uitgangen; daardoor voegt onnxruntime de laatste Add en LayerNorm daar
+# niet samen (SkipLayerNormFusion) en in de graaf zonder meten wel. Dat scheelt een ulp, en een ulp
+# vóór een afronding naar int8 kan op een andere CPU een stap van de schaal worden. Met de fusie uit
+# in beide grafen rekenen ze dezelfde ops: de vergelijking hieronder meet dan het meten, niet ORT.
+ZONDER_FUSIE = ("SkipLayerNormFusion",)
+
+
 def test_meet_de_invoer_van_elke_linear_en_de_residu_na_elke_laag(km):
     for toren, naam in (("beeld", "vision_model"), ("tekst", "text_model")):
         meet: list = []
-        s = _sessie(_graaf(km, toren, meet=meet))
+        s = _sessie(_graaf(km, toren, meet=meet), ZONDER_FUSIE)
         invoer = [m for m in meet if m[0] == "invoer"]
         rest = [m for m in meet if m[0] == "rest"]
         assert [m[1] for m in invoer] == [x for x in _linears(naam) if x != KOP_Q]
@@ -428,7 +439,7 @@ def test_meet_de_invoer_van_elke_linear_en_de_residu_na_elke_laag(km):
         assert namen[0] == hoofd and namen[1:] == list(dict.fromkeys(m[2] for m in meet))
         data = _pixels() if toren == "beeld" else km.tokens
         uit = s.run([hoofd, *namen[1:]], {s.get_inputs()[0].name: data})
-        zonder = _draai(km, toren, _sessie(_graaf(km, toren)))
+        zonder = _draai(km, toren, _sessie(_graaf(km, toren), ZONDER_FUSIE))
         assert float(np.abs(uit[0] - zonder).max()) <= TOL, toren
         waarden = dict(zip(namen, uit, strict=True))
         for _soort, label, x, n_in in invoer:

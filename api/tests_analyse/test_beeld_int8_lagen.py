@@ -53,6 +53,7 @@ from app.analyse.worker.omzetten.safetensors import Safetensors
 from tests_analyse.beeld_echt import (
     BATCH,
     Verslag,
+    cpu,
     kwantielen,
     omgeving,
     sessie,
@@ -191,22 +192,6 @@ def factoren(xmax: np.ndarray, wmax: np.ndarray, alfa: float = ALFA) -> np.ndarr
     f = xm**alfa / wm ** (1 - alfa)
     f = f / np.median(f)
     return np.exp2(np.clip(np.rint(np.log2(f)), -GLAD_EXP, GLAD_EXP)).astype(np.float32)
-
-
-def cpu() -> dict:
-    """De naam van de CPU en of hij VNNI heeft (avx512_vnni of avx_vnni), uit /proc/cpuinfo."""
-    naam, vlaggen = "onbekend", set()
-    try:
-        regels = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        regels = []
-    for regel in regels:
-        sleutel, _, waarde = regel.partition(":")
-        if sleutel.strip() == "model name" and naam == "onbekend":
-            naam = waarde.strip()
-        elif sleutel.strip() == "flags" and not vlaggen:
-            vlaggen = set(waarde.split())
-    return {"model": naam, "vnni": bool(vlaggen & {"avx512_vnni", "avx_vnni"})}
 
 
 def _r(x: float, n: int = 4) -> float:

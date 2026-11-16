@@ -138,10 +138,11 @@ jobs:
       # de bytes van VERSIE 2 1, een schaal per kolom en |q| tot 64 in beide vormen 2; de nieuwe
       # regels van het rapport met nepvectoren 4 en een deel dat faalt 3); en van de review
       # daarvan: 3 (de fp32-kant van die regels 1, geen vector in kort.txt 1, een rij van
-      # nullen per token 1); gedeselecteerd: de 16 tests van de job beeld-model (5 van het
+      # nullen per token 1); en van CI op ea7d372: 1 (de CPU met VNNI en AMX voor de regels
+      # van BZ4 en BZ6); gedeselecteerd: de 16 tests van de job beeld-model (5 van het
       # rapport). Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies één
       # keer noemt (-m)
-      ANALYSE_TESTS: "281"
+      ANALYSE_TESTS: "282"
       ANALYSE_DESELECTED: "16"
     steps:
       - uses: actions/checkout@v4

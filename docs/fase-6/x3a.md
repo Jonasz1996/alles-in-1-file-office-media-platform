@@ -2206,6 +2206,11 @@ het antwoord verandert er aan de poorten niets, en is `beeld-model` rood op deze
 - **Een sjabloon voor de vraag** ("een foto van …") is niet geprobeerd. Het kan "bergen" en "boot"
   helpen, maar dat is niet gemeten. Komt het, dan eerst als regel in het rapport, nooit stil in de
   poort.
+- **BZ6 op een trage runner met per token** (R2 in "De controle per CPU" hieronder). Gemeten is per
+  token alleen op een Xeon 6975P-C met VNNI en AMX. Op de traagste runner tot nu (±77 ms per foto
+  met per tensor) wordt het naar schatting ±115 ms, 4 % onder de 120 ms van de poort. Vóór X3b zijn
+  tijden vastlegt, moet er een keuze liggen voor het geval dat per token daar op 115–125 ms landt.
+  Dat is een keuze over het product (Vraag 14), nooit een lagere poort.
 
 ### De review
 
@@ -2229,3 +2234,22 @@ een veelvoud van 4. CI draait alleen op x64.
 
 Na de punten: `test_beeld_int8_klein.py` 60 goed, `tests_analyse` telt 281 en 16 gedeselecteerd,
 de tests die `ci.yml` lezen 246 goed, ruff en yamllint schoon.
+
+### De controle per CPU
+
+Na het herstel ging een tweede controle langs alle tests van `tests_analyse` en `beeld-model` die
+op de ene x86-runner kunnen slagen en op de andere niet. Bijna alles is veilig: geen graaf rekent
+nog met |q| boven 64, en de vergelijkingen die precies moeten kloppen zijn per constructie gelijk
+of gemeten op 0,0. Twee punten bleven over.
+
+| Punt | Wat er gebeurde |
+|---|---|
+| **R1** `test_meet_de_invoer_van_elke_linear_en_de_residu_na_elke_laag` vergelijkt de meetgraaf met de gewone graaf binnen 1e-5. In de gewone graaf voegt onnxruntime de laatste Add en LayerNorm samen (`SkipLayerNormFusion`); in de meetgraaf is de residu een uitgang en gebeurt dat niet. De invoer van de kop verschilt dan een ulp (beeld 8.621 van 12.288 waarden, tot 9,5e-7). De kop rondt per token af naar int8: twee waarden lagen dichter bij een grens dan dat verschil, en één omgeklapte afronding verandert de uitvoer tot 3,5e-3. Welke waarden dat zijn hangt aan de CPU (AVX2, AVX512, AMX) | Beide sessies van deze test draaien nu zonder `SkipLayerNormFusion` (`_sessie(..., ZONDER_FUSIE)`). Gemeten: de invoer van de kop is bit voor bit gelijk, het verschil 0,0 in beeld en tekst (was 0,0 en 5,96e-8). TOL blijft 1e-5 |
+| **R2** De job `beeld-model` zegt alleen in de stap van het rapport op welke CPU hij liep. Die stap hangt aan de set van BZ4 en mag falen; BZ6 hangt alleen aan de omzetting. Een rode BZ6 kon dus zonder CPU in het log staan | `cpu()` staat nu in `beeld_echt.py`, leest ook `amx_int8`, en de regel van BZ6 eindigt met de CPU, vnni en amx; het verslag `bz6.json` krijgt ze ook. De regel van BZ4 gebruikt dezelfde functie. Een test leest een nep-`cpuinfo` (`test_cpu_leest_naam_vnni_en_amx`). De poort zelf blijft; de marge staat in "Open na 669f03c" |
+
+CI op `ea7d372` liep API analyse op een Xeon 6975P-C met `amx_int8`, `avx512_vnni` en `avx_vnni`
+(281 goed): dat bewijst het herstel op een runner zonder VNNI niet opnieuw, de nabootsing hierboven
+wel.
+
+Na de punten: `tests_analyse` telt 282 en 16 gedeselecteerd (één test erbij), de tests die `ci.yml`
+lezen 246 goed, ruff en yamllint schoon.

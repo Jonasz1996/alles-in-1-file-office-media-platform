@@ -34,6 +34,7 @@ from app.analyse.worker import omzetten
 from tests_analyse.beeld_echt import (
     BATCH,
     Verslag,
+    cpu,
     omgeving,
     sessie,
     voorbewerk,
@@ -130,10 +131,13 @@ def test_bz6_fotos_per_minuut_en_een_vraag():
         },
     )
     verslag.zet("maxrss_mib", round(maxrss, 1))
+    c = cpu()
+    verslag.zet("cpu", c)
     verslag.kort(
         f"BZ6 beeld int8 op {cores} core(s): {per_foto * 1000:.1f} ms per foto uit 256.webp, "
         f"{per_minuut:.0f} per minuut (poort ≥ {PER_MINUUT}) — "
-        f"{'goed' if per_minuut >= PER_MINUUT else 'FOUT'}"
+        f"{'goed' if per_minuut >= PER_MINUUT else 'FOUT'}; cpu {c['model']}, vnni "
+        f"{'ja' if c['vnni'] else 'nee'}, amx {'ja' if c['amx'] else 'nee'}"
     )
     verslag.kort(
         f"BZ6 vraag (tokenizer + tekst int8): p50 {p50:.1f} ms, p95 {p95:.1f} ms (voorwaarde ≤ "
