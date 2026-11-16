@@ -222,6 +222,63 @@ def test_per_token_matmulinteger_met_nulpunt_128_en_gewichten_tot_64(km, tmp_pat
             assert int(np.abs(inits[f"{label}.w8"].astype(np.int16)).max()) <= bouw.Q_MAX
 
 
+PER_TOKEN_LABELS = [
+    "text_model.encoder.layers.0.self_attn.out_proj",
+    "text_model.encoder.layers.1.mlp.fc2",
+    "vision_model.encoder.layers.0.mlp.fc1",
+    "vision_model.encoder.layers.1.self_attn.out_proj",
+    "vision_model.head.mlp.fc2",
+    "text_model.head",
+]
+
+
+@pytest.mark.parametrize("label", PER_TOKEN_LABELS)
+def test_per_token_rekent_precies_als_de_keten_in_numpy(km, tmp_path, label):
+    """De review (S2): één Linear met per_token tegen de keten in numpy, met de q, s en b uit de
+    graaf: a = max |x| / 127 per rij, u = clip(rint(x / a) + 128, 0, 255), y = ((u − 128) @ q) ×
+    a × s + b, binnen 1e-5; met uitschieters in een rij en in één kanaal. De enige Add met een
+    constante telt 128 op (het nulpunt), geen 127."""
+    b = bouw.Bouwer(km.st, "een", int8=True, per_token=True)
+    n_in = km.st.info(f"{label}.weight").vorm[1]
+    y = b.linear(b.g.input("x", bouw.FLOAT, ["n", 5, n_in]), [bouw._linear(label)], label)
+    b.g.output(y, bouw.FLOAT, None)
+    pad = tmp_path / "een.onnx"
+    Onnx(b.g).write(pad)
+    nodes, inits = lees_onnx(pad)
+    q = inits[f"{label}.w8"].astype(np.int32)
+    s, bias = inits[f"{label}.s"], inits[f"{label}.b"]
+    plus = [inits[i] for op, _d, inv in nodes if op == "Add" for i in inv if i in inits]
+    plus = [float(p) for p in plus if p.size == 1]
+    assert plus == [128.0], plus
+    sessie = _sessie(b.g)
+    erg = 0.0
+    for zaad in range(20):
+        rng = np.random.default_rng(zaad)
+        x = rng.normal(size=(3, 5, n_in)).astype(np.float32)
+        x[1, 2] *= 100  # een rij met een groot bereik
+        x[2, 0, 3] = 300  # één kanaal
+        a = np.maximum(np.abs(x).max(axis=-1, keepdims=True) / np.float32(127), np.float32(1e-30))
+        u = np.clip(np.rint(x / a) + np.float32(128), 0, 255).astype(np.uint8)
+        ref = ((u.astype(np.int32) - 128) @ q).astype(np.float32) * a * s + bias
+        erg = max(erg, float(np.abs(sessie.run(None, {"x": x})[0] - ref).max()))
+    assert erg <= TOL, (label, erg)
+
+
+@pytest.mark.parametrize("q_max", [65, 127])
+def test_per_token_met_een_gewicht_boven_64_is_een_fout(km, monkeypatch, q_max):
+    """De review (N5): met per_token past een paar van vpmaddubsw (255·q·2) alleen met |q| ≤ 64 in
+    int16; q_max groter (of Q_MAX zelf groter) is een ValueError. 64 en kleiner mag."""
+    with pytest.raises(ValueError, match="per_token"):
+        _graaf(km, "tekst", per_token=True, q_max=q_max)
+    monkeypatch.setattr(bouw, "Q_MAX", q_max)
+    with pytest.raises(ValueError, match="per_token"):
+        _graaf(km, "beeld", per_token=True)
+    monkeypatch.undo()
+    for goed in (None, 32, 64):
+        _graaf(km, "tekst", per_token=True, q_max=goed)
+    _graaf(km, "tekst", q_max=q_max)  # zonder per_token: de variant Q_MAX 127 van het rapport
+
+
 def test_fp32_als_elke_linear_is_de_fp32_graaf(km, tmp_path):
     for toren in ("beeld", "tekst"):
         extra = {"embedding_fp32": True} if toren == "tekst" else {}

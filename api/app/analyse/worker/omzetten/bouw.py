@@ -414,6 +414,8 @@ def controleer_tokenizer_config(doc: dict, tok: Tokenizer) -> dict:
 # 255·64·2 = 32.640, op elke CPU. onnxruntime doet het zelf zo met reduce_range (int8 −64..64).
 # Het kost één bit van het gewicht.
 Q_MAX = 64
+# per_token (MatMulInteger met uint8 tot 255) moet op elke CPU kloppen: daar dus nooit meer dan 64.
+PER_TOKEN_Q_MAX = 64
 
 
 def _eindig(a: np.ndarray, naam: str) -> None:
@@ -475,7 +477,8 @@ class Bouwer:
       een paar van vpmaddubsw hooguit 255·64·2 = 32.640: het past in int16, ook zonder VNNI;
     - glad: per label een factor per invoerkanaal (machten van 2): x / f en de rijen van Wᵀ × f.
       Met machten van 2 is dat exact; daarna kwantiseert per_kolom het gladde gewicht;
-    - q_max: de grootste |q| van het gewicht van een Linear (None: Q_MAX);
+    - q_max: de grootste |q| van het gewicht van een Linear (None: Q_MAX); met per_token hooguit
+      PER_TOKEN_Q_MAX (64), anders een ValueError;
     - meet: een lijst. Per Linear komt erin ("invoer", label, naam, n_in) (niet als de invoer een
       constante is: de probe van de MAP-kop), per laag ("rest", "<toren>.<i>", naam): de residu na
       die laag. `meet_uitvoer` maakt van elke naam een uitvoer van de graaf.
@@ -493,6 +496,10 @@ class Bouwer:
         q_max: int | None = None,
         meet: list | None = None,
     ) -> None:
+        top = Q_MAX if q_max is None else q_max
+        if per_token and top > PER_TOKEN_Q_MAX:
+            # 255·q·2 moet in int16 passen (zie Q_MAX); de variant Q_MAX 127 is zonder per_token
+            raise ValueError(f"per_token met q_max {top}: hooguit {PER_TOKEN_Q_MAX}")
         self.st = st
         self.g = Graph(naam)
         self.int8 = int8
