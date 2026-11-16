@@ -118,7 +118,15 @@ async def test_een_tweede_opdracht_voor_werk_is_busy_en_pid1_antwoordt_gewoon(pa
             await _begin_faces(settings, _preview())
         assert exc.value.child == Child.WERK.value
         caps = await client.caps(settings)
-        assert caps.built == ["cancel", "caps", "embed_text", "faces"]
+        assert caps.built == [
+            "cancel",
+            "caps",
+            "embed_image",
+            "embed_text",
+            "faces",
+            "forget",
+            "rank",
+        ]
     finally:
         werk.close()
 
@@ -198,10 +206,13 @@ def test_built_en_de_handlers_van_de_kinderen_zijn_gelijk():
     for kind in Child:
         verwacht = {op.value for op in server.BUILT if wire.CHILD[op] is kind}
         assert set(kids.handlers(kind)) == verwacht, kind
-    assert server.BUILT == frozenset({Op.CAPS, Op.CANCEL, Op.FACES})  # X2a; golf 6 zet hier bij
+    # X2a, en X3b (golf 6): embed_image in werk, embed_text, rank en forget in zoeken
+    assert server.BUILT == frozenset(
+        {Op.CAPS, Op.CANCEL, Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET}
+    )
     assert {kind: sorted(kids.handlers(kind)) for kind in Child} == {
-        Child.WERK: ["faces"],
-        Child.ZOEKEN: [],
+        Child.WERK: ["embed_image", "faces"],
+        Child.ZOEKEN: ["embed_text", "forget", "rank"],
     }
 
 
@@ -278,8 +289,8 @@ async def test_werk_start_opnieuw_na_10_minuten(paar, klok):
 
 async def test_zoeken_leeft_lang_en_decodeert_nooit_een_beeld(paar):
     worker, settings = paar
-    assert kids.handlers(Child.ZOEKEN) == {}
-    assert set(kids.handlers(Child.WERK)) == {Op.FACES.value}
+    assert set(kids.handlers(Child.ZOEKEN)) == {"embed_text", "rank", "forget"}
+    assert set(kids.handlers(Child.WERK)) == {Op.FACES.value, Op.EMBED_IMAGE.value}
     seen = {(await _embed(settings, f"vraag {i}"))["pid"] for i in range(12)}
     assert len(seen) == 1
     data = await _embed(settings, "pil")

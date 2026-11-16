@@ -6,20 +6,32 @@
   zodat caps elke 30 s niet 38 MB leest. Het kind rekent hem bij het laden opnieuw (K1-12).
 - built: de opdrachten die deze worker doet (caps en cancel altijd).
 - limits: de grenzen van de cgroup (cpu.max en memory.max, of v1), None als er geen zijn.
-- beeld: X3.
+- beeld (X3b, Keuze 75): model, dim, scale (exp van logit_scale) en bias uit meta.json, als die
+  ok is; anders None (dan zoekt de app niet op beeld).
+
+**Welke regels van models.lock meetellen** (X3b; x3a.md, Open 1). De bronnen van een omzetting
+(`<map>/bron/…`) niet: install.sh haalt ze alleen om om te zetten en wist ze daarna (Keuze 84).
+Een model in een map (`siglip2-b32-256/…`) pas als die map er is: install.sh zet de map pas neer
+als de omzetting klaar en nagerekend is, en met BEELD=uit is er geen map. Zo blijft de stand ok
+voor gezichten zonder beeld, en is beeld pas klaar als de map er is en elk bestand klopt.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import os
 import stat
 from pathlib import Path
 
 from app.analyse import lock, wire
 from app.analyse.wire import Op
+from app.analyse.worker import omzetten
 
 CGROUP = Path("/sys/fs/cgroup")
+META = f"{omzetten.MAP}/{omzetten.META}"
+MAX_META = 1_000_000
 _Key = tuple[int, int, int, int, int]
 
 
@@ -63,8 +75,55 @@ class ModelStates:
         finally:
             os.close(fd)
 
+    def counted(self, item: lock.ModelFile) -> bool:
+        """Telt deze regel mee? Niet de bron van een omzetting; een model in een map pas als die
+        map er is (zie boven)."""
+        parts = item.name.split("/")
+        if "bron" in parts[:-1]:
+            return False
+        if len(parts) == 1:
+            return True
+        try:
+            info = os.lstat(self.root / parts[0])
+        except OSError:
+            return False
+        return stat.S_ISDIR(info.st_mode)
+
     def gather(self) -> list[wire.ModelCaps]:
-        return [wire.ModelCaps(name=m.name, state=self.state(m)) for m in lock.load(self.lock_path)]
+        return [
+            wire.ModelCaps(name=m.name, state=self.state(m))
+            for m in lock.load(self.lock_path)
+            if self.counted(m)
+        ]
+
+    def beeld(self, models: list[wire.ModelCaps]) -> wire.BeeldCaps | None:
+        """Het beeldmodel uit meta.json, als die er ok is (de bytes opnieuw nagerekend)."""
+        if not any(m.name == META and m.state == "ok" for m in models):
+            return None
+        item = next((m for m in lock.load(self.lock_path) if m.name == META), None)
+        if item is None or item.size > MAX_META:
+            return None
+        try:
+            fd = os.open(self.root / META, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        except OSError:
+            return None
+        try:
+            raw = os.pread(fd, item.size + 1, 0)
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+        if len(raw) != item.size or hashlib.sha256(raw).hexdigest() != item.sha256:
+            return None
+        try:
+            doc = json.loads(raw.decode("utf-8"))
+            scale = math.exp(float(doc["logit_scale"]))
+            bias = float(doc["logit_bias"])
+            if not (math.isfinite(scale) and math.isfinite(bias)):
+                return None
+            return wire.BeeldCaps(model=doc["model"], dim=doc["dim"], scale=scale, bias=bias)
+        except (ValueError, KeyError, TypeError, OverflowError, UnicodeDecodeError):
+            return None
 
 
 def _read(path: Path) -> str | None:
@@ -106,4 +165,7 @@ def built(ops: frozenset[Op]) -> list[str]:
 
 
 def gather(states: ModelStates, ops: frozenset[Op], cgroup: Path = CGROUP) -> wire.CapsData:
-    return wire.CapsData(models=states.gather(), built=built(ops), limits=limits(cgroup))
+    models = states.gather()
+    return wire.CapsData(
+        models=models, built=built(ops), beeld=states.beeld(models), limits=limits(cgroup)
+    )

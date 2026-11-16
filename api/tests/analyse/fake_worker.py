@@ -120,7 +120,12 @@ class FakeAnalyseWorker:
         self.socket = socket_path
         self.key = key if key is not None else secrets.token_hex(32)
         self.clock = clock
-        self.models: dict[str, wire.ModelState] = {m.name: "ok" for m in lock.load()}
+        # Zoals caps van pid 1 zonder de map van beeld (BEELD=uit, of nog niet omgezet): een
+        # model in een map (siglip2-b32-256/…) telt caps pas als die map er is, en de bronnen
+        # nooit (app/analyse/worker/caps.py, X3b). Een test van beeld zet ze er zelf bij.
+        self.models: dict[str, wire.ModelState] = {
+            m.name: "ok" for m in lock.load() if "/" not in m.name
+        }
         self.beeld: wire.BeeldCaps | None = None
         self.limits: wire.LimitsCaps | None = None
         self.refuse: Code | None = None

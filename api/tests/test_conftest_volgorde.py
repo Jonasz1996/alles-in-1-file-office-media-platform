@@ -34,6 +34,8 @@ BESTANDEN = {
     "ocr": ["test_ocr_step.py", "test_ocr_access.py", "test_ocr_limits.py"],
     # de nep-worker fake, settings_fake en het autouse _stand_terug (fase 6, A0)
     "analyse": ["test_analyse_wire.py", "test_analyse_monitor.py", "test_fake_analyse_worker.py"],
+    # beeld en mensen, en het autouse _beeld_weer_uit (fase 6, X3b)
+    "beeld": ["test_beeld_off.py", "test_embed_step.py", "test_beeld_gen.py"],
 }
 
 # In het eigen proces: verzamelen (niets draaien) en per test de fixtures teruggeven
@@ -96,6 +98,8 @@ def test_een_bestand_uit_tests_ertussen_verandert_de_fixtures_niet():
     assert any("stappen" in v["van"] for v in verwacht.values())
     assert any(v["van"].get("fake") == "tests.analyse.conftest" for v in verwacht.values())
     assert all("_stand_terug" in v["namen"] for n, v in verwacht.items() if "/analyse/" in n)
+    assert any(v["van"].get("beeld") == "tests.beeld.conftest" for v in verwacht.values())
+    assert all("_beeld_weer_uit" in v["namen"] for n, v in verwacht.items() if "/beeld/" in n)
 
     assert sorted(gekregen) == sorted(verwacht)
     verschil = [n for n in verwacht if gekregen[n] != verwacht[n]]

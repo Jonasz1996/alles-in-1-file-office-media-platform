@@ -390,16 +390,14 @@ async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
 
 @pytest.mark.anyio
 async def test_de_stubs_van_gezichten_en_beeld(settings):
-    """De commando's van X2 en X3 staan er als stub (A0, §3.5): ze noemen hun pakket, exitcode
-    1. Wie er een bouwt, haalt hem uit ANALYSE_STUBS en uit deze lijst."""
+    """De commando's van X2 staan er als stub (A0, §3.5): ze noemen hun pakket, exitcode 1. Wie
+    er een bouwt, haalt hem uit ANALYSE_STUBS en uit deze lijst. Die van X3 zijn gebouwd
+    (app/beeld/cli.py; tests/beeld/test_beeld_cli.py)."""
     assert {name: package for name, (package, _) in cli.ANALYSE_STUBS.items()} == {
         "analyse-bench": "X2",
         "analyse-kwaliteit": "X2b",
-        "beeld-bench": "X3",
-        "beeld-kwaliteit": "X3",
-        "beeld-status": "X3",
     }
-    for name, package in (("analyse-kwaliteit", "X2b"), ("beeld-status", "X3")):
+    for name, package in (("analyse-kwaliteit", "X2b"),):
         result = await run_cli(settings, name)
         assert result.returncode == 1, result.stderr.decode()
         assert f"is nog niet gebouwd ({package})" in result.stderr.decode()

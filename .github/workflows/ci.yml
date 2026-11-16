@@ -128,11 +128,13 @@ jobs:
       # bron die liegt), 1 (met en zonder --fp32), 1 (laag 3 alleen de gezichten), 2 (de punten
       # decoderen en uitlijnen), 2 (de schalen van int8) en 1 (BUILT en de handlers gelijk);
       # en van de nacontrole van golf 5: 2 (het uitgelijnde gezicht pixel voor pixel en de
-      # invoer van SFace in NCHW); en van CI op 7569d48: 5 (int8 zonder VNNI: het model van
-      # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); gedeselecteerd: de 11 tests van de
-      # job beeld-model. Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
+      # invoer van SFace in NCHW); van CI op 7569d48: 5 (int8 zonder VNNI: het model van
+      # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); van X3b: 13 (test_beeld_ops.py), 9
+      # (test_beeld_cache.py), 1 (bezet per kind, zoeken) en 1 (test_beeld_perf.py: p95 bij
+      # 55.000 en 100.000 foto's op één core); gedeselecteerd: de 11 tests van de job
+      # beeld-model. Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
       # één keer noemt (-m)
-      ANALYSE_TESTS: "216"
+      ANALYSE_TESTS: "240"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4
@@ -891,6 +893,13 @@ jobs:
       # keer, ANALYSE=uit, en terug naar 0.8.0 en weer vooruit. Als root (sudo -n)
       - name: Analyse in install.sh controleren (test_install_analyse.sh)
         run: bash infra/single/tests/test_install_analyse.sh
+      # Zoeken op beeld in install.sh (X3b, Keuze 84): BEELD alleen met de analyse aan, de bron
+      # van een lokale server met een eigen lock (sha256, --max-filesize, de ruimte via df), een
+      # nep-omzetter als uid 10004, de uitkomst nagekeken en de bron weg, symlinks niet gevolgd,
+      # nooit fataal; analyse-omzetten in de echte compose-bestanden zonder netwerk, KEY,
+      # analyse-run of /models (docker compose config). Als root (sudo -n)
+      - name: Zoeken op beeld in install.sh controleren (test_install_beeld.sh)
+        run: bash infra/single/tests/test_install_beeld.sh
       - name: PostgreSQL-image bouwen en Patroni-configuratie valideren
         run: |
           base=$(python3 -c "import yaml; v=yaml.safe_load(open('infra/ansible/group_vars/all.yml')); print(v['postgres_base_image'])")

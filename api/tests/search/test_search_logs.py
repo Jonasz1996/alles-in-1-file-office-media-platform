@@ -22,7 +22,9 @@ from sqlalchemy import event
 from sqlalchemy.exc import DBAPIError
 
 from app.db import get_engine
-from app.search import engine
+from app.people import search as people_search
+from app.search import engine, filters_photo
+from tests.beeld.conftest import beeld, mensen  # noqa: F401 - de fixtures van tests/beeld
 from tests.search import wereld as W
 from tests.search.server import App, zonder_2fa
 from tests.search.test_search_access import _doe, kop
@@ -37,6 +39,15 @@ BBOX = f"{LON},{LAT},{LON[:-1]}9,{LAT[:-1]}9"
 DAG = "-".join(("1999", "12", "31"))
 PERSOON = str(uuid.uuid4())
 GEHEIM = (WOORD, PLAATS, LAT, LON, DAG, PERSOON)
+
+
+@pytest.fixture(autouse=True)
+def _filters():
+    """De filters person, place, country en camera staan in het register: een test eerder in de
+    run kan filters.reset() gedaan hebben (test_contracts.py), en dan gaf de vraag met person een
+    501 in plaats van een antwoord, afhankelijk van de volgorde."""
+    people_search.register()
+    filters_photo.register()
 
 
 def vragen() -> list[tuple[str, dict]]:
@@ -177,3 +188,69 @@ def test_niets_in_de_toegangslog(tmp_path):
     assert lekken(log) == []
     for pad, _ in vragen():
         assert f'"GET {pad}?*** HTTP/1.1"' in log, pad
+
+
+# --- zoeken op beeld (X3b; K1-16) ---------------------------------------------------------------
+
+
+async def test_niets_in_de_log_met_zoeken_op_beeld(client, mensen, beeld, caplog, capfd):  # noqa: F811
+    """mode=image met het geheime woord: gewoon, met filters, meer zoals deze, en de drie
+    fallbacks (te laat, de container weg, een fout van rank). De vraag gaat wel naar de
+    container (RankArgs.text), maar staat in geen enkele regel van de log, ook niet van de
+    nep-worker, en niet op stdout of stderr."""
+    from app.analyse import monitor
+    from app.analyse.wire import Code, Op
+    from tests.analyse.fake_worker import FakeFail
+    from tests.beeld import nep
+
+    (eva, _), _ = mensen
+    fake, settings = beeld
+    caplog.set_level(logging.DEBUG)
+    await nep.beeld_aan(client, eva)
+    await nep.run_jobs(settings)
+    rood = await nep.foto(client, eva, settings, "rood.jpg", "rood")
+    await nep.embed_all(settings)
+    fake.ranks.clear()
+    for params in (
+        {"q": WOORD},
+        {"q": WOORD, "from": DAG, "type": "image"},
+        {"q": WOORD, "offset": 1, "limit": 1},
+        {"like": rood["id"]},
+    ):
+        r = await nep.zoek(client, eva, **params)
+        assert r.status_code == 200, r.text
+        assert r.json()["mode"] == "image"
+    assert WOORD in [a.text for a in fake.ranks]
+    # te laat: gewoon zoeken met dezelfde vraag
+    fake.rank_delay = 2.0
+    from app.config import get_settings
+    from app.main import app
+
+    app.dependency_overrides[get_settings] = lambda: settings.model_copy(
+        update={"beeld_deadline_ms": 50}
+    )
+    try:
+        r = await nep.zoek(client, eva, WOORD + "x")
+    finally:
+        app.dependency_overrides[get_settings] = lambda: settings
+        fake.rank_delay = 0.0
+    assert (r.status_code, r.json()["fallback"]) == (200, "slow"), r.text
+
+    # een fout van rank (BAD_REQUEST met een tekst van de container)
+    async def stuk(req):
+        raise FakeFail(Code.BAD_REQUEST, "kapot")
+
+    fake.fake.on(Op.RANK, stuk)
+    r = await nep.zoek(client, eva, WOORD + "y")
+    assert r.status_code == 200, r.text
+    fake.install()
+    # de container weg
+    monitor._status = monitor.AnalyseStatus("down", "gone")
+    r = await nep.zoek(client, eva, WOORD + "z")
+    assert (r.status_code, r.json()["fallback"]) == (200, "down"), r.text
+    assert caplog.records
+    for record in caplog.records:
+        tekst = logging.Formatter().format(record)
+        assert WOORD not in tekst, record.name
+    uit, err = capfd.readouterr()
+    assert WOORD not in uit and WOORD not in err

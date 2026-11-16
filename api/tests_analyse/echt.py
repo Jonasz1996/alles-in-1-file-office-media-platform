@@ -4,7 +4,8 @@
   `python -I -c BOOT`), maar met --local: geen zelftest, sandbox "off", en de kinderen starten uit
   de python van deze venv (er is geen python-tekst). De sleutel staat alleen in de omgeving; wat
   de worker op stderr zet, komt in een bestand (K1-16 kijkt daarin).
-- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces).
+- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces en de
+  vier opdrachten van beeld; X3b).
 - binnen(): pid 1 in dit proces, met een eigen BOOT voor de kinderen (proef.py) of andere
   grenzen; voor wat alleen met een naad te testen is.
 """
@@ -29,7 +30,7 @@ from app.analyse.worker import server
 from app.config import Settings
 from app.media.worker import guard
 from tests.analyse import analyse_contract as C
-from tests_analyse import fake_models
+from tests_analyse import fake_beeld, fake_models
 
 START_S = 30.0
 
@@ -139,10 +140,13 @@ class EchteWorker:
 
 
 class EchteDriver:
-    """De Driver van analyse_contract.py voor de echte worker van X2a (faces, nog geen group)."""
+    """De Driver van analyse_contract.py voor de echte worker (faces van X2a, de opdrachten van
+    beeld van X3b; nog geen group). lang(Op.RANK) vraagt de nepmodellen van beeld met slow
+    (fake_beeld.install(..., slow=LANG_RANK)): het tekstmodel loopt dan langer dan een scenario
+    duurt, tot cancel of de verbinding dichtgaat."""
 
     name = "echt"
-    has = frozenset({Op.FACES})
+    has = frozenset({Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET})
 
     def __init__(self, worker: EchteWorker) -> None:
         self.worker = worker
@@ -154,8 +158,12 @@ class EchteDriver:
         return self.worker.settings()
 
     async def lang(self, op: Op) -> C.Opdracht:
-        # Elk scenario met lang() vraagt group of rank (needs); die staan niet in de lijst van X2a
-        raise AssertionError(f"geen lange opdracht voor {op.value} in X2a")
+        if op is Op.RANK:
+            data = fake_beeld.vec_bytes([1, 2], [[1.0] + [0.0] * 767, [0.0, 1.0] + [0.0] * 766], 1)
+            args = wire.RankArgs(owner="0" * 32, gen=1, text="lang", k=1)
+            return C.Opdracht(Op.RANK, args, lambda: [fake_beeld.vec_fd(data)])
+        # group is van X2b: dat scenario staat nog niet in de lijst
+        raise AssertionError(f"geen lange opdracht voor {op.value}")
 
     async def los(self) -> None:
         return None

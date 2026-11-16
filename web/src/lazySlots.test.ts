@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAreas, resetI18nForTests } from "./i18n";
 import FacesRow from "./photos/faces/FacesRow";
 import FacesSwitch from "./photos/faces/FacesSwitch";
@@ -8,8 +8,10 @@ import PeopleFaces from "./photos/faces/PeopleFaces";
 import PersonFaces from "./photos/faces/PersonFaces";
 import peoplePage from "./photos/people/PeoplePage.tsx?raw";
 import personPage from "./photos/people/PersonPage.tsx?raw";
-import BeeldResults from "./search/beeld/BeeldResults";
+import BeeldResults, { BeeldLater, stage } from "./search/beeld/BeeldResults";
+import beeldResults from "./search/beeld/BeeldResults.tsx?raw";
 import BeeldSwitch from "./search/beeld/BeeldSwitch";
+import { OFF } from "./search/beeld/status";
 import infoPanel from "./viewer/InfoPanel.tsx?raw";
 import type { ViewerItem } from "./viewer/types";
 
@@ -49,15 +51,23 @@ describe("elke plek van X2 en X3 toont niets tot zijn pakket hem vult", () => {
 });
 
 // I1 (S8): in de stand beeld op /zoeken stond niets onder de knoppen. Nu één zin, zonder
-// versienummer (de go/no-go na I1 beslist of X3 in deze fase komt). De plek blijft dezelfde: de
-// default export zonder props, die X3 vervangt.
-describe("de stand beeld op /zoeken zolang X3 het raster niet vult", () => {
-  afterEach(() => resetI18nForTests("nl"));
+// versienummer. X3b vult de plek met het raster; zolang de server zoeken op beeld niet kent (de
+// analyse staat uit: GET /photos/beeld geeft 501, de stand off) staat er precies die zin, en
+// zolang de stand er nog niet is niets (zonder DOM vraagt de plek hem niet).
+describe("de stand beeld op /zoeken met de analyse uit", () => {
+  beforeEach(() => vi.stubGlobal("window", { location: { pathname: "/zoeken", search: "?mode=image&q=strand" } }));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetI18nForTests("nl");
+  });
 
   it("nl: één zin dat zoeken op beeld in een volgende versie komt", async () => {
     resetI18nForTests("nl");
     await loadAreas(["beeld"]);
-    expect(renderToStaticMarkup(createElement(BeeldResults))).toBe(
+    expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
+    expect(stage(null)).toBe("wacht");
+    expect(stage(OFF)).toBe("later");
+    expect(renderToStaticMarkup(createElement(BeeldLater))).toBe(
       '<p class="muted">Zoeken op beeld komt in een volgende versie.</p>',
     );
   });
@@ -65,8 +75,16 @@ describe("de stand beeld op /zoeken zolang X3 het raster niet vult", () => {
   it("en: dezelfde zin in het Engels, en nergens een versienummer", async () => {
     resetI18nForTests("en");
     await loadAreas(["beeld"]);
-    const html = renderToStaticMarkup(createElement(BeeldResults));
+    expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
+    const html = renderToStaticMarkup(createElement(BeeldLater));
     expect(html).toBe('<p class="muted">Search by image is coming in a future version.</p>');
     expect(html).not.toMatch(/\d/);
+  });
+
+  it("de plek toont de zin bij de stand off, en alleen het raster als de server beeld kent", () => {
+    expect(beeldResults).toMatch(/if \(at === "wacht"\) return null;\s*if \(at === "later"\) return <BeeldLater \/>;/);
+    for (const state of ["ok", "bezig", "uit", "beheer_uit", "niet_geinstalleerd", "weg", "fout"] as const) {
+      expect(stage({ state, done: null })).toBe("raster");
+    }
   });
 });

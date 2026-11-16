@@ -205,19 +205,28 @@ async def _photometa_rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild
     return None
 
 
+async def _fts_rebuild(db: AsyncSession) -> Rebuild | None:
+    """De herbouw in stukken van de index die nu loopt, of None: cursor, begin en wat uit
+    search_state en het hoogste num uit search_seq, in één lezing."""
+    conn = await db.connection()
+    row = (
+        await conn.exec_driver_sql(
+            "SELECT s.cursor, q.next - 1, s.started_at, s.what FROM search_state s, search_seq q "
+            "WHERE s.id = 1 AND q.id = 1"
+        )
+    ).first()
+    if row is None or row[0] is None:
+        return None
+    what = row[3] if row[3] in FTS else "text"
+    started = row[2] or _iso(now())
+    return Rebuild(what=what, started_at=started, done=_fraction(int(row[0]), int(row[1])))
+
+
 async def _rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild | None:
     """De herbouw die nu loopt: eerst die van de index (die raakt zoeken), dan die van
     photometa."""
-    conn = await db.connection()
-    found = await rebuild.progress(conn.engine)
-    if found is not None:
-        row = (
-            await conn.exec_driver_sql("SELECT started_at, what FROM search_state WHERE id = 1")
-        ).first()
-        what = row[1] if row is not None and row[1] in FTS else "text"
-        started = row[0] if row is not None and row[0] else _iso(now())
-        return Rebuild(what=what, started_at=started, done=_fraction(found[0], found[1]))
-    return await _photometa_rebuild(db, saved)
+    fts = await _fts_rebuild(db)
+    return fts if fts is not None else await _photometa_rebuild(db, saved)
 
 
 def _places(settings: Settings) -> AdminPlaces:
@@ -255,8 +264,16 @@ def bench_result(settings: Settings) -> AdminBench | None:
 
 async def state(db: AsyncSession, settings: Settings) -> AdminSearch:
     conn = await db.connection()
-    chosen = await search_engine.engine_for(settings, conn)
-    building = await search_engine.rebuilding(conn)
+    # De motor, "namen klaar" en de herbouw van de index uit één lezing: met een lezing per veld
+    # kon het laatste stuk van een herbouw ertussen vallen (motor like, maar geen herbouw). De
+    # motor zoals engine_for: LikeFallback zolang de herbouw loopt
+    fts = await _fts_rebuild(db)
+    building = fts is not None
+    chosen = (
+        search_engine.LIKE
+        if building
+        else search_engine.select_engine(settings, await search_engine.read_conn_info(conn))
+    )
     saved = await stored(db)
     counts = perhour.counts()
     places, bench = await to_thread.run_sync(lambda: (_places(settings), bench_result(settings)))
@@ -264,7 +281,7 @@ async def state(db: AsyncSession, settings: Settings) -> AdminSearch:
         engine=chosen.name,
         paused=bool(saved.get("paused", False)),
         index=await _index(db, building),
-        rebuild=await _rebuild(db, saved),
+        rebuild=fts if fts is not None else await _photometa_rebuild(db, saved),
         extract_in_sandbox=text_step.in_sandbox(settings),
         per_hour=PerHour(
             deadline_b=counts["deadline_b"], deadline_c=counts["deadline_c"], busy=counts["busy"]

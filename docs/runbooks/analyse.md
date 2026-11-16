@@ -167,10 +167,46 @@ modellen kloppen nog, dus het haalt niets opnieuw, en de container start weer.
 
 ## Zoeken op beeld (X3)
 
-Golf 5 (X3a) bouwt de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Op de LXC
-verandert er nog niets: `install.sh` haalt SigLIP 2 niet op en zet niets om; dat komt in golf 6
-(X3b, de functies voor `BEELD` in `install.sh`). Wat er gebouwd is en wat nog open staat:
-[docs/fase-6/x3a.md](../fase-6/x3a.md).
+Golf 5 (X3a) bouwt de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Golf 6
+(X3b) bouwt de rest: het model op de LXC, de opdrachten in de container, het zoeken in de app, de
+web, het blok op `/beheer` en `beeld-status`, `beeld-bench` en `beeld-kwaliteit`. Wat er gebouwd
+is en wat nog open staat: [docs/fase-6/x3a.md](../fase-6/x3a.md) en
+[docs/fase-6/x3b.md](../fase-6/x3b.md).
+
+Tot 0.8.1 staat ook zoeken op beeld uit: met de analyse uit kent de app het niet (elke route van
+beeld geeft `501`, zoals in 0.8.0), en de web toont wat 0.8.0 toonde.
+
+### Het model op de LXC (`BEELD`, X3b)
+
+Alleen met de analyse aan (`ANALYSE=aan`): dan zet `install.sh` één keer `BEELD=aan` in `.env`,
+en haalt het na de start van de app het model op en zet het om (Keuze 84). Zonder `ANALYSE`, met
+`ANALYSE=uit` of met `BEELD=uit` doet het niets: geen download, geen omzetting, geen map, geen
+regel.
+
+1. Eerst de ruimte (`df`): in `MODELLEN_ROOT` de bron en twee keer de uitkomst plus 100 MB
+   (±2,44 GB), in `DATA_ROOT` 1 GB voor de vectoren en de cache. Te weinig: `Let op: te weinig
+   ruimte in …`.
+2. De vijf bronbestanden (±1,55 GB, `huggingface.co` op een vaste commit) naar een eigen map
+   `MODELLEN_ROOT/.beeld.XXXXXX/bron` van root, elk met `--max-filesize` en dan de grootte en
+   sha256 van `models.lock`.
+3. De dienst `analyse-omzetten` (`docker compose --profile omzetten run --rm --no-deps -T
+   analyse-omzetten`): uid 10004, zonder netwerk, zonder sleutel, zonder `analyse-run` en zonder
+   `/models`; de bron alleen-lezen, de uitvoer in een lege map van 10004. Een paar minuten.
+4. Root kopieert de vijf bestanden van de uitkomst (nooit een symlink of iets anders dan een
+   gewoon bestand) en kijkt elke kopie na op grootte en sha256. Pas dan gaat de nieuwe map in één
+   keer op de plek van `MODELLEN_ROOT/siglip2-b32-256` (0755, de bestanden 0644, van root), en
+   start de container analyse opnieuw (`--force-recreate`).
+5. De bron en de tijdelijke map gaan weg, ook als iets mislukte.
+
+Een mislukking is nooit fataal: `Zoeken op beeld: het model is niet geladen. De volgende run
+probeert het opnieuw.`, en de rest (ook gezichten) werkt gewoon; de eindtekst zegt hoe je het
+opnieuw probeert. Staat het model er al goed, dan zegt het script `Zoeken op beeld: het model
+staat er al (…)` en haalt het niets. Een symlink of iets anders dan een map op de plek van
+`siglip2-b32-256`, of een symlink op de plek van een bestand erin, raakt het niet aan.
+
+Uit: `curl … | BEELD=uit bash`. Dan haalt het niets meer op; een model dat er al staat, blijft
+staan (gooi `MODELLEN_ROOT/siglip2-b32-256` zelf weg als je de ruimte terug wilt). Aan:
+`curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op beeld daarna zelf aan bij Instellingen.
 
 ### De job `beeld-model`
 
@@ -353,10 +389,121 @@ Op stdout komen de regels voor `models.lock`, op stderr de voortgang, de tijd en
 met één zin is een bron of map die niet klopt (de uitvoermap blijft leeg); code 1 is een fout in
 de omzetter.
 
+### De stand van zoeken op beeld (`beeld-status`)
+
+```bash
+dc exec -T platform python -m app.cli beeld-status
+```
+
+Zo ziet dat eruit als alles goed is (de getallen en tijden zijn een voorbeeld, geen meting):
+
+```
+analyse: ok
+model: ok
+beheerder: aan
+foto's met een vector: 4210 van 4213
+mislukt (no_preview): 3
+ruimte: database 6467584 B, cache 6471680 B, modellen 399569024 B
+bench (2026-11-20T10:12:03+00:00): p95 61 ms, 1490 foto's per minuut
+kwaliteit (2026-11-20T10:20:41+00:00): ok
+```
+
+- `analyse`: de stand van de container, zoals `analyse-status` (`ok`, `down (…)`,
+  `models_missing`).
+- `model`: `ok` als de container de opdrachten van beeld kent en het model klopt met
+  `models.lock`; anders `missing` (het script haalt het bij de volgende run; zie "Het model op de
+  LXC").
+- `beheerder`: of zoeken op beeld voor iedereen aan staat (de knop op `/beheer`).
+- `foto's met een vector`: hoeveel foto's van gebruikers met zoeken op beeld aan al bekeken zijn.
+  Mislukt per code daaronder; `no_preview` is een foto zonder preview.
+- `ruimte`: de vectoren in de database, de bestanden per eigenaar in de cache, en de modellen.
+- `bench` en `kwaliteit` alleen als `beeld-bench` of `beeld-kwaliteit` al gedraaid heeft.
+
+Alleen getallen en woorden van de app; nooit een vector, een vraag of een bestandsnaam. Met de
+analyse uit zegt het één regel op stderr (`Zoeken op beeld staat uit: de analyse staat uit
+(ANALYSE).`) en is de code 1.
+
+### Het blok op `/beheer`
+
+`/beheer` → "Zoeken en foto's" → "Zoeken op beeld" toont hetzelfde als `beeld-status`, plus het
+afgelopen uur: hoeveel vragen, de p95, en hoe vaak de app terugviel op gewoon zoeken (te traag,
+geen container, geen model). Drie knoppen:
+
+- **Zet uit voor iedereen** / **Zet aan voor iedereen**: uit geeft iedereen meteen de melding
+  "Zoeken op beeld staat uit voor dit platform."; de vectoren blijven staan, zodat aan weer meteen
+  werkt.
+- **Opnieuw berekenen**: alle vectoren opnieuw, als job op de achtergrond (na een nieuw model doet
+  de app dat zelf).
+- **Beeldindex wissen**, met een bevestiging: alle vectoren, de bestanden per eigenaar en het
+  geheugen van de container gaan weg. Wie zoeken op beeld aan heeft, krijgt daarna de melding
+  dat zijn foto's nog bekeken worden, en de app begint opnieuw. Dat kost ongeveer twee core-uur per
+  100.000 foto's.
+
+Elke gebruiker zet zoeken op beeld zelf aan bij Account → Foto's (standaard uit, Vraag 11). Uit
+wist wat alleen voor die gebruiker bewaard is, ook in het geheugen van de container. De vectoren
+gaan niet mee in de reservekopie van het platform; een snapshot die je zelf van `/data` maakt
+(ZFS, restic), heeft ze wel, tot je die weggooit.
+
+### BZ9: `beeld-bench` op de LXC
+
+Hoe snel is zoeken op beeld op deze CPU? Na de installatie, met de analyse en `BEELD` aan en het
+model geladen (`beeld-status` zegt `model: ok`):
+
+```bash
+dc exec -T platform python -m app.cli beeld-bench
+```
+
+Het rekent op de container zelf, met eigen getallen: hoeveel foto's per minuut `embed_image`
+haalt (64 nep-previews in batches van 16), en de p95 van 40 vragen met vaste woorden over een
+bestand van 100.000 willekeurige vectoren in een tijdelijke map (die daarna weg is, ook uit de
+container). Een paar minuten. `--fotos`, `--vragen` en `--embed` veranderen de aantallen.
+
+```
+beeld-bench: p95 <ms> ms over 40 vragen en 100000 foto's; <aantal> foto's per minuut
+```
+
+De uitkomst staat daarna op `/beheer` (regel `beeld-bench`) en in `beeld-status`; het bestand is
+`/data/cache/beeld-bench.json`. De poort (Keuze 77, 78, Vraag 14): p95 ≤ 250 ms en ≥ 500 foto's
+per minuut. Haalt de CPU de 250 ms niet, dan vangt de klok van 800 ms het op: de gebruiker krijgt
+dan de treffers van gewoon zoeken met de melding dat het te lang duurde, en `/beheer` telt dat
+onder "te traag". Zeg het tegen de ontwikkelaar, met de regel van `beeld-bench`.
+
+### BZ10: `beeld-kwaliteit --personen` op de LXC
+
+Vindt "Meer zoals deze" op een portret dezelfde persoon terug? Alleen met gezichten (X2) en
+personen die je zelf bevestigd hebt:
+
+```bash
+dc exec -T platform python -m app.cli beeld-kwaliteit --personen --eigenaar <e-mailadres>
+```
+
+Zonder `--eigenaar` neemt het de eerste gebruiker. Voor elke foto van een bevestigde persoon met
+minstens twee foto's vraagt het "Meer zoals deze", en telt het hoe vaak een andere foto van
+dezelfde persoon in de top 5 staat, tegen wat je bij toeval zou verwachten:
+
+```
+beeld-kwaliteit --personen: <personen> personen, <vragen> vragen; dezelfde persoon in de top 5: <deel>, bij toeval <deel> (boven toeval)
+```
+
+(of `niet boven toeval`).
+
+Alleen getallen: geen naam, geen foto en geen vector, en niets verlaat de LXC. De uitkomst staat
+daarna op `/beheer` (regel `beeld-kwaliteit`: "in orde" als het boven toeval is) en in
+`/data/cache/beeld-kwaliteit.json`. Zeg de regel (alleen de getallen) tegen de ontwikkelaar; hij
+komt in `docs/fase-6/x3b.md`. Boven toeval geldt de regel van Keuze 82: dan geeft "Meer zoals
+deze" niets meer op een foto met een gevonden gezicht, en gelden voor beeld dezelfde regels als
+voor gezichten. Die regel is nog niet gebouwd; het is een beslissing na deze meting (x3b.md,
+Open). Tot dan blijft zoeken op beeld per gebruiker standaard uit (Vraag 11).
+
+Zonder `--personen` zegt het commando dat de kwaliteitspoort met de vaste set (Keuze 83, BZ4) in
+de CI-job `beeld-model` draait, met code 2. Geen bevestigde persoon met twee foto's: één regel op
+stderr, code 1.
+
 ## Wat er nog niet is
 
 - het vinden van gezichten in de app, de voorstellen, `/beheer` en `app.cli analyse-bench` en
   `analyse-kwaliteit` (X2b; `analyse-bench` zegt tot dan welk pakket hem bouwt);
-- zoeken op beeld op de LXC: SigLIP 2 ophalen en omzetten met `install.sh` (de dienst
-  `analyse-omzetten`), de opdrachten `embed_image`, `embed_text`, `rank` en `forget`, en
-  `beeld-status` (X3b). De omzetter zelf en de job `beeld-model` zijn er (X3a, hierboven).
+- zoeken op beeld voor gebruikers: het is gebouwd (X3a en X3b, hierboven), maar staat tot 0.8.1
+  uit, net als de rest van de analyse. Nog niet gedaan: BZ9 en BZ10 op de LXC van Jonas
+  (`beeld-bench` en `beeld-kwaliteit --personen`, hierboven), en de strenge run van `beeld-model`
+  met `beeld.tsv` (BZ4); zie [docs/fase-6/x3b.md](../fase-6/x3b.md), Open.

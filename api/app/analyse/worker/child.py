@@ -590,10 +590,12 @@ def _stop_reader(flag: StopFlag) -> None:
 def handlers(child: Child) -> dict[str, Handler]:
     """Wat dit kind doet. werk decodeert previews; zoeken nooit (Keuze 75)."""
     if child is Child.WERK:
-        from app.analyse.worker.ops import faces
+        from app.analyse.worker.ops import beeld, faces
 
-        return {wire.Op.FACES.value: faces.run}
-    return {}
+        return {wire.Op.FACES.value: faces.run, wire.Op.EMBED_IMAGE.value: beeld.embed_image}
+    from app.analyse.worker.ops import beeld  # zonder Pillow (Keuze 75)
+
+    return {"embed_text": beeld.embed_text, "rank": beeld.rank, "forget": beeld.forget}
 
 
 HANDLERS: dict[str, Handler] = {}  # een test (de proef van test_analyse_kinderen) vult aan

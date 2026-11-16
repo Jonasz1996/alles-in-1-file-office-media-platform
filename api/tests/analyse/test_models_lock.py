@@ -21,6 +21,9 @@ SIGLIP_LICENTIE = "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94
 
 def test_de_twee_modellen_van_gezichten():
     files = lock.load()
+    # daarna de tien regels van SigLIP 2 (X3b; test_lock_siglip.py legt ze vast)
+    assert [f.name.split("/")[0] for f in files[2:]] == ["siglip2-b32-256"] * 10
+    files = files[:2]
     assert [(f.name, f.size, f.sha256) for f in files] == [
         (
             "face_detection_yunet_2026may.onnx",
@@ -96,9 +99,9 @@ def test_een_naam_staat_er_hooguit_een_keer_in():
 def test_de_vingerafdruk_van_gezichten_blijft_als_x3_regels_toevoegt():
     """X3 zet zijn regels erbij; de versie van de gezichten hangt alleen van de eigen af."""
     text = lock.LOCK_PATH.read_text()
-    faces = lock.parse(text)
+    faces = lock.parse(text)[:2]
     more = lock.parse(text + f"{SHA} 99 siglip2-b32-256/vision.onnx -\n")
-    assert len(more) == 3
+    assert len(more) == 13  # YuNet, SFace, de tien van SigLIP 2 (X3b) en deze
     assert lock.digest(more[:2]) == lock.digest(faces)
     assert lock.digest(more) != lock.digest(faces)
 
