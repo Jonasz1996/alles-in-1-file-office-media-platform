@@ -556,6 +556,93 @@ def test_het_rapport_per_laag_en_variant_op_het_kleine_model(km, tmp_path, monke
     assert kort_label("text_model.encoder.layers.11.mlp.fc2") == "laag 11 fc2"
 
 
+def _lagen(toren: str, *namen: str) -> set[str]:
+    t = "vision_model" if toren == "beeld" else "text_model"
+    return {f"{t}.encoder.layers.{i}.{n}" for i in range(klein.LAGEN) for n in namen}
+
+
+KOP = {
+    "beeld": {
+        "vision_model.head.attention.q",
+        "vision_model.head.attention.kv",
+        "vision_model.head.attention.out_proj",
+        "vision_model.head.mlp.fc1",
+        "vision_model.head.mlp.fc2",
+    },
+    "tekst": {"text_model.head"},
+}
+# per variant van Rapport.lijst() en per toren: de Linears in fp32 (None: de toren van nu)
+FP32 = {
+    "per token": lambda t: set(),
+    "fc2 fp32": lambda t: _lagen(t, "mlp.fc2"),
+    "kop fp32": lambda t: KOP[t],
+    "per token + kop fp32": lambda t: KOP[t],
+    "mlp fp32": lambda t: _lagen(t, "mlp.fc1", "mlp.fc2"),
+    "aandacht fp32": lambda t: _lagen(t, "self_attn.qkv", "self_attn.out_proj"),
+    "laag 0-1 fp32": lambda t: _lagen(
+        t, "self_attn.qkv", "self_attn.out_proj", "mlp.fc1", "mlp.fc2"
+    ),
+    "per token + glad": lambda t: set(),
+    "Q_MAX 127": lambda t: set(),
+    "embedding fp32": lambda t: None if t == "beeld" else set(),
+}
+
+
+def test_elke_variant_van_het_rapport_meet_wat_zijn_naam_zegt(km, tmp_path, monkeypatch):
+    """De review (S3): per variant van Rapport.lijst() precies de Linears in fp32 die de naam
+    zegt (fc2, mlp en aandacht alleen in de lagen; de koppen alleen in kop fp32), MatMulInteger
+    alleen met per token (anders DynamicQuantizeMatMul), `.glad` alleen met glad (elke Linear
+    behalve de vraag van de MAP-kop), |q| tot 127 alleen bij Q_MAX 127, en de embedding van de
+    tekst in fp32 alleen bij embedding fp32."""
+    r = _rapport(km, tmp_path, monkeypatch, tijd_s=600)
+    namen = [naam for naam, *_ in r.lijst()]
+    assert sorted(set(namen)) == sorted(FP32)
+    for naam, beeld, tekst, _reden in r.lijst():
+        for toren, opties in (("beeld", beeld), ("tekst", tekst)):
+            verwacht = FP32[naam](toren)
+            if verwacht is None:
+                assert opties is None, (naam, toren)
+                continue
+            if opties.get("glad") == GLAD:
+                opties = {**opties, "glad": r.glad(toren)}
+            pad = tmp_path / f"{toren}.onnx"
+            Onnx(r._graaf(toren, **opties)).write(pad)
+            nodes, inits = lees_onnx(pad)
+            alle = set(linears(r.v, toren))
+            fp32 = {k.removesuffix(".w") for k in inits if k.endswith(".w")}
+            int8 = {k.removesuffix(".w8") for k in inits if k.endswith(".w8")} & alle
+            assert fp32 == verwacht and int8 == alle - verwacht, (naam, toren, fp32 ^ verwacht)
+            ops = {n[0] for n in nodes}
+            per_token = naam.startswith("per token")
+            assert ("MatMulInteger" in ops) == per_token, (naam, toren)
+            assert ("DynamicQuantizeMatMul" in ops) == (not per_token), (naam, toren)
+            glad = {k.removesuffix(".glad") for k in inits if k.endswith(".glad")}
+            assert glad == (alle - {KOP_Q} if "glad" in naam else set()), (naam, toren)
+            q = max(int(np.abs(inits[f"{x}.w8"].astype(np.int16)).max()) for x in int8)
+            assert q == (127 if naam == "Q_MAX 127" else bouw.Q_MAX), (naam, toren)
+            embedding = "text_model.embeddings.token_embedding.weight.w8" in inits
+            assert embedding == (toren == "tekst" and naam != "embedding fp32"), (naam, toren)
+
+
+def test_glad_komt_niet_uit_de_set(km, tmp_path, monkeypatch):
+    """De review (S3): de factoren van glad komen alleen uit ijk_beelden en IJK_ZINNEN. Met foto's
+    van de set die NaN zijn en andere vragen in het Nederlands zijn ze precies dezelfde (en
+    eindig, en machten van 2)."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _rapport(km, tmp_path / "a", monkeypatch, tijd_s=600)
+    b = _rapport(km, tmp_path / "b", monkeypatch, tijd_s=600)
+    b.pixels = [np.full_like(p, np.nan) for p in b.pixels]
+    b.rijen = {**b.rijen, "nl": [{**x, "vraag": "een heel andere vraag"} for x in b.rijen["nl"]]}
+    for toren in ("beeld", "tekst"):
+        fa, fb = a.glad(toren), b.glad(toren)
+        assert set(fa) == set(linears(a.v, toren)) - {KOP_Q}, toren
+        assert set(fb) == set(fa), toren
+        for label, f in fa.items():
+            assert np.isfinite(f).all() and (np.frexp(f)[0] == 0.5).all(), label
+            assert np.array_equal(f, fb[label]), label
+
+
 def test_de_varianten_stoppen_na_de_tijd(km, tmp_path, monkeypatch):
     r = _rapport(km, tmp_path, monkeypatch, tijd_s=0)
     r.regel_varianten()

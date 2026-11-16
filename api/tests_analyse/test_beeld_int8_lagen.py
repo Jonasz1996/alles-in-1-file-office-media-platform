@@ -441,7 +441,11 @@ class Rapport:
 
     # 5
     def lijst(self) -> list[tuple[str, dict | None, dict | None, str | None]]:
-        """(naam, opties beeld, opties tekst, reden om over te slaan); None: de toren van nu."""
+        """(naam, opties beeld, opties tekst, reden om over te slaan); None: de toren van nu.
+
+        Elke variant meet één plek: fc2, mlp en aandacht alleen in de lagen van de encoder, de
+        koppen (de MAP-kop van het beeld met zijn aandacht en mlp, en de kop van de tekst) alleen
+        in kop fp32 (de review, S3; test_beeld_int8_klein.py zet per variant de Linears vast)."""
         n = self.v.beeld.lagen
         k = min(4, n)
 
@@ -452,13 +456,13 @@ class Rapport:
             return label.startswith(("vision_model.head.", "text_model.head"))
 
         def fc2(label: str) -> bool:
-            return label.endswith(".mlp.fc2")
+            return laag_van(label) is not None and label.endswith(".mlp.fc2")
 
         def mlp(label: str) -> bool:
-            return ".mlp." in label
+            return laag_van(label) is not None and ".mlp." in label
 
         def aandacht(label: str) -> bool:
-            return ".self_attn." in label or ".head.attention." in label
+            return laag_van(label) is not None and ".self_attn." in label
 
         def beide(**o) -> tuple[dict, dict]:
             return dict(o), dict(o)
