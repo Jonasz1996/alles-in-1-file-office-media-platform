@@ -1,0 +1,51 @@
+/* Het raster van zoeken op beeld (fase 6, X3). In de chunk van het raster, niet in de eerste
+   lading. Het aantal kolommen zet BeeldResults per rij (gridTemplateColumns), zodat de pijlen en
+   de rijen (role="row") hetzelfde raster zien. */
+
+.beeld-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 var(--space-3);
+}
+
+.beeld-row {
+  display: grid;
+  gap: 12px;
+}
+
+.beeld-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+
+.beeld-cell:hover {
+  background: var(--hover);
+}
+
+.beeld-cell:focus-visible {
+  outline-offset: -2px;
+}
+
+.beeld-cell .thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  margin: 0;
+}
+
+.beeld-name,
+.beeld-date {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.beeld-date {
+  font-size: var(--text-s);
+}
