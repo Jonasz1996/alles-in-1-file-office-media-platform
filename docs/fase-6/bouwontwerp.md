@@ -2016,7 +2016,7 @@ Keuze 70–85 van X3.
       | `beeld_no_vector` | "Deze foto is nog niet bekeken. Probeer het straks opnieuw." |
       | viewer | "Meer zoals deze" |
       | suggestie | "Zoek 'strand' op wat er op je foto's staat" |
-      | schakelaar | "Zoeken op beeld. Je foto's worden op de achtergrond bekeken, zodat je ze kunt vinden op wat erop staat ('strand', 'hond'). Dat gebeurt op deze server; er gaat niets naar buiten. Alleen jij kunt zo in je eigen foto's zoeken. Uit wist wat alleen voor jou bewaard is. Snapshots die de beheerder zelf van de server maakt, houden het tot ze verlopen." |
+      | schakelaar | "Zoeken op beeld. Je foto's worden op de achtergrond bekeken, zodat je ze kunt vinden op wat erop staat ('strand', 'hond'). Dat gebeurt op deze server; er gaat niets naar buiten. Alleen jij kunt zo in je eigen foto's zoeken. Uit wist wat alleen voor jou bewaard is. Snapshots die de beheerder zelf van de server maakt, houden het tot ze verlopen." *Noot (Keuze 85, 2026-11-16): daarachter komt "Wat je mag verwachten: één woord geeft meestal een paar goede foto's bovenaan. Sommige woorden vinden weinig; zoek dan op 'berg' in plaats van 'bergen', of op 'bootje' in plaats van 'boot'. Bij 'Meer zoals deze' gaat ongeveer de helft van de eerste foto's over hetzelfde onderwerp." (`5e24f80`; "van de eerste foto's" sinds `f78b415`, R7-2 in [x3b.md](x3b.md)).* |
 
     - **Het toetsenbord** (geen nieuwe sneltoets; alles met Tab, pijlen, Enter en Esc; de lijst komt
       in `docs/fase-6/toetsenbord-x3.md`):
@@ -2288,7 +2288,9 @@ Keuze 70–85 van X3.
       beantwoordt die vraag niet). De uitleg bij de schakelaar in Account → Foto's zegt wat je mag
       verwachten: één woord vindt meestal een paar goede foto's bovenaan, sommige woorden vinden
       weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel), en "Meer zoals deze" geeft ongeveer de
-      helft uit hetzelfde onderwerp. Die tekst komt met X3b. [Gedaan in `5e24f80`.]
+      helft uit hetzelfde onderwerp. Die tekst komt met X3b. [Gedaan in `5e24f80`. Na de review
+      (R7-2 in [x3b.md](x3b.md)): de zin over "Meer zoals deze" gaat over de eerste foto's, want
+      gemeten is de top 4 (`f78b415`).]
     - **Later.** Beter kan met het grotere model B/16 (Vraag 10c) of met een vaste vorm van de vraag
       ("een foto van …"); geen van beide is gemeten. Haalt een latere run de poorten van Keuze 83
       weer, dan kan een nieuwe keuze ze terugzetten. Lager dan hier kan alleen met een nieuwe keuze.

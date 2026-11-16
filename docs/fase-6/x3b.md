@@ -701,7 +701,7 @@ niets gepusht, de versie blijft 0.8.0.
 |---|---|
 | `cb6ab8c` | Een gewone merge van `origin/claude/stappenplan-uitwerken-lu4uv3` (`502f4c3`, met `d0d25d8` en `b65eeb1`). Brengt Keuze 85 in [bouwontwerp.md](bouwontwerp.md), de ondergrenzen in `tests_analyse/test_beeld_kwaliteit.py` (`BEKEND_ZWAK` en `MEER_ONDER`), in x3a.md "CI op ffac665" en "Keuze 85", en de reparatie van e2e m6 (`e2e/test_media_m6.py`, `docs/fase-5/m6.md`). Alle tests van `test_beeld_kwaliteit.py` hebben de marker `beeld_echt`; de telling van `api-analyse` blijft 329 en 16 (`--collect-only` op deze kop: 329 van 345, 16 niet gekozen) |
 | `d1c29e0` | `api/tests/analyse/sets/beeld.tsv`: het voorstel uit het log van `beeld-model` op `502f4c3` (run 43870814179), 120 foto's, CC0 of publiek domein, thumbnails van 1280 px met url, bytes en sha256. Nagekeken met `lees_set`, tegen `beeld_niet.tsv`, en heen en terug door `set_tsv` byte voor byte gelijk. `LATER` in `test_beeld_ci.py` is nu leeg: elk pad van de poort van `beeld-model` moet bestaan. In `test_beeld_sets.py` alleen de docstring |
-| `5e24f80` | De uitleg bij de schakelaar in Account → Foto's (`switch.hint` in `beeld.nl.ts` en `beeld.en.ts`; die staat er alleen met de analyse aan) zegt wat je mag verwachten (Keuze 85): één woord geeft meestal een paar goede foto's bovenaan; sommige woorden vinden weinig, zoek dan op 'berg' in plaats van 'bergen' of op 'bootje' in plaats van 'boot'; bij "Meer zoals deze" gaat ongeveer de helft over hetzelfde onderwerp. `beeld.test.ts` en `HINT` in `e2e/test_zoek_beeld.py` zijn mee veranderd. De tekst van de terugval (`photos_people.settings.beeldHint`) bleef gelijk, zodat de pagina met de analyse uit dezelfde blijft als in 0.8.0 (`e2e/test_uit080.py`, `e2e/uit080_web.json`) |
+| `5e24f80` | De uitleg bij de schakelaar in Account → Foto's (`switch.hint` in `beeld.nl.ts` en `beeld.en.ts`; die staat er alleen met de analyse aan) zegt wat je mag verwachten (Keuze 85): één woord geeft meestal een paar goede foto's bovenaan; sommige woorden vinden weinig, zoek dan op 'berg' in plaats van 'bergen' of op 'bootje' in plaats van 'boot'; bij "Meer zoals deze" gaat ongeveer de helft over hetzelfde onderwerp. `beeld.test.ts` en `HINT` in `e2e/test_zoek_beeld.py` zijn mee veranderd. De tekst van de terugval (`photos_people.settings.beeldHint`) bleef gelijk, zodat de pagina met de analyse uit dezelfde blijft als in 0.8.0 (`e2e/test_uit080.py`, `e2e/uit080_web.json`). [Na de review: de zin over "Meer zoals deze" noemt de eerste foto's (`f78b415`) en de Engelse uitleg noemt geen enkelvoud meer (`82bfc26`); zie "De review van golf 6 afronden"] |
 
 **CI op `502f4c3`** (run 43870814179, job `beeld-model`, een Xeon 6975P-C met VNNI en AMX; de
 cijfers staan in x3a.md, "CI op 502f4c3"). BZ2 gaf twee keer dezelfde sha256 en precies de vijf
@@ -719,6 +719,24 @@ Klaar als (de go/no-go, BZ2, BZ4 en de tijden), Bewijs BZ1–BZ10 (BZ2, BZ4, BZ6
 samenvoeging", G6-2 in De review, "Klaar als, nagelopen" en "Open na de nacontrole" hebben een
 noot [Na golf 6, …] of een doorgehaalde zin. Keuze 85 beantwoordt Vraag 11 (standaard aan of uit)
 niet; B49–B70, Vraag 4 en Vraag 8–14 blijven open.
+
+### De review van golf 6 afronden
+
+De review van `9a64365..ae1ec48` vond niets dat blokkeert, één punt dat zou moeten (R7-1) en twee
+kleine (R7-2, R7-3). Elk punt eerst zelf nagegaan.
+
+| Punt | Wat er gedaan is | Test |
+|---|---|---|
+| **R7-1** (zou) De Engelse uitleg zei "then try another word, for example the singular"; dat is niet gemeten | Klopt. Gemeten zijn alleen Nederlandse vragen: 'bergen' werd 'berg' (3/5), maar 'boot' werd 'bootje' (3 tot 4/5), en dat is geen enkelvoud. De Engelse vragen van BZ4 haalden op `502f4c3` allemaal 3 of meer van 5 (beach 3, dog 4, cat 5, snow 4, bicycle 4, sunset 5). De zin is nu "then try a different word for the same thing" (`82bfc26`) | `beeld.test.ts`, "de uitleg in het Engels zegt alleen wat gemeten is (Keuze 85)": de hele Engelse uitleg; met de oude zin rood |
+| **R7-2** (klein) "Ongeveer de helft van wat 'Meer zoals deze' laat zien" gaat verder dan de meting | Klopt. BZ4 meet "Meer zoals deze" op de top 4 (0,475 op `502f4c3`), terwijl de link naar `/zoeken?mode=image&like=` per 48 foto's laadt. De zin gaat nu over de eerste foto's: "Bij 'Meer zoals deze' gaat ongeveer de helft van de eerste foto's over hetzelfde onderwerp." en "Of the first few photos 'More like this' shows, about half are about the same subject." (`f78b415`). De terugval `photos_people.settings.beeldHint` bleef gelijk | `beeld.test.ts` (de teksten van Keuze 81 en de Engelse uitleg) en `HINT` in `e2e/test_zoek_beeld.py`; met de oude teksten zijn beide tests van `beeld.test.ts` rood |
+| **R7-3** (klein) De rij "schakelaar" in de teksten van Keuze 81 had de zinnen van Keuze 85 niet, terwijl de test met die naam ze wel eist | Klopt. [bouwontwerp.md](bouwontwerp.md) heeft in die rij een noot met de hele tekst erachter, en Keuze 85 "In de app" een noot over R7-2. De naam van de test bleef | Alleen tekst |
+
+**Gedraaid na de review**, achter het slot van de zware runs en op drie cores: in `web`
+`npm run typecheck`, `npm test` (123 bestanden, 1.344 tests groen), `npm run build`,
+`npm run check:i18n -- --strict` (0 meldingen) en `npm run budget` (binnen het budget; likeRow
+2.692 van 3.000 B, beeld 11,0 van 15,0 KB); `e2e/test_zoek_beeld.py` en `e2e/test_uit080.py` met
+`uv run --with playwright==1.65.2` (9 groen in 197 s, met de Chromium van de sandbox); ruff schoon
+op `e2e/test_zoek_beeld.py`. In CI na de push: de jobs `web` en `e2e`.
 
 ### Open na golf 6
 
