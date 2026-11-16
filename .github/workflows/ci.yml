@@ -1525,6 +1525,7 @@ jobs:
           paden+=(tests_analyse/test_beeld_kwaliteit.py tests_analyse/test_beeld_echt_perf.py)
           paden+=(tests/analyse/sets/beeld_tokens.tsv tests/analyse/sets/beeld_vragen.tsv tests/analyse/sets/beeld.tsv)
           paden+=(tests_analyse/test_beeld_int8_lagen.py tests/analyse/sets/beeld_niet.tsv)
+          paden+=(tests/beeld/piek.py)
           if [ "$SOORT" = pull_request ] && [ "$ACTIE" = synchronize ]; then
             van="$VOOR"; tot="$NA"; reeks="$VOOR..$NA"
           elif [ "$SOORT" = pull_request ]; then

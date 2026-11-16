@@ -58,6 +58,8 @@ PADEN = [
     # de lijst van wat een voorstel nooit neemt (x3a.md, "De set strenger"): een push die alleen
     # die lijst verandert, draait de job ook
     "tests/analyse/sets/beeld_niet.tsv",
+    # wat BZ7 in test_beeld_tokenizer_echt.py meet: het geheugen van het kind (piek.laad, I2)
+    "tests/beeld/piek.py",
 ]
 # Paden die nog niet hoeven te bestaan. Leeg sinds beeld.tsv er staat (de set van de run op
 # 502f4c3, Keuze 85): elk pad bestaat
