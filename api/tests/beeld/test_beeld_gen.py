@@ -13,6 +13,7 @@ wordt opnieuw gemaakt; hoeveel hoger doet er niet toe):
 
 from __future__ import annotations
 
+import gc
 import sqlite3
 import time
 import uuid
@@ -119,12 +120,9 @@ async def test_gen_bij_wat_het_bestand_raakt(client, admin, mensen, beeld):
 # --- BZ8 -----------------------------------------------------------------------------------------
 
 N = 500
-RONDES = (
-    "met",
-    "zonder",
-    "zonder",
-    "met",
-)  # ABBA: wat de schijf of de cache doet, telt voor allebei
+KEER = 2  # elke kant twee keer een import van N foto's
+BLOK = 25  # foto's per blok; de blokken gaan om de beurt
+VOLGORDE = ("met", "zonder", "zonder", "met")  # ABBA
 
 
 async def _triggers(engine, aan: bool) -> None:
@@ -144,10 +142,30 @@ async def _import(client, headers, parent: str, fotos: list[tuple[str, bytes]]) 
     return time.perf_counter() - begin
 
 
-async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, beeld):
-    """Een import van 500 foto's met en zonder de drie triggers van beeld (om de beurt, ABBA);
-    de beste tijd telt. Met: hooguit 10% trager. De triggers doen het op deze SQLite (met: gen
-    + N, zonder: niets)."""
+@pytest.fixture
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de test loopt, zoals python -m
+    app.serve dat na de start doet (serve.freeze_heap) en zoals frozen_heap in
+    test_media_loadtest en tests_analyse/test_beeld_perf. In de volle suite telt de heap
+    miljoenen objecten van eerdere tests; een volle ronde van de gc daarover kost tot ±0,6 s
+    (gemeten met een spion op gc.callbacks, met 3,3 miljoen objecten) en valt dan in één kant.
+    Wat de uploads zelf aan afval maken, ruimt de gc nog steeds op."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
+async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, beeld, frozen_heap):
+    """Een import van 500 foto's met en zonder de drie triggers van beeld, twee keer per kant,
+    in blokken van 25 om de beurt (ABBA); de som per kant telt. Met: hooguit 10% trager. De
+    triggers doen het op deze SQLite (met: gen + 25 per blok, zonder: niets).
+
+    Blokken van 25 en niet vier rondes van 500: wat de rest van de machine intussen doet (een
+    build, een andere test op dezelfde kernen) duurt seconden en raakt dan beide kanten. Met
+    rondes van 500 (±14 s elk) viel zoiets in één kant: in de volle suite eens 1,101, terwijl
+    deze test alleen 0,95–1,00 gaf; twee processen die alleen tijdens de rondes met de triggers
+    rekenden, gaven 0,79 (de uploads werden er hier sneller van, niet trager)."""
     (eva, eva_id), _ = mensen
     fake, settings = beeld
     engine = get_engine(settings)
@@ -168,24 +186,29 @@ async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, b
         [(f"warm{i}.jpg", nep.photo(kleuren[i % 5], seed=90_000 + i)) for i in range(50)],
     )
     tijden: dict[str, list[float]] = {"met": [], "zonder": []}
+    aan = True
     try:
-        for ronde, naam in enumerate(RONDES):
+        for blok in range(2 * KEER * N // BLOK):
+            naam = VOLGORDE[blok % len(VOLGORDE)]
             fotos = [
-                (f"r{ronde}-{i}.jpg", nep.photo(kleuren[i % 5], seed=ronde * N + i))
-                for i in range(N)
+                (f"b{blok}-{i}.jpg", nep.photo(kleuren[i % 5], seed=blok * BLOK + i))
+                for i in range(BLOK)
             ]
-            await _triggers(engine, naam == "met")
+            if aan != (naam == "met"):
+                aan = naam == "met"
+                await _triggers(engine, aan)
             voor = await _gen(settings, eva_id)
             tijden[naam].append(await _import(client, eva, parent, fotos))
             na = await _gen(settings, eva_id)
-            assert na - voor == (N if naam == "met" else 0), (naam, voor, na)
+            assert na - voor == (BLOK if aan else 0), (naam, blok, voor, na)
     finally:
         await _triggers(engine, True)
-    beste_met, beste_zonder = min(tijden["met"]), min(tijden["zonder"])
-    verhouding = beste_met / beste_zonder
+    assert len(tijden["met"]) == len(tijden["zonder"]) == KEER * N // BLOK
+    met, zonder = sum(tijden["met"]), sum(tijden["zonder"])
+    verhouding = met / zonder
     print(
-        f"BZ8 sqlite {sqlite3.sqlite_version}: import van {N} foto's met de triggers "
-        f"{beste_met * 1000:.0f} ms, zonder {beste_zonder * 1000:.0f} ms, "
+        f"BZ8 sqlite {sqlite3.sqlite_version}: {KEER} x {N} foto's per kant in blokken van "
+        f"{BLOK}, met de triggers {met * 1000:.0f} ms, zonder {zonder * 1000:.0f} ms, "
         f"verhouding {verhouding:.3f}"
     )
     assert verhouding <= 1.10, tijden
