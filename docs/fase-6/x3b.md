@@ -25,6 +25,11 @@ waar, geen `ANALYSE`-regel) meldt de app niets van beeld aan: geen stap `embed`,
 rij `analyse`, geen bestand onder `DATA_ROOT`, geen nieuwe regel in `.env`. Elke route van beeld
 geeft `501 not_built` zoals in 0.8.0, een vraag zonder `mode` geeft wat hij in 0.8.0 gaf, en de
 web toont wat 0.8.0 toonde. Zie "Met de analyse uit" hieronder voor de tests die dat bewijzen.
+[I2 (0.8.1): de install zet de analyse nu standaard aan; wie `ANALYSE=uit` vroeg, houdt hem uit.
+Zoeken op beeld staat per gebruiker standaard uit (Keuze 85); Vraag 11 blijft open. Met de analyse
+uit zegt 0.8.1 op `/zoeken` en `/beheer` dat het uitstaat, en staat op `/account` de link naar
+`/over`; de rest is zoals hierboven. Zie "Met de analyse uit" en
+[integratie-2.md](integratie-2.md).]
 
 ## Gebouwd
 
@@ -79,6 +84,12 @@ beeld toont, vraagt één keer `GET /photos/beeld` en krijgt `501` (tien minuten
 bestond in 0.8.0 al als stub met hetzelfde antwoord; de server doet er geen werk voor. Zie
 Afwijkingen.
 
+[I2 (0.8.1): met de analyse uit zeggen de stand beeld op `/zoeken` en het blok op `/beheer` nu dat
+het op deze server uitstaat (`ANALYSE=uit` in `/opt/platform/.env`) en hoe de beheerder het
+aanzet, in plaats van de zin van 0.8.0 (`bea29ca`). Op `/account` staat "Over dit platform" met de
+link naar `/over` (`6890c2f`). `e2e/test_uit080.py` eist precies die verschillen en verder de
+pagina's van 0.8.0 (`ca8af68`). Het vinkje in Account → Foto's en zijn uitleg bleven gelijk.]
+
 ## De go/no-go van X3
 
 Keuze 73 en K2-12 noemen drie delen; §5 vraagt deel 1 en BZ1. Wat er nu van bewezen is:
@@ -87,7 +98,7 @@ Keuze 73 en K2-12 noemen drie delen; §5 vraagt deel 1 en BZ1. Wat er nu van bew
 |---|---|
 | 1. De kleine vorm rekent als een eigen numpy-versie | gehaald (X3a, opnieuw gemeten in de nacontrole van golf 5) |
 | 2. Twee keer omzetten geeft dezelfde sha256 (BZ2) | gehaald in `beeld-model` op `26c49ca` (x3a.md, CI op 26c49ca) |
-| 3. De kwaliteitspoort (BZ4) | **niet gehaald, niet streng gedaan**: op `26c49ca` niet gerekend (HTTP 429 van Commons). [Nacontrole golf 6: op `669f03c` wel gerekend, op de set uit het voorstel (`voorstel-beeld.tsv`, 120 foto's) en met de omzetter van `VERSIE` 3: twee poorten rood, "slechtste vraag 0/5" (poort ≥ 1) en "meer zoals deze 0,475" (poort ≥ 0,7), in fp32 ook; nagelezen in het log van run 43850620942; x3a.md, "CI op 669f03c".] Streng wordt BZ4 pas in een run van `beeld-model` met de pins in `models.lock` én `api/tests/analyse/sets/beeld.tsv`. De pins van `VERSIE` 3 staan er sinds G6-2 (`c921c66`), ~~`beeld.tsv` niet: die zet de lead, uit het voorstel van een run~~. **Of BZ4 groen is, is het oordeel van CI na de push**, niet van deze tak. [Na golf 6, 2026-11-16: deel 3 is beslist in Keuze 85, door Jonas ("Toch uitbrengen"): zoeken op beeld komt in 0.8.1, per gebruiker standaard uit. Twee poorten werden ondergrenzen: 'bergen' en 'boot' mogen 0/5 geven (en moeten in `beeld_vragen.tsv` blijven), elke andere vraag ≥ 1/5; "meer zoals deze" ≥ 0,40, met 0,7 als doel alleen in de regel. Met die grenzen was BZ4 groen in `beeld-model` op `502f4c3` (run 43870814179), op de set uit het voorstel: nl precisie@5 0,692, slechtste vraag buiten 'bergen' en 'boot' 2/5, meer zoals deze 0,475. Die set staat sinds `d1c29e0` als `beeld.tsv` op deze tak. Streng, met de pins en `beeld.tsv`, blijft het het oordeel van CI na de push.] |
+| 3. De kwaliteitspoort (BZ4) | **niet gehaald, niet streng gedaan**: op `26c49ca` niet gerekend (HTTP 429 van Commons). [Nacontrole golf 6: op `669f03c` wel gerekend, op de set uit het voorstel (`voorstel-beeld.tsv`, 120 foto's) en met de omzetter van `VERSIE` 3: twee poorten rood, "slechtste vraag 0/5" (poort ≥ 1) en "meer zoals deze 0,475" (poort ≥ 0,7), in fp32 ook; nagelezen in het log van run 43850620942; x3a.md, "CI op 669f03c".] Streng wordt BZ4 pas in een run van `beeld-model` met de pins in `models.lock` én `api/tests/analyse/sets/beeld.tsv`. De pins van `VERSIE` 3 staan er sinds G6-2 (`c921c66`), ~~`beeld.tsv` niet: die zet de lead, uit het voorstel van een run~~. **Of BZ4 groen is, is het oordeel van CI na de push**, niet van deze tak. [Na golf 6, 2026-11-16: deel 3 is beslist in Keuze 85, door Jonas ("Toch uitbrengen"): zoeken op beeld komt in 0.8.1, per gebruiker standaard uit. Twee poorten werden ondergrenzen: 'bergen' en 'boot' mogen 0/5 geven (en moeten in `beeld_vragen.tsv` blijven), elke andere vraag ≥ 1/5; "meer zoals deze" ≥ 0,40, met 0,7 als doel alleen in de regel. Met die grenzen was BZ4 groen in `beeld-model` op `502f4c3` (run 43870814179), op de set uit het voorstel: nl precisie@5 0,692, slechtste vraag buiten 'bergen' en 'boot' 2/5, meer zoals deze 0,475. Die set staat sinds `d1c29e0` als `beeld.tsv` op deze tak. Streng, met de pins en `beeld.tsv`, blijft het het oordeel van CI na de push.] [I2: streng groen in `beeld-model` op `dc5dfe5` (run 43888472609), ook de stap "Uitslag", en weer op `e535332` (run 43892193604); zie "CI op dc5dfe5". Deel 3 is gehaald, met de ondergrenzen van Keuze 85.] |
 
 Volgens x3a.md ("De go/no-go na CI") gaat X3b door met BZ4 streng als poort van X3b: een rode
 BZ4 met de pins en de set houdt X3b tegen. Dat is hier niet anders gemaakt. Niets is hier beslist
@@ -95,7 +106,8 @@ of als beslist gemarkeerd. [Na golf 6, 2026-11-16: Jonas besliste deel 3 in Keuz
 ([bouwontwerp.md](bouwontwerp.md), Keuze 85; x3a.md, "Keuze 85"), niet deze tak. BZ4 blijft de
 poort van X3b, nu met de ondergrenzen van Keuze 85: een rode BZ4 met de pins en `beeld.tsv` houdt
 X3b nog steeds tegen. Keuze 85 beantwoordt Vraag 11 (standaard aan of uit) niet; die blijft open,
-net als B49–B70, Vraag 4 en Vraag 8–14.]
+net als B49–B70, Vraag 4 en Vraag 8–14.] [I2: met de pins en `beeld.tsv` was BZ4 groen op
+`dc5dfe5` en op `e535332`; BZ4 houdt X3b niet tegen.]
 
 ## Metingen
 
@@ -124,7 +136,13 @@ meting. BZ6 als geheel (het pad met het echte model, `werk` vol, tijdens de back
 niet gemeten. [Nacontrole golf 6: dit zijn de getallen van `VERSIE` 1. De pins van nu zijn die van
 `VERSIE` 3; in `beeld-model` op `669f03c` 32,4 ms per foto (1.852 per minuut) en een vraag p95
 20,4 ms (log van run 43850620942), op een Xeon 6975P-C met VNNI; x3a.md, "Open na 669f03c", zegt
-wat een tragere runner kan geven.]
+wat een tragere runner kan geven.] [I2: op `dc5dfe5` 34,7 ms per foto, op `e535332` 33,8 ms en
+een vraag p95 22,2 ms, beide op een Xeon 6975P-C met VNNI; op `ffac665`, zonder VNNI, 82,8 ms
+(x3a.md). BZ6 als geheel is M12 in [metingen.md](metingen.md). In de sandbox van I2 haalde het
+pad met een tekstmodel van ware grootte (willekeurige gewichten) de eigen grens van 100 ms bij
+100.000 foto's niet: p95 105,7 ms warm en 113,0 ms na opwarmen; het tekstmodel kost daar ±40 ms
+per vraag op één core (de toelichting van `test_beeld_perf.py`, `e8c4a02`). De optelsom hierboven
+was dus te laag. De poort van het ontwerp voor het geheel is 250 ms.]
 
 ## Afwijkingen
 
@@ -173,6 +191,13 @@ wat een tragere runner kan geven.]
     contract veranderd (de vorm van `AdminSearch` is gelijk), geen test losser. De nieuwe test
     laat het laatste stuk midden in de GET vallen en is zonder de wijziging rood met
     `("like", False, None)`. Niet van X3b, maar het hield de controles van deze stap tegen.
+15. **`MIN_TEKST` en `MIN_FOTO` blijven 0** (I2, `eed4c00`). Het ontwerp zegt dat de app onder een
+    vaste grens niets toont, en dat BZ4 die grenzen vaststelt. BZ4 gaf geen grens die goede van
+    slechte treffers scheidt: de kans van een goede treffer heeft p5 0,0, en de cosinus van "Meer
+    zoals deze" overlapt tussen dezelfde en een andere soort (x3a.md, "CI op 3a9b07d" en "CI op
+    669f03c"). Dus beide 0: elke treffer telt, en "onder de grens toont de app niets" gebeurt
+    nooit. `tests/beeld/test_beeld_drempels.py` houdt beide op 0 en laat zien dat een grens boven
+    0 wel treffers weghaalt. De opmerking "tot dan" in `app/beeld/search.py` is weg.
 
 **Bestanden van anderen die X3b raakte** (alleen hotspots of tests die een exacte lijst
 hebben):
@@ -208,33 +233,48 @@ Geen contract van A0 of Z0b is veranderd (`app/search/types.py`, `web/src/search
 
 ## Open
 
-1. **BZ4 streng**: ~~`beeld.tsv` uit het voorstel van een run van `beeld-model`, door de lead;~~ dan
-   rekent CI de poort. Rood houdt X3b tegen (de go/no-go hierboven). [Na golf 6, 2026-11-16:
+1. ~~**BZ4 streng**: `beeld.tsv` uit het voorstel van een run van `beeld-model`, door de lead; dan
+   rekent CI de poort. Rood houdt X3b tegen (de go/no-go hierboven).~~ [Na golf 6, 2026-11-16:
    `beeld.tsv` staat er sinds `d1c29e0`: de 120 foto's uit het voorstel van de run op `502f4c3`
    (run 43870814179), waarop BZ4 met de ondergrenzen van Keuze 85 groen was. Open is alleen nog
-   het oordeel van CI na de push; zie "Na de nacontrole (golf 6 afronden)".]
-2. **De pins van de uitkomst** in `models.lock` (`beeld.int8.onnx`, `tekst.int8.onnx`,
+   het oordeel van CI na de push; zie "Na de nacontrole (golf 6 afronden)".] [I2: streng groen
+   op `dc5dfe5` (run 43888472609), ook de stap "Uitslag", en weer op `e535332`; zie "CI op
+   dc5dfe5".]
+2. ~~**De pins van de uitkomst** in `models.lock` (`beeld.int8.onnx`, `tekst.int8.onnx`,
    `meta.json`) komen uit de run op `26c49ca`. Op de branch staat sinds `eb3f763` een andere
    int8-omzetting (|q| ≤ 64), dus na de samenvoeging kloppen die drie niet meer; de strenge run
-   zegt het, en de lead vervangt ze dan uit het voorstel. Geen sha256 is hier verzonnen.
+   zegt het, en de lead vervangt ze dan uit het voorstel. Geen sha256 is hier verzonnen.~~
    **Gedaan in de review van golf 6 (G6-2, `c921c66`):** de drie regels van VERSIE 3 (per
-   token) uit de run op `669f03c`; zie De review.
+   token) uit de run op `669f03c`; zie De review. [I2: BZ2 gaf op `dc5dfe5` en `e535332` precies
+   die pins.]
 3. **BZ5** (het geheugen met een groepsronde van 60.000, de cache vol en een herlaadactie) heeft
    de groepsronde van X2b nodig en het echte model: niet gemeten. Na de samenvoeging met X2b, in
-   CI of op de LXC.
+   CI of op de LXC. [I2: `test_geheugen_samen.py` draait nu ook met modellen van de echte vorm
+   (`ANALYSE_GEHEUGEN_MODELLEN` en `ANALYSE_GEHEUGEN_LOCK`, `4c70dbc`): de echte YuNet en SFace en
+   SigLIP 2 op ware grootte met willekeurige gewichten (`siglip_vol.py`, `965a36d`). De poort is
+   dan de som van VmHWM ≤ 2,5 GB en elk kind onder zijn RLIMIT_DATA. Dat is M11 in
+   [metingen.md](metingen.md): ⟦I2: gehaald of niet, uit M11⟧. `memory.peak` van de cgroup
+   blijft voor de LXC.]
 4. **BZ6 als geheel** met het echte model (het pad, `werk` vol, tijdens de backfill van de
    index) en **BZ9** (`beeld-bench` op de LXC van Jonas): niet gedaan. Het runbook zegt hoe.
+   [I2: `test_beeld_perf.py` draait nu ook met modellen van de echte vorm (`BEELD_PERF_MODELLEN`
+   en `BEELD_PERF_LOCK`, `e8c4a02`). Dat is M12 in [metingen.md](metingen.md): ⟦I2: de p95 warm bij 55.000 en 100.000 en na het opwarmen, uit M12, tegen 250 ms⟧. In de sandbox haalde de echte
+   vorm de eigen grens van 100 ms bij 100.000 niet (zie Metingen). En de eerste beeldvraag na de
+   start van de worker valt terug op gewoon zoeken: het laden van de tokenizer en het tekstmodel
+   duurde 1,65 s, de klok is 800 ms. BZ9 blijft voor de LXC.]
 5. **BZ10** (`beeld-kwaliteit --personen` op de LXC): niet gedaan. Boven toeval geldt de regel
    van Keuze 82: dan geeft "Meer zoals deze" niets op een foto met een gevonden gezicht, en gelden
    voor beeld de regels van gezichten. Die regel is niet gebouwd; dat is een beslissing na de
-   meting.
+   meting. [I2: niet gedaan; blijft voor de LXC, na bevestigde personen.]
 6. **`test_beeld_perf.py`** eens rood in negen runs (de eerste vraag na een nieuw bestand bij
    100.000: p95 114,8 ms), in de eerste volle `tests_analyse`, nog vóór `bd10d6c` en `4d2644d`.
    Daarna groen, met p95 tot 90,2 ms: weinig ruimte onder de 100 ms. In CI in de gaten houden; de
-   grens blijft 100 ms.
-7. **`infra/single/README.md`** zegt bij de analyse "vóór 0.8.1 doet de app er nog niets mee:
+   grens blijft 100 ms. [I2: groen in `api-analyse` op `e535332` (330 goed, 16 niet gekozen).]
+7. ~~**`infra/single/README.md`** zegt bij de analyse "vóór 0.8.1 doet de app er nog niets mee:
    alleen de status". Met X2b en X3b op de branch klopt dat niet meer voor wie de analyse nu al
-   aanzet; die zin is van de analyse als geheel (X2), dus voor de samenvoeging of I2.
+   aanzet; die zin is van de analyse als geheel (X2), dus voor de samenvoeging of I2.~~ [I2: de
+   zin is weg; het deel heet nu "Gezichten en zoeken op beeld: de container analyse" en zegt wat
+   0.8.1 doet (`e4c9f42`).]
 8. Niet gedaan en niet van X3b: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Vraag 11 is "uit",
    Vraag 14 is 250 ms, zoals in het ontwerp).
 
@@ -242,6 +282,10 @@ Geen contract van A0 of Z0b is veranderd (`app/search/types.py`, `web/src/search
 
 De regels van X3 in het ontwerp. "In CI" is na de push; "op de LXC" is na de installatie bij
 Jonas.
+
+[I2: alles wat hieronder "in CI" heet, was groen op `e535332` (run 43892193604, alle 19 jobs);
+`beeld-model` met de pins en `beeld.tsv` al op `dc5dfe5`. Nog open: BZ5 en BZ6 als geheel met de
+echte vorm (M11 en M12 in [metingen.md](metingen.md)), en BZ9 en BZ10 op de LXC.]
 
 | Regel | Bewijs | Uitkomst |
 |---|---|---|
@@ -251,12 +295,12 @@ Jonas.
 | De omzetter gelijk aan numpy, twee keer dezelfde sha256 | X3a (`test_beeld_omzetten.py`) | gehaald (x3a.md) |
 | De go/no-go na X3a | x3a.md, "De go/no-go na CI" | deel 1 en 2 gehaald, ~~deel 3 (BZ4) niet; niet beslist~~ [Na golf 6, 2026-11-16: deel 3 beslist in Keuze 85, door Jonas ("Toch uitbrengen"); BZ4 met de ondergrenzen groen op `502f4c3` (run 43870814179), op de set uit het voorstel; streng in CI na de push] |
 | De echte omzetting (BZ2) in `beeld-model`, de sha256's in `models.lock` | `beeld-model` op `26c49ca` en `669f03c`; `0a90be0`, `c921c66`; `test_lock_siglip.py` (9) | gedaan; de pins van de uitkomst zijn sinds G6-2 die van `VERSIE` 3 uit de run op `669f03c`, in de nacontrole regel voor regel tegen het log van die run gelezen; streng (dezelfde sha256 na de push) in CI. [Na golf 6: op `502f4c3` (run 43870814179) gaf BZ2 weer twee keer dezelfde sha256, en het voorstel noemde precies de vijf pins van de uitkomst die sinds `c921c66` in `models.lock` staan; de omzetter en wat hij gebruikt zijn tussen `502f4c3` en deze kop gelijk (`git diff`)] |
-| De opdrachten in de container met nepmodellen; `rank` gelijk aan brute force | `tests_analyse/test_beeld_ops.py` (13), `test_beeld_cache.py` (10; sinds `c1b2939` ook het herladen) | groen in de volle `tests_analyse` van stap 1 en van de nacontrole; in CI (`api-analyse`, nu 329 en 16) |
+| De opdrachten in de container met nepmodellen; `rank` gelijk aan brute force | `tests_analyse/test_beeld_ops.py` (13), `test_beeld_cache.py` (10; sinds `c1b2939` ook het herladen) | groen in de volle `tests_analyse` van stap 1 en van de nacontrole; in CI (`api-analyse`, nu 329 en 16) [I2: 330 en 16 sinds `e535332`, groen] |
 | Zoeken: alleen eigen, levende foto's; elk filter; de terugval; geen vector en geen score; schone logs; `429`; een nieuwe vraag stopt de oude | `test_beeld_search.py`, `test_beeld_access.py`, `test_beeld_never_out.py`, `test_search_logs.py`, `test_beeld_events.py::test_beeld_fallback` | groen in stap 1 (zie Gedraaid); in CI |
 | Uit en wissen: 0 rijen, geen bestand, `forget`; `blob_embed` niet in de reservekopie; de beheerder kan uitzetten | `test_beeld_off.py`, `test_beeld_events.py` (`off`, `on_again`, `wipe`, `admin_off`), `test_backup_gezichten.py` (A0); `e2e/test_zoek_beeld.py` (schakelaar, beheerder) | API: groen in stap 1 en in de volle suite op `4924b30` (Gedraaid); e2e: groen op `4e286b9`. **Tot `9228eb6` niet helemaal**: de lijsten van 60 s in de app bleven staan, en na uit en weer aan of na wissen gaf een vraag nog foto's uit de gewiste vectoren (De nacontrole) |
-| De kwaliteitspoort (BZ4) groen | `test_beeld_kwaliteit.py` in `beeld-model` | **open**: in CI na de push, met `beeld.tsv` (Open 1). [Na golf 6, 2026-11-16: met de ondergrenzen van Keuze 85 groen op `502f4c3` (run 43870814179), op de set uit het voorstel; die set is sinds `d1c29e0` `beeld.tsv`. Streng, met de pins en `beeld.tsv`, blijft het oordeel van CI na de push] |
-| De tijden: p95 ≤ 100 ms zonder tekstmodel; ≤ 250 ms warm met het echte model, ook bij 100.000 en de eerste vraag; ≥ 500 foto's per minuut | `test_beeld_perf.py`; `test_beeld_echt_perf.py` in `beeld-model` | ≤ 100 ms: groen, eens rood in 9 (Metingen, Open 6); ≥ 500 per minuut: 1.508 op `26c49ca` (`VERSIE` 1), 1.852 op `669f03c` (`VERSIE` 3, de pins van nu); een vraag met het echte model p95 20,4 ms op `669f03c`; ≤ 250 ms voor het geheel met het echte model: in CI. [Na golf 6: op `502f4c3` 1.671 per minuut (35,9 ms per foto) en een vraag p95 23,4 ms, op een Xeon 6975P-C met VNNI en AMX] |
-| Het geheugen (BZ5) | `tests_analyse/test_geheugen_samen.py` (De samenvoeging) | met de nepmodellen gehaald (De samenvoeging; opnieuw in de nacontrole); met de echte modellen en `memory.peak` van de cgroup **open**: in CI of op de LXC (Open 3) |
+| De kwaliteitspoort (BZ4) groen | `test_beeld_kwaliteit.py` in `beeld-model` | **open**: in CI na de push, met `beeld.tsv` (Open 1). [Na golf 6, 2026-11-16: met de ondergrenzen van Keuze 85 groen op `502f4c3` (run 43870814179), op de set uit het voorstel; die set is sinds `d1c29e0` `beeld.tsv`. Streng, met de pins en `beeld.tsv`, blijft het oordeel van CI na de push] [I2: streng groen op `dc5dfe5` en `e535332`] |
+| De tijden: p95 ≤ 100 ms zonder tekstmodel; ≤ 250 ms warm met het echte model, ook bij 100.000 en de eerste vraag; ≥ 500 foto's per minuut | `test_beeld_perf.py`; `test_beeld_echt_perf.py` in `beeld-model` | ≤ 100 ms: groen, eens rood in 9 (Metingen, Open 6); ≥ 500 per minuut: 1.508 op `26c49ca` (`VERSIE` 1), 1.852 op `669f03c` (`VERSIE` 3, de pins van nu); een vraag met het echte model p95 20,4 ms op `669f03c`; ≤ 250 ms voor het geheel met het echte model: in CI. [Na golf 6: op `502f4c3` 1.671 per minuut (35,9 ms per foto) en een vraag p95 23,4 ms, op een Xeon 6975P-C met VNNI en AMX] [I2: op `e535332` 33,8 ms per foto en een vraag p95 22,2 ms; het geheel met de echte vorm is M12 (Open 4)] |
+| Het geheugen (BZ5) | `tests_analyse/test_geheugen_samen.py` (De samenvoeging) | met de nepmodellen gehaald (De samenvoeging; opnieuw in de nacontrole); met de echte modellen en `memory.peak` van de cgroup **open**: in CI of op de LXC (Open 3) [I2: met de echte vorm is het M11 (Open 3); `memory.peak` op de LXC] |
 | BZ10 gemeten | `beeld-kwaliteit --personen` | **op de LXC**, niet gedaan (Open 5) |
 | `test_install_beeld.sh` groen in `infra`; `BEELD=uit` werkt; een mislukking is niet fataal | `test_install_beeld.sh` | 120 controles groen hier (stap 1). **Van `c921c66` tot `a453869` rood** (1 van 120: de ruimte rekende nog met de uitkomst van `VERSIE` 1); sinds `a453869` weer 120 groen (De nacontrole); in CI |
 | De web: vitest en e2e met alleen het toetsenbord groen; de eerste lading +0 B; het raster ≤ 15 kB; `toetsenbord-x3.md` | `beeld.test.ts` (45), `e2e/test_zoek_beeld.py` (8), `npm run budget` | groen op `4e286b9` (Gedraaid); +0 B ruw, 10.883 B en 2.558 B (Metingen); de vinkjes in `toetsenbord-x3.md` |
@@ -268,11 +312,11 @@ Jonas.
 | # | Waar | Uitkomst |
 |---|---|---|
 | BZ1 | `beeld-model` op `26c49ca` | huggingface.co, commons.wikimedia.org en upload.wikimedia.org bereikbaar; images-assets.nasa.gov 403 (x3a.md) |
-| BZ2 | idem, en op `669f03c` | twee omzettingen gelijk, maxrss 354 MiB (grens 1.536); op `669f03c` (`VERSIE` 3) weer gelijk, maxrss 352 MiB; die pins in `models.lock` sinds G6-2 (`c921c66`). [Na golf 6: op `502f4c3` (run 43870814179) weer gelijk (8,9 en 8,5 s, maxrss 354 MiB; met `--fp32` 16,5 s, 1.608 MiB), en precies die vijf pins] |
+| BZ2 | idem, en op `669f03c` | twee omzettingen gelijk, maxrss 354 MiB (grens 1.536); op `669f03c` (`VERSIE` 3) weer gelijk, maxrss 352 MiB; die pins in `models.lock` sinds G6-2 (`c921c66`). [Na golf 6: op `502f4c3` (run 43870814179) weer gelijk (8,9 en 8,5 s, maxrss 354 MiB; met `--fp32` 16,5 s, 1.608 MiB), en precies die vijf pins] [I2: op `dc5dfe5` en `e535332` weer precies die pins] |
 | BZ3 | idem | 0 verschillen op 2.000 zinnen; de lijst had 8 rijen met U+E000/U+E001 (hersteld in `e92b1c1`); in CI |
-| BZ4 | `beeld-model` | **open**: op `669f03c` met de set uit het voorstel twee poorten rood (slechtste vraag 0/5, meer zoals deze 0,475; fp32 ook); streng in CI, met `beeld.tsv`. [Na golf 6, 2026-11-16: sinds Keuze 85 zijn die twee poorten ondergrenzen. Op `502f4c3` (run 43870814179) was BZ4 daarmee groen, op de set uit het voorstel: nl precisie@5 0,692 (fp32 0,692), slechtste vraag buiten de bekend zwakke 2/5 ('bergen' 0/5, 'boot' 0/5), combinaties 6/6 (plekken 4, 1, 2, 3, 1, 6), int8 zakt 0,000, meer zoals deze 0,475 (fp32 0,463), kleuren 3/3; pytest `bz4` 6 en `bz4r` 5 goed. `beeld.tsv` is die set (`d1c29e0`); streng in CI na de push] |
-| BZ5 | `tests_analyse/test_geheugen_samen.py` | met de nepmodellen gehaald (De samenvoeging); met de echte modellen en de cgroup **open**: in CI of op de LXC |
-| BZ6 | `beeld-model` (het model), `test_beeld_perf.py` (het pad) | het model: op `26c49ca` (`VERSIE` 1) 1.508 foto's per minuut, een vraag p95 35,5 ms; op `669f03c` (`VERSIE` 3) 1.852 per minuut, p95 20,4 ms; het pad zonder tekstmodel ≤ 100 ms hier; het geheel: in CI of op de LXC. [Na golf 6: op `502f4c3` 1.671 per minuut (35,9 ms per foto), een vraag p95 23,4 ms, op een Xeon 6975P-C met VNNI en AMX] |
+| BZ4 | `beeld-model` | **open**: op `669f03c` met de set uit het voorstel twee poorten rood (slechtste vraag 0/5, meer zoals deze 0,475; fp32 ook); streng in CI, met `beeld.tsv`. [Na golf 6, 2026-11-16: sinds Keuze 85 zijn die twee poorten ondergrenzen. Op `502f4c3` (run 43870814179) was BZ4 daarmee groen, op de set uit het voorstel: nl precisie@5 0,692 (fp32 0,692), slechtste vraag buiten de bekend zwakke 2/5 ('bergen' 0/5, 'boot' 0/5), combinaties 6/6 (plekken 4, 1, 2, 3, 1, 6), int8 zakt 0,000, meer zoals deze 0,475 (fp32 0,463), kleuren 3/3; pytest `bz4` 6 en `bz4r` 5 goed. `beeld.tsv` is die set (`d1c29e0`); streng in CI na de push] [I2: streng groen op `dc5dfe5` (run 43888472609), op de 120 foto's van `beeld.tsv`, met dezelfde getallen; ook de stap "Uitslag"] |
+| BZ5 | `tests_analyse/test_geheugen_samen.py` | met de nepmodellen gehaald (De samenvoeging); met de echte modellen en de cgroup **open**: in CI of op de LXC [I2: met de echte vorm M11 (Open 3); de cgroup op de LXC] |
+| BZ6 | `beeld-model` (het model), `test_beeld_perf.py` (het pad) | het model: op `26c49ca` (`VERSIE` 1) 1.508 foto's per minuut, een vraag p95 35,5 ms; op `669f03c` (`VERSIE` 3) 1.852 per minuut, p95 20,4 ms; het pad zonder tekstmodel ≤ 100 ms hier; het geheel: in CI of op de LXC. [Na golf 6: op `502f4c3` 1.671 per minuut (35,9 ms per foto), een vraag p95 23,4 ms, op een Xeon 6975P-C met VNNI en AMX] [I2: op `dc5dfe5` 34,7 ms per foto; op `e535332` 33,8 ms en een vraag p95 22,2 ms; het geheel is M12 (Open 4)] |
 | BZ7 | `beeld-model` op `26c49ca` | 0,135 s, 0,0 MB erbij |
 | BZ8 | `test_beeld_gen.py::test_bz8_…` (de kosten); `test_triggers_beeld.py` van A0 (de werking, ook op 3.46.1 in de stap "triggers" van `zoek-perf`) | 1,011 en 0,993 (grens 1,10) hier; in CI |
 | BZ9 | `beeld-bench` | **op de LXC**, niet gedaan |
@@ -510,12 +554,15 @@ de herhaling van alleen die tests.
   `install.sh` (`BEELD`); `test_install_analyse.sh` en `test_install_beeld.sh` gaan terug naar
   0.8.0 en weer vooruit, en waren hier groen (128 en 120 controles). De job `infra` draait
   `--stappen` na de push; `test_install_update.sh` staat niet in CI (x2a.md, Open 8).
-- **Andere metingen van het geheugen met `ru_maxrss`** nemen ook de piek van pytest mee, en zijn
+- ~~**Andere metingen van het geheugen met `ru_maxrss`** nemen ook de piek van pytest mee, en zijn
   dan te ruim of zeggen niets: `_MEET_RSS` in `tests/beeld/test_tokenizer.py` en
   `tests_analyse/test_beeld_tokenizer_echt.py` (`na - voor` binnen pytest),
   `test_beeld_omzetten.py` (`wait4` van een kind) en `test_beeld_echt_perf.py` (`RUSAGE_SELF`
   van pytest). Niet veranderd: ze waren groen en zijn van X3a en X3b; dezelfde aanpak als
-  `c2be5fc` (`VmHWM` in het kind) past ook daar.
+  `c2be5fc` (`VmHWM` in het kind) past ook daar.~~ [I2: `test_beeld_omzetten.py` sinds
+  `e535332` (`bouw.maxrss_mib()` meldt VmHWM); `_MEET_RSS` en BZ7 meten in het kind met
+  `tests/beeld/piek.py`, en het rapport van BZ6 zegt wat het meet (`d15499b`). Elk met een test
+  die met de oude meting rood is; de grenzen bleven.]
 
 ## De review (golf 6)
 
@@ -746,7 +793,8 @@ waren er al; geen voorstel`): BZ2 twee keer dezelfde sha256 en precies de pins v
 fp32 0,692; slechtste vraag buiten 'bergen' en 'boot' 2/5; combinaties 6/6; int8 zakt 0,000;
 meer zoals deze 0,475; kleuren 3/3), BZ6 34,7 ms per foto op een Xeon 6975P-C met VNNI. Ook
 groen: `web`, `api-media`, `https`, `ocr`, `media-image`, `infra`, `office`, `e2e-media` en de
-twee rapporten. Rood waren drie tests die alleen in CI draaien; geen ervan was een fout in de
+twee rapporten. [I2: ook groen waren `api`, `zoek-perf`, `e2e` en de drie jobs "Images bouwen";
+die ontbraken in dit lijstje. Alleen `analyse-image` en `api-analyse` waren rood.] Rood waren drie tests die alleen in CI draaien; geen ervan was een fout in de
 app:
 
 | Job | Wat | Oorzaak | Herstel |
@@ -761,15 +809,38 @@ shellcheck op `test_analyse_container.sh`, ruff.
 
 ### Open na golf 6
 
-- **Alleen in CI, na de push:** `beeld-model` streng: BZ2 met dezelfde sha256 als de pins, BZ4
+- ~~**Alleen in CI, na de push:** `beeld-model` streng: BZ2 met dezelfde sha256 als de pins, BZ4
   op de foto's van `beeld.tsv` (geen voorstel meer uit Commons) met de ondergrenzen van Keuze 85,
   en de stap "Uitslag (rood zolang models.lock of beeld.tsv een voorstel is)", de enige rode stap
   op `502f4c3`. `api-analyse` exact 329 en 16. De rest zoals in "Open na de nacontrole": `api`
   (met `tests/uit080` en de tests van `d1c29e0`), `web` (`beeld.test.ts` van `5e24f80`),
   `zoek-perf`, `e2e` (met `test_uit080.py`, `test_zoek_beeld.py` met de nieuwe uitleg, en
   Playwright 1.65.2), `e2e-media` (de reparatie van m6 uit `b65eeb1`), `infra` (met
-  `test_install_beeld.sh` en `--stappen`) en `analyse-image` (G6-1, `test_zoek_gezichten_echt.py`).
+  `test_install_beeld.sh` en `--stappen`) en `analyse-image` (G6-1, `test_zoek_gezichten_echt.py`).~~
+  [I2: `beeld-model` streng groen op `dc5dfe5`; alle 19 jobs groen op `e535332`, `api-analyse`
+  330 en 16. Zie "CI op e535332" hieronder.]
 - **BZ5 met de echte modellen** en `memory.peak` van de cgroup: CI (`analyse-image`) of de LXC.
+  [I2: met de echte vorm M11 (Open 3).]
 - **`test_install_search.sh --stappen` en `test_install_update.sh`**: niet gedraaid (de schijf);
-  `test_install_update.sh` staat niet in CI (x2a.md, Open 8).
+  `test_install_update.sh` staat niet in CI (x2a.md, Open 8). [I2: `--stappen` draait in de job
+  `infra` en was groen op `e535332`. `test_install_update.sh` is ook in I2 niet gedraaid
+  ([integratie-2.md](integratie-2.md), "Niet gedaan in I2, met de reden").]
 - **BZ9 en BZ10** op de LXC (Open 4 en 5).
+
+### CI op e535332 (I2)
+
+Run 43892193604: alle 19 jobs groen. `api-analyse` precies 330 goed en 16 niet gekozen (de
+nieuwe test van het herstel telt mee), en `analyse-image` groen. `beeld-model` gaf dezelfde pins, BZ4
+weer groen met de ondergrenzen van Keuze 85, BZ6 33,8 ms per foto en een vraag p95 22,2 ms, op een
+Xeon 6975P-C met VNNI.
+
+### Wat open blijft na I2
+
+- **BZ5 en BZ6 als geheel met de echte vorm**: M11 en M12 in [metingen.md](metingen.md) (Open 3
+  en 4). Met de echte gewichten zegt pas de LXC het.
+- **De eerste beeldvraag na de start van de worker** valt terug op gewoon zoeken: het laden van de
+  tokenizer en het tekstmodel duurde in de sandbox 1,65 s, de klok is 800 ms (Open 4). De vraag
+  daarna is wel zoeken op beeld. Niet veranderd in I2.
+- **BZ9 en BZ10** op de LXC (Open 4 en 5).
+- **`memory.peak` van de cgroup** op de LXC.
+- Niet van X3b en niet beslist: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Open 8).
