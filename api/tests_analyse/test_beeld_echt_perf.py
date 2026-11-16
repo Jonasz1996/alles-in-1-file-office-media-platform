@@ -11,15 +11,16 @@ backfill, de hele GET /search), hoort bij X3b; dit is het model zelf:
   Poort: ≥ 500 (Vraag 14, §4.5);
 - **één vraag in woorden**: tokenizer.bin plus het tekstmodel in int8, één vraag per keer, 200
   keer warm. p95 ≤ 250 ms is een voorwaarde voor de poort van GET /search?mode=image (BZ6), niet
-  die poort zelf. De eerste vraag (sessie maken plus de eerste run) en maxrss staan in het
-  rapport.
+  die poort zelf. De eerste vraag (sessie maken plus de eerste run) en de piek van het geheugen
+  staan in het rapport: VmHWM van dit pytest-proces, met beeld- en tekstmodel samen en de foto's
+  (niet ru_maxrss, dat bij exec de piek van de ouder erft; bouw.maxrss_mib()). Geen grens: het
+  geheugen van de kinderen meet test_geheugen_samen.py.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import resource
 import statistics
 import tempfile
 import time
@@ -31,6 +32,7 @@ import pytest
 from app import render
 from app.analyse.tokenizer import Tokenizer
 from app.analyse.worker import omzetten
+from app.analyse.worker.omzetten import bouw
 from tests_analyse.beeld_echt import (
     BATCH,
     Verslag,
@@ -108,7 +110,7 @@ def test_bz6_fotos_per_minuut_en_een_vraag():
     ms = [vraag(teksten[i % len(teksten)]) for i in range(HERHAAL)]
     p50 = statistics.median(ms)
     p95 = float(np.percentile(ms, 95))
-    maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    piek = bouw.maxrss_mib()  # VmHWM van dit proces: beeld en tekst samen, geen kind
 
     verslag.zet(
         "beeld",
@@ -130,7 +132,7 @@ def test_bz6_fotos_per_minuut_en_een_vraag():
             "keer": HERHAAL,
         },
     )
-    verslag.zet("maxrss_mib", round(maxrss, 1))
+    verslag.zet("vmhwm_testproces_mib", round(piek, 1))
     c = cpu()
     verslag.zet("cpu", c)
     verslag.kort(
@@ -141,8 +143,8 @@ def test_bz6_fotos_per_minuut_en_een_vraag():
     )
     verslag.kort(
         f"BZ6 vraag (tokenizer + tekst int8): p50 {p50:.1f} ms, p95 {p95:.1f} ms (voorwaarde ≤ "
-        f"{VRAAG_P95_MS} ms), eerste {eerste:.1f} ms, met laden {eerste_totaal:.0f} ms; maxrss "
-        f"{maxrss:.0f} MiB — {'goed' if p95 <= VRAAG_P95_MS else 'FOUT'}"
+        f"{VRAAG_P95_MS} ms), eerste {eerste:.1f} ms, met laden {eerste_totaal:.0f} ms; VmHWM "
+        f"testproces (beeld en tekst) {piek:.0f} MiB — {'goed' if p95 <= VRAAG_P95_MS else 'FOUT'}"
     )
     assert per_minuut >= PER_MINUUT, tijden
     assert p95 <= VRAAG_P95_MS, (p50, p95)

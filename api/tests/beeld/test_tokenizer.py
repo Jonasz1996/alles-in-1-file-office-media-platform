@@ -15,16 +15,14 @@ import hashlib
 import json
 import random
 import struct
-import subprocess
-import sys
 import time
 from array import array
-from pathlib import Path
 
 import pytest
 
 from app.analyse import tokenizer as tok
 from app.analyse.tokenizer import GEEN, LENGTE, MAX_CHARS, Tokenizer, TokenizerFout
+from tests.beeld import piek
 
 # Merges op rang (0 eerst). (y, z) staat vóór (x, y): "xyz" wordt x | yz.
 MERGES = [
@@ -642,22 +640,10 @@ def groot_bin() -> bytes:
     return t.to_bin()
 
 
-_MEET_RSS = """
-import resource, sys
-sys.path.insert(0, sys.argv[1])
-from app.analyse.tokenizer import Tokenizer
-voor = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-t = Tokenizer.load(sys.argv[2])
-na = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-assert len(t.encode("hond op het strand")) == 64
-print(na - voor)
-"""
-
-
 def test_bz7_laden_onder_een_halve_seconde_en_100_mb(groot_bin, tmp_path):
     """BZ7 (Keuze 74): tokenizer.bin laden ≤ 0,5 s en ≤ 100 MB (de JSON kost 1,35 s en 245 MB).
-    De tijd is de snelste van drie keer; het geheugen de groei van maxrss in een vers proces,
-    van vóór het lezen van het bestand tot na het laden."""
+    De tijd is de snelste van drie keer; het geheugen wat het laden erbij doet in een vers proces:
+    VmHWM na het laden min VmRSS ervoor (piek.py; niet ru_maxrss, dat de piek van pytest erft)."""
     assert len(groot_bin) > 10_000_000
     tijden = []
     for _ in range(3):
@@ -671,13 +657,25 @@ def test_bz7_laden_onder_een_halve_seconde_en_100_mb(groot_bin, tmp_path):
 
     pad = tmp_path / "tokenizer.bin"
     pad.write_bytes(groot_bin)
-    api = str(Path(__file__).resolve().parents[2])
-    uit = subprocess.run(
-        [sys.executable, "-I", "-c", _MEET_RSS, api, str(pad)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=True,
-    )
-    groei_kib = int(uit.stdout.strip())
-    assert groei_kib <= 100 * 1024, groei_kib
+    meting = piek.laad(pad)
+    assert meting["ids"] == LENGTE, meting
+    assert meting["erbij"] <= 100 * 1024 * 1024, meting
+
+
+def test_bz7_meet_het_kind_ook_als_pytest_meer_vasthoudt(groot_bin, tmp_path):
+    """Houdt pytest 256 MB vast, dan meet BZ7 toch wat het laden in het kind kost. Met de oude
+    meting (ru_maxrss na min ervoor) erft het kind de piek van pytest, is "erbij" 0 en zegt de
+    poort van 100 MB niets. Laden leest het bestand en maakt er arrays van: minstens één keer de
+    grootte van het bestand erbij."""
+    pad = tmp_path / "tokenizer.bin"
+    pad.write_bytes(groot_bin)
+    vast = bytearray(256 * 1024 * 1024)
+    try:
+        for i in range(0, len(vast), 4096):  # elke pagina echt in het geheugen
+            vast[i] = 1
+        meting = piek.laad(pad)
+    finally:
+        del vast
+    assert meting["ids"] == LENGTE, meting
+    assert meting["erbij"] >= len(groot_bin), meting
+    assert meting["vmhwm"] < 200 * 1024 * 1024, meting
