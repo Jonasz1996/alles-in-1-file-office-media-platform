@@ -17,6 +17,13 @@ rekent (cosinus ≥ 0,99 met de numpy-versie), en elke optie doet wat ze belooft
 - meet: de invoer van elke Linear en de residu na elke laag als uitvoer, zonder de gewone
   uitvoer te veranderen.
 
+Elke variant die rekent houdt |q| ≤ 64 (LINEAR): dan past een paar van uint8 maal int8 in int16 en
+rekent onnxruntime op elke CPU hetzelfde, met of zonder VNNI (test_onnxw_ort.py). Met 127 rekent
+per tensor alleen met VNNI goed: CI op 669f03c gaf op een runner zonder VNNI cosinus 0,973 (beeld)
+en 0,989 (tekst), zoals 7569d48. Daarom is die variant per tensor + q_max 32; 127 komt alleen nog
+in een graaf die niet rekent (test_q_max_gaat_door_naar_per_kolom, de bouw in
+test_per_token_met_een_gewicht_boven_64_is_een_fout).
+
 Met één neuron × 100 (E6 van de analyse) eist de test alleen wat zeker is (per token los van de
 batch, fp32 blijft fp32); de cosinussen staan in de uitvoer (pytest -s): per token helpt daar
 niet, het is een uitschieter per kanaal. Dan de rooktest van het rapport zelf
@@ -60,6 +67,7 @@ from tests_analyse.test_beeld_int8_lagen import (
 from tests_analyse.test_beeld_kwaliteit import _rapport_int8
 from tests_analyse.test_beeld_omzetten import (
     COS,
+    LINEAR,
     TEKSTEN,
     TOL,
     _cos,
@@ -163,7 +171,8 @@ VARIANTEN = {
     "kop fp32": {"fp32_als": lambda x: ".head" in x},
     "glad": {"glad": GLAD},
     "per tensor + glad": {"per_token": False, "glad": GLAD},
-    "per tensor + q_max 127": {"per_token": False, "q_max": 127},
+    # niet 127: dat rekent per tensor alleen met VNNI goed (CI op 669f03c, zie boven)
+    "per tensor + q_max 32": {"per_token": False, "q_max": 32},
     "q_max 32": {"q_max": 32},
     "meet": {"meet": MEET},
     "embedding fp32": {"embedding_fp32": True},  # alleen de tekst heeft een embedding
@@ -178,7 +187,9 @@ GEVALLEN = [
 
 @pytest.mark.parametrize(("toren", "naam"), GEVALLEN)
 def test_elke_variant_bouwt_en_rekent(km, toren, naam):
+    """Bouwt, rekent en ligt binnen COS van numpy, op elke CPU: geen variant boven |q| 64."""
     opties = dict(VARIANTEN[naam])
+    assert opties.get("q_max", LINEAR) <= LINEAR, naam
     if opties.get("glad") == GLAD:
         opties["glad"] = _glad_geijkt(km, toren)
     if opties.get("meet") == MEET:
