@@ -119,7 +119,7 @@ echte SigLIP 2) en, voor gezichten, uit `analyse-kwaliteit` op de LXC.
 | Een vaste zin rond de vraag voor 'bergen' en 'boot', en SmoothQuant | onderzoek; Keuze 85 laat de twee zwakke woorden toe | [x3a.md](x3a.md) |
 | Kleine punten uit A0 en X3b (een nieuw mime-type verhoogt `gen` niet, de uv-cache in het image, een WAL-checkpoint per start, PostgreSQL voor 0011 en 0012 met de hand, `ImageHint` en de datum in het raster van beeld) | klein; geen pakket van I2 had ze | [a0.md](a0.md) en [x3b.md](x3b.md), Open |
 | `test_analyse_kinderen.py` naar `analyse-image` | later | [x2a.md](x2a.md), Open |
-| Opnieuw nagaan: de ids van Wikidata en de miniaturen voor `beeld.tsv` | `beeld.tsv` staat vast sinds `dc5dfe5` en BZ4 is groen | [x3a.md](x3a.md) |
+| Opnieuw nagaan: de ids van Wikidata en de miniaturen voor `beeld.tsv` | `beeld.tsv` staat vast sinds golf 6 (`d1c29e0`) en BZ4 is groen op `dc5dfe5` | [x3a.md](x3a.md) |
 
 ## Standaarden die Jonas kan veranderen
 
