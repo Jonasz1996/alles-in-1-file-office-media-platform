@@ -858,8 +858,11 @@ def analyse_overleefd(worker: dict[str, Any] | None) -> tuple[bool | None, str]:
 
 
 def _lees(data_dir: Path, sql: str, *args: Any) -> list[tuple[Any, ...]]:
-    """Alleen lezen, naast de draaiende server; [] zolang de tabel er niet is."""
-    con = sqlite3.connect(f"file:{data_dir / 'platform.db'}?mode=ro", uri=True, timeout=10)
+    """Alleen lezen, naast de draaiende server; [] zolang de database of de tabel er niet is."""
+    try:
+        con = sqlite3.connect(f"file:{data_dir / 'platform.db'}?mode=ro", uri=True, timeout=10)
+    except sqlite3.OperationalError:
+        return []
     try:
         return con.execute(sql, args).fetchall()
     except sqlite3.OperationalError:
@@ -1253,17 +1256,7 @@ def stap(
     fotos_na = foto_stand(server) if opzet.fotos else None
     ana = None
     if opzet.analyse is not None:
-        vragen: list[dict[str, Any]] = []
-        if opzet.vragen is not None:
-            opzet.vragen.fase = None
-            # een vraag die nog liep toen de fase eraf ging, telt niet mee
-            vragen = [v for v in opzet.vragen.vragen[n_vragen:] if v.get("fase") == naam]
-        ana = {
-            "voortgang": {"voor": ana_voor, "na_media": ana_na_media,
-                          "na": analyse_voortgang(server.data_dir)},
-            "beeld": beeld_samenvatting(vragen),
-            "worker": opzet.wachter.stand() if opzet.wachter is not None else None,
-        }  # fmt: skip
+        ana = analyse_van_stap(opzet, naam, n_vragen, ana_voor, ana_na_media)
     fotos = None
     if fotos_voor is not None:
         fotos = {"voor": fotos_voor, "na_media": fotos_na_media, "na": fotos_na}
@@ -1304,6 +1297,31 @@ def stap(
         uit["analyse"] = ana
     print(f"[{naam}] {json.dumps(uit, ensure_ascii=False)}", flush=True)
     return uit
+
+
+def analyse_van_stap(
+    opzet: Opzet,
+    naam: str,
+    n_vragen: int,
+    voor: dict[str, Any] | None,
+    na_media: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Het einde van een stap met --analyse: de beeldvragen stoppen, en de voortgang, de
+    beeldvragen van deze stap (vanaf n_vragen, met fase naam: een vraag die nog liep toen de fase
+    eraf ging, telt niet) en de stand van de wachter."""
+    vragen: list[dict[str, Any]] = []
+    if opzet.vragen is not None:
+        opzet.vragen.fase = None
+        vragen = [v for v in opzet.vragen.vragen[n_vragen:] if v.get("fase") == naam]
+    return {
+        "voortgang": {
+            "voor": voor,
+            "na_media": na_media,
+            "na": analyse_voortgang(opzet.server.data_dir),
+        },
+        "beeld": beeld_samenvatting(vragen),
+        "worker": opzet.wachter.stand() if opzet.wachter is not None else None,
+    }
 
 
 def oordeel(stap2: dict[str, Any], nul: dict[str, Any]) -> list[tuple[str, bool | None]]:
