@@ -202,8 +202,8 @@ onder het slot).
 | routes bij 60.000 gezichten (poort p95 ≤ 100 ms, de stand ≤ 50 ms) | `tests/people/faces/test_faces_perf.py` (marker `zoek_perf`), N = 100.000, SQLite 3.53.1 | voorstellen 46,5 ms, groepen 35,7 ms, een foto 10,0 ms, de stand 31,7 ms (vóór `d0950f1` was de stand 50,5 ms: rood) |
 | het chunk van gezichten (begroting 12.000 B gzip) | `npm run budget`, rij "faces (X2)" | 11.831 B (de eerste versie was 15,3 kB; zie Afwijkingen 9) |
 | de initiële JS (0 B erbij) | `npm run budget`, rij "eerste lading JS", tegen een build van `625e946` in een eigen worktree | 98.039 → 98.050 B gzip; de ruwe bytes van de shell gelijk (90.787 B), en na het gelijk maken van de hashes in de namen ook de inhoud; de 11 B zijn gzip van andere hashnamen |
-| `e2e/test_zoek_gezichten.py` | onder het slot, `taskset -c 0-2` | zie Gedraaid |
-| de echte scan (`test_zoek_gezichten_echt.py`) | tegen een stand-in van het image (de Dockerfile zonder de web-stap en apt) met de echte modellen | 1 passed in 7,94 s (de eerste run faalde op de volgorde van de modellen in de test; zie Gedraaid) |
+| `e2e/test_zoek_gezichten.py` | onder het slot, `taskset -c 0-2`, met `-m ""` | 2 passed in 63,7 s (de lange test 49,2 s, die zonder de analyse 7,7 s) |
+| de echte scan (`test_zoek_gezichten_echt.py`) | tegen een stand-in van het image (de Dockerfile zonder de web-stap en apt) met de echte modellen | 1 passed in 7,94 s (de eerste run faalde op de namen van de modellen in de test; zie Gedraaid) |
 | de tijd per foto met de echte modellen | `test_models_real.py` van X2a (laag 3) en `analyse-bench` | ongewijzigd t.o.v. X2a; `analyse-bench` op de LXC: het runbook zegt hoe |
 
 ## Afwijkingen
@@ -312,22 +312,22 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 | Tests: `test_group_perf.py` (poort) | 23,5 s, 254 MB, recall 0,986 | gehaald |
 | Tests: `test_faces_quality.py` (laag 4) | niet gebouwd (Vraag 8 nee; Afwijkingen 3) | — |
 | Tests: `web/src/photos/faces/faces.test.ts` | 25 (toetsen, alleen gezien en geselecteerd naar `confirm`, nl en en, de stand) | groen |
-| Tests: `e2e/test_zoek_gezichten.py` | 2 tests | zie Gedraaid |
+| Tests: `e2e/test_zoek_gezichten.py` | 2 tests | groen (los, in `slim.sh` en in de CI-set; zie Gedraaid) |
 | Tests: `e2e/test_zoek_gezichten_echt.py` | 1 test | stand-in groen; `analyse-image` in CI na de push |
 | Tests: `test_faces_perf.py` (`zoek-perf`) | p95 46,5 / 35,7 / 10,0 / 31,7 ms | gehaald lokaal; in CI na de push |
 | Klaar als: `/beheer` toont de juiste stand bij ok, down, models_missing en off | `facesBlock.test.ts::de regel Analyse` (ok, off, elke reden van down, models_missing met de namen); `test_faces_meten.py`; de e2e: "werkt" met de nep-worker, en zonder de analyse het blok van 0.8.0 (Vormen 3) | groen |
 | Klaar als: de lagen 1 en 2 groen (scan, groeperen, keuzes, levensloop, kopieën, versie) | `tests/people/faces/` (94, en 1 perf), `test_worker_group.py` (14) | groen |
-| Klaar als: privacy (`off`, `wipe_bytes`, `no_vector`, `privacy`, `crypto`, `backup`, `test_db_pragmas.py`) | in de volle suite | zie Gedraaid |
+| Klaar als: privacy (`off`, `wipe_bytes`, `no_vector`, `privacy`, `crypto`, `backup`, `test_db_pragmas.py`) | in de volle suite, en `tests/people/faces` als nobody | groen (zie Gedraaid) |
 | Klaar als: poort 60.000 gezichten ≤ 60 s en ≤ 400 MB | `test_group_perf.py` | 23,5 s, 254 MB |
 | Klaar als: de kwaliteit op echte gezichten, de drempels in `drempels.py`; tot dan "niet gemeten" in de README en op `/beheer` | `drempels.py` (0,50, 0,45, voorlopig); README; `facesBlock.test.ts` en de e2e ("niet gemeten") | het deel tot de meting: groen; de meting zelf open (Open 4) |
-| Klaar als: `e2e/test_zoek_gezichten.py` groen en `toetsenbord-x2.md` af | zie Gedraaid; [toetsenbord-x2.md](toetsenbord-x2.md) | zie Gedraaid |
+| Klaar als: `e2e/test_zoek_gezichten.py` groen en `toetsenbord-x2.md` af | de e2e (zie Gedraaid); [toetsenbord-x2.md](toetsenbord-x2.md), met wat niet in een e2e staat | groen; af |
 | Klaar als: `e2e/test_zoek_gezichten_echt.py` groen in `analyse-image` | de stap in `analyse-image` | in CI na de push |
 | Klaar als: `test_faces_perf.py` p95 ≤ 100 ms in `zoek-perf` | de stap in `zoek-perf` | lokaal gehaald; in CI na de push |
 | Klaar als: de initiële JS niet gegroeid, het chunk binnen zijn begroting | `npm run budget` | 11.831 ≤ 12.000 B; de initiële JS gelijk in ruwe bytes |
 | Klaar als: §4.5 met X2 aan | — | integratie (Open 5) |
 | Klaar als: `analyse-bench` op de LXC, of het runbook zegt hoe | [gezichten.md](../runbooks/gezichten.md), "Hoe snel is het op deze CPU" | het runbook zegt hoe |
 | Klaar als: de documenten (README, runbook, x2.md, B57 en B61 en verder) | README "Gezichten in detail", `gezichten.md` (de map met sleutels niet in snapshots), dit bestand, notities bij B57, B61 en B64 | er |
-| Klaar als: `e2e/slim.sh` groen | zie Gedraaid | zie Gedraaid |
+| Klaar als: `e2e/slim.sh` groen | `SLIM_CPUS=0-2 e2e/slim.sh` op `61b9d9b` | groen in 1106 s |
 | Levensloop: upload door een ander of via een link | `test_faces_privacy.py::test_keuze_69_een_upload_van_een_ander` | groen |
 | Levensloop: upload (gezichten aan), `wait` dan `done` | `test_faces_scan.py::test_zonder_1024_wacht_en_daarna_klaar` | groen |
 | Levensloop: kopie door dezelfde eigenaar, door een ander | `test_faces_copy.py` (3) | groen |
@@ -339,4 +339,25 @@ De regels van X2 (en de tests per bestand) die bij X2b horen. Die van X2a staan 
 
 ## Gedraaid
 
-Zie hieronder (ingevuld na de controles aan het eind van stap 2).
+Aan het eind van stap 2, op `61b9d9b` (de web op `b978b08`: daarna veranderde er niets onder
+`web/`). De zware runs elk één keer, onder het slot en met `taskset -c 0-2`.
+
+| Wat | Uitkomst |
+|---|---|
+| `uv run ruff check .` en `ruff format --check` | groen (758 bestanden) |
+| `uv.lock`, `web/package-lock.json`, `pyproject.toml`, `web/package.json` | gelijk aan `625e946` |
+| yamllint (relaxed) op `ci.yml` | alleen regels die te lang zijn, zoals ervoor |
+| web: `typecheck`, `vitest`, `build`, `check:i18n --strict` | groen; 122 bestanden, 1297 tests; 0 meldingen |
+| web: `npm run budget` (direct na de eigen build) | faces 11.831 / 12.000 B, eerste lading JS 98.050 / 100.000 B |
+| `e2e/slim.sh` (python:3.12-slim, SQLite 3.46.1) | groen in 1106 s: zoeken en triggers 1307 passed (845 s), e2e marker `zoek` 103 passed (261 s) |
+| de e2e-set van CI (`-m "not perf and … and not analyse_echt"`) | 240 passed, 136 deselected in 926 s |
+| `e2e/test_zoek_gezichten.py` en `test_zoek_gezichten_echt.py` met `-m ""` | 2 passed, 1 skipped (de echte: geen `E2E_ANALYSE_IMAGE`; die draait in `analyse-image`) in 63,7 s |
+| de volle api-suite (`-p no:randomly`) | 6561 passed, 2 skipped (zoals in stap 1), 241 deselected in 2707 s |
+| `tests_analyse` (`.venv-analyse`) | 229 passed, 11 deselected in 73,8 s |
+| als nobody (`/tmp/ci-nobody`, met `-u SSL_CERT_FILE`): `tests/people/faces`, `test_own_live.py`, `test_api_stubs.py`, `tests/analyse` | 449 passed, 1 deselected in 113 s |
+
+De echte scan tegen de stand-in (bij `7e8f516`): de eerste run faalde in de test zelf, die de
+korte namen van de modellen verwachtte (`sface`, `yunet`); `/admin/search` geeft de bestandsnamen
+van `models.lock` (`face_detection_yunet_2026may.onnx` …). De test leest die namen nu uit
+`models.lock` (`modellen_van_gezichten`); daarna 1 passed in 7,94 s. De stand-in is daarna
+gewist; het image zelf bouwt alleen CI.
