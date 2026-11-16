@@ -92,9 +92,20 @@ seconden tot de stand ok is (install.sh, na de start van de container) en is de 
 0: de regels zeggen wat er is, zoals media-status. Zonder --wait is de exitcode 1 bij down en
 models_missing. Staat de analyse uit, dan raakt hij de socket niet aan.
 
-analyse-bench en analyse-kwaliteit (X2) zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt,
-met exitcode 1. beeld-status, beeld-bench en beeld-kwaliteit (X3) staan in app/beeld/cli.py; met de
-analyse uit doen ze niets (exitcode 1).
+Gezichten meten (X2b, app/people/faces/meten.py; alleen als gezichten draaien, anders doen ze
+niets):
+
+    python -m app.cli analyse-bench [--fotos 200]
+    python -m app.cli analyse-kwaliteit
+
+analyse-bench stuurt gemaakte foto's door de worker en geeft ms per foto, foto's per minuut en
+de geschatte tijd voor wat er wacht; analyse-kwaliteit meet de precisie van de voorstellen tegen
+de eigen ja en nee, en de zuiverheid en recall van de groepen (exitcode 3 als een poort niet
+gehaald is). Allebei: alleen getallen, de uitkomst ook op /beheer; exitcode 1 als er niets
+gemeten is.
+
+beeld-status, beeld-bench en beeld-kwaliteit (X3) staan in app/beeld/cli.py; met de analyse uit
+doen ze niets (exitcode 1).
 """
 
 import argparse
@@ -504,17 +515,26 @@ def _backup(settings: Settings) -> int:
 # is gebouwd (Z3, app/geo/load.py)
 SEARCH_STUBS: dict[str, tuple[str, str]] = {}
 # De commando's van gezichten (X2) en zoeken op beeld (X3), als stub van A0 (§3.5); wie er een
-# bouwt, haalt hem hier weg. analyse-status is gebouwd (A0)
-ANALYSE_STUBS: dict[str, tuple[str, str]] = {
-    "analyse-bench": ("X2", "gezichten op deze CPU meten"),
-    "analyse-kwaliteit": ("X2b", "de kwaliteit van gezichten meten"),
-}
+# bouwt, haalde hem hier weg. analyse-status is gebouwd (A0), analyse-bench en analyse-kwaliteit
+# (X2b, FACES_COMMANDS), beeld-status, beeld-bench en beeld-kwaliteit (X3b, app/beeld/cli.py):
+# er is geen stub meer
+ANALYSE_STUBS: dict[str, tuple[str, str]] = {}
 
 
 def _stub(name: str) -> int:
     package, what = {**SEARCH_STUBS, **ANALYSE_STUBS}[name]
     print(f"{name} ({what}) is nog niet gebouwd ({package}).", file=sys.stderr)
     return 1
+
+
+FACES_COMMANDS = ("analyse-bench", "analyse-kwaliteit")
+
+
+def _faces_measure(settings: Settings, args: argparse.Namespace) -> int:
+    """analyse-bench en analyse-kwaliteit (app/people/faces/meten.py, X2b)."""
+    from app.people.faces import meten
+
+    return meten.run(settings, args.command, getattr(args, "fotos", meten.FOTOS))
 
 
 def _analyse_status(settings: Settings, wait: float) -> int:
@@ -682,6 +702,15 @@ def main(argv: list[str] | None = None) -> int:
     analyse.add_argument(
         "--wait", type=float, default=0.0, help="hooguit zoveel seconden wachten tot hij ok is"
     )
+    faces_bench = commands.add_parser(
+        "analyse-bench", help="gezichten vinden meten op deze CPU, met de uitkomst op /beheer"
+    )
+    faces_bench.add_argument(
+        "--fotos", type=int, default=200, help="zoveel gemaakte foto's (standaard 200)"
+    )
+    commands.add_parser(
+        "analyse-kwaliteit", help="de kwaliteit van de voorstellen meten tegen de eigen ja en nee"
+    )
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
@@ -715,6 +744,8 @@ def main(argv: list[str] | None = None) -> int:
         return _recheck(settings)
     if args.command == "analyse-status":
         return _analyse_status(settings, args.wait)
+    if args.command in FACES_COMMANDS:
+        return _faces_measure(settings, args)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

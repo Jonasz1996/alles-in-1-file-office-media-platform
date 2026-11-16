@@ -390,18 +390,30 @@ async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
 
 @pytest.mark.anyio
 async def test_de_stubs_van_gezichten_en_beeld(settings):
-    """De commando's van X2 staan er als stub (A0, §3.5): ze noemen hun pakket, exitcode 1. Wie
-    er een bouwt, haalt hem uit ANALYSE_STUBS en uit deze lijst. Die van X3 zijn gebouwd
-    (app/beeld/cli.py; tests/beeld/test_beeld_cli.py)."""
-    assert {name: package for name, (package, _) in cli.ANALYSE_STUBS.items()} == {
-        "analyse-bench": "X2",
-        "analyse-kwaliteit": "X2b",
-    }
-    for name, package in (("analyse-kwaliteit", "X2b"),):
+    """Er is geen stub van gezichten en beeld meer (A0 zette ze, §3.5): analyse-bench en
+    analyse-kwaliteit bouwde X2b, beeld-status, beeld-bench en beeld-kwaliteit X3b. Met de
+    analyse uit (zoals 0.8.0) doen ze niets: exitcode 1, één regel op stderr, niets op stdout, en
+    niets in de datamap. Met de analyse aan: tests/people/faces/test_faces_meten.py en
+    tests/beeld/test_beeld_cli.py."""
+    assert cli.ANALYSE_STUBS == {}
+    before = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    for name in ("beeld-status", "beeld-bench", "beeld-kwaliteit"):
         result = await run_cli(settings, name)
         assert result.returncode == 1, result.stderr.decode()
-        assert f"is nog niet gebouwd ({package})" in result.stderr.decode()
+        assert result.stderr.decode() == (
+            "Zoeken op beeld staat uit: de analyse staat uit (ANALYSE).\n"
+        )
         assert result.stdout == b""
+    for name in ("analyse-bench", "analyse-kwaliteit"):
+        result = await run_cli(settings, name)
+        assert result.returncode == 1, result.stderr.decode()
+        assert result.stderr.decode() == (
+            f"{name}: niets gemeten: gezichten staan uit (ANALYSE=uit of geen"
+            " PLATFORM_FACES_KEYS)\n"
+        )
+        assert result.stdout == b""
+    after = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    assert after == before
 
 
 @pytest.mark.anyio

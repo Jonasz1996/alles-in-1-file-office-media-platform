@@ -612,9 +612,10 @@ async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
             "embed_text",
             "faces",
             "forget",
+            "group",
             "rank",
         ]
-        assert found.built(Op.FACES) and not found.built(Op.GROUP)
+        assert found.built(Op.FACES) and found.built(Op.GROUP) and found.built(Op.RANK)
         shown = state.view(found, lock_path=worker.config.lock)
         versions = {m.name: m.sha256[:12] for m in lock.load(worker.config.lock)}
         assert [(m.name, m.version, m.sha_ok) for m in shown.models] == [
@@ -626,7 +627,7 @@ async def test_echt_ok_met_modellen_grenzen_en_opdrachten(tmp_path):
         assert status.lines(found)[0] == "Analyse: ok"
         assert status.lines(found)[-2:] == [
             "  grenzen: 1.5 cpus, 3072 MB geheugen",
-            "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, rank",
+            "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, group, rank",
         ]
 
 
@@ -731,7 +732,7 @@ async def test_echt_analyse_status_als_proces(tmp_path):
         f"  model {YUNET} (versie {VERSIE[YUNET]}): klopt",
         f"  model {SFACE} (versie {VERSIE[SFACE]}): klopt",
         "  grenzen: 1.5 cpus, 3072 MB geheugen",
-        "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, rank",
+        "  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, group, rank",
     ]
     assert worker.config.key not in (result.stdout + result.stderr).decode()
 

@@ -131,10 +131,11 @@ jobs:
       # invoer van SFace in NCHW); van CI op 7569d48: 5 (int8 zonder VNNI: het model van
       # vpmaddubsw 4, geen gewicht van een Linear boven 64 1); van X3b: 13 (test_beeld_ops.py), 9
       # (test_beeld_cache.py), 1 (bezet per kind, zoeken) en 1 (test_beeld_perf.py: p95 bij
-      # 55.000 en 100.000 foto's op één core); gedeselecteerd: de 11 tests van de job
-      # beeld-model. Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies
-      # één keer noemt (-m)
-      ANALYSE_TESTS: "240"
+      # 55.000 en 100.000 foto's op één core); van X2b: 18 (test_worker_group.py 14,
+      # test_group_perf.py 1 en de drie scenario's met group tegen de echte worker in
+      # test_analyse_contract_real.py); gedeselecteerd: de 11 tests van de job beeld-model. Noem
+      # hun marker hier niet: test_beeld_ci.py eist dat deze job hem precies één keer noemt (-m)
+      ANALYSE_TESTS: "258"
       ANALYSE_DESELECTED: "11"
     steps:
       - uses: actions/checkout@v4
@@ -378,6 +379,12 @@ jobs:
           set -o pipefail
           ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
             tests/photos/test_dupes_perf.py | tee "$RUNNER_TEMP/zoek-perf/duplicaten_log.txt"
+      - name: §4.4 gezichten bij 60.000 gezichten (X2b; voorstellen, groepen en een foto ≤ 100 ms, de stand ≤ 50 ms; de poorten zijn hard)
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/people/faces/test_faces_perf.py | tee "$RUNNER_TEMP/zoek-perf/gezichten_log.txt"
       - name: S10 de vormen van Keuze 4a (tools/zoekbench/bench.py --los --vormen)
         if: ${{ !cancelled() }}
         run: |
@@ -421,6 +428,7 @@ jobs:
           if [ -f "$d/fotokaart.txt" ]; then cat "$d/fotokaart.txt"; else echo "§4.4 kaart: liep niet of brak af"; fi
           if [ -f "$d/fotokaart_filters.txt" ]; then cat "$d/fotokaart_filters.txt"; else echo "§4.4 kaart met een filter: liep niet of brak af"; fi
           if [ -f "$d/duplicaten.txt" ]; then cat "$d/duplicaten.txt"; else echo "§4.4 duplicaten: liep niet of brak af"; fi
+          if [ -f "$d/gezichten.txt" ]; then cat "$d/gezichten.txt"; else echo "§4.4 gezichten: liep niet of brak af"; fi
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
           echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
 
@@ -500,11 +508,12 @@ jobs:
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
       # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf. Zoeken (marker
-      # zoek, fase 6) draait hier mee; ocr (echte tesseract) niet: die draait in de job ocr van
-      # §4.6 (X1)
+      # zoek, fase 6) draait hier mee, ook analyse (de nep-worker, X2b); ocr (echte tesseract) niet:
+      # die draait in de job ocr van §4.6 (X1); analyse_echt (de echte container) ook niet: die
+      # draait in de job analyse-image (X2b)
       - run: >-
           uv run --with playwright python -m pytest ../e2e
-          -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
+          -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr and not analyse_echt"
       - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
         run: uv run --with playwright python -m pytest ../e2e -m office
 
@@ -1389,6 +1398,26 @@ jobs:
           ANALYSE_TEST_MODELLEN: ${{ runner.temp }}/analyse-modellen
           ANALYSE_TEST_OUT: ${{ runner.temp }}/analyse-image
         run: bash infra/single/tests/test_analyse_container.sh
+      # X2b: de e2e met de echte scan (marker analyse_echt) tegen hetzelfde image en dezelfde
+      # modellen, in een eigen compose-project. Precies 1 passed; overgeslagen is rood
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        with:
+          python-version: "3.12"
+      - name: De echte scan in de e2e (test_zoek_gezichten_echt.py, X2b)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        working-directory: api
+        env:
+          E2E_ANALYSE_IMAGE: platform:ci
+          E2E_ANALYSE_MODELLEN: ${{ runner.temp }}/analyse-modellen
+        run: |
+          set -o pipefail
+          uit="$RUNNER_TEMP/analyse-image/gezichten-echt.txt"
+          mkdir -p "$RUNNER_TEMP/analyse-image"
+          uv sync --frozen
+          uv run --with playwright python -m pytest ../e2e/test_zoek_gezichten_echt.py \
+            -m analyse_echt -q -rs | tee "$uit"
+          grep -Eq '^1 passed in ' "$uit"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1401,6 +1430,12 @@ jobs:
           echo "=== kort ==="
           echo "X2a de container analyse (test_analyse_container.sh):"
           sed 's/^/  /' "$RUNNER_TEMP/analyse-image/analyse.txt" 2> /dev/null || echo "  liep niet"
+          echo "X2b de echte scan in de e2e (test_zoek_gezichten_echt.py):"
+          if [ -f "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" ]; then
+            tail -n 1 "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
 
   # Fase 6, X3a (Keuze 73, 74, 83; BZ1–BZ4, BZ6 ruw en BZ7): het echte beeldmodel, SigLIP 2
   # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert, of wat de job

@@ -47,9 +47,9 @@ from app.media.worker import guard
 
 log = logging.getLogger("platform.analyse.worker")
 
-# Wat de worker van X2a doet (caps.built); group (X2b) en beeld (X3) komen erbij
+# Wat de worker doet (caps.built): X2a, met group (X2b) en de vier opdrachten van beeld (X3b)
 BUILT: frozenset[Op] = frozenset(
-    {Op.CAPS, Op.CANCEL, Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET}
+    {Op.CAPS, Op.CANCEL, Op.FACES, Op.GROUP, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET}
 )
 SCARCE = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM})
 ACCEPT_PAUSE = 0.1

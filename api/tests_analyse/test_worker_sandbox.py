@@ -121,8 +121,17 @@ def test_de_sleutel_is_weg_en_pid1_blijft_zonder_numpy(tmp_path, modellen):
     assert out["dumpable"] == 0 and out["sandbox"] is False
     assert out["python_ok"] is True
     assert out["faces"] == ["ok"]
-    # X3b: de opdrachten van zoeken op beeld erbij (server.BUILT)
-    assert out["caps"] == ["cancel", "caps", "embed_image", "embed_text", "faces", "forget", "rank"]
+    # golf 6: group (X2b) en de opdrachten van zoeken op beeld (X3b) erbij (server.BUILT)
+    assert out["caps"] == [
+        "cancel",
+        "caps",
+        "embed_image",
+        "embed_text",
+        "faces",
+        "forget",
+        "group",
+        "rank",
+    ]
     assert out["kind"]["ev"] == "klaar" and out["kind"]["dumpable"] == 0
     assert key not in proc.stdout and key not in proc.stderr
 

@@ -1,9 +1,9 @@
 """analyse_contract.py tegen de echte worker (fase 6, X2 "De tests", laag 2; X2a).
 
 Dezelfde scenario's als tegen de nep (tests/analyse/test_fake_analyse_worker.py). De echte worker
-van X2a doet faces, die van X3b ook embed_image, embed_text, rank en forget; een scenario dat
-group vraagt (needs), staat niet in zijn lijst. X2b (group) zet zijn opdracht in GEBOUWD, en de
-lijst groeit vanzelf.
+van X2a doet faces, die van X2b ook group, die van X3b ook embed_image, embed_text, rank en
+forget: elke opdracht van wire.Op is gebouwd, dus elk scenario staat in de lijst (ook
+zoeken_naast_werk, dat group en rank tegelijk vraagt).
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from tests_analyse import echt, fake_beeld, fake_models
 
 pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
 
-GEBOUWD = frozenset({Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET})
+GEBOUWD = frozenset({Op.FACES, Op.GROUP, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET})
 LIJST = [s for s in C.SCENARIOS if C.required(s) <= GEBOUWD]
 
 
 def test_de_lijst_volgt_wat_de_worker_doet():
-    """GEBOUWD is wat de worker van X2a meldt (caps.built zonder caps en cancel); elk scenario
+    """GEBOUWD is wat de worker meldt (caps.built zonder caps en cancel); elk scenario
     zonder needs staat in de lijst, en geen enkel scenario wordt overgeslagen."""
     assert server.BUILT - {Op.CAPS, Op.CANCEL} == GEBOUWD == echt.EchteDriver.has
     assert [s.__name__ for s in LIJST] == [
@@ -38,7 +38,11 @@ def test_de_lijst_volgt_wat_de_worker_doet():
         "verkeerde_deadline",
         "verkeerd_aantal_fds",
         "cancel_onbekend",
+        "bezet_per_kind_werk",
+        "zoeken_naast_werk",
         "bezet_per_kind_zoeken",
+        "dicht_is_afbreken",
+        "deadline_is_timeout",
     ]
 
 

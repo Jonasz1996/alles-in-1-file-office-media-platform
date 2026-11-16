@@ -10,9 +10,9 @@ wat het script doet, de stand, de afscherming, uitzetten, de modellen, de sleute
 0.8.0; het deel over zoeken op beeld (X3) staat onder "Zoeken op beeld (X3)".
 
 **Tot 0.8.1 staat de analyse uit.** Zonder `ANALYSE` in `/opt/platform/.env` doet het script
-precies wat 0.8.0 deed: geen download, geen container, geen nieuwe regel in `.env`. De app doet
-vóór 0.8.1 nog niets met de container behalve zijn stand lezen; aanzetten is dus alleen om te
-proberen.
+precies wat 0.8.0 deed: geen download, geen container, geen nieuwe regel in `.env`. Aanzetten
+vóór 0.8.1 is alleen om te proberen: elke gebruiker ziet dan onder Account de schakelaar voor
+gezichten. Wat gezichten doen en bewaren: [gezichten.md](gezichten.md).
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -74,13 +74,13 @@ Analyse: ok
   model face_detection_yunet_2026may.onnx (versie ebafce4e3c11): klopt
   model face_recognition_sface_2021dec.onnx (versie 0ba9fbfa01b5): klopt
   grenzen: 1 cpus, 3072 MB geheugen
-  opdrachten: cancel, caps, faces
+  opdrachten: cancel, caps, faces, group
 ```
 
 De eerste regel is de stand: `ok`, `off`, `down (<reden>)` of `models_missing (<modellen>)`.
 Daarna, als de worker antwoordt: per model of het klopt (de versie is het begin van de sha256),
-de grenzen die de container zelf ziet, en de opdrachten die de worker kent. Tot X2b en X3 klaar
-zijn, zijn dat er drie; de andere (groeperen, beeld) zeggen `not_built`. De exitcode is 0 bij `ok`
+de grenzen die de container zelf ziet, en de opdrachten die de worker kent. Tot X3 klaar is, zijn
+dat er vier; de opdrachten van beeld zeggen `not_built`. De exitcode is 0 bij `ok`
 en `off`, anders 1 (met `--wait N` altijd 0).
 
 | De eerste regel | Wat het betekent | Wat je doet |
@@ -154,8 +154,8 @@ commando met `ANALYSE=aan`. De sleutel in `.env` blijft dezelfde.
   vanaf X2b per eigenaar de sleutel waarmee de vectoren van gezichten versleuteld zijn. Hij staat
   bewust buiten `/tank`: een snapshot van `/tank/platform` heeft de sleutels dan niet, en "uit"
   bij gezichten (de sleutel weg) werkt ook voor die snapshot. Een snapshot of back-up van de hele
-  container (de rootdisk) heeft ze wel. Wat er in die map staat en hoe je hem wist, beschrijft
-  X2b.
+  container (de rootdisk) heeft ze wel. Wat er in die map staat, hoe je hem wist en hoe je hem
+  ook uit een snapshot van de container houdt: [gezichten.md](gezichten.md).
 
 ## Terug naar 0.8.0
 
@@ -501,8 +501,8 @@ stderr, code 1.
 
 ## Wat er nog niet is
 
-- het vinden van gezichten in de app, de voorstellen, `/beheer` en `app.cli analyse-bench` en
-  `analyse-kwaliteit` (X2b; `analyse-bench` zegt tot dan welk pakket hem bouwt);
+- ~~het vinden van gezichten in de app, de voorstellen, `/beheer` en `app.cli analyse-bench` en
+  `analyse-kwaliteit`~~ [golf 6: gebouwd door X2b, zie [gezichten.md](gezichten.md); uit tot 0.8.1];
 - zoeken op beeld voor gebruikers: het is gebouwd (X3a en X3b, hierboven), maar staat tot 0.8.1
   uit, net als de rest van de analyse. Nog niet gedaan: BZ9 en BZ10 op de LXC van Jonas
   (`beeld-bench` en `beeld-kwaliteit --personen`, hierboven), en de strenge run van `beeld-model`

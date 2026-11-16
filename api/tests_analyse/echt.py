@@ -4,8 +4,9 @@
   `python -I -c BOOT`), maar met --local: geen zelftest, sandbox "off", en de kinderen starten uit
   de python van deze venv (er is geen python-tekst). De sleutel staat alleen in de omgeving; wat
   de worker op stderr zet, komt in een bestand (K1-16 kijkt daarin).
-- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces en de
-  vier opdrachten van beeld; X3b).
+- EchteDriver: de Driver van tests/analyse/analyse_contract.py voor zo'n worker (has: faces en
+  group van X2b, de vier opdrachten van beeld van X3b; de lange opdracht in werk is group over
+  GROEP_N gemaakte gezichten, in zoeken een rank met een traag tekstmodel).
 - binnen(): pid 1 in dit proces, met een eigen BOOT voor de kinderen (proef.py) of andere
   grenzen; voor wat alleen met een naad te testen is.
 """
@@ -33,6 +34,10 @@ from tests.analyse import analyse_contract as C
 from tests_analyse import fake_beeld, fake_models
 
 START_S = 30.0
+# group over zoveel gemaakte gezichten (groep_maak.py) duurt 3,5 s op 3 kernen (X2b): lang
+# genoeg voor busy, cancel, dicht en een deadline van 300 ms; elke stopvlag-check komt per blok
+GROEP_N = 30_000
+VRIJ_S = 10.0
 
 
 def settings_for(base: Path, socket_path: Path, key: str) -> Settings:
@@ -140,33 +145,65 @@ class EchteWorker:
 
 
 class EchteDriver:
-    """De Driver van analyse_contract.py voor de echte worker (faces van X2a, de opdrachten van
-    beeld van X3b; nog geen group). lang(Op.RANK) vraagt de nepmodellen van beeld met slow
-    (fake_beeld.install(..., slow=LANG_RANK)): het tekstmodel loopt dan langer dan een scenario
-    duurt, tot cancel of de verbinding dichtgaat."""
+    """De Driver van analyse_contract.py voor de echte worker: faces (X2a), group (X2b) en de
+    opdrachten van beeld (X3b). lang(Op.GROUP) is group over GROEP_N gemaakte gezichten;
+    lang(Op.RANK) vraagt de nepmodellen van beeld met slow (fake_beeld.install(..., slow=
+    LANG_RANK)): het tekstmodel loopt dan langer dan een scenario duurt, tot cancel of de
+    verbinding dichtgaat."""
 
     name = "echt"
-    has = frozenset({Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET})
+    has = frozenset({Op.FACES, Op.GROUP, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET})
 
     def __init__(self, worker: EchteWorker) -> None:
         self.worker = worker
         self.socket = worker.socket
         self.key = worker.key
         self.models = tuple(m.name for m in lock.load(worker.models.lock))
+        self._groep: bytes | None = None
 
     def settings(self) -> Settings:
         return self.worker.settings()
 
     async def lang(self, op: Op) -> C.Opdracht:
+        """Een opdracht die lang genoeg loopt: in zoeken een rank met het trage tekstmodel; in
+        werk group (mode full) over GROEP_N gemaakte gezichten, verzegeld in een verse memfd per
+        begin."""
         if op is Op.RANK:
             data = fake_beeld.vec_bytes([1, 2], [[1.0] + [0.0] * 767, [0.0, 1.0] + [0.0] * 766], 1)
             args = wire.RankArgs(owner="0" * 32, gen=1, text="lang", k=1)
             return C.Opdracht(Op.RANK, args, lambda: [fake_beeld.vec_fd(data)])
-        # group is van X2b: dat scenario staat nog niet in de lijst
-        raise AssertionError(f"geen lange opdracht voor {op.value}")
+        assert op is Op.GROUP, op
+        if self._groep is None:
+            from tests_analyse.groep_maak import invoer, maak  # numpy: niet in pid 1 of de proef
+
+            self._groep = invoer(maak(GROEP_N)[0], [], 0)
+        data = self._groep
+        return C.Opdracht(
+            Op.GROUP,
+            wire.GroupArgs(mode="full"),
+            lambda: [wire.sealed_memfd("in", data), wire.out_memfd("uit")],
+        )
 
     async def los(self) -> None:
-        return None
+        """Na elk scenario: wacht tot werk en zoeken weer vrij zijn. Een afgebroken group stopt
+        pas bij de volgende check van zijn stopvlag (per blok), een rank met het trage tekstmodel
+        pas na zijn MatMuls; het volgende scenario begint met vrije kinderen, zoals bij de nep na
+        het loslaten van zijn poorten. werk vraagt group over 0 gezichten, zoeken forget: allebei
+        meteen klaar."""
+
+        async def vrij(op: Op) -> bool:
+            try:
+                job = await C.begin(self, C.STANDAARD[op])
+            except client.AnalyseBusy:
+                return False
+            try:
+                await job.result()
+            finally:
+                job.close()
+            return True
+
+        await C.until(lambda: vrij(Op.GROUP), VRIJ_S)
+        await C.until(lambda: vrij(Op.FORGET), VRIJ_S)
 
 
 # --- pid 1 in dit proces --------------------------------------------------------------------

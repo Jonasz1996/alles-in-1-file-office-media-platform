@@ -3,8 +3,8 @@
 pid 1 draait in dit proces (echt.binnen) met de kinderen van proef.py: echte kinderen (dezelfde
 BOOT, grenzen en fd's) die ook WACHT, NEGEER en embed_text kennen. Zo is te zien wat pid 1 doet
 terwijl een opdracht loopt: busy per kind, cancel, de deadline, en een beeldvraag (zoeken) naast
-een lange opdracht van werk. group (X2b) en rank (X3) zijn er nog niet; embed_text van de proef
-staat in voor de beeldvraag.
+een lange opdracht van werk. group (X2b) en de opdrachten van beeld (X3b) zijn er sinds golf 6;
+embed_text van de proef (met WACHT) staat in voor een lange beeldvraag.
 """
 
 from __future__ import annotations
@@ -125,6 +125,7 @@ async def test_een_tweede_opdracht_voor_werk_is_busy_en_pid1_antwoordt_gewoon(pa
             "embed_text",
             "faces",
             "forget",
+            "group",
             "rank",
         ]
     finally:
@@ -206,12 +207,13 @@ def test_built_en_de_handlers_van_de_kinderen_zijn_gelijk():
     for kind in Child:
         verwacht = {op.value for op in server.BUILT if wire.CHILD[op] is kind}
         assert set(kids.handlers(kind)) == verwacht, kind
-    # X2a, en X3b (golf 6): embed_image in werk, embed_text, rank en forget in zoeken
+    # X2a faces; golf 6: group (X2b) en embed_image in werk, embed_text, rank en forget in
+    # zoeken (X3b)
     assert server.BUILT == frozenset(
-        {Op.CAPS, Op.CANCEL, Op.FACES, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET}
+        {Op.CAPS, Op.CANCEL, Op.FACES, Op.GROUP, Op.EMBED_IMAGE, Op.EMBED_TEXT, Op.RANK, Op.FORGET}
     )
     assert {kind: sorted(kids.handlers(kind)) for kind in Child} == {
-        Child.WERK: ["embed_image", "faces"],
+        Child.WERK: ["embed_image", "faces", "group"],
         Child.ZOEKEN: ["embed_text", "forget", "rank"],
     }
 
@@ -290,7 +292,11 @@ async def test_werk_start_opnieuw_na_10_minuten(paar, klok):
 async def test_zoeken_leeft_lang_en_decodeert_nooit_een_beeld(paar):
     worker, settings = paar
     assert set(kids.handlers(Child.ZOEKEN)) == {"embed_text", "rank", "forget"}
-    assert set(kids.handlers(Child.WERK)) == {Op.FACES.value, Op.EMBED_IMAGE.value}
+    assert set(kids.handlers(Child.WERK)) == {
+        Op.FACES.value,
+        Op.GROUP.value,
+        Op.EMBED_IMAGE.value,
+    }
     seen = {(await _embed(settings, f"vraag {i}"))["pid"] for i in range(12)}
     assert len(seen) == 1
     data = await _embed(settings, "pil")

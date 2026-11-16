@@ -308,6 +308,52 @@ privacyregel schuift.
 - **Licenties**: de modellen voor gezichten en beeld (YuNet: MIT; SFace en SigLIP 2: Apache-2.0)
   mogen privé en commercieel gebruikt worden. Waar ze mee getraind zijn, is niet nagekeken.
 
+## Gezichten in detail (vanaf 0.8.1)
+
+Zo gaat het werken vanaf 0.8.1. In 0.8.0 staat het uit en zie je er niets van; ook met de nieuwste
+`install.sh` blijft het uit zolang `ANALYSE` niet op `aan` staat. Hoe het gebouwd is:
+[x2b.md](x2b.md); wat je op de server doet: het runbook [gezichten.md](../runbooks/gezichten.md).
+
+- **Wat er bewaard wordt.** Alleen voor wie het aanzet, en alleen bij de eigen foto's: per
+  gevonden gezicht het kader, een score en de vector (128 getallen, versleuteld), je keuzes (ja,
+  nee, niet tonen), en per foto of hij al bekeken is. Uitsneden van gezichten worden niet
+  opgeslagen; de app maakt ze bij elke vraag uit de preview. Een bevestigd gezicht wordt een
+  persoon op de foto, net als wanneer je die met de hand benoemt. Ongeveer 0,8 kB per gezicht in
+  de database. Een vector staat nooit in een antwoord van de API, een log of een foutmelding; de
+  beheerder ziet alleen aantallen.
+- **De toestemming.** Per gebruiker, standaard uit. Aanzetten doe je onder Account → Foto's, na
+  een dialoog dat zegt wat er gebeurt: dat het biometrische data is, ook van mensen op je foto's
+  die zelf niets kozen, dat de getallen versleuteld op de server staan, dat de beheerder er
+  technisch bij kan, wat er met kopieën gebeurt, en dat uitzetten alles wist. De beheerder kan
+  het voor iedereen verbieden (`/beheer`); dat wist alles, en weer toestaan zet niemand aan. Een
+  foto die iemand anders in jouw map zette, wordt alleen bekeken als die ander het zelf ook aan
+  heeft; een upload via een publieke link nooit.
+- **De versleuteling.** Elke vector is versleuteld (AES-256-GCM) met een sleutel per gebruiker.
+  De sleutels staan in `/opt/platform/sleutels/gezichten`, buiten de map met je data. Zet iemand
+  het uit, dan wist het platform eerst die sleutel en dan de gezichten; personen die je zelf
+  benoemde of bevestigde, blijven.
+- **Reservekopieën en snapshots.** De reservekopieën die het platform zelf maakt (`db-backup`, en
+  die van `install.sh` vóór een update), bevatten geen gezichten. Je eigen snapshots van `/tank`
+  en de offsite-kopie bevatten de gezichten versleuteld, zonder de sleutels; na "uit" zijn ze
+  daar niet meer te lezen. Een backup of snapshot van de **hele** container bevat de sleutels
+  wel: het runbook zegt hoe je de sleutels op een eigen mount point zonder backup zet.
+- **De AVG**: zie [Privacy en de wet](#privacy-en-de-wet).
+- **Bronnen en licenties.** Twee modellen van OpenCV Zoo, van een vaste commit (`48b10fa`), met
+  hun sha256 in `api/app/analyse/models.lock`: YuNet (`face_detection_yunet_2026may.onnx`, het
+  vinden, MIT) en SFace (`face_recognition_sface_2021dec.onnx`, de vector, Apache-2.0). De
+  licentieteksten staan naast de modellen in `/opt/platform/modellen`. Waar ze mee getraind zijn,
+  is niet nagekeken.
+- **De vijf pakketten van de extra `analyse`.** Alleen in de container `analyse` (in
+  `/opt/analyse` van het image); de app zelf gebruikt ze nooit: numpy 2.5.4 (BSD-3-Clause, met
+  delen onder 0BSD, MIT, Zlib en CC0-1.0), onnxruntime 1.31.1 (MIT), en wat onnxruntime meebrengt:
+  protobuf 7.36.2 (BSD-3-Clause), flatbuffers 25.12.19 (Apache-2.0) en packaging 26.3
+  (Apache-2.0 of BSD-2-Clause). Ze maken het image ±118–141 MB groter, ook als je de analyse
+  niet aanzet.
+- **De kwaliteit is niet gemeten.** Er zijn in de bouw geen echte gezichten gebruikt (Vraag 8,
+  standaard nee). De grenzen voor een voorstel (0,45) en voor een groep (0,50) zijn voorlopig;
+  `app.cli analyse-kwaliteit` meet ze op je eigen LXC tegen je eigen ja en nee, en tot dan zegt
+  `/beheer` "niet gemeten". Niets wordt vanzelf bevestigd.
+
 ## Vragen voor Jonas
 
 Elke vraag heeft een standaard. Tot je antwoordt, bouwen we daarop door; niemand hoeft te

@@ -17,14 +17,17 @@ uitslag van I1 komt onder [Uitslag I1](#uitslag-i1); de integratie zelf in
 | `zoek_perf` | `api/tests/search`, `api/tests/photos` | `python:3.12-slim` (SQLite 3.46.1, zoals het image), op 3 cores | `zoek-perf` | hard (de p95), rapport (de p99, de max) |
 | `ocr` | `api/tests` en `e2e/` | de echte tesseract van Ubuntu met nld, eng en osd, en DejaVu Sans | `ocr` | hard |
 | `zoek` | `e2e/` | de echte app; in Chromium met alleen het toetsenbord (`test_zoek_z2.py` alleen via de API) | `e2e` | hard |
+| `analyse` | `e2e/` | de echte app met `PLATFORM_ANALYSE_ENABLED` en de nep-worker van de analyse in een draad (`api/tests/people/faces/schijven.py`, zonder numpy); `test_zoek_gezichten.py` (X2b) | `e2e` | hard |
+| `analyse_echt` | `e2e/` | de echte compose met het image en de echte modellen van `models.lock`, alleen via de API; `test_zoek_gezichten_echt.py` (X2b) | `analyse-image` | hard (overgeslagen is rood) |
 | (meetscript) | `e2e/perf/zoek_ui.py` | Chromium met het profiel van `first_view.py` | `perf` | alleen een rapport |
 | (meetscript) | `e2e/perf/zoek_samen.py --kort` en `e2e/perf/zoek_backfill.py` | de app met media aan, de lokale worker en echte ffmpeg | `e2e-media-perf` | alleen een rapport |
 
 - `api/pyproject.toml` laat `media`, `media_perf`, `provider_real`, `zoek_perf`, `ocr` en `geo`
   standaard weg (`addopts`). `zoek` en `triggers` draaien gewoon mee; ze zijn er om te kiezen,
   niet om over te slaan.
-- `e2e/pytest.ini` kent `zoek` en `ocr`. De job `e2e` sluit `ocr` uit met zijn markerexpressie;
-  `zoek` draait daar mee.
+- `e2e/pytest.ini` kent `zoek`, `ocr`, `analyse`, `analyse_echt` en `beeld_echt`. De job `e2e`
+  sluit `ocr` en `analyse_echt` uit met zijn markerexpressie; `zoek` en `analyse` draaien daar
+  mee (X2b).
 - Beide `pytest`-configuraties houden `--strict-markers`: een tikfout in een marker faalt.
 - Een test met de nep-worker vervangt nooit een test met de echte tesseract, en andersom: de
   marker `ocr` draait alleen waar tesseract er echt is, en overslaan telt in de job `ocr` als
@@ -66,8 +69,12 @@ taskset -c 0-2 uv run pytest -q -m ocr -rs
 taskset -c 0-2 uv run --with playwright python -m pytest ../e2e -m ocr -rs
 taskset -c 0 uv run python -m tests.ocr.poort
 
-# de e2e zoals de job e2e (zoek draait mee, ocr niet)
-uv run --with playwright python -m pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
+# de e2e zoals de job e2e (zoek en analyse draaien mee, ocr en analyse_echt niet)
+uv run --with playwright python -m pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr and not analyse_echt"
+
+# de echte scan zoals de job analyse-image (X2b): het image en de modellen van models.lock
+E2E_ANALYSE_IMAGE=platform:ci E2E_ANALYSE_MODELLEN=/pad/naar/modellen \
+  uv run --with playwright python -m pytest ../e2e/test_zoek_gezichten_echt.py -m analyse_echt -rs
 
 # alleen de e2e van zoeken (zoals stap 3 van slim.sh)
 uv run --with playwright python -m pytest ../e2e -m "zoek and not ocr and not perf and not media and not media_perf"
