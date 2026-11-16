@@ -440,7 +440,9 @@ SRC=$top
 check "de echte lock: vijf bronnen (met url), vijf bestanden van de uitkomst (url -)" eval 'beeld_regels >/dev/null && [ "${#BEELD_BRON[@]}" = 5 ] && [ "${#BEELD_UIT[@]}" = 5 ]'
 check "de echte lock: de bronnen van huggingface.co op een vaste commit" eval 'for l in "${BEELD_BRON[@]}"; do [[ ${l##* } =~ ^https://huggingface\.co/google/siglip2-base-patch32-256/resolve/[0-9a-f]{40}/ ]] || exit 1; done'
 check "de echte lock: de uitkomst zoals X3a hem maakt" test "$(for l in "${BEELD_UIT[@]}"; do read -r _ _ b <<<"$l"; echo "$b"; done | sort | tr '\n' ' ')" = "beeld.int8.onnx meta.json siglip2-Apache-2.0.txt tekst.int8.onnx tokenizer.bin "
-check "de echte lock: de ruimte is de bron plus twee keer de uitkomst (±2,3 GB)" eval '[ "$BEELD_NODIG" = $((1541884183 + 2 * 399407013)) ]'
+# De uitkomst is die van VERSIE 3 van de omzetter (G6-2): beeld.int8.onnx, tekst.int8.onnx,
+# tokenizer.bin, meta.json en de licentie, met de groottes uit models.lock.
+check "de echte lock: de ruimte is de bron plus twee keer de uitkomst (±2,3 GB)" eval '[ "$BEELD_NODIG" = $((1541884183 + 2 * (102609072 + 284248004 + 12414446 + 2376 + 10174))) ]'
 SRC=$saved_src
 check "de nep-lock: twee bronnen, drie bestanden" eval 'beeld_regels >/dev/null && [ "${#BEELD_BRON[@]}" = 2 ] && [ "${#BEELD_UIT[@]}" = 3 ]'
 bad_lock() {
