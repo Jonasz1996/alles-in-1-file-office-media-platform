@@ -1,12 +1,15 @@
 """De haken van de omzetter voor het int8-rapport van BZ4, en dat rapport zelf, op het kleine model
-(fase 6, X3a; x3a.md, "CI op 3a9b07d"; job api-analyse, niet de marker beeld_echt).
+(fase 6, X3a; x3a.md, "CI op 3a9b07d" en "CI op 011bf2d"; job api-analyse, niet de marker
+beeld_echt).
 
-bouw.py heeft opties die standaard uit staan (fp32_als, per_token, glad, q_max, meet en bij de
-tekst embedding_fp32); test_beeld_omzetten.py bewijst dat ze uit dezelfde bytes geven. Hier: elke
-variant bouwt en rekent (cosinus ≥ 0,99 met de numpy-versie), en elke optie doet wat ze belooft:
+bouw.py heeft opties (fp32_als, per_token, glad, q_max, meet en bij de tekst embedding_fp32) die
+op hun standaard de omzetting van VERSIE geven: sinds VERSIE 3 per token, en per_token=False is de
+vorm van VERSIE 2; test_beeld_omzetten.py bewijst beide met de bytes. Hier: elke variant bouwt en
+rekent (cosinus ≥ 0,99 met de numpy-versie), en elke optie doet wat ze belooft:
 
-- per_token: een foto of vraag alleen geeft dezelfde vector als in een batch, ook naast een foto
-  met een heel ander bereik (DynamicQuantizeMatMul niet: één schaal voor de hele batch);
+- per_token (de standaard): een foto of vraag alleen geeft dezelfde vector als in een batch, ook
+  naast een foto met een heel ander bereik (per tensor, DynamicQuantizeMatMul, niet: één schaal
+  voor de hele batch);
 - fp32_als voor elke Linear (en bij de tekst embedding_fp32): de fp32-graaf, binnen TOL;
 - glad met machten van 2: in fp32 precies gelijk; in int8 kwantiseert per_kolom het gladde
   gewicht; een factor die geen macht van 2 is, is een OmzetFout;
@@ -17,7 +20,9 @@ variant bouwt en rekent (cosinus ≥ 0,99 met de numpy-versie), en elke optie do
 Met één neuron × 100 (E6 van de analyse) eist de test alleen wat zeker is (per token los van de
 batch, fp32 blijft fp32); de cosinussen staan in de uitvoer (pytest -s): per token helpt daar
 niet, het is een uitschieter per kanaal. Dan de rooktest van het rapport zelf
-(test_beeld_int8_lagen.py en _rapport_int8 van test_beeld_kwaliteit.py) op dit model.
+(test_beeld_int8_lagen.py en _rapport_int8 van test_beeld_kwaliteit.py) op dit model, en de
+regels van "CI op 011bf2d" (meer zoals deze per categorie en top 1, de zwakke vragen) met
+nepvectoren waarvan de uitkomst vastligt.
 """
 
 from __future__ import annotations
@@ -149,13 +154,13 @@ def _glad_geijkt(k, toren: str) -> dict[str, np.ndarray]:
 
 MEET = "meet"  # in VARIANTEN: een nieuwe lijst per test
 VARIANTEN = {
-    "standaard": {},
-    "per_token": {"per_token": True},
+    "standaard": {},  # per token (VERSIE 3)
+    "per tensor": {"per_token": False},  # VERSIE 2
     "fc2 fp32": {"fp32_als": lambda x: x.endswith(".mlp.fc2")},
-    "per_token + kop fp32": {"per_token": True, "fp32_als": lambda x: ".head" in x},
+    "kop fp32": {"fp32_als": lambda x: ".head" in x},
     "glad": {"glad": GLAD},
-    "per_token + glad": {"per_token": True, "glad": GLAD},
-    "q_max 127": {"q_max": 127},
+    "per tensor + glad": {"per_token": False, "glad": GLAD},
+    "per tensor + q_max 127": {"per_token": False, "q_max": 127},
     "q_max 32": {"q_max": 32},
     "meet": {"meet": MEET},
     "embedding fp32": {"embedding_fp32": True},  # alleen de tekst heeft een embedding
@@ -201,18 +206,22 @@ def _alleen_en_batch(km, toren: str, s) -> tuple[float, float]:
 
 @pytest.mark.parametrize("toren", ["beeld", "tekst"])
 def test_per_token_alleen_gelijk_aan_in_een_batch(km, toren):
-    per_token = _alleen_en_batch(km, toren, _sessie(_graaf(km, toren, per_token=True)))
-    nu = _alleen_en_batch(km, toren, _sessie(_graaf(km, toren)))
-    print(f"{toren}: alleen tegen batch, buur: per token {per_token}, zoals nu {nu}")
+    """De standaard (per token, VERSIE 3) hangt niet af van de batch; per tensor (VERSIE 2) wel,
+    dus de test ziet het als de standaard ooit terug zou gaan."""
+    per_token = _alleen_en_batch(km, toren, _sessie(_graaf(km, toren)))
+    per_tensor = _alleen_en_batch(km, toren, _sessie(_graaf(km, toren, per_token=False)))
+    print(f"{toren}: alleen tegen batch, buur: per token {per_token}, per tensor {per_tensor}")
     assert max(per_token) <= ALLEEN, per_token
+    assert min(per_tensor) > ALLEEN, per_tensor
 
 
 def test_per_token_matmulinteger_met_nulpunt_128_en_gewichten_tot_64(km, tmp_path):
-    """Elke Linear: MatMulInteger(u, w8, nul) met een scalair nulpunt 128 (uint8) en |q| ≤ 64,
-    zodat een paar van vpmaddubsw (255·64·2) in int16 past; geen DynamicQuantizeMatMul meer."""
+    """De standaard, elke Linear: MatMulInteger(u, w8, nul) met een scalair nulpunt 128 (uint8)
+    en |q| ≤ 64, zodat een paar van vpmaddubsw (255·64·2) in int16 past; geen
+    DynamicQuantizeMatMul meer."""
     for toren, naam in (("beeld", "vision_model"), ("tekst", "text_model")):
         pad = tmp_path / f"{toren}.onnx"
-        Onnx(_graaf(km, toren, per_token=True)).write(pad)
+        Onnx(_graaf(km, toren)).write(pad)
         nodes, inits = lees_onnx(pad)
         assert not [n for n in nodes if n[0] == "DynamicQuantizeMatMul"]
         mmi = [n for n in nodes if n[0] == "MatMulInteger"]
@@ -241,7 +250,7 @@ def test_per_token_rekent_precies_als_de_keten_in_numpy(km, tmp_path, label):
     graaf: a = max |x| / 127 per rij, u = clip(rint(x / a) + 128, 0, 255), y = ((u − 128) @ q) ×
     a × s + b, binnen 1e-5; met uitschieters in een rij en in één kanaal. De enige Add met een
     constante telt 128 op (het nulpunt), geen 127."""
-    b = bouw.Bouwer(km.st, "een", int8=True, per_token=True)
+    b = bouw.Bouwer(km.st, "een", int8=True)  # de standaard: per token
     n_in = km.st.info(f"{label}.weight").vorm[1]
     y = b.linear(b.g.input("x", bouw.FLOAT, ["n", 5, n_in]), [bouw._linear(label)], label)
     b.g.output(y, bouw.FLOAT, None)
@@ -269,17 +278,19 @@ def test_per_token_rekent_precies_als_de_keten_in_numpy(km, tmp_path, label):
 
 @pytest.mark.parametrize("q_max", [65, 127])
 def test_per_token_met_een_gewicht_boven_64_is_een_fout(km, monkeypatch, q_max):
-    """De review (N5): met per_token past een paar van vpmaddubsw (255·q·2) alleen met |q| ≤ 64 in
-    int16; q_max groter (of Q_MAX zelf groter) is een ValueError. 64 en kleiner mag."""
-    with pytest.raises(ValueError, match="per_token"):
-        _graaf(km, "tekst", per_token=True, q_max=q_max)
+    """De review (N5): met per_token (de standaard) past een paar van vpmaddubsw (255·q·2) alleen
+    met |q| ≤ 64 in int16; q_max groter (of Q_MAX zelf groter) is een ValueError. 64 en kleiner
+    mag; meer alleen per tensor."""
+    for opties in ({}, {"per_token": True}):
+        with pytest.raises(ValueError, match="per_token"):
+            _graaf(km, "tekst", q_max=q_max, **opties)
     monkeypatch.setattr(bouw, "Q_MAX", q_max)
     with pytest.raises(ValueError, match="per_token"):
-        _graaf(km, "beeld", per_token=True)
+        _graaf(km, "beeld")
     monkeypatch.undo()
     for goed in (None, 32, 64):
-        _graaf(km, "tekst", per_token=True, q_max=goed)
-    _graaf(km, "tekst", q_max=q_max)  # zonder per_token: de variant Q_MAX 127 van het rapport
+        _graaf(km, "tekst", q_max=goed)
+    _graaf(km, "tekst", per_token=False, q_max=q_max)  # per tensor (VERSIE 2) kan het wel
 
 
 def test_fp32_als_elke_linear_is_de_fp32_graaf(km, tmp_path):
@@ -337,9 +348,11 @@ def test_glad_die_niet_klopt_is_een_omzetfout(km, fout):
 
 @pytest.mark.parametrize("q_max", [32, 127])
 def test_q_max_gaat_door_naar_per_kolom(km, tmp_path, q_max):
+    """32 per token (de standaard); 127 kan alleen per tensor."""
+    vorm = {} if q_max <= bouw.PER_TOKEN_Q_MAX else {"per_token": False}
     for toren, naam in (("beeld", "vision_model"), ("tekst", "text_model")):
         pad = tmp_path / f"{toren}.onnx"
-        Onnx(_graaf(km, toren, q_max=q_max)).write(pad)
+        Onnx(_graaf(km, toren, q_max=q_max, **vorm)).write(pad)
         _, inits = lees_onnx(pad)
         for label in _linears(naam):
             q, s = _q8_per_kolom(_wt(km.w, label), q_max)
@@ -420,9 +433,9 @@ def test_een_neuron_x100_per_token_blijft_los_van_de_batch(km, tmp_path):
     glad = _glad_geijkt(k, "beeld")
     gemeten = {}
     for naam, opties in (
-        ("zoals nu", {}),
-        ("per token", {"per_token": True}),
-        ("per token + glad", {"per_token": True, "glad": glad}),
+        ("per tensor (v2)", {"per_token": False}),
+        ("zoals nu (per token)", {}),
+        ("per token + glad", {"glad": glad}),
         ("laag 0 fc2 fp32", {"fp32_als": lambda x: x == "vision_model.encoder.layers.0.mlp.fc2"}),
     ):
         s = _sessie(_graaf(k, "beeld", **opties))
@@ -434,7 +447,7 @@ def test_een_neuron_x100_per_token_blijft_los_van_de_batch(km, tmp_path):
             round(float(_cos(batch, fp32).min()), 5),
             float(np.abs(alleen - batch).max()),
         )
-        if opties.get("per_token"):
+        if opties.get("per_token", True):
             assert gemeten[naam][2] <= ALLEEN, (naam, gemeten[naam])
     print(f"E6 (neuron × 100), cos alleen, cos batch, alleen tegen batch: {gemeten}")
     alles = _draai(k, "beeld", _sessie(_graaf(k, "beeld", fp32_als=lambda _x: True)), px)
@@ -516,23 +529,18 @@ def test_het_rapport_per_laag_en_variant_op_het_kleine_model(km, tmp_path, monke
     for regel, begin in zip(regels, verwacht, strict=True):
         assert regel.startswith(begin), (regel, begin)
     assert namen == [
-        "per token",
+        "per tensor (v2)",
         "fc2 fp32",
-        "kop fp32",
-        "per token + kop fp32",
         "mlp fp32",
         "aandacht fp32",
+        "kop fp32",
         "laag 0-1 fp32",
         "laag 0-1 fp32",
         "per token + glad",
-        "Q_MAX 127",
         "embedding fp32",
     ]
     for regel in regels[-len(namen) :]:
-        if "Q_MAX 127" in regel and not r.cpu["vnni"]:
-            assert regel.endswith("overgeslagen: geen VNNI")
-        else:
-            assert " nl " in regel and " ms per vraag" in regel, regel
+        assert " nl " in regel and " ms per vraag" in regel, regel
     doc = json.loads(r.verslag.pad.read_text())
     assert set(doc) == {
         "cpu",
@@ -574,29 +582,29 @@ KOP = {
     },
     "tekst": {"text_model.head"},
 }
-# per variant van Rapport.lijst() en per toren: de Linears in fp32 (None: de toren van nu)
+# per variant van Rapport.lijst() en per toren: de Linears in fp32 (None: de toren van nu, de
+# standaard van de omzetter)
 FP32 = {
-    "per token": lambda t: set(),
+    "per tensor (v2)": lambda t: set(),
     "fc2 fp32": lambda t: _lagen(t, "mlp.fc2"),
-    "kop fp32": lambda t: KOP[t],
-    "per token + kop fp32": lambda t: KOP[t],
     "mlp fp32": lambda t: _lagen(t, "mlp.fc1", "mlp.fc2"),
     "aandacht fp32": lambda t: _lagen(t, "self_attn.qkv", "self_attn.out_proj"),
+    "kop fp32": lambda t: KOP[t],
     "laag 0-1 fp32": lambda t: _lagen(
         t, "self_attn.qkv", "self_attn.out_proj", "mlp.fc1", "mlp.fc2"
     ),
     "per token + glad": lambda t: set(),
-    "Q_MAX 127": lambda t: set(),
     "embedding fp32": lambda t: None if t == "beeld" else set(),
 }
 
 
 def test_elke_variant_van_het_rapport_meet_wat_zijn_naam_zegt(km, tmp_path, monkeypatch):
-    """De review (S3): per variant van Rapport.lijst() precies de Linears in fp32 die de naam
-    zegt (fc2, mlp en aandacht alleen in de lagen; de koppen alleen in kop fp32), MatMulInteger
-    alleen met per token (anders DynamicQuantizeMatMul), `.glad` alleen met glad (elke Linear
-    behalve de vraag van de MAP-kop), |q| tot 127 alleen bij Q_MAX 127, en de embedding van de
-    tekst in fp32 alleen bij embedding fp32."""
+    """De review (S3), sinds CI op 011bf2d tegen de standaard per token: per variant van
+    Rapport.lijst() precies de Linears in fp32 die de naam zegt (fc2, mlp en aandacht alleen in de
+    lagen; de koppen alleen in kop fp32), MatMulInteger in elke variant behalve `per tensor (v2)`
+    (die alleen DynamicQuantizeMatMul), `.glad` alleen met glad (elke Linear behalve de vraag van
+    de MAP-kop), |q| tot 64 overal, en de embedding van de tekst in fp32 alleen bij embedding
+    fp32. Een toren zonder opties is die van de omzetter zelf: per token."""
     r = _rapport(km, tmp_path, monkeypatch, tijd_s=600)
     namen = [naam for naam, *_ in r.lijst()]
     assert sorted(set(namen)) == sorted(FP32)
@@ -616,13 +624,13 @@ def test_elke_variant_van_het_rapport_meet_wat_zijn_naam_zegt(km, tmp_path, monk
             int8 = {k.removesuffix(".w8") for k in inits if k.endswith(".w8")} & alle
             assert fp32 == verwacht and int8 == alle - verwacht, (naam, toren, fp32 ^ verwacht)
             ops = {n[0] for n in nodes}
-            per_token = naam.startswith("per token")
+            per_token = naam != "per tensor (v2)"
             assert ("MatMulInteger" in ops) == per_token, (naam, toren)
             assert ("DynamicQuantizeMatMul" in ops) == (not per_token), (naam, toren)
             glad = {k.removesuffix(".glad") for k in inits if k.endswith(".glad")}
             assert glad == (alle - {KOP_Q} if "glad" in naam else set()), (naam, toren)
             q = max(int(np.abs(inits[f"{x}.w8"].astype(np.int16)).max()) for x in int8)
-            assert q == (127 if naam == "Q_MAX 127" else bouw.Q_MAX), (naam, toren)
+            assert q == bouw.Q_MAX, (naam, toren)
             embedding = "text_model.embeddings.token_embedding.weight.w8" in inits
             assert embedding == (toren == "tekst" and naam != "embedding fp32"), (naam, toren)
 

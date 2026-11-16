@@ -1,5 +1,5 @@
 """BZ4, het rapport van int8: welke toren, welke Linears en welke variant (fase 6, X3a; marker
-beeld_echt; x3a.md, "CI op 3a9b07d").
+beeld_echt; x3a.md, "CI op 3a9b07d" en "CI op 011bf2d").
 
 Alleen in de job beeld-model, in een eigen stap die mag falen (continue-on-error) en geen poort
 is: geen test eist een getal, alleen de laatste dat bz4r.json er is. Elke test vangt zijn eigen
@@ -14,14 +14,17 @@ De regels, ook in bz4r.json:
 3. `BZ4 invoer <toren>`: een probe (int8=True met elke Linear in fp32 en meet; bouw.py) met de
    eerste 16 foto's van de set of de 24 vragen in het Nederlands. Per invoer van een Linear: max
    |x| tegen de rms, waar de max zit, en de fout ‖(Q(x) − x)·Wᵀ‖ / ‖x·Wᵀ‖ als Q naar uint8 gaat
-   per tensor (over een batch van 16, zoals DynamicQuantizeMatMul nu; en per item alleen), per
-   token, of per token na glad. De drie slechtste Linears, op de fout per tensor in de batch;
+   per tensor (over een batch van 16, zoals DynamicQuantizeMatMul in VERSIE 2; en per item
+   alleen), per token (de standaard sinds VERSIE 3), of per token na glad. De drie slechtste
+   Linears, op de fout per tensor in de batch;
 4. `BZ4 afwijking per laag <toren>`: de cosinus van de residu na elke laag, de int8-graaf tegen
    de probe van 3 (beide met de int8-embedding van de tekst): een sprong bij laag k wijst naar
    de Linears van laag k;
 5. `BZ4 variant <naam>`: de omzetter met een optie van bouw.py, met de 120 foto's en 36 vragen
-   zoals de poort (batches van 16, één draad). Eerst fp32 en "zoals nu", dan de varianten, de
-   nuttigste eerst, samen hooguit TIJD_S.
+   zoals de poort (batches van 16, één draad). Eerst fp32 en "zoals nu" (de uitvoer van de
+   omzetter: sinds VERSIE 3 per token), dan de varianten tegen die standaard: `per tensor (v2)`
+   (de vorm van VERSIE 2) en de varianten die bovenop per token nog iets in fp32 zetten of glad
+   maken, de nuttigste eerst, samen hooguit TIJD_S.
 
 De factoren van glad (α = 0,5, machten van 2) komen alleen uit de 64 synthetische foto's van BZ6
 (test_beeld_echt_perf.py) en de vaste zinnen van IJK_ZINNEN, zonder een categorie; nooit uit de
@@ -443,9 +446,13 @@ class Rapport:
     def lijst(self) -> list[tuple[str, dict | None, dict | None, str | None]]:
         """(naam, opties beeld, opties tekst, reden om over te slaan); None: de toren van nu.
 
-        Elke variant meet één plek: fc2, mlp en aandacht alleen in de lagen van de encoder, de
-        koppen (de MAP-kop van het beeld met zijn aandacht en mlp, en de kop van de tekst) alleen
-        in kop fp32 (de review, S3; test_beeld_int8_klein.py zet per variant de Linears vast)."""
+        Tegen de standaard van de omzetter (VERSIE 3, per token; CI op 011bf2d): `per tensor
+        (v2)` is de vorm van daarvoor, de andere varianten zijn per token met nog één plek in fp32
+        of glad. Elke variant meet één plek: fc2, mlp en aandacht alleen in de lagen van de
+        encoder, de koppen (de MAP-kop van het beeld met zijn aandacht en mlp, en de kop van de
+        tekst) alleen in kop fp32 (de review, S3; test_beeld_int8_klein.py zet per variant de
+        Linears en de vorm vast). Q_MAX 127 valt weg: per token kan alleen met |q| ≤ 64
+        (PER_TOKEN_Q_MAX), en per tensor gaf het 0,500 (CI op 011bf2d)."""
         n = self.v.beeld.lagen
         k = min(4, n)
 
@@ -467,18 +474,15 @@ class Rapport:
         def beide(**o) -> tuple[dict, dict]:
             return dict(o), dict(o)
 
-        vnni = None if self.cpu["vnni"] else "geen VNNI"
         return [
-            ("per token", *beide(per_token=True), None),
+            ("per tensor (v2)", *beide(per_token=False), None),
             ("fc2 fp32", *beide(fp32_als=fc2), None),
-            ("kop fp32", *beide(fp32_als=kop), None),
-            ("per token + kop fp32", *beide(per_token=True, fp32_als=kop), None),
             ("mlp fp32", *beide(fp32_als=mlp), None),
             ("aandacht fp32", *beide(fp32_als=aandacht), None),
+            ("kop fp32", *beide(fp32_als=kop), None),
             (f"laag 0-{k - 1} fp32", *beide(fp32_als=lagen(0, k - 1)), None),
             (f"laag {n - k}-{n - 1} fp32", *beide(fp32_als=lagen(n - k, n - 1)), None),
-            ("per token + glad", *beide(per_token=True, glad=GLAD), None),
-            ("Q_MAX 127", *beide(q_max=127), vnni),
+            ("per token + glad", *beide(glad=GLAD), None),
             ("embedding fp32", None, {"embedding_fp32": True}, None),
         ]
 

@@ -144,13 +144,13 @@ def _dqmm_invoer() -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
 
 @pytest.mark.parametrize("met_nulpunt", [True, False])
 def test_dynamic_quantize_matmul(sessie, met_nulpunt):
-    """com.microsoft DynamicQuantizeMatMul zoals de omzetter hem gebruikt (Keuze 73): het gewicht
-    uit bouw.per_kolom, int8 met een schaal per kolom en |q| ≤ 64. De invoer ligt op het rooster
-    dat onnxruntime zelf kiest (min −128·s, max 127·s, s = 2⁻⁶): zo is de kwantisering van de
-    invoer exact en is het verschil met numpy alleen afronding. Met |q| tot 127 faalde dit op een
-    runner zonder VNNI (CI op 7569d48: verschil 0,167): daar telt onnxruntime twee buren in int16
-    op, en dat liep over. Met 64 kan dat niet meer (zie de tests hieronder, die dat op elke CPU
-    nadoen)."""
+    """com.microsoft DynamicQuantizeMatMul zoals de omzetter hem tot VERSIE 3 gebruikte, en met
+    per_token=False nog gebruikt (Keuze 73): het gewicht uit bouw.per_kolom, int8 met een schaal
+    per kolom en |q| ≤ 64. De invoer ligt op het rooster dat onnxruntime zelf kiest (min −128·s,
+    max 127·s, s = 2⁻⁶): zo is de kwantisering van de invoer exact en is het verschil met numpy
+    alleen afronding. Met |q| tot 127 faalde dit op een runner zonder VNNI (CI op 7569d48:
+    verschil 0,167): daar telt onnxruntime twee buren in int16 op, en dat liep over. Met 64 kan dat
+    niet meer (zie de tests hieronder, die dat op elke CPU nadoen)."""
     _, x, _, w = _dqmm_invoer()
     q, scale = per_kolom(w)
     bias = f32(6, seed=7)
