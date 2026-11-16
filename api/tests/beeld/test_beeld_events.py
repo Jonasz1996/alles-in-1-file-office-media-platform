@@ -335,13 +335,20 @@ async def test_beeld_off(client, mensen, beeld):
 
 async def test_beeld_on_again(client, mensen, beeld):
     """Weer aan: de stappen terug op wait, GET /photos/beeld zegt bezig met done, en na de
-    pomp en het bestand is alles weer te vinden."""
-    (eva, _), _ = mensen
+    pomp en het bestand is alles weer te vinden.
+
+    Uit wist ook de gerangschikte lijsten van Eva in de cache van 60 s (K1-08). Het nieuwe
+    bestand heeft dezelfde gen als het oude (gen telt nodes, geen vectoren), dus zonder dat gaf
+    "rood" vlak na weer aan nog de lijst van vóór uit, uit vectoren die er niet meer zijn
+    (nacontrole golf 6)."""
+    (eva, eva_id), _ = mensen
     fake, settings = beeld
     await aan(client, settings, eva)
     rood = await foto(client, eva, settings, "rood.jpg", "rood")
     groen = await foto(client, eva, settings, "groen.jpg", "groen", seed=1)
     await nep.embed_all(settings)
+    assert await nep.ids(client, eva, "rood") == [rood["id"], groen["id"]]
+    gen = (await nep.owner(settings, eva_id)).built_gen
     await nep.beeld_aan(client, eva, "uit")
     await nep.run_jobs(settings)
     assert await nep.vectors(settings) == set()
@@ -350,6 +357,10 @@ async def test_beeld_on_again(client, mensen, beeld):
     assert await nep.row(settings, rood["sha"]) == ("wait", None)
     r = await client.get("/api/v1/photos/beeld", headers=eva)
     assert r.json() == {"state": "bezig", "done": 0.0}
+    await nep.bestanden(settings)
+    found = await nep.owner(settings, eva_id)
+    assert (found.built_gen, found.built_rows) == (gen, 0)  # dezelfde sleutel in de cache
+    assert await nep.ids(client, eva, "rood") == []
     await nep.embed_all(settings)
     assert await nep.ids(client, eva, "rood") == [rood["id"], groen["id"]]
     r = await client.get("/api/v1/photos/beeld", headers=eva)
@@ -387,8 +398,11 @@ async def test_beeld_admin_off(client, admin, mensen, beeld):
 
 async def test_beeld_wipe(client, admin, mensen, beeld):
     """De beheerder wist (DELETE /admin/search/beeld, 202; een gebruiker 403): alle vectoren,
-    alle bestanden, forget voor elke eigenaar; de stappen terug op wait en de backfill vult
-    alles weer."""
+    alle bestanden, forget voor elke eigenaar, en de cache van 60 s in de app; de stappen terug
+    op wait en de backfill vult alles weer.
+
+    Zonder de cache te wissen gaf "rood" na het nieuwe (lege) bestand met dezelfde gen nog de
+    lijst van vóór het wissen, zolang die 60 s niet om waren (nacontrole golf 6)."""
     jonas, _ = admin
     (eva, eva_id), (bram, bram_id) = mensen
     fake, settings = beeld
@@ -396,6 +410,8 @@ async def test_beeld_wipe(client, admin, mensen, beeld):
     rood = await foto(client, eva, settings, "rood.jpg", "rood")
     await foto(client, bram, settings, "groen.jpg", "groen", seed=1)
     await nep.embed_all(settings)
+    assert await nep.ids(client, eva, "rood") == [rood["id"]]
+    gen = (await nep.owner(settings, eva_id)).built_gen
     assert (await client.delete(f"{ADMIN_SEARCH}/beeld", headers=eva)).status_code == 403
     r = await client.delete(f"{ADMIN_SEARCH}/beeld", headers=jonas)
     assert r.status_code == 202, r.text
@@ -406,6 +422,10 @@ async def test_beeld_wipe(client, admin, mensen, beeld):
     assert await nep.row(settings, rood["sha"]) == ("wait", None)
     r = await nep.zoek(client, eva, "rood")
     assert (r.status_code, r.json()["fallback"]) == (200, "slow")
+    await nep.bestanden(settings)
+    found = await nep.owner(settings, eva_id)
+    assert (found.built_gen, found.built_rows) == (gen, 0)  # dezelfde sleutel in de cache
+    assert await nep.ids(client, eva, "rood") == []
     await nep.embed_all(settings)
     assert await nep.ids(client, eva, "rood") == [rood["id"]]
 

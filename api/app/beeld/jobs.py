@@ -52,6 +52,7 @@ from app import analysis, beeld_rows, jobs, mime, prefs, previews
 from app.analyse import client, monitor, wire
 from app.analyse.wire import Op
 from app.analysis import Outcome, Step
+from app.beeld import cache as bcache
 from app.beeld import types as vt
 from app.beeld import vecfile
 from app.config import Settings
@@ -451,6 +452,11 @@ async def off_job(settings: Settings, payload: dict[str, Any]) -> None:
         await db.commit()
     _searched.pop(user_id, None)
     await forget(settings, user_id)
+    # Ook de gerangschikte lijsten van 60 s in de app: het volgende bestand kan dezelfde gen
+    # hebben (gen telt nodes, geen vectoren), en dan gaf de oude sleutel na weer aan nog een
+    # lijst uit de gewiste vectoren (nacontrole golf 6). Na forget, zodat een vraag die nog
+    # liep er ook uit gaat.
+    bcache.forget(user_id)
 
 
 async def wipe_job(settings: Settings, payload: dict[str, Any]) -> None:
@@ -471,6 +477,7 @@ async def wipe_job(settings: Settings, payload: dict[str, Any]) -> None:
     _searched.clear()
     for owner in sorted(owners):
         await forget(settings, owner)
+    bcache.forget()  # de lijsten van 60 s in de app ook, om dezelfde reden als in off_job
     await analysis.recover(settings)
 
 
