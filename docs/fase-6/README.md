@@ -1,6 +1,6 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **gebouwd, versie 0.8.1 (⟦I2: de datum van de commit van 0.8.1⟧)**. Fase 6 staat op de
+Status: **gebouwd, versie 0.8.1 (16 november 2026)**. Fase 6 staat op de
 branch `claude/stappenplan-uitwerken-lu4uv3`. De kern kwam met 0.8.0 (11 november 2026): zoeken in
 de inhoud van je bestanden, tekst in scans en foto's, de kaart met plaatsen en landen, dubbele
 bestanden, personen, herinneringen en slimme albums. 0.8.1 maakt de fase af met gezichten
@@ -35,7 +35,7 @@ Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gez
 besloten; de rest is voorstel. Sinds 0.8.0 koos je één ding: zoeken op beeld toch uitbrengen
 (Keuze 85, 16 november 2026). Vraag 4 en Vraag 8–14 heb je nog niet beantwoord; 0.8.1 draait op
 de standaarden. Zo ziet alleen de eigenaar de plek van een foto (Vraag 4), en staat zoeken op beeld
-per gebruiker uit (Vraag 11). Bij 0.8.1 kwamen er drie vragen bij, elk met een standaard. Zie
+per gebruiker uit (Vraag 11). Bij 0.8.1 kwamen er negen vragen bij, elk met een standaard. Zie
 [Vragen voor Jonas](#vragen-voor-jonas).
 
 ## Klaar als
@@ -68,7 +68,11 @@ vragen zijn sneller.
   foto's bij een Nederlandse vraag klopten er gemiddeld 0,692, poort 0,6; "Meer zoals deze" 0,475,
   ondergrens 0,40; [x3b.md](x3b.md)). Eén foto verwerken voor de beeldindex kostte 33,8 ms op
   één core (grens 120 ms) en het model-deel van een vraag p95 22,2 ms (op `e535332`). Het geheel
-  onder belasting, met alles aan: ⟦I2: de p95 van zoeken op beeld uit M13 (§4.5 stap 2 met de analyse, `zoek_samen --analyse`)⟧, grens 250 ms ([metingen.md](metingen.md)).
+  onder belasting, met alles aan: p95 191,8 ms in de sandbox (M13, §4.5 stap 2 met de analyse),
+  grens 250 ms; met de gezichtenscan ernaast was het 290,4 ms, in een stap zonder poort
+  ([metingen.md](metingen.md), en hieronder bij Bekende grenzen). Die metingen gebruiken modellen
+  van de echte vorm met willekeurige gewichten: ze zeggen iets over de tijd, niet over de
+  kwaliteit.
 - **De tekst uit documenten** (PDF, docx, xlsx, pptx, txt, md) is doorzoekbaar. Het lezen op de
   achtergrond moet minstens 1.000 documenten per minuut halen op één core; gemeten
   1.977 per minuut (M2).
@@ -97,7 +101,10 @@ vragen zijn sneller.
   van de drie runs één keer, vlak na verspringen. Er was nooit meer dan ±3,6 GiB van de 15,7 GiB
   geheugen in gebruik. De vier rondes ervoor haalden het niet, drie vooral door fouten in de
   meetopzet en één op haperen na verspringen (zie daar de Bevindingen). Met de analyse erbij
-  (0.8.1, de container `analyse` die gezichten en beelden rekent): ⟦I2: de uitkomst van M13 per regel (zoeken p95, haperen, OnlyOffice, beeld p95 en het geheugen van de analyse)⟧.
+  (0.8.1, de container `analyse` die gezichten en beelden rekent; M13): alle 13 poorten gehaald.
+  Zoeken p95 53,4 ms, geen film haperde, OnlyOffice sloeg op in 8,3 s (grens 8,9 s) zonder een
+  woord te verliezen, zoeken op beeld p95 191,8 ms, en de analyse gebruikte samen 1,51 GB (grens
+  2,5 GB). De testfoto's hadden geen gezichten: het herkennen en groeperen zelf zat er niet in.
 - **Een upload wacht hooguit 1 s**, ook als de index tegelijk een tekst van 1 MB met 10 kopieën
   schrijft. De langste wachttijd was 337 ms (M6).
 
@@ -255,6 +262,13 @@ Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
 | Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8, standaard nee). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan op **niet gemeten, geen gereedschap** tot er een antwoord is op Vraag 8. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
 | Zoeken op beeld: zwakke woorden (0.8.1) | 'bergen' en 'boot' vinden weinig in de testset ('berg' en 'bootje' wel); "Meer zoals deze" haalde 0,475, waar het ontwerp 0,7 wilde. Zo uitgebracht met Keuze 85; de uitleg bij de schakelaar zegt het. | [x3b.md](x3b.md); Keuze 85 in het [bouwontwerp](bouwontwerp.md) |
 | Gezichten en zoeken op beeld op jouw CPU (0.8.1) | Gemeten in de sandbox en in CI, niet op jouw CPU. `analyse-bench` (gezichten) en `beeld-bench` (zoeken op beeld) meten het daar; zie [Op de LXC](#op-de-lxc). | de runbooks [gezichten.md](../runbooks/gezichten.md) en [analyse.md](../runbooks/analyse.md) |
+| De metingen van 0.8.1 | De tijd en het geheugen van gezichten en beeld zijn gemeten met modellen van de echte vorm, maar met willekeurige gewichten. Over de kwaliteit zeggen ze niets; die komt alleen uit BZ4 in CI. De testfoto's van de grote belastingtest (M13) hadden geen gezichten: het herkennen (SFace) en het groeperen zaten er niet in. | [metingen.md](metingen.md), M10–M13 |
+| Zoeken op beeld na een herstart (0.8.1) | Na een herstart van de container laadt het opwarmen het tekstmodel één keer (±1,6 s in de sandbox). Dat betaalt het opwarmen (`/beheer`, of na het bouwen van de beeldindex), niet de eerste zoekvraag. | [integratie-2.md](integratie-2.md), De review (U1) |
+| Zoeken op beeld terwijl gezichten gescand worden (0.8.1) | De grens van 250 ms is gemeten terwijl de gezichtenscan wachtte (191,8 ms). Liep de scan van 5.000 foto's ernaast, dan was het 290,4 ms (9 van 103 vragen boven 250 ms); dat was een stap zonder poort. Een vraag hieronder. | [metingen.md](metingen.md), Bevinding 12 |
+| `/over` (0.8.1) | Alleen voor wie is ingelogd, ook een gast; een bezoeker zonder account ziet de pagina niet. | [integratie-2.md](integratie-2.md), Bekende grenzen |
+| Het budget van de schermen van gezichten (0.8.1) | 11.964 van 12.000 B: nog 36 B ruimte. Wie daar iets toevoegt, moet eerst iets anders kleiner maken of een hogere grens vragen. Een vraag hieronder. | `web/scripts/budget.mjs` |
+| Office: Sluiten schuift | Gaat een andere bewerker weg, dan wordt de statusregel korter en schuift **Sluiten** in de kopbalk ±80 px. Wie precies dan klikt, kan naast de knop loslaten. De test wacht er nu op; de app is niet veranderd. | [integratie-2.md](integratie-2.md), Bekende grenzen |
+| De tijdstest van de namen | In de volle testsuite was één tijdstest een paar keer net te traag (0,53–0,56 s tegen 0,5 s). Waarom, is niet bewezen; de grens bleef, en bij rood zegt de test nu meer. In de volle suite van 0.8.1 was hij groen. | [integratie-2.md](integratie-2.md), Bekende grenzen |
 | Reservekopieën en gezichten (0.8.1) | De reservekopieën van het platform bevatten geen gezichten: na het terugzetten begint de scan opnieuw. De sleutels staan in `/opt/platform/sleutels/gezichten`, niet op `/tank`. | het runbook [gezichten.md](../runbooks/gezichten.md) |
 | Jouw CPU | De 200 ms is gemeten in de sandbox en in CI. De Zoekbench op `/beheer` → Zoeken en foto's toont de p95 op jouw CPU, voor "eigenaar" en "alles"; ligt een van beide boven 200 ms, dan haalt jouw CPU het niet. `/beheer` waarschuwt daar niet zelf voor. Meten doe je met `bench --los`. | het runbook, "Zoeken meten"; §4.4 van het [bouwontwerp](bouwontwerp.md), "Op de LXC" |
 
@@ -342,8 +356,8 @@ daarna in de bouw en in CI gemeten is, staat erbij; de rest blijft een schatting
 | de modellen | ±39 MB voor gezichten en ±0,4 GB voor beeld, in `/opt/platform/modellen`; bij de installatie tijdelijk 1,55 GB extra |
 | de database | ±0,3 GB per 100.000 foto's, voor gezichten en beeld samen; plus ±0,15 GB cache voor zoeken op beeld |
 | eenmalig rekenen, 55.000 foto's | gezichten ±2,2–2,5 uur, beeld ±1,1–1,2 uur, op de achtergrond op één core (geschat). [I2: gemeten in de sandbox 1.043 foto's per minuut per core met één gezicht, op `9228eb6` ([x2b.md](x2b.md)); in CI 33,8 ms per foto voor beeld op `e535332`. Op jouw CPU: [Op de LXC](#op-de-lxc).] |
-| geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB. [I2: met modellen van de echte vorm: ⟦I2: de som van VmHWM uit M11 (BZ5, test_geheugen_samen.py), grens 2,5 GB⟧.] |
-| zoeken op beeld | binnen 250 ms (Vraag 14). [I2: onder belasting ⟦I2: de p95 van zoeken op beeld uit M13⟧.] |
+| geheugen | de container `analyse` hooguit 3 GB; met media en OnlyOffice samen 8 van de 16 GB. [I2: met modellen van de echte vorm samen 1.835 MiB (BZ5, M11), grens 2,5 GB; onder belasting 1,51 GB (M13).] |
+| zoeken op beeld | binnen 250 ms (Vraag 14). [I2: onder belasting p95 191,8 ms (M13); op één core zonder belasting 90–107 ms (M12).] |
 
 Je container heeft een rootdisk van 500 GB; dat past ruim. Een tragere CPU dan die van de sandbox rekent langer. `/beheer`
 laat zien hoe ver het is.
@@ -361,7 +375,7 @@ gezichten en beeld, en zonder review per golf. Loopt het uit, dan schuift eerst 
 op beeld, dan beeld helemaal (naar een fase 6b), dan de groepen "Wie is dit?" van gezichten. Geen
 privacyregel schuift. [16 november 2026: zoeken op beeld is gebouwd en blijft in 0.8.1 (Keuze
 85).] [I2: 0.8.1 kwam in twee delen, zoals Vraag 13 met zijn standaard: 0.8.0 op 11 november en
-0.8.1 op ⟦I2: de datum van de commit van 0.8.1⟧. Niets schoof naar een fase 6b.]
+0.8.1 op 16 november 2026. Niets schoof naar een fase 6b.]
 
 ## Privacy en de wet
 
@@ -504,6 +518,24 @@ anders wilt:
   0.8.1 komt uit met beide op **niet gemeten, geen gereedschap**, Vraag 8 blijft open, en het
   gereedschap komt later. Anders: Vraag 8 op ja (een openbare set gezichten in CI, met jouw akkoord
   voor die set; ±1–2 dagen werk).
+- **`BEELD=uit` samen met `ANALYSE=uit`.** Vraag je bij de installatie beide uit, dan onthoudt
+  `.env` alleen `ANALYSE=uit`; zet je later `ANALYSE=aan`, dan komt zoeken op beeld mee, met de
+  download van 1,55 GB. (a) Ook `BEELD=uit` onthouden; (b) zo laten en in de eindtekst zeggen dat
+  `BEELD` alleen telt met de analyse aan. Tot je kiest, blijft het zoals het is.
+- **Een vraag die te laat is, houdt de analyse 5 s bezig.** Daarna stopt de worker het kind hard.
+  Standaard: **zo laten**. Anders: een eigen pakket dat het kind eerder vrijmaakt, met tests.
+- **De job `beeld-model` in CI** start niet als alleen de tests van de echte vorm (BZ5, BZ6)
+  veranderen; die draaien we met de hand. Standaard: **zo laten**. Anders: die bestanden erbij.
+- **De analyse met een lagere voorrang starten.** Start iemand de analyse zelf met `nice`, dan kan
+  het kind voor zoeken op beeld niet starten. In de container zoals `install.sh` hem start, gebeurt
+  dat niet. Standaard: **zo laten**. Anders: het kind past zich aan, met een test.
+- **Nog 36 B ruimte in de schermen van gezichten.** Standaard: **de grens blijft**; wie er iets
+  toevoegt, maakt eerst iets anders kleiner of vraagt het je. Anders: de grens nu ophogen.
+- **Zoeken op beeld terwijl gezichten gescand worden** (290,4 ms, zie Bekende grenzen).
+  Standaard: **zo laten**: de poort van 250 ms geldt voor de gewone belasting. Anders: een aparte
+  meting erbij, of de scan laten wijken voor een zoekvraag (een codewijziging).
+
+Uitgebreider, met de opties: [integratie-2.md](integratie-2.md#vragen-voor-jonas).
 
 ## Op de LXC
 
@@ -639,4 +671,4 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
   in `install.sh` (uit blijft bewaard), `/over`, de zinnen met de analyse uit, de metingen met
   modellen van de echte vorm en §4.5 met de analyse (M10–M13), een stap in CI die SigLIP 2 voor
   het eerst echt omzet in `analyse-omzetten` (⟦I2: of die stap groen was, en in welke run⟧), en
-  deze teksten. 0.8.1 is de commit ⟦I2: de korte hash van de commit van 0.8.1⟧ van ⟦I2: de datum van de commit van 0.8.1⟧, met CI groen in ⟦I2: de run en het aantal groene jobs op die commit⟧.
+  deze teksten. 0.8.1 is de commit ⟦I2: de korte hash van de commit van 0.8.1⟧ van 16 november 2026, met CI groen in ⟦I2: de run en het aantal groene jobs op die commit⟧.

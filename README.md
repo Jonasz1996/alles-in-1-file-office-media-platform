@@ -113,7 +113,27 @@ Alles staat in [docs/fase-6/README.md](docs/fase-6/README.md); de belangrijkste:
   jouw server is, zeggen `analyse-bench` (gezichten) en `beeld-bench` (zoeken op beeld), in de
   lijst "Op de LXC".
 - **Het geheugen van de container onder echte belasting** meet je ook op je server
-  ([docs/runbooks/analyse.md](docs/runbooks/analyse.md), "Het geheugen op de LXC").
+  ([docs/runbooks/analyse.md](docs/runbooks/analyse.md), "Het geheugen op de LXC"). In de
+  belastingtest van de integratie bleef hij op 1,51 GB (de grens is 2,5 GB), maar die mat zonder
+  de grenzen van docker en met modellen met willekeurige gewichten: dat zegt iets over de tijd
+  en het geheugen, niet over de kwaliteit (die komt alleen uit CI).
+- **Die belastingtest had geen gezichten op de foto's.** Het zoeken naar gezichten liep wel, maar
+  er was niets te herkennen of te groeperen; hoe dat onder belasting gaat, zie je pas op je eigen
+  foto's.
+- **Zoeken op beeld terwijl de gezichtenscan loopt** kan trager zijn dan de grens: in de test
+  was een vraag dan p95 290 ms (de grens van 250 ms geldt zonder de scan ernaast). Een vraag aan
+  jou in [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#vragen-voor-jonas).
+- **Na een herstart van de container** laadt zoeken op beeld zijn model één keer opnieuw (±1,6 s),
+  bij het opwarmen (`/beheer`, of na het bouwen van de beeldindex) en niet bij je eerste
+  zoekvraag.
+- **De pagina `/over`** (de bronnen en licenties, ook van de modellen) zie je alleen als je
+  bent ingelogd.
+- **In Office kan de knop Sluiten even verspringen** als een andere bewerker weggaat (±80 px);
+  klik je precies dan, dan mis je de knop. De app is daarvoor niet veranderd.
+- **Voor wie verder bouwt:** het stuk web-app van gezichten heeft nog 36 B ruimte in zijn
+  budget (11.964 van 12.000 B), en waarom de test met 10.000 namen in de volle suite soms net
+  boven 0,5 s kwam, is niet bewezen (de grens bleef 0,5 s). Beide staan in
+  [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#bekende-grenzen).
 - **Reservekopieën van het platform bevatten geen gezichten.** Na het terugzetten van zo'n kopie
   begint de scan opnieuw. De sleutels van de gezichten staan in `/opt/platform/sleutels/gezichten`,
   niet op `/tank`.

@@ -540,7 +540,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   0.8.1, ~~maar kan naar een eigen fase 6b schuiven~~ (B57, B66, B68).
   [2026-11-16: het blijft in 0.8.1, standaard uit per gebruiker (Keuze 85 in
   docs/fase-6/bouwontwerp.md; Vraag 11 staat nog open).]
-  [Gebouwd in 0.8.1 (⟦I2: de datum van de laatste push van I2⟧,
+  [Gebouwd in 0.8.1 (16 november 2026,
   ⟦I2: de volledige commit van 0.8.1⟧): gezichten vanzelf herkennen met YuNet en SFace, en zoeken
   op wat er op een foto staat met SigLIP 2. Beide rekenen op de eigen server, in de container
   analyse, en staan per gebruiker standaard uit. Personen met de hand benoemen blijft zoals in
@@ -581,12 +581,13 @@ en B57 besloten; de rest is nog voorstel, en 0.8.0 draait op de
 standaarden van het bouwontwerp (ook Vraag 4: alleen de eigenaar ziet de
 plek van een foto).
 
-Versie 0.8.1 (⟦I2: de datum van de laatste push van I2⟧): gezichten vanzelf herkennen en zoeken op
+Versie 0.8.1 (16 november 2026): gezichten vanzelf herkennen en zoeken op
 wat er op een foto staat. De installatie zet de container analyse standaard aan; wie
 `ANALYSE=uit` koos, houdt hem uit. Daarna zet ieder het zelf aan bij Account → Foto's. Gezichten:
 1.043 foto's per minuut op één processorkern (de grens is 250). Zoeken op beeld: een foto bekijken
 kost 33,8 ms en een vraag 22,2 ms (p95) in de automatische tests; samen met de rest van de app
-⟦I2: de p95 van zoeken op beeld uit M12⟧ (de grens is 250 ms). Sommige woorden vinden weinig
+p95 90 tot 107 ms op één kern bij 55.000 en 100.000 foto's (M12), en 191,8 ms terwijl de server
+vol draait (M13; de grens is 250 ms). Sommige woorden vinden weinig
 (zoals 'bergen' en 'boot'); Jonas koos het toch uit te brengen (Keuze 85). Wat 0.8.1 brengt en de
 grenzen staan in [docs/fase-6/README.md](fase-6/README.md), de integratie in
 [docs/fase-6/integratie-2.md](fase-6/integratie-2.md). Van B49–B70 blijven alle punten behalve
