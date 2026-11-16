@@ -123,8 +123,9 @@ Alles staat in [docs/fase-6/README.md](docs/fase-6/README.md); de belangrijkste:
 - **Zoeken op beeld terwijl de gezichtenscan loopt** kan trager zijn dan de grens: in de test
   was een vraag dan p95 290 ms (de grens van 250 ms geldt zonder de scan ernaast). Een vraag aan
   jou in [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#vragen-voor-jonas).
-- **Na een herstart van de container** laadt zoeken op beeld zijn model één keer opnieuw (±1,6 s),
-  bij het opwarmen (`/beheer`, of na het bouwen van de beeldindex) en niet bij je eerste
+- **Na een herstart van de container** laadt zoeken op beeld zijn model één keer opnieuw
+  (±1,7 s), bij het opwarmen: zodra iemand op `/zoeken` zoeken op beeld kiest of het infopaneel
+  van een eigen foto opent, of na het bouwen van de beeldindex. Dat gebeurt dus niet bij je eerste
   zoekvraag.
 - **De pagina `/over`** (de bronnen en licenties, ook van de modellen) zie je alleen als je
   bent ingelogd.

@@ -183,7 +183,7 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
 - **Gezichten deden niet echt mee in M13.** De testfoto's hebben geen gezichten: YuNet las ze
   allemaal, maar SFace en het groeperen kregen niets te doen. De ruimte per gezicht is ook niet
   gemeten (per gezicht AES-GCM over 128 × float32, 512 B klare tekst).
-- **Na een herstart warmt zoeken op beeld één keer op**, ±1,6 s (U1 hierboven). Dat betaalt het
+- **Na een herstart warmt zoeken op beeld één keer op**, ±1,7 s (U1 hierboven). Dat betaalt het
   opwarmen, niet de eerste zoekvraag.
 - **De chunk van gezichten heeft 36 B ruimte.** 11.964 van 12.000 B op `e41b724`. Elke volgende
   regel in de schermen van gezichten gaat over het budget (een vraag hieronder).
