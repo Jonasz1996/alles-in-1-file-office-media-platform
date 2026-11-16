@@ -1,5 +1,8 @@
 # Fase 6: de integratie (I1)
 
+[I2: de integratie van 0.8.1 (gezichten en zoeken op beeld) staat in
+[integratie-2.md](integratie-2.md). Dit document blijft over I1 en 0.8.0.]
+
 ## In het kort
 
 De integratie I1 bracht de kern van fase 6 samen tot versie 0.8.0: Z0 tot en met Z7 en X1. Dat is
@@ -36,7 +39,9 @@ contracten](#wijzigingen-aan-contracten)).
 
 Voor 0.8.1 blijft: gezichten automatisch herkennen (X2) en zoeken op wat er op een foto staat
 (X3, dat ook naar een fase 6b kan schuiven), met de container `analyse`, de migraties 0011 en
-0012 en de pagina `/over`. Wat I1 verder liet liggen, staat met de reden onder
+0012 en de pagina `/over`. [I2: X3 schoof niet naar een fase 6b. Jonas koos op 16 november 2026
+"Toch uitbrengen" (Keuze 85), dus beide zitten in 0.8.1; zie [integratie-2.md](integratie-2.md).]
+Wat I1 verder liet liggen, staat met de reden onder
 [Niet gedaan, met de reden](#niet-gedaan-met-de-reden).
 
 Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gezichten en beeld)
@@ -208,21 +213,21 @@ personen; personen zijn Keuze 38, en Vraag 4 gaat over wie de plek van een foto 
 
 | Wat | Waarom niet | Waar het staat |
 |---|---|---|
-| Gezichten automatisch herkennen (X2), met de container `analyse`, migratie 0011 en de jobs `api-analyse` en `analyse-image` | hoort bij 0.8.1 (B68, Vraag 13 met standaard twee opleveringen) | README, "Wat komt in 0.8.1" |
-| Zoeken op wat er op een foto staat (X3), met migratie 0012 en de job `beeld-model` | 0.8.1, of een fase 6b als het uitloopt | README, "Wat komt in 0.8.1" en "Planning" |
-| De vormen van Z0b voor gezichten en zoeken op beeld (onder andere `AdminFaces`, `AdminBeeld`, `BeeldStatus` en `FacesConfirm`) | een voorstel tot A0, X2 en X3 ze vastleggen (0.8.1) | het plan van I1; [z0b.md](z0b.md), Open 1–3 |
-| De pagina `/over` met de bronvermelding | komt met de gezichten (X2); tot dan staan GeoNames en Natural Earth onder de kaart en in de README | README, "Bekende grenzen" (De bronvermelding) |
-| Het kader van een persoon bij een nieuwe versie van een foto | kan pas met migratie 0011, want 0010 ligt vast | README, "Bekende grenzen" |
+| Gezichten automatisch herkennen (X2), met de container `analyse`, migratie 0011 en de jobs `api-analyse` en `analyse-image` | hoort bij 0.8.1 (B68, Vraag 13 met standaard twee opleveringen) | README, "Wat komt in 0.8.1" [I2: gebouwd in 0.8.1; de README zegt nu "Wat 0.8.1 brengt", en [integratie-2.md](integratie-2.md)] |
+| Zoeken op wat er op een foto staat (X3), met migratie 0012 en de job `beeld-model` | 0.8.1, of een fase 6b als het uitloopt | README, "Wat komt in 0.8.1" en "Planning" [I2: gebouwd in 0.8.1 (Keuze 85), geen fase 6b; [integratie-2.md](integratie-2.md)] |
+| De vormen van Z0b voor gezichten en zoeken op beeld (onder andere `AdminFaces`, `AdminBeeld`, `BeeldStatus` en `FacesConfirm`) | een voorstel tot A0, X2 en X3 ze vastleggen (0.8.1) | het plan van I1; [z0b.md](z0b.md), Open 1–3 [I2: A0, X2b en X3b legden ze vast; z0b.md zegt per punt waar] |
+| De pagina `/over` met de bronvermelding | komt met de gezichten (X2); tot dan staan GeoNames en Natural Earth onder de kaart en in de README | README, "Bekende grenzen" (De bronvermelding) [I2: gebouwd in 0.8.1 (P2): `/over` voor iedereen, ook met de analyse uit] |
+| Het kader van een persoon bij een nieuwe versie van een foto | kan pas met migratie 0011, want 0010 ligt vast | README, "Bekende grenzen" [I2: opgelost met 0011 in 0.8.1] |
 | Zoeken op PostgreSQL: de tak van 0010, `select_engine` en het opruimen in stukken | niet getest; PostgreSQL zoekt alleen op naam (LIKE) | README, "Bekende grenzen" (Zoeken zonder index); z0-api.md Open 5 |
 | Niemand luistert naar `search.progress` in de web | de tab op `/beheer` peilt elke 5 s, dus Jonas ziet hetzelfde; geen pakket had het, en het heeft geen eigenaar | z7.md (Afwijkingen), z0-web.md Open 6; niet in de README |
 | De service worker bewaart `/kaart/` niet | klein, later | z0-web.md Open 5 |
 | Herinneringen per map verbergen in de web (de API kan het, `kind = folder`), en een link naar `/dubbel` in het menu (nu alleen op `/fotos`) | geen pakket van I1 had het; klein, later | README, "Bekende grenzen" (herinneringen per map); [z6.md](z6.md) en [z5.md](z5.md), Open |
-| De koude eerste weergave van ±8 s (één keer gezien, oorzaak onbekend) | geen meting in I1 draait `run_all.py` met een trace; naar I2 | z5.md, Open; niet in de README |
-| Een e2e voor "Meer laden" in de lijst van mislukte op `/beheer` | daarvoor zijn meer dan 50 mislukte inhouden nodig; de bladzijden toetst `test_admin_search.py`; naar I2 | z7.md, Open |
+| De koude eerste weergave van ±8 s (één keer gezien, oorzaak onbekend) | geen meting in I1 draait `run_all.py` met een trace; naar I2 | z5.md, Open; niet in de README [I2: ook in I2 niet gedaan; [integratie-2.md](integratie-2.md), "Niet gedaan in I2"] |
+| Een e2e voor "Meer laden" in de lijst van mislukte op `/beheer` | daarvoor zijn meer dan 50 mislukte inhouden nodig; de bladzijden toetst `test_admin_search.py`; naar I2 | z7.md, Open [I2: ook in I2 niet gedaan; [integratie-2.md](integratie-2.md), "Niet gedaan in I2"] |
 | OCR voor een foto met dezelfde inhoud als een bestand dat er al was (`add_ref`) | vraagt een haak in Z0; zo'n foto krijgt zijn tekst bij de volgende start | README, "Bekende grenzen" (OCR); x1.md, Open |
 | De rij van OCR staat alleen bij wie OCR mag vragen: wie een PDF alleen mag lezen, ziet niet of OCR klaar is (de tekst vindt hij wel met Zoeken) | klein; geen pakket van I1 had het | [x1.md](x1.md), Open 7 |
 | Het camerafilter onder een libc-collatie op PostgreSQL (W2 van de review van web) | dat is de API van Z3, en PostgreSQL is niet getest; op SQLite werkt het | `api/app/search/filters_photo.py`; dit document |
-| De teksten `beeld.notReady` en `photos_faces.notReady` op `/beheer` zeggen nog "komt later in fase 6" (W6 en R3 van de review van web) | horen bij de go/no-go van X2 en X3 | `web/src/i18n/areas/beeld.nl.ts`; dit document |
+| De teksten `beeld.notReady` en `photos_faces.notReady` op `/beheer` zeggen nog "komt later in fase 6" (W6 en R3 van de review van web) | horen bij de go/no-go van X2 en X3 | `web/src/i18n/areas/beeld.nl.ts`; dit document [I2: sinds 0.8.1 zeggen ze dat het op deze server uitstaat en wat de beheerder kan doen (P2); `test_uit080.py` houdt de zinnen vast] |
 | De zichtbare uitleg in de stand beeld zegt nog "Druk op Enter" | buiten S8; de beschrijving van het veld begint nu met de zin dat het later komt | `web/src/search/ImageHint.tsx` (`IMAGE_SEARCH_READY`) |
 | `uploads.cleanup_loop` en de lus van de mediascanner zijn niet als achtergrond gemerkt | hun schrijfacties staan bij de verzoeken in de rij, zoals vóór de poort | z2.md, Open 12 |
 | De runner kijkt na een `Defer` pas na `jobs.POLL` (5 s) weer, tenzij iets hem wekt; bij een start met media aan kost dat tot 5 s voor de eerste tekst | het plan nam het alleen mee als D1 `jobs.py` toch zou raken; D1 zette daar alleen het achtergrondwerk van de Runner achter de poort. Hervatten wekt de pompen al zelf (S1) | [z2.md](z2.md), Open 11 |
@@ -320,7 +325,7 @@ stopt het dan. In M7e had DS een grens van 2 GiB (`--memory 2g` in `e2e/office_d
 worker en de bewerkers (Chromium) liepen als processen in de sandbox, zonder grens. Het hoogste
 geheugengebruik was ±3,6 GiB van de 15,7 GiB: `MemAvailable` zakte tot 12.434 MiB (run 1, stap
 `achtergrond`). De poorten van de beeldvraag en de container
-`analyse` horen bij 0.8.1 en zijn niet gemeten.
+`analyse` horen bij 0.8.1 en zijn niet gemeten. [I2: ze staan in [metingen.md](metingen.md#gezichten-en-beeld-081), M11–M13.]
 
 **M9, plaatsen na de update (A4), met de echte bronnen.** De test
 `api/tests/geo/test_places_later_echt.py::test_upgrade_met_de_echte_bronnen` (marker `geo`,
@@ -444,7 +449,9 @@ niet opnieuw getest; de stappen van `--stappen` in `infra` en `test_install_medi
   `fsync`. Of de schijf van de LXC daaronder blijft, is niet gemeten, en de lijst Op de LXC heeft
   er geen punt voor.
 - **De kwaliteit van gezichten en zoeken op beeld op echte foto's:** 0.8.1, en alleen na een ja
-  op Vraag 8 en 12 in CI.
+  op Vraag 8 en 12 in CI. [I2: zoeken op beeld haalde BZ4 in CI op `dc5dfe5` (Keuze 85); voor
+  gezichten blijft het de LXC (`analyse-kwaliteit`), en twee eisen hebben geen gereedschap
+  ([integratie-2.md](integratie-2.md), "Alleen op de LXC").]
 
 ## Afronden en 0.8.0
 
@@ -690,9 +697,9 @@ op `47d62eb` met de code van 0.8.0, en run 106 op `3fca440`, de commit van 0.8.0
 |---|---|---|
 | **Een zoekopdracht over 100.000 bestanden antwoordt binnen 200 ms** | **in CI**; de CPU van Jonas **op de LXC** | `api/tests/search/test_perf_100k.py` en `e2e/perf/zoek_100k.py`: p95 ≤ 200 ms per toegangsprofiel, op SQLite 3.46.1, in `zoek-perf`, stap "§4.4 100.000 bestanden binnen 200 ms (Z1; de poorten zijn hard)". M1: 126,7 ms, en met 4 tegelijk 209,4 ms (in run 99 206,6 ms, grens 300). LXC: `bench --los` |
 | **OCR-tekst is doorzoekbaar** | **in CI** en **hier** | `e2e/test_zoek_ocr.py` (marker `ocr`, de echte tesseract) in de job `ocr`, stap "e2e -m ocr"; de poort in de stap "De poort van §4.5 (130 scans, taskset -c 0, ≥ 8 pagina's per minuut)" (run 99: 20,5 per minuut; M5 23,2 per minuut over de mix); `test_ocr_container.sh` in `media-image`. Hier in B1: `-m ocr` 13 goed, e2e `-m ocr` 5 goed |
-| **Gezichten zijn te benoemen en te zoeken** | met de hand **hier** en **in CI**; automatisch **open voor 0.8.1** | `e2e/test_zoek_personen.py` (in de set van `e2e`) en `api/tests/people/test_people_privacy.py` (in `api`). Automatisch vinden (X2): `test_zoek_gezichten.py` en `test_zoek_gezichten_echt.py` en de jobs `api-analyse` en `analyse-image` bestaan nog niet |
-| **Privacy van gezichten** | **open voor 0.8.1** | de tests uit §4.0 (`test_faces_*.py`, `test_db_pragmas.py`) horen bij X2 en bestaan nog niet. In 0.8.0 zijn er geen vectoren van gezichten: de schakelaar "Gezichten herkennen" op `/account` gaat niet aan |
-| **Gezichten en objecten, semantisch zoeken (X3)** | **open voor 0.8.1**, of een fase 6b | `e2e/test_zoek_beeld.py` en `test_beeld_*.py` bestaan nog niet; de stand beeld zegt dat het in een volgende versie komt (S8) |
+| **Gezichten zijn te benoemen en te zoeken** | met de hand **hier** en **in CI**; automatisch **open voor 0.8.1** [I2: gebouwd in 0.8.1; [integratie-2.md](integratie-2.md), "Klaar als"] | `e2e/test_zoek_personen.py` (in de set van `e2e`) en `api/tests/people/test_people_privacy.py` (in `api`). Automatisch vinden (X2): `test_zoek_gezichten.py` en `test_zoek_gezichten_echt.py` en de jobs `api-analyse` en `analyse-image` bestaan nog niet |
+| **Privacy van gezichten** | **open voor 0.8.1** [I2: gebouwd in 0.8.1; [x2b.md](x2b.md)] | de tests uit §4.0 (`test_faces_*.py`, `test_db_pragmas.py`) horen bij X2 en bestaan nog niet. In 0.8.0 zijn er geen vectoren van gezichten: de schakelaar "Gezichten herkennen" op `/account` gaat niet aan |
+| **Gezichten en objecten, semantisch zoeken (X3)** | **open voor 0.8.1**, of een fase 6b [I2: gebouwd in 0.8.1 (Keuze 85); [x3b.md](x3b.md)] | `e2e/test_zoek_beeld.py` en `test_beeld_*.py` bestaan nog niet; de stand beeld zegt dat het in een volgende versie komt (S8) |
 | **Full-text voor pdf, docx, xlsx, pptx, txt, md** | **hier** en **in CI** | `api/tests/extract/test_extract_*.py` (html, media, no_pdfium_in_app, normalize, office, pdf, plain, rtf, subprocess, terugval) in `api`; `e2e/test_zoek_z2.py` in `e2e` (alleen via de API), zijn test met de worker in `e2e-media`. M2: 1.977 per minuut met de worker |
 | **EXIF en GPS, kaart, offline plaatsnamen** | **hier** en **in CI** | `api/tests/geo/*` in `api`, met de stap "pytest -m geo (grenzen, zee, de plaats tegen brute kracht, 180°)" op de echte bronnen, en sinds I1 `test_places_later.py` en `test_places_later_echt.py` (M9, gehaald); `e2e/test_zoek_kaart.py` (0 verzoeken naar andere hosts) in `e2e`; de kaart in `zoek-perf`, stap "§4.4 de kaart binnen 150 ms bij 55.000 foto's …" (M1: 51,9 ms). M3 13.713 per minuut, M4 44.495 per minuut. LXC: "De plaatsnamen zijn gebouwd" |
 | **Duplicaten en bijna-duplicaten** | **hier** en **in CI** | `api/tests/dupes/test_dupes.py` en `test_phash.py` in `api`; `e2e/test_zoek_dubbel.py` in `e2e`; `zoek-perf`, stap "§4.4 de duplicaten binnen 300 ms" (M1: 192,7 ms) |
@@ -709,4 +716,6 @@ Daarnaast twee punten uit §4.5 die de README onder "Klaar als" noemt:
 
 Open voor 0.8.1 blijven X2 (gezichten automatisch, met hun privacy) en X3 (zoeken op beeld), met
 de container `analyse` en de jobs `api-analyse`, `analyse-image` en `beeld-model`. Schuift X3 naar
-een fase 6b, dan blijft "semantisch zoeken" in het stappenplan open.
+een fase 6b, dan blijft "semantisch zoeken" in het stappenplan open. [I2: X3 schoof niet; X2 en X3
+zitten in 0.8.1. Wat daar klaar is en waar het bewezen is: [integratie-2.md](integratie-2.md),
+"Klaar als".]

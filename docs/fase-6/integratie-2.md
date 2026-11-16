@@ -104,6 +104,23 @@ echte SigLIP 2) en, voor gezichten, uit `analyse-kwaliteit` op de LXC.
 
 ⟦I2: de review na het samenvoegen (veilig, uitrol, contract): wat ze vond, wat er hersteld is en met welke test⟧
 
+## Niet gedaan in I2, met de reden
+
+| Wat | Waarom niet | Waar het staat |
+|---|---|---|
+| `test_install_update.sh` (±17 min, fase 4) | weigert zolang `python:3.12-slim` er is, en draait niet in CI; net als bij 0.8.0 niet gedraaid | [integratie.md](integratie.md), De controles |
+| Een `--stappen` met echte docker en de analyse standaard aan (modellen die niet te halen zijn, de container met `models_missing`) | vandaag alleen met de nep van docker in de installatietests | P1 |
+| `ROLLBACK_SHA` in `test_install_search.sh` van 0.7.1 naar de commit van 0.8.0 | hoort bij een volgende versie | [a0.md](a0.md) |
+| Gereedschap voor de kleurvolgorde en voor "≥ 95% van de portretten" | er is geen set met echte gezichten zolang Vraag 8 op nee staat | [README](README.md), Vragen voor Jonas |
+| Een GPS-waarde met 60,0 seconden | een herstel vraagt een nieuwe versie van photometa, en dan leest de update van Jonas elke foto opnieuw | [integratie.md](integratie.md), Niet gedaan; [metingen.md](metingen.md), Bevindingen 5 |
+| De koude eerste weergave van ±8 s | geen meting draait `run_all.py` met een trace | [z5.md](z5.md), Open |
+| Een e2e voor "Meer laden" op `/beheer`, en de gaten in de e2e met het toetsenbord van X2b | staan op de lijst voor de hand-test van Jonas | [z7.md](z7.md), Open; [toetsenbord-x2.md](toetsenbord-x2.md) |
+| De regel van Keuze 82 (geen "Meer zoals deze" op een foto met een gevonden gezicht) | een beslissing na BZ10 op de LXC | runbook [analyse.md](../runbooks/analyse.md) |
+| Een vaste zin rond de vraag voor 'bergen' en 'boot', en SmoothQuant | onderzoek; Keuze 85 laat de twee zwakke woorden toe | [x3a.md](x3a.md) |
+| Kleine punten uit A0 en X3b (een nieuw mime-type verhoogt `gen` niet, de uv-cache in het image, een WAL-checkpoint per start, PostgreSQL voor 0011 en 0012 met de hand, `ImageHint` en de datum in het raster van beeld) | klein; geen pakket van I2 had ze | [a0.md](a0.md) en [x3b.md](x3b.md), Open |
+| `test_analyse_kinderen.py` naar `analyse-image` | later | [x2a.md](x2a.md), Open |
+| Opnieuw nagaan: de ids van Wikidata en de miniaturen voor `beeld.tsv` | `beeld.tsv` staat vast sinds `dc5dfe5` en BZ4 is groen | [x3a.md](x3a.md) |
+
 ## Standaarden die Jonas kan veranderen
 
 Geen vraag aan Jonas: 0.8.1 gaat uit van deze standaarden, en hij kan ze veranderen
