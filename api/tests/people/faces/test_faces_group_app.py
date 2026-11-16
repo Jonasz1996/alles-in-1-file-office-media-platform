@@ -3,7 +3,8 @@ referentie in puur Python, tests/analyse/groep_ref.py).
 
 - na een batch: voorstellen voor de nieuwe gezichten (suggest, alleen die);
 - full: face_owner.run één omhoog, de groepen heten "<run>:<cluster>"; een oude run is 409
-  faces_gone; hooguit één keer per uur vanzelf;
+  faces_gone; hooguit één keer per uur vanzelf, en de ronde van elk uur haalt in wat binnen het
+  uur kwam;
 - een afwijzing (nee) gaat mee: nooit dat voorstel;
 - de uitkomst klopt niet (grootte): bad_output, niets geschreven, geen nieuwe poging;
 - schrijven in stukken (CHUNK): dezelfde uitkomst als in één keer.
@@ -14,9 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.analyse import wire
 from app.models import Face, FaceOwner, Job
@@ -160,6 +162,51 @@ async def test_full_hooguit_een_keer_per_uur(settings, nep, eva):
     await group.maybe_full(settings, eva["id"])
     async with maker(settings)() as session:
         assert list(await session.scalars(select(Job.payload).where(Job.type == group.GROUP))) == []
+
+
+async def group_modes(settings) -> list[str]:
+    """De rondes van group die klaarstaan."""
+    async with maker(settings)() as session:
+        waiting = select(Job.payload).where(Job.type == group.GROUP, Job.status == "queued")
+        return [p["mode"] for p in await session.scalars(waiting)]
+
+
+async def test_de_ronde_van_elk_uur_groepeert_wat_binnen_het_uur_kwam(settings, nep, eva):
+    """Een batch binnen het uur na een full zet geen full klaar (maybe_full). De ronde van elk uur
+    (register.hourly) doet dat wel zodra het uur om is, en alleen voor wie gezichten heeft van na
+    zijn laatste full."""
+    from app.people.faces import register
+
+    voor = await run_of(settings, eva["id"])
+    assert voor >= 1
+    await foto(settings, nep, eva["id"], "later.jpg", [(A, 1)])
+    await aan(settings, eva["id"])
+    await draai(settings)
+    assert await run_of(settings, eva["id"]) == voor
+    # Binnen het uur: ook de ronde van elk uur wacht
+    await register.hourly(settings)
+    assert await group_modes(settings) == []
+    # Het uur is om: full, met het nieuwe gezicht
+    async with maker(settings)() as session:
+        row = await session.get(FaceOwner, eva["id"])
+        row.grouped_at = datetime.now(UTC) - timedelta(hours=2)
+        await session.commit()
+    await register.hourly(settings)
+    assert await group_modes(settings) == ["full"]
+    await draai(settings)
+    assert await run_of(settings, eva["id"]) == voor + 1
+    # Geen gezicht van na de laatste full: geen full, ook niet na het uur
+    async with maker(settings)() as session:
+        row = await session.get(FaceOwner, eva["id"])
+        row.grouped_at = datetime.now(UTC) - timedelta(hours=2)
+        await session.execute(
+            update(Face)
+            .where(Face.owner_id == eva["id"])
+            .values(created_at=datetime.now(UTC) - timedelta(hours=3))
+        )
+        await session.commit()
+    await register.hourly(settings)
+    assert await group_modes(settings) == []
 
 
 async def test_een_uitkomst_die_niet_klopt_schrijft_niets(settings, nep, eva, fake, caplog):

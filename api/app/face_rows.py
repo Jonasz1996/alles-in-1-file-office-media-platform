@@ -385,6 +385,20 @@ async def set_scan(
     await db.execute(update(FaceScan).where(*where).values(**values))
 
 
+async def new_since_full(db: AsyncSession) -> list[uuid.UUID]:
+    """De eigenaren (zonder wisronde) met een gezicht van na hun laatste full, of nog zonder full:
+    voor de ronde van elk uur (group.full_due). Per eigenaar één vraag langs ix_face_new."""
+    rows = select(FaceOwner.owner_id, FaceOwner.grouped_at).where(FaceOwner.wiping == 0)
+    found = []
+    for owner, last in (await db.execute(rows)).all():
+        faces = select(Face.id).where(Face.owner_id == owner, Face.hidden == 0)
+        if last is not None:
+            faces = faces.where(Face.created_at > last)
+        if await db.scalar(faces.limit(1)) is not None:
+            found.append(owner)
+    return found
+
+
 async def queue_quiet(db: AsyncSession, owner: uuid.UUID) -> bool:
     """Wacht er voor deze eigenaar niets meer (geen wait of busy)? Dan mag een volle groepering."""
     found = await db.scalar(

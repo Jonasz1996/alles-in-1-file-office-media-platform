@@ -267,6 +267,16 @@ async def maybe_full(settings: Settings, owner: uuid.UUID) -> None:
         await db.commit()
 
 
+async def full_due(settings: Settings) -> None:
+    """Elk uur (register.hourly): maybe_full voor elke eigenaar met gezichten van na zijn laatste
+    full. Een batch binnen het uur na een full zet geen full klaar; zonder deze ronde bleven die
+    gezichten buiten "Wie is dit?" tot er na dat uur weer een batch met nieuwe gezichten kwam."""
+    async with _maker(settings)() as db:
+        owners = await face_rows.new_since_full(db)
+    for owner in owners:
+        await maybe_full(settings, owner)
+
+
 def _aware(when):
     from datetime import UTC
 

@@ -314,12 +314,14 @@ async def on_start(settings: Settings) -> None:
 
 
 async def hourly(settings: Settings) -> None:
-    """Elk uur: de sweep (alleen als gezichten draaien) en de wisrondes die nog open zijn."""
+    """Elk uur: de sweep en een full voor wie er nieuwe gezichten heeft (alleen als gezichten
+    draaien), en de wisrondes die nog open zijn."""
     state.configure(settings)
     if state.running(settings):
         async with scan._maker(settings)() as db:
             await scan.queue_plan(db, "sweep")
             await db.commit()
+        await group.full_due(settings)
     await wipe.resume(settings)
 
 
