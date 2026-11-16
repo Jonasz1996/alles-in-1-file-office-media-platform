@@ -259,11 +259,20 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
 - `BZ4 set: … tweede keus (<zoekopdracht> …, …); de eerste keus was op; het bewijs per foto staat
   in het log`: alleen als een voorstel foto's van de tweede keus nam (stap 4), met per
   zoekopdracht hoeveel;
+- `BZ4 set: de eerste keus gaf … tekorten, de volgorde van Commons …: dit voorstel volgt de
+  volgorde van Commons, met … tweede keus (…); het bewijs per foto staat in het log, na deze
+  regel`: de eerste keus gaf een tekort (een eerste keus van de ene zoekopdracht kan een volgende
+  een foto afnemen), en opnieuw kiezen in de volgorde van Commons, zoals vóór de eerste keus maar
+  met `beeld_niet.tsv`, gaf er minder. Het voorstel volgt dan die keuze; zonder tweede keus valt
+  `, met … tweede keus (…)` weg. Bij evenveel tekorten blijft de eerste keus (x3a.md, "De
+  review");
 - `BZ4 set: beeld_niet.tsv: … foto's op de lijst, als kandidaat overgeslagen: …`: alleen als die
   lijst er is; hoeveel foto's erop staan en hoeveel daarvan het voorstel tegenkwam en oversloeg;
 - `FOUT set: beeld_niet.tsv regel …: …`: de lijst klopt niet (de kop, een bron die geen
   bestandspagina van Commons is, een reden die niet bestaat, een lege of te lange `gezien`, een
-  dubbele bron; ook `FOUT set: beeld_niet.tsv: geen UTF-8`); `set` vraagt dan niets aan Commons.
+  dubbele bron; ook `FOUT set: beeld_niet.tsv: geen UTF-8`, en `FOUT set: beeld_niet.tsv: <pad>
+  is er niet (--niet)` als een lijst die met `--niet` is opgegeven niet bestaat; zonder `--niet`
+  mag de standaardlijst ontbreken); `set` vraagt dan niets aan Commons.
   `FOUT set: beeld.tsv: regel … (<sleutel>) staat in beeld_niet.tsv regel …
   (<reden>); …`: een vaste foto staat op de lijst; `set` haalt dan niets op;
 - `FOUT <stap>: … HTTP 429 (…)` of `HTTP 5xx (…)`: de host gaf ook na zes pogingen nee, of vroeg
@@ -299,8 +308,10 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
     token en per token na glad;
   - `BZ4 afwijking per laag <toren> (rapport)`: cos tussen int8 en fp32 na elke laag;
   - `BZ4 variant <naam> (rapport)`: nl (en hoeveel die zakt tegen fp32), engels, combinaties, meer
-    zoals deze, cos, en de grootte en tijd van de grafen. Na 8 minuten `overgeslagen: tijd`;
-    `Q_MAX 127` zonder VNNI `overgeslagen: geen VNNI`;
+    zoals deze, cos, en de grootte en tijd van de grafen. Elke variant meet één plek: `fc2 fp32`,
+    `mlp fp32` en `aandacht fp32` alleen in de lagen van de encoder, de koppen alleen in `kop
+    fp32`. Na 8 minuten `overgeslagen: tijd`; `Q_MAX 127` zonder VNNI `overgeslagen: geen VNNI`;
+    een variant die faalt `mislukt (<soort>)`, en de volgende gaat door;
 - `UITSLAG …`: waarom de job rood is, als er een voorstel ligt;
 - per pytest-stap de laatste regel (`bz3`, `bz4`, `bz4r`, `bz6`).
 
@@ -319,7 +330,11 @@ elk teken uit blijkt (een eigenschap als `P6243` of `P195`, een waarde als `P31 
 `P180 Q8441`, of een sjabloon als `Artwork` of `Personality rights`). `eigen werk` is P7482 = eigen
 werk; `prominent` zegt of de categorie van de zoekopdracht op P180 de rang preferred heeft (bij
 een combinatie `1 van 2` als één van de twee); `P180 …` is hoeveel dingen er volgens Commons op
-staan. Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons. Daarmee
+staan. Gaf de eerste keus een tekort, dan kiest `set` opnieuw in de volgorde van Commons, met
+per zoekopdracht `BZ4 set: volgorde van Commons, <zoekopdracht>: … van … gekozen, … tweede keus
+(…)`, en daarna `BZ4 set: de volgorde van Commons gaf …: het voorstel houdt de eerste keus`, of
+(als die keuze minder tekorten gaf) de regel uit het blok hierboven en het bewijs per foto van
+die keuze. Alleen ids en namen uit de vaste lijsten van de tool, nooit tekst van Commons. Daarmee
 kijk je stap 4 sneller na.
 
 ### Een contact in de User-Agent (`BEELD_CONTACT`, in de CI aan)

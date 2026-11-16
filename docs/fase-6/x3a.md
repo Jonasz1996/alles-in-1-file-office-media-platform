@@ -1544,7 +1544,7 @@ Niets hiervan verandert een poort, een pin of de bytes van de omzetter.
   de gewichten, een probe van de invoer van elke Linear, de afwijking per laag en de varianten;
   geen assert op een getal, alleen dat `bz4r.json` er is. Met `test_beeld_int8_klein.py` (35 tests
   in de sandbox: elke haak, elke variant op het kleine model, en het rapport van begin tot eind);
-  `api-analyse` telt nu 253 tests en 16 gedeselecteerd.
+  `api-analyse` telt nu 253 tests en 16 gedeselecteerd (na de review 268; "De review" hieronder).
 - **Een eigen stap in `beeld-model`** (`5c7980b`): `BZ4 rapport int8 per laag en varianten (geen
   poort)`, na BZ6 en vóór de uitslag, met `continue-on-error: true` en `timeout-minutes: 15`, zonder
   netwerk (de bron en de set van eerder in de job). De uitslag leest hem niet.
@@ -1583,8 +1583,10 @@ kanaal, en de fout per tensor in de batch, per tensor alleen, per token en per t
 `BZ4 afwijking per laag <toren> (rapport)` en `BZ4 variant <naam> (rapport)` voor per token, fc2
 fp32, kop fp32, per token + kop fp32, mlp fp32, aandacht fp32, de eerste en laatste vier lagen in
 fp32, per token + glad (geijkt op synthetische foto's en vaste zinnen, nooit op de set), Q_MAX 127
-(alleen met VNNI) en embedding fp32. Na 8 minuten zegt een variant `overgeslagen: tijd`. Verwacht:
-4 tot 5,5 minuten erbij.
+(alleen met VNNI) en embedding fp32. Elke variant meet één plek: fc2, mlp en aandacht alleen in de
+lagen van de encoder, de koppen (de MAP-kop van het beeld en de kop van de tekst) alleen in kop
+fp32 (sinds de review, S3). Na 8 minuten zegt een variant `overgeslagen: tijd`. Verwacht: 4 tot
+5,5 minuten erbij.
 
 ### Zo lees je de uitkomst
 
@@ -1608,7 +1610,8 @@ fp32, per token + glad (geijkt op synthetische foto's en vaste zinnen, nooit op 
   bron, niet uit een numpy-forward in de omzetter.
 - **Of BZ4 vragen één voor één meet** zoals `embed_text`, is een keuze voor Keuze 83, nooit stil.
 - **Hoe lang de varianten op de runner duren**, is niet bekend; de tijdgrens van 8 minuten en de
-  15 minuten van de stap houden de job binnen zijn tijd.
+  15 minuten van de stap begrenzen het rapport, en `timeout-minutes` van de job telt die 15
+  minuten mee (105 sinds de review, N1; eerder 90, en dat paste niet).
 
 ### De set strenger
 
@@ -1640,8 +1643,12 @@ Per zoekopdracht neemt het voorstel eerst de eerste keus, pagina na pagina. Pas 
 na alle pagina's tot het uiterste van vroeger (2 licenties × `max_pagina` 4), vult hij aan met de
 tweede keus van alle pagina's die hij las. Binnen elke keus eerst een kandidaat waarop de
 categorie van de zoekopdracht prominent is (P180 met rang preferred; bij een combinatie: hoeveel
-van de twee), dan eigen werk (P7482 = Q66458942), en verder de volgorde van Commons. Er komt geen
-tekort bij: wat vroeger genoeg was, is nu ook genoeg, en de regel van een tekort is dezelfde. De
+van de twee), dan eigen werk (P7482 = Q66458942), en verder de volgorde van Commons. Per
+zoekopdracht komt er geen tekort bij: wat vroeger genoeg was, is nu ook genoeg, en de regel van een
+tekort is dezelfde. Over zoekopdrachten heen kon dat wel (de review, S1): een eerste keus van de
+ene zoekopdracht kan een volgende een foto afnemen die die vroeger had. Geeft de eerste keus een
+tekort, dan kiest `stel_voor` daarom opnieuw in de volgorde van Commons, zoals vroeger (maar met
+`beeld_niet.tsv`), en volgt die keuze als ze minder tekorten geeft ("De review"). De
 tekens komen uit vragen die de tool al deed: de sjablonen in dezelfde vraag als imageinfo
 (`prop=imageinfo|templates`, met `tltemplates` alleen die drie sjablonen), de rang en de andere
 uitspraken uit wbgetentities. Geen nieuwe host, geen vraag erbij per pagina.
@@ -1664,7 +1671,8 @@ wat hij deed. Het voorstel blijft een vaste functie van de antwoorden van Common
 een foto die niet klopt op de lijst zetten, pushen, het volgende voorstel nakijken.
 
 De eerste lijst heeft 49 foto's uit het voorstel op 3a9b07d, volgens één vaste regel op de
-review, alleen "ja" en "waarschijnlijk" (misschien telt niet):
+review: `persoon` alleen (a) ja; `niet-zichtbaar` (c) ja of waarschijnlijk (misschien telt
+nergens):
 
 | reden | aantal | regel |
 |---|---|---|
@@ -1688,7 +1696,11 @@ vroeger ook las, dan is het aantal vragen hetzelfde: met de nep van de tests 90 
 vroeger. Vroeger las hij soms een pagina meer (die kwam binnen voordat de lus zag dat hij klaar
 was); dat is weg. Is de eerste keus op, dan kost elke pagina erbij 3 vragen, tot hooguit 24 per
 zoekopdracht en 750 samen met de reserves: hetzelfde uiterste als vroeger, dus de opmerking bij
-`timeout-minutes` van de job in `ci.yml` blijft kloppen. Met contact (de CI, 1 s per vraag) is
+`timeout-minutes` van de job in `ci.yml` blijft kloppen (sinds de review 105 minuten, met de stap
+van het rapport erbij; N1). Kiest het voorstel na een tekort opnieuw in de volgorde van Commons,
+dan leest het de pagina's die al binnen waren uit het geheugen, en een volgende alleen als die
+keuze hem nodig heeft, nooit voorbij het uiterste per zoekopdracht; volgt het die keuze, dan
+haalt het daarna nog de thumbnails die de eerste ronde niet had (hooguit 120). Met contact (de CI, 1 s per vraag) is
 dat uiterste 12,5 minuten, zonder contact (8 s) 100. Hoeveel pagina's het echte voorstel erbij
 leest, zegt pas de volgende run (in het log: `… kandidaten bekeken op … pagina's`).
 
@@ -1726,7 +1738,7 @@ Teruggedraaid getest: met de tool van 3a9b07d op de plek van de nieuwe (daarna t
 checkout`, nagekeken met `git status`) gaven `test_beeld_tools.py` en `test_beeld_sets.py` 39
 rood en 166 groen. De 39 zijn precies de nieuwe tests: in `test_beeld_tools.py` 12 losse en de
 26 gevallen van twee tests met parameters (15 en 11), en `test_beeld_niet_tsv_klopt`; de
-bestaande bleven groen. Met de nieuwe
+bestaande bleven groen. In het pakket zelf, vóór samenvoegen: met de nieuwe
 tool 205 groen, `tests/analyse` 486 groen; ruff schoon. `tests_analyse`, `ci.yml` en
 `test_beeld_ci.py` zijn niet veranderd, en de pins van de omzetter niet geraakt.
 
@@ -1745,3 +1757,48 @@ tool 205 groen, `tests/analyse` 486 groen; ruff schoon. `tests_analyse`, `ci.yml
   hoeveel van de 34 bestanden van het Met P195, P217, P6243 of het sjabloon Artwork hebben, is
   vanaf hier niet na te kijken.
 - **De ids** van `KUNSTWERK_P31` en `PERSOON_P180` (hierboven).
+
+### De review
+
+De review van dit werk (de set strenger en het rapport van int8, samen op `2358b43`) gaf vier
+punten die moesten (S1 tot S4) en zeven kleine (N1 tot N7). Elk is eerst nagekeken; geen bleek
+onjuist. Elk herstel kreeg een test die zonder dat herstel rood is.
+
+| Bevinding | Wat er gebeurde | Test |
+|---|---|---|
+| **S1** De eerste keus kon over zoekopdrachten heen een tekort geven: een eerste keus van `hond` die ook een kat afbeeldt, neemt `kat` een foto af die die vroeger had (nagespeeld: de nieuwe tool een tekort, die van 3a9b07d een voorstel). "Er komt geen tekort bij" klopte alleen per zoekopdracht | `stel_voor` (`d83b79a`): geeft de eerste keus een tekort, dan kiest hij opnieuw in de volgorde van Commons, zoals vóór de eerste keus maar met `beeld_niet.tsv`, op de pagina's die al binnen waren (een volgende alleen als die keuze hem nodig heeft, nooit voorbij het uiterste). Minder tekorten (dan meer foto's): het voorstel volgt die keuze, met één regel in het blok, en haalt alleen de foto's die de eerste ronde niet had. Bij gelijkspel blijft de eerste keus en zegt alleen het log wat de volgorde van Commons gaf. "De set strenger" en het runbook zeggen nu "per zoekopdracht" | `test_de_eerste_keus_maakt_over_zoekopdrachten_heen_geen_tekort[4, 6]` (een voorstel; `hond-1..4` en `kat-1..4` zoals vroeger; 93 vragen aan de API; elke foto één download) en `test_bij_evenveel_tekorten_houdt_het_voorstel_de_eerste_keus` |
+| **S2** Geen exacte referentie voor de keten van per_token: de mutatie `pt_plus_127` (Round + 127 in plaats van + 128) bleef groen | `test_per_token_rekent_precies_als_de_keten_in_numpy` (`947a66b`): de graaf van één Linear tegen dezelfde keten in numpy (max van \|x\| per rij / 127, Round + 128, Clip 0..255, MatMulInteger met nulpunt 128, × a × s, + bias), binnen TOL, met uitschieters, voor zes Linears van beide torens en de koppen; de constante van die Add is precies 128 | `pt_plus_127` rood (6 van 6) |
+| **S3** Niet getest dat elke variant van het rapport meet wat zijn naam zegt. Zo raakten `fc2 fp32`, `mlp fp32` en `aandacht fp32` ook de MAP-kop van het beeld (`vision_model.head.mlp.fc2`, zijn aandacht), en waren ze niet los van `kop fp32` te lezen | `lijst()` (`dbb9182`): fc2, mlp en aandacht alleen in de lagen van de encoder. `test_elke_variant_van_het_rapport_meet_wat_zijn_naam_zegt`: per variant en toren precies welke Linears fp32 zijn, MatMulInteger alleen bij per token, `.glad` alleen bij glad, de grootste \|q\| 127 alleen bij `Q_MAX 127`, de embedding in int8 behalve bij `embedding fp32`. `test_glad_komt_niet_uit_de_set`: dezelfde factoren met een set van NaN en andere vragen | de mutaties `rap_fc2_is_fc1`, `rap_kop_alleen_tekst`, `rap_variant_per_token_uit` en `rap_glad_op_de_set` rood |
+| **S4** De try's die de uitslag van BZ4 beschermen, hadden geen test (`kwal_zonder_try`, `rap_probeer_zonder_try` en `rap_variant_zonder_try` bleven groen) | `_rapport_veilig(verslag, **kw)` in `test_beeld_kwaliteit.py` (`306562c`), dat `uitkomst` aanroept | `test_een_int8_rapport_dat_faalt_is_een_regel_en_geen_uitslag` (een stub met RuntimeError: precies één regel `BZ4 int8-rapport (rapport): mislukt (RuntimeError)`, geen `int8_rapport` in `bz4.json`; zonder fout wel), `test_de_fixture_uitkomst_rekent_het_int8_rapport_alleen_veilig` (AST: `_rapport_int8` alleen in `_rapport_veilig`), `test_probeer_maakt_van_een_fout_een_regel` en `test_een_variant_die_faalt_stopt_de_rest_niet` (`_variant` faalt bij `fc2 fp32`; de rest gaat door, `bz4r.json` heeft `{"variant": "fc2 fp32", "mislukt": "RuntimeError"}`); de drie mutaties rood |
+| **N1** De opmerking bij `timeout-minutes` (90) en "houden de job binnen zijn tijd" vergaten de stap van het rapport (15 min): 60 + 15 + 15 + 15 = 105 | `timeout-minutes` van `beeld-model` 105, met de opmerking (`979db5d`); "Open na 3a9b07d" aangepast | `test_de_tijd_van_de_job_draagt_ook_het_rapport_van_int8` in `test_beeld_ci.py`: de getallen uit de opmerking, `PAUZE_API_S` en `WACHT_TOTAAL_S` uit de tool, plus de `timeout-minutes` van elke stap; met 90 rood (90 ≥ 105) |
+| **N2** "alleen ja en waarschijnlijk" klopte niet voor `persoon`, dat alleen (a) ja nam | "De set strenger": `persoon` alleen (a) ja; `niet-zichtbaar` (c) ja of waarschijnlijk | (docs) |
+| **N3** "`tests_analyse`, `ci.yml` en `test_beeld_ci.py` zijn niet veranderd" en "486 groen" golden alleen vóór het samenvoegen | Ervoor: "In het pakket zelf, vóór samenvoegen" | (docs) |
+| **N4** `Verslag.zet` zette de waarde vóór `json.dumps`: één waarde die geen JSON is, bedierf elke volgende `zet` in hetzelfde verslag | Eerst de nieuwe dict en `json.dumps`, dan pas zetten en schrijven (`306562c`) | `test_een_waarde_die_geen_json_is_bederft_het_verslag_niet` |
+| **N5** `Bouwer` nam per_token met `q_max` 127 aan; per_token (MatMulInteger, uint8 tot 255) klopt alleen met \|q\| ≤ 64 op elke CPU | `PER_TOKEN_Q_MAX` 64: per_token met meer (ook via `Q_MAX`) is een `ValueError` (`947a66b`); de standaard bouwt dezelfde bytes | `test_per_token_met_een_gewicht_boven_64_is_een_fout[65, 127]` |
+| **N6** De mutatie `set_voorstel_geen_controle` (het voorstel zelf niet nog eens langs `beeld_niet.tsv`) bleef groen | Een test (`8def9f2`) | `test_het_voorstel_zelf_gaat_nog_eens_langs_de_lijst`: met `_op_lijst` uit vangt de controle van het voorstel het (`… staat in beeld_niet.tsv regel 3 (persoon); …`), en er is geen voorstel |
+| **N7** Een opgegeven `--niet` die er niet is, betekende stil "geen lijst" | `set_`: een opgegeven pad dat geen bestand is, is een fout (`8def9f2`); zonder `--niet` mag de standaardlijst ontbreken, zoals vroeger. Runbook: `FOUT set: beeld_niet.tsv: … is er niet (--niet)` | `test_een_opgegeven_lijst_die_er_niet_is_is_een_fout` (code 1, één regel, geen vraag aan Commons) |
+
+Teruggedraaid getest: alleen dat herstel ongedaan (de omgekeerde diff van de code van die commit;
+voor een herstel dat alleen een test is, de mutatie van de review), de test rood; dan terug
+(`git checkout` of de kopie), de test groen, en `git status` zoals ervoor.
+
+| Herstel | Ongedaan | Rood | Weer groen |
+|---|---|---|---|
+| S1 | `d83b79a`, `tools/beeld/beeld_model.py` | 3 | 3 |
+| S2 | `pt_plus_127` in `bouw.py` | 6 | 6 |
+| N5 | `947a66b`, `bouw.py` | 2 | 2 |
+| S3, de namen | `dbb9182`, `test_beeld_int8_lagen.py` | 1 | 1 |
+| S3, glad | `rap_glad_op_de_set` | 1 | 1 |
+| S4, het int8-rapport | `306562c`, `test_beeld_kwaliteit.py` | 2 | 2 |
+| S4, zonder try | `kwal_zonder_try` (nu in `_rapport_veilig`) | 1 | 1 |
+| S4, probeer | `rap_probeer_zonder_try` | 1 | 1 |
+| S4, een variant | `rap_variant_zonder_try` | 1 | 1 |
+| N4 | `306562c`, `beeld_echt.py` | 1 | 1 |
+| N1 | `979db5d`, `ci.yml` | 1 | 1 |
+| N6 | `set_voorstel_geen_controle` | 1 | 1 |
+| N7 | `8def9f2`, `tools/beeld/beeld_model.py` | 1 | 1 |
+
+De telling van `api-analyse`: `ANALYSE_TESTS` 268 (253 en de 15 nieuwe van
+`test_beeld_int8_klein.py`), `ANALYSE_DESELECTED` 16. Geen poort en geen test lager, geen
+afhankelijkheid, host of action erbij; de bytes van de omzetter met de standaardopties zijn
+dezelfde (pins beeld `96c602da`, tekst `afc9dd55`, meta `cc84a88b`).
