@@ -8,6 +8,7 @@
 //   Enter              de foto openen in de viewer
 //   Ctrl+Z             de laatste keuze ongedaan maken, zolang de melding staat
 //   Escape             het raster sluiten (onClose zet de focus terug op de kaart)
+// Bij het openen staat de focus op het eerste gezicht (of op Sluiten als er niets is).
 // Elke keuze zegt via een melding (aria-live) wat er gebeurde. In "Wie is dit?" gaan alleen de
 // gezichten die je zag (in beeld waren) en die geselecteerd zijn naar confirm, nooit de groep.
 
@@ -57,6 +58,8 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
   const [mine, setMine] = useState<Person[]>([]);
   const [pick, setPick] = useState<ComboOption | null>(null);
   const cells = useRef<(HTMLDivElement | null)[]>([]);
+  const closeButton = useRef<HTMLButtonElement | null>(null);
+  const first = useRef(true);
   const last = useRef(new LastChoice());
   useScope("faces");
 
@@ -83,6 +86,15 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
         .then((r) => setMine(r.people), () => {});
     }
   }, []);
+
+  // Na de eerste pagina staat de focus in het raster (de knop van de kaart is dan weg); zonder
+  // gezichten op Sluiten
+  useEffect(() => {
+    if (!first.current || loading) return;
+    first.current = false;
+    if (faces.length > 0) cells.current[0]?.focus();
+    else closeButton.current?.focus();
+  }, [loading, faces]);
 
   // Gezien: een cel die in beeld kwam. Zonder IntersectionObserver telt elke getoonde cel.
   useEffect(() => {
@@ -331,7 +343,9 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
         </form>
       )}
       <p>
-        <Button onClick={p.onClose}>{t("photos_faces.grid.close")}</Button>
+        <Button ref={closeButton} onClick={p.onClose}>
+          {t("photos_faces.grid.close")}
+        </Button>
       </p>
       {viewing && (
         <Suspense fallback={null}>
