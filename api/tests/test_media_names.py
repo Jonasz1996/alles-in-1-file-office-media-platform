@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import json
 import random
 import time
@@ -228,7 +229,23 @@ def fuzz_names(seed: int, n: int) -> list[tuple[str, str, int | None, bool]]:
     return out
 
 
-def test_fuzz_10000_namen_met_vaste_seed():
+@pytest.fixture
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de tijdtest loopt, zoals frozen_heap
+    in tests/search/test_search_rebuild.py (b74e1ae), test_media_loadtest en
+    tests/beeld/test_beeld_gen, en zoals python -m app.serve dat na de start doet
+    (serve.freeze_heap). In de hele api-suite komt deze test na ±4.000 andere, en heeft het
+    proces honderdduizenden objecten van eerdere tests; een volle ronde van de gc daarover viel
+    in de meting, en dan kostte 10.000 namen 0,52 tot 0,56 s (docs/fase-6/z0.md, a0.md). Dat is
+    de rest van de suite, niet de parser. Wat de parser zelf aan afval maakt, ruimt de gc nog
+    steeds op, en de grens van 0,5 s blijft."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
+def test_fuzz_10000_namen_met_vaste_seed(frozen_heap):
     cases = fuzz_names(20261029, 10_000)
     top = dt.date.today().year + 1
     # De beste van drie keer, elke keer zonder wat de parser onthoudt: een gedeelde machine
