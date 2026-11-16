@@ -20,7 +20,8 @@ stand-in voor de routes van M2 in de browser; m6.md, afwijking 1.)
 3. transcode: hevc10_hdr10.mkv naar 720 (VP9 + Opus in Chromium 141, H.264 in CI): de trede uit
    de opdracht van ffmpeg en de init, de redenen in Info, de SRT als <track> en de ASS-cue met
    \\an8 bovenaan;
-4. een ander audiospoor bij een transcode (multi_audio.mkv), met de regel voor geforceerd;
+4. een ander audiospoor bij een transcode (multi_audio.mkv), met de regel voor geforceerd (in een
+   bibliotheek, met het spoor vooraf uitgepakt: de clip duurt 6 s);
 5. kwaliteit 720 naar 480 met het menu: een nieuwe sessie, de positie blijft;
 6. de kaart "Volgende aflevering" met de aftelling; Esc annuleert; daarna vanzelf door; cd1 naar
    cd2 zonder kaart;
@@ -590,6 +591,14 @@ def test_een_ander_audiospoor_bij_een_transcode(media, media_browsers, ffmpeg_co
     owner, folder, context, page = setup(media, media_browsers, "M6 audio")
     plays = Plays(context)
     up = media.upload(owner, "multi_audio.mkv", folder)
+    # Het geforceerde spoor moet er zijn voordat de clip (6 s) uit is: de speler start meteen, en
+    # buiten een bibliotheek pakt de app het spoor pas bij de eerste vraag uit (hooguit 2 s
+    # wachten, anders 202 met Retry-After 5). Duurde dat uitpakken langer dan 2 s, dan stond het
+    # spoor er pas na ~7 s, was de clip al afgelopen (paused, ended) en wachtte pause_at(1,5)
+    # vergeefs (CI op ea7d372). In een bibliotheek pakt de stap subs het spoor vooraf uit.
+    library_item(media, owner, folder, up.id, [])
+    row = wait_state(media, up.sha, "subs_state")
+    assert row["subs_state"] == "ready", row
     watch(page, up.id)
     ready_state(page)
     first = plays.wait(page, 1)["out"]
