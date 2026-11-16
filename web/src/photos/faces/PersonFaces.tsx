@@ -2,7 +2,8 @@
 // met zes uitsneden en een knop die het raster met alle voorstellen voor deze persoon opent. Z0b
 // zette de plek (review contract F3): PersonPage.tsx van Z6 laadt dit bestand lazy, met het
 // gebied photos_faces. Het contract: de default export met PersonFacesProps, een eigen chunk.
-// Zonder de analyse, met gezichten uit, of zonder voorstellen: niets (zoals 0.8.0).
+// Zonder de analyse, met gezichten uit, of zonder voorstellen: niets (zoals 0.8.0). Maakte het
+// raster de laatste voorstellen op, dan staat er "Hier staat niets meer.", met de focus erop.
 
 import { type JSX, useCallback, useEffect, useRef, useState } from "react";
 import { useCurrentUser } from "../../currentUser";
@@ -20,15 +21,20 @@ export interface PersonFacesProps {
   personId: string;
 }
 
+const focusNow = (el: HTMLElement | null) => el?.focus();
+
 export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element | null {
   const [page, setPage] = useState<FacePage | null>(null);
   const [open, setOpen] = useState(false);
+  const [done, setDone] = useState("");
   const button = useRef<HTMLButtonElement | null>(null);
   const who = useCurrentUser()?.id ?? "";
 
   const load = useCallback(async () => {
     try {
-      setPage(await personSample(who, personId));
+      const next = await personSample(who, personId);
+      setPage(next);
+      return next?.faces.length;
     } catch {
       setPage(null); // geen voorstellen te tonen; de pagina zelf werkt door
     }
@@ -39,8 +45,8 @@ export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element
   }, [load]);
   useReloadOn((e) => e.type === PEOPLE_CHANGED, () => void load());
 
-  if (!page || page.faces.length === 0) return null;
-  const name = page.faces[0].suggest?.name ?? "";
+  const name = page?.faces[0]?.suggest?.name ?? done;
+  if (!name) return null;
   const title = t("photos_faces.suggest.maybe", { name });
   return (
     <section className="person-faces" aria-labelledby="faces-misschien">
@@ -54,8 +60,13 @@ export default function PersonFaces({ personId }: PersonFacesProps): JSX.Element
           onClose={() => {
             setOpen(false);
             requestAnimationFrame(() => button.current?.focus());
+            void load().then((n) => n || setDone(name));
           }}
         />
+      ) : !page?.faces.length ? (
+        <p className="muted" tabIndex={-1} ref={focusNow}>
+          {t("photos_faces.grid.empty")}
+        </p>
       ) : (
         <FaceCard
           faces={page.faces}

@@ -55,7 +55,10 @@ function On(): JSX.Element {
   const [groups, setGroups] = useState<FaceGroups | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Open>(null);
+  const [closed, setClosed] = useState(0);
   const buttons = useRef(new Map<string, HTMLButtonElement | null>());
+  const wipeButton = useRef<HTMLButtonElement | null>(null);
+  const statusRef = useRef<HTMLParagraphElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,7 +94,15 @@ function On(): JSX.Element {
   function close(key: string) {
     setOpen(null);
     requestAnimationFrame(() => buttons.current.get(key)?.focus());
+    void load().then(() => setClosed((n) => n + 1));
   }
+
+  // Na het laatste voorstel is de kaart na het opnieuw laden weg, en de focus met hem: dan de
+  // eerste kaart die er nog is, anders "Niet benoemde gezichten wissen", anders de regel
+  useEffect(() => {
+    if (!closed || document.activeElement !== document.body) return;
+    ([...buttons.current.values()].find(Boolean) ?? wipeButton.current ?? statusRef.current)?.focus();
+  }, [closed]);
 
   async function wipe(n: number) {
     const ok = await confirm({
@@ -118,7 +129,7 @@ function On(): JSX.Element {
     <div className="people-faces">
       {error && <p role="alert">{error}</p>}
       {status && (
-        <p className="faces-status" role="status" data-faces="status">
+        <p className="faces-status" role="status" data-faces="status" tabIndex={-1} ref={statusRef}>
           {statusLine(status)}
         </p>
       )}
@@ -183,7 +194,7 @@ function On(): JSX.Element {
       )}
       {status && status.faces.open > 0 && !status.wiping && (
         <p>
-          <Button variant="danger" onClick={() => void wipe(status.faces.open)}>
+          <Button ref={wipeButton} variant="danger" onClick={() => void wipe(status.faces.open)}>
             {t("photos_faces.wipe.button")}
           </Button>
         </p>

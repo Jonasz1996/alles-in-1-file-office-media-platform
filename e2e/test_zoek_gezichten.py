@@ -16,7 +16,7 @@ is Cas). Eva:
    rode schijf: het kader valt op het gevonden gezicht, dat is dan ja (de rij Gezichten toont
    Anna in plaats van "?");
 5. na 30 s (VERDICT_WAIT) komt "Is dit Anna?": Enter opent het raster met de focus op het eerste
-   gezicht; J, J, N;
+   gezicht; J, J, N; Esc: de kaart van Anna is weg, de focus blijft in het blok gezichten;
 6. zoekt "anna" (Ctrl+K, ↓ tot de persoon Anna, Enter): de drie foto's van Anna;
 7. "Wie is dit?" → Naam "Cas" (een nieuwe persoon) → Bevestigen: drie gezichten;
 8. Bram (met wie Eva één foto deelt) ziet niets: [] voor die foto, 404 voor de rest, geen
@@ -438,6 +438,10 @@ def test_gezichten_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> 
     expect(toast(page, "Niet Anna.")).to_be_visible()
     page.keyboard.press("Escape")
     expect(raster).to_have_count(0)
+    # Dit was het laatste voorstel: de kaart van Anna is weg, en de focus met hem. Hij staat dan
+    # op de eerste kaart die er nog is (of op de knop wissen, of de regel), nooit op de body
+    expect(kaart).to_have_count(0)
+    expect(page.locator(".people-faces :focus")).to_have_count(1)
 
     # Twee van de drie rode zijn nu Anna, de derde niet (en niet meer voorgesteld)
     namen = {
