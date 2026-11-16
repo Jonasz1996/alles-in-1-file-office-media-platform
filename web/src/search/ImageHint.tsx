@@ -1,8 +1,8 @@
 // De uitleg bij het veld van /zoeken in de stand beeld (fase 6, Z4; Keuze 81). Het veld wijst er
 // met aria-describedby naar (imageDescribedBy).
 //
-// Zolang het raster van X3 er niet is, hoort bij die beschrijving ook de zin dat zoeken op beeld
-// later komt (I1, review R4). Zichtbaar staat die zin in BeeldResults, maar dat is een lazy chunk
+// Kent de server zoeken op beeld niet, dan hoort bij die beschrijving ook de zin dat het uitstaat
+// (I1, review R4; tot 0.8.1: dat het later komt). Zichtbaar staat die zin in BeeldResults, maar dat is een lazy chunk
 // die meestal pas komt als de focus al in het veld staat (Keuze 81): een schermlezer hoorde hem
 // dan niet. Daarom staat hij hier nog eens, met de tekst uit het gebied search (dat laadt met de
 // pagina, dus zonder te wachten) en met hidden: aria-describedby leest een verborgen element wel,
@@ -24,7 +24,7 @@ import { useCurrentUser } from "../currentUser";
 import { t } from "../i18n";
 
 /** Of zoeken op beeld er is, bij het laden van de pagina. Tot de server het zegt, zegt de
- * beschrijving van het veld dat het later komt. */
+ * beschrijving van het veld dat het uitstaat. */
 export const IMAGE_SEARCH_READY: boolean = false;
 
 let ready = IMAGE_SEARCH_READY;

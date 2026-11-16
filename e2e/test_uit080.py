@@ -116,18 +116,17 @@ ERBIJ: dict[str, list[str]] = {
 }
 ANTWOORD = {BEELD: {501}, INSTELLINGEN: {200}}
 # Wat de web van 0.8.1 (I2) met de analyse uit anders toont dan die van 0.8.0, per pagina, precies:
-# (regel van 0.8.0, regel van nu). Gezichten en zoeken op beeld zeggen dat ze op deze server
-# uitstaan en wat de beheerder kan doen, in plaats van "komt later" (web/src/i18n/areas/beeld.nl.ts,
-# search.nl.ts en photos_faces.nl.ts). Elke regel van 0.8.0 staat precies één keer in zijn boom.
+# (regel van 0.8.0, regel van nu). Gezichten en zoeken op beeld zeggen dat ze op deze server niet
+# draaien, en op /beheer waar de beheerder ziet waarom, in plaats van "komt later"
+# (web/src/i18n/areas/beeld.nl.ts, search.nl.ts en photos_faces.nl.ts; review I2, V2 en U2). Elke
+# regel van 0.8.0 staat precies één keer in zijn boom.
 LATER_080 = "  - paragraph: Zoeken op beeld komt in een volgende versie."
-LATER = (
-    "  - paragraph: Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
-    "De beheerder kan het aanzetten met ANALYSE=aan."
-)
+LATER = "  - paragraph: Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten."
 UIT_BEHEER = (
-    "staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). "
-    "Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf "
-    "aan bij Account → Foto's. Zie docs/runbooks/analyse.md."
+    "draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom "
+    "staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond "
+    "daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan "
+    "bij Account → Foto's. Zie docs/runbooks/analyse.md."
 )
 ANDERS: dict[str, list[tuple[str, str]]] = {
     "eva /zoeken?q=strand&mode=image": [(LATER_080, LATER)],

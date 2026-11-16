@@ -5,8 +5,9 @@
 // zonder props, een eigen chunk.
 //
 // Eerst de stand (GET /photos/beeld, status.ts). Kent de server zoeken op beeld niet (501: de
-// analyse staat uit), dan staat hier precies wat 0.8.0 toonde: één zin dat het later komt, zonder
-// versienummer (de uitleg bij het veld, ImageHint, vraagt dezelfde stand). Anders zoekt het met
+// analyse draait niet), dan staat hier zoals in 0.8.0 één zin zonder versienummer; sinds 0.8.1
+// (I2) dat het uitstaat en dat de beheerder het kan aanzetten (beeld.later; de uitleg bij het veld,
+// ImageHint, vraagt dezelfde stand). Anders zoekt het met
 // GET /search?mode=image (beeld.ts):
 // - uit (jij of de beheerder): alleen de melding, geen vraag aan /search;
 // - je foto's worden nog bekeken: de melding met hoeveel procent klaar;

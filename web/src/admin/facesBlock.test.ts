@@ -161,10 +161,10 @@ describe("het blok met een stand (Keuze 67)", () => {
     expect(row(markup, "models")).toBe("geen (de app weet niet wat er in de container staat)");
   });
 
-  it("null (de analyse staat uit): de kop en één zin (uit, en wat de beheerder doet), zonder knop of schakelaar", () => {
+  it("null (de analyse draait niet): de kop en één zin (waar de beheerder ziet waarom), zonder knop of schakelaar", () => {
     expect(renderToStaticMarkup(createElement(FacesBlock, { faces: null }))).toBe(
       '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Gezichten</h3>' +
-        '<p class="muted">Gezichten herkennen staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>',
+        '<p class="muted">Gezichten herkennen draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>',
     );
   });
 

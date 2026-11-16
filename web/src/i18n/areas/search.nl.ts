@@ -8,9 +8,10 @@ export default {
     placeholder: "Een naam of een woord uit de tekst",
     placeholderImage: "Beschrijf de foto, bijvoorbeeld: hond op het strand",
     hintImage: "Zoekt in je eigen foto's. Druk op Enter.",
-    // Ook de beschrijving van het veld zolang het raster van X3 er niet is (I1, review R4; de
-    // schakelaar staat in search/ImageHint.tsx). Dezelfde zin als beeld.later, zonder versienummer
-    imageLater: "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.",
+    // Ook de beschrijving van het veld zolang de server zoeken op beeld niet kent (I1, review R4; de
+    // schakelaar staat in search/ImageHint.tsx). Dezelfde zin als beeld.later, zonder versienummer,
+    // pad of variabele (review I2, V2)
+    imageLater: "Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten.",
     submit: "Zoeken",
   },
   mode: {

@@ -82,16 +82,15 @@ FOTOS = (
     ("IMG_0105.jpg", "blauw"),
     ("zomer aan zee.jpg", "paars"),
 )
-# Met de analyse uit (sinds 0.8.1, I2): de zin dat zoeken op beeld uitstaat en wat de beheerder kan
-# doen, in plaats van "komt later" in 0.8.0 (web/src/i18n/areas/beeld.nl.ts en search.nl.ts)
-LATER = (
-    "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
-    "De beheerder kan het aanzetten met ANALYSE=aan."
-)
+# Met de analyse uit (sinds 0.8.1, I2): de zin dat zoeken op beeld uitstaat (voor iedereen, zonder
+# pad of variabele) en op /beheer waar de beheerder ziet waarom, in plaats van "komt later" in 0.8.0
+# (web/src/i18n/areas/beeld.nl.ts en search.nl.ts; review I2, V2 en U2)
+LATER = "Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten."
 LATER_BEHEER = (
-    "Zoeken op beeld staat uit op deze server: de analyse draait niet "
-    "(ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met "
-    "ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md."
+    "Zoeken op beeld draait niet op deze server: de analyse staat uit, of is niet helemaal "
+    "geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de "
+    "container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; "
+    "daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md."
 )
 UITLEG_080 = LATER + " Zoekt in je eigen foto's. Druk op Enter."
 HINT = (

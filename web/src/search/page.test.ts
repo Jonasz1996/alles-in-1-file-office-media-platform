@@ -238,7 +238,7 @@ describe("de stand beeld op /zoeken (Keuze 81): het raster van X3, lazy", () => 
 
 // I1, review R4: in de stand beeld staat de focus in het veld (Keuze 81) voordat de lazy chunk van
 // BeeldResults er is. Daarom zegt de beschrijving van het veld zelf dat zoeken op beeld er niet is
-// (sinds 0.8.1, I2: dat het uitstaat op deze server en wat de beheerder kan doen), met een tekst uit
+// (sinds 0.8.1, I2: dat het uitstaat op deze server en dat de beheerder het kan aanzetten), met een tekst uit
 // het gebied search. De beforeEach laadt het gebied beeld niet: deze tests tonen
 // dus ook dat de zin niet op die chunk wacht.
 describe("de beschrijving van het veld in de stand beeld, zolang X3 er niet is (I1, R4)", () => {
@@ -248,7 +248,7 @@ describe("de beschrijving van het veld in de stand beeld, zolang X3 er niet is (
     expect(IMAGE_SEARCH_READY).toBe(false);
     const html = renderToStaticMarkup(createElement(ImageHint));
     expect(html).toBe(
-      `${HINT_NL}<span id="zoek-beeld-later" hidden="">Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.</span>`,
+      `${HINT_NL}<span id="zoek-beeld-later" hidden="">Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten.</span>`,
     );
     expect(imageDescribedBy()).toBe("zoek-beeld-later zoek-beeld-uitleg");
     for (const id of imageDescribedBy().split(" ")) expect(html).toContain(`id="${id}"`);
@@ -259,7 +259,7 @@ describe("de beschrijving van het veld in de stand beeld, zolang X3 er niet is (
     await loadAreas(["search"]);
     const html = renderToStaticMarkup(createElement(ImageHint));
     expect(html).toContain(
-      '<span id="zoek-beeld-later" hidden="">Search by image is off on this server (ANALYSE=uit in /opt/platform/.env). The administrator can turn it on with ANALYSE=aan.</span>',
+      '<span id="zoek-beeld-later" hidden="">Search by image is off on this server. The administrator can turn it on.</span>',
     );
     expect(t("search.field.imageLater")).not.toMatch(/\d/);
   });

@@ -4,8 +4,8 @@ import type nl from "./beeld.nl";
 const en: Translation<typeof nl> = {
   title: "Search by image",
   notReady:
-    "Search by image is off on this server: the analysis is not running (ANALYSE=uit in /opt/platform/.env). To turn it on, run the install script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.",
-  later: "Search by image is off on this server (ANALYSE=uit in /opt/platform/.env). The administrator can turn it on with ANALYSE=aan.",
+    "Search by image is not running on this server: the analysis is off, or not fully installed. The end text of the install script says why, at Gezichten (de container analyse). If it says ANALYSE=uit, run the script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.",
+  later: "Search by image is off on this server. The administrator can turn it on.",
   grid: {
     label: "Photos that match '{q}'",
     labelLike: "Photos that look like the chosen photo",

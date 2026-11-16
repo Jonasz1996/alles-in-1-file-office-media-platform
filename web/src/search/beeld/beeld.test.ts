@@ -426,20 +426,20 @@ describe("de stand van GET /photos/beeld (status.ts)", () => {
 });
 
 // Met de analyse uit: alles van golf 6 blijft weg; alleen de zinnen van 0.8.0 zeggen sinds 0.8.1
-// (I2) dat zoeken op beeld uitstaat en wat de beheerder kan doen, in plaats van "komt later"
+// (I2) dat zoeken op beeld niet draait, in plaats van "komt later"
 describe("met de analyse uit: wat 0.8.0 toonde, met de zinnen van 0.8.1", () => {
   it("/zoeken in de stand beeld: niets tot de stand er is, dan de zin dat het uitstaat", () => {
     vi.stubGlobal("window", { location: { pathname: "/zoeken", search: "?mode=image&q=strand" } });
     expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
     expect(stage(OFF)).toBe("later");
     expect(renderToStaticMarkup(createElement(BeeldLater))).toBe(
-      '<p class="muted">Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.</p>',
+      '<p class="muted">Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten.</p>',
     );
     // Met de stand off vraagt het raster niets aan /search
     expect(beeldResultsSource).toContain("if (!known || off || blocked || !canSearch(query)) return;");
   });
 
-  it("de uitleg bij het veld zegt dat het later komt, tot de server zoeken op beeld kent", () => {
+  it("de uitleg bij het veld zegt dat het uitstaat, tot de server zoeken op beeld kent", () => {
     expect(IMAGE_SEARCH_READY).toBe(false);
     expect(imageDescribedBy()).toBe("zoek-beeld-later zoek-beeld-uitleg");
     expect(renderToStaticMarkup(createElement(ImageHint, {}))).toContain('<span id="zoek-beeld-later" hidden="">');
@@ -472,10 +472,10 @@ describe("met de analyse uit: wat 0.8.0 toonde, met de zinnen van 0.8.1", () => 
     expect(likeRowSource).toContain("if (!can || own !== item.id) return null;");
   });
 
-  it("/beheer: het blok zonder stand, met de kop en wat de beheerder kan doen", () => {
+  it("/beheer: het blok zonder stand, met de kop en waar de beheerder ziet waarom", () => {
     expect(renderToStaticMarkup(createElement(BeeldBlock, { beeld: null }))).toBe(
       '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Zoeken op beeld</h3>' +
-        '<p class="muted">Zoeken op beeld staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>',
+        '<p class="muted">Zoeken op beeld draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>',
     );
   });
 });

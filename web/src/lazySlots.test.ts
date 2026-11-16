@@ -1,7 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadAreas, resetI18nForTests } from "./i18n";
+import installSh from "../../infra/single/install.sh?raw";
+import { loadAreas, resetI18nForTests, t } from "./i18n";
 import FacesRow from "./photos/faces/FacesRow";
 import FacesSwitch from "./photos/faces/FacesSwitch";
 import PeopleFaces from "./photos/faces/PeopleFaces";
@@ -51,8 +52,9 @@ describe("elke plek van X2 en X3 toont niets tot zijn pakket hem vult", () => {
 });
 
 // I1 (S8): in de stand beeld op /zoeken stond niets onder de knoppen. Nu één zin, zonder
-// versienummer (sinds 0.8.1, I2: dat het uitstaat op deze server en wat de beheerder kan doen). X3b vult de plek met het raster; zolang de server zoeken op beeld niet kent (de
-// analyse staat uit: GET /photos/beeld geeft 501, de stand off) staat er precies die zin, en
+// versienummer (sinds 0.8.1, I2: dat het uitstaat op deze server en dat de beheerder het kan
+// aanzetten). X3b vult de plek met het raster; zolang de server zoeken op beeld niet kent (de
+// analyse draait niet: GET /photos/beeld geeft 501, de stand off) staat er precies die zin, en
 // zolang de stand er nog niet is niets (zonder DOM vraagt de plek hem niet).
 describe("de stand beeld op /zoeken met de analyse uit", () => {
   beforeEach(() => vi.stubGlobal("window", { location: { pathname: "/zoeken", search: "?mode=image&q=strand" } }));
@@ -68,7 +70,7 @@ describe("de stand beeld op /zoeken met de analyse uit", () => {
     expect(stage(null)).toBe("wacht");
     expect(stage(OFF)).toBe("later");
     expect(renderToStaticMarkup(createElement(BeeldLater))).toBe(
-      '<p class="muted">Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.</p>',
+      '<p class="muted">Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten.</p>',
     );
   });
 
@@ -77,7 +79,7 @@ describe("de stand beeld op /zoeken met de analyse uit", () => {
     await loadAreas(["beeld"]);
     expect(renderToStaticMarkup(createElement(BeeldResults))).toBe("");
     const html = renderToStaticMarkup(createElement(BeeldLater));
-    expect(html).toBe('<p class="muted">Search by image is off on this server (ANALYSE=uit in /opt/platform/.env). The administrator can turn it on with ANALYSE=aan.</p>');
+    expect(html).toBe('<p class="muted">Search by image is off on this server. The administrator can turn it on.</p>');
     expect(html).not.toMatch(/\d/);
   });
 
@@ -86,5 +88,34 @@ describe("de stand beeld op /zoeken met de analyse uit", () => {
     for (const state of ["ok", "bezig", "uit", "beheer_uit", "niet_geinstalleerd", "weg", "fout"] as const) {
       expect(stage({ state, done: null })).toBe("raster");
     }
+  });
+});
+
+// Review I2 (V2, U2): de zin voor iedereen noemt geen pad, bestand of variabele van de server. De
+// zinnen op /beheer zeggen niet dat ANALYSE=uit de oorzaak is: de blokken zijn ook leeg als de
+// analyse aan staat maar niet helemaal geïnstalleerd is (PostgreSQL, geweigerde mappen, geen map
+// met sleutels). Ze wijzen naar de regel in de eindtekst van het installatiescript die zegt waarom.
+describe("de zinnen als de server gezichten of zoeken op beeld niet kent (review I2, V2 en U2)", () => {
+  afterEach(() => resetI18nForTests("nl"));
+
+  for (const taal of ["nl", "en"] as const) {
+    it(`${taal}: geen pad of variabele voor iedereen, de eindtekst voor de beheerder`, async () => {
+      resetI18nForTests(taal);
+      await loadAreas(["beeld", "search", "photos_faces"]);
+      for (const zin of [t("beeld.later"), t("search.field.imageLater")]) {
+        for (const woord of ["/opt/platform", ".env", "ANALYSE"]) expect(zin).not.toContain(woord);
+      }
+      for (const zin of [t("beeld.notReady"), t("photos_faces.notReady")]) {
+        expect(zin).not.toContain("ANALYSE=uit in");
+        expect(zin).not.toContain(".env");
+        expect(zin).toContain("Gezichten (de container analyse)");
+        expect(zin).toContain("ANALYSE=aan");
+      }
+    });
+  }
+
+  it("de regel waar de zinnen naar wijzen, staat zo in de eindtekst van install.sh", () => {
+    expect(installSh).toContain('echo "Gezichten (de container analyse): uit (ANALYSE=uit)."');
+    expect(installSh).toContain('echo "Gezichten (de container analyse): uit, want $ANALYSE_REASON."');
   });
 });
