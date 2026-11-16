@@ -241,8 +241,9 @@ def test_analyse_image_zet_de_echte_bron_om_in_analyse_omzetten():
     assert "OMZETTER_SRC" not in stap["run"]
     assert "continue-on-error" not in stap  # rood is rood: dit is het bewijs van Open 9
     assert stap["run"].splitlines()[0] == 'mkdir -p "$OMZETTER_OUT"'  # als de runner, niet root
-    # de bron (±1,55 GB, curl --max-time 600 s plus 1 s per MB) en de omzetting passen erin; de
-    # job houdt de 45 min van vóór deze stap
+    # de bron (±1,55 GB; 26 s op de runner van beeld-model, x3a.md) en de omzetting (±8 s) passen
+    # ruim in 15 min. curl mag per bestand langer (--max-time 600 s plus 1 s per MB): zo traag is
+    # de stap rood op zijn timeout. De job houdt de 45 min van vóór deze stap
     assert stap["timeout-minutes"] == 15
     assert job["timeout-minutes"] >= 45 + stap["timeout-minutes"]
 
