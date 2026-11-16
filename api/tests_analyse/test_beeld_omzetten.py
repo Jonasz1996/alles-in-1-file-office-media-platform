@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from app.analyse import lock
+from app.analyse.onnxw import Model
 from app.analyse.runtime import OMZET_BOOT
 from app.analyse.tokenizer import Tokenizer
 from app.analyse.worker.omzetten import (
@@ -256,6 +257,44 @@ def test_twee_omzettingen_dezelfde_sha256(omgezet):
     assert res1.stdout == res2.stdout
 
 
+# De sha256 van dit kleine model, gemeten vóór de opties voor het int8-rapport van BZ4 in bouw.py
+# kwamen (x3a.md, "CI op 3a9b07d"): zonder die opties dezelfde bytes, dus dezelfde pins van het
+# echte model in models.lock
+VOOR_DE_OPTIES = {
+    BEELD: "31fb8622f226cdb17523cd72a1acf10d9a63f3bb633b678fd10138aee64c57ff",
+    TEKST: "ebbb3c053be978fc8e8d5904df48729003e0c28864f2afa79744827cf14b37cb",
+    BEELD_FP32: "9d58a41e3a7ca75acddd4a479fae84860097a112d944874397d4ec3aeade6404",
+    TEKST_FP32: "4037109fabe0222d7e6749721eecb928cb11ad6178917096d0ef7826bbc56904",
+    TOKENIZER_BIN: "b70f6c67f9f0365348ccca704a92cb2d2524a32da658206e0bc56194010924ba",
+    META: "868e9777827b22330845b27c451303756c35853caa89775b1bb99aaeb7b95763",
+    LICENTIE: "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+}
+
+
+def test_zonder_opties_dezelfde_bytes_als_voor_de_opties(omgezet):
+    uit = omgezet[1][0][0]
+    assert {p.name: _sha(p) for p in uit.iterdir()} == VOOR_DE_OPTIES
+
+
+def test_varianten_uit_dezelfde_bytes(tmp_path):
+    """De opties van bouw.py expliciet uit (of met hun standaardwaarde) maken precies dezelfde
+    graaf als zonder; dezelfde bytes als in VOOR_DE_OPTIES."""
+    klein.schrijf_bron(tmp_path / "bron")
+    st = Safetensors(tmp_path / "bron" / "model.safetensors")
+    vorm = bouw.lees_config(json.loads((tmp_path / "bron" / "config.json").read_text()))
+    uit = [
+        {},
+        {"fp32_als": None, "per_token": False, "glad": None, "q_max": None, "meet": None},
+        {"fp32_als": lambda _label: False, "glad": {}, "q_max": bouw.Q_MAX},
+    ]
+    for int8, (beeld, tekst) in ((True, (BEELD, TEKST)), (False, (BEELD_FP32, TEKST_FP32))):
+        for opties in uit:
+            g = bouw.beeld_graaf(st, vorm, int8=int8, **opties)
+            assert hashlib.sha256(Model(g).to_bytes()).hexdigest() == VOOR_DE_OPTIES[beeld]
+            g = bouw.tekst_graaf(st, vorm, int8=int8, embedding_fp32=False, **opties)
+            assert hashlib.sha256(Model(g).to_bytes()).hexdigest() == VOOR_DE_OPTIES[tekst]
+
+
 def test_regels_voor_models_lock(omgezet):
     """stdout: per bestand `sha256 bytes siglip2-b32-256/naam -`, wat lock.parse leest."""
     _, runs = omgezet
@@ -336,7 +375,7 @@ def test_int8_echt_int8(omgezet):
 # test_int8_echt_int8 kijkt alleen of de op er is. Hier de grafen zelf: een eigen lezer van het
 # protobuf (veldnummers van onnx.proto), zonder onnxw en zonder het pakket onnx.
 
-_DTYPE = {1: "<f4", 3: "i1", 7: "<i8"}  # FLOAT, INT8, INT64
+_DTYPE = {1: "<f4", 2: "u1", 3: "i1", 7: "<i8"}  # FLOAT, UINT8, INT8, INT64
 
 
 def _varint(b: memoryview, i: int) -> tuple[int, int]:
