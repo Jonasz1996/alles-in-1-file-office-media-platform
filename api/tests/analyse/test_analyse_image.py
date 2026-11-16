@@ -5,6 +5,11 @@ Het image zelf bouwt alleen in CI. Hier: het blok staat direct na `RUN uv sync -
 (die regel blijft zoals hij is), het zet de vijf pakketten met --no-cache in /opt/analyse en nooit
 in /opt/venv, /run/analyse staat in de RUN van media, en de stap in ci.yml kijkt het image na met
 dezelfde vijf versies als uv.lock. Een stand-in met dit blok is in de sandbox gebouwd (a0.md).
+
+En de job analyse-image (I2, x3a.md Open 9): na X2b zet hij de echte bron van SigLIP 2 om in de
+dienst analyse-omzetten, met beeld_model van install.sh (test_omzetter_echt.sh), maar alleen achter
+een poort zoals die van beeld-model (git diff of "beeld-model: ja" in de PR; de bron is ±1,55 GB,
+K2-03). Nooit met OMZETTER_SRC: in CI altijd de echte models.lock en huggingface.co.
 """
 
 from __future__ import annotations
@@ -151,3 +156,131 @@ def test_images_kijkt_het_image_na():
     assert {k.removeprefix("google."): v for k, v in versies.items()} == EXTRA
     assert "POORT = 160 * 10**6" in script
     assert '"/root/.cache/uv"' in script
+
+
+# --- de job analyse-image: de echte bron in analyse-omzetten (I2, x3a.md Open 9) ---------------
+
+CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
+OMZETTER = ROOT / "infra" / "single" / "tests" / "test_omzetter_echt.sh"
+# Wat de omzetting van install.sh in analyse-omzetten raakt (vanaf de wortel van de repository)
+OMZET_PADEN = [
+    "Dockerfile",
+    "api/uv.lock",
+    "infra/single/install.sh",
+    "infra/single/compose.yaml",
+    "infra/single/compose.analyse.yaml",
+    "infra/single/compose.analyse-limits.yaml",
+    "api/app/analyse/worker/omzetten",
+    "api/app/analyse/tokenizer.py",
+    "api/app/analyse/onnxw.py",
+    "api/app/analyse/lock.py",
+    "api/app/analyse/models.lock",
+    "api/app/analyse/licenties",
+    "infra/single/tests/test_omzetter_echt.sh",
+]
+
+
+def _job(naam: str) -> dict:
+    return yaml.safe_load(CI_YML.read_text(encoding="utf-8"))["jobs"][naam]
+
+
+def _stap(stappen: list[dict], deel: str) -> tuple[int, dict]:
+    gevonden = [(i, s) for i, s in enumerate(stappen) if deel in str(s.get("run", ""))]
+    assert len(gevonden) == 1, deel
+    return gevonden[0]
+
+
+def _poort_kern(script: str) -> list[str]:
+    """De regels die beslissen (van, tot en reeks; de regel van de PR), zonder paden en reden."""
+    return [
+        regel.strip()
+        for regel in script.splitlines()
+        if regel.strip().startswith(("if [", "elif [", "van=", "if printf", "elif ! git"))
+    ]
+
+
+def test_analyse_image_vergelijkt_met_git_diff_zoals_beeld_model():
+    job = _job("analyse-image")
+    stappen = job["steps"]
+    assert stappen[0]["uses"] == "actions/checkout@v4" and stappen[0]["with"]["fetch-depth"] == 0
+    i, poort = next((i, s) for i, s in enumerate(stappen) if s.get("id") == "omzet-poort")
+    assert poort["if"] == "${{ !cancelled() }}"
+    beeld = next(s for s in _job("beeld-model")["steps"] if s.get("id") == "poort")
+    assert poort["env"] == beeld["env"]  # dezelfde gegevens, de tekst van de PR via env
+    script = poort["run"]
+    assert "${{" not in script  # geen expressie in het script
+    assert _poort_kern(script) == _poort_kern(beeld["run"])
+    m = re.findall(r"^paden\+?=\((.*)\)$", script, re.M)
+    assert re.search(r"^paden=\(", script, re.M)
+    assert [p for g in m for p in g.split()] == OMZET_PADEN
+    for pad in OMZET_PADEN:  # een tikfout zou de stap stil overslaan
+        assert (ROOT / pad).exists(), pad
+    assert 'git diff --name-only "$reeks" -- "${paden[@]}"' in script
+    assert 'echo "draaien=$draaien" >> "$GITHUB_OUTPUT"' in script
+    assert '| tee "$RUNNER_TEMP/analyse-image/omzet-poort.txt"' in script
+    # na de e2e van X2b: die stap houdt zijn plek
+    e2e, _ = _stap(stappen, "pytest ../e2e/test_zoek_gezichten_echt.py")
+    assert e2e < i
+
+
+def test_analyse_image_zet_de_echte_bron_om_in_analyse_omzetten():
+    job = _job("analyse-image")
+    stappen = job["steps"]
+    i, stap = _stap(stappen, "bash infra/single/tests/test_omzetter_echt.sh")
+    assert stappen[i - 1].get("id") == "omzet-poort"
+    assert stappen[i + 1]["uses"] == "actions/upload-artifact@v4"
+    assert stap["if"] == (
+        "${{ !cancelled() && steps.bouw.outcome == 'success' && "
+        "steps.omzet-poort.outputs.draaien == 'ja' }}"
+    )
+    # het image van deze run en de echte models.lock: nooit OMZETTER_SRC in CI
+    assert stap["env"] == {
+        "OMZETTER_IMAGE": "platform:ci",
+        "OMZETTER_OUT": "${{ runner.temp }}/analyse-image",
+    }
+    assert "OMZETTER_SRC" not in stap["run"]
+    assert "continue-on-error" not in stap  # rood is rood: dit is het bewijs van Open 9
+    assert stap["run"].splitlines()[0] == 'mkdir -p "$OMZETTER_OUT"'  # als de runner, niet root
+    # de bron (±1,55 GB, curl --max-time 600 s plus 1 s per MB) en de omzetting passen erin; de
+    # job houdt de 45 min van vóór deze stap
+    assert stap["timeout-minutes"] == 15
+    assert job["timeout-minutes"] >= 45 + stap["timeout-minutes"]
+
+
+def test_de_samenvatting_van_analyse_image_noemt_de_omzetter():
+    stappen = _job("analyse-image")["steps"]
+    laatste = stappen[-1]
+    assert laatste["name"] == "Samenvatting" and laatste["if"] == "always()"
+    run = laatste["run"]
+    assert run.splitlines()[0] == 'echo "=== kort ==="'
+    regel = 'echo "X3 de echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh):"'
+    assert regel in run
+    na = run.split(regel, 1)[1]
+    assert '"$RUNNER_TEMP/analyse-image/omzet-poort.txt"' in na
+    assert '"$RUNNER_TEMP/analyse-image/omzetter.txt"' in na
+    assert 'echo "  liep niet"' in na
+
+
+def test_test_omzetter_echt_draait_beeld_model_van_install_sh():
+    script = OMZETTER.read_text(encoding="utf-8")
+    assert script.startswith("#!/usr/bin/env bash\n")
+    assert "\nset -euo pipefail\n" in script
+    # install.sh zelf (als bibliotheek), met de analyse aan en de echte compose-bestanden
+    assert "export PLATFORM_ROOT=$WERK/platform INSTALL_LIB=1\n" in script
+    assert '. "$install_sh"\n' in script
+    assert "\ncompose_files 0 0 0 1\n" in script
+    assert re.search(r"^  beeld_model$", script, re.M)
+    # wat compose.analyse.yaml de dienst geeft, verwacht het script letterlijk
+    dienst = yaml.safe_load((ROOT / "infra" / "single" / "compose.analyse.yaml").read_text())
+    omzet = dienst["services"]["analyse-omzetten"]
+    tmp = next(t for t in omzet["tmpfs"] if t.startswith("/tmp:"))
+    verwacht = (
+        f"user {omzet['user']} read_only network {omzet['network_mode']} tmpfs {tmp} "
+        f"cap_drop {','.join(omzet['cap_drop'])} {','.join(omzet['security_opt'])} "
+    )
+    assert omzet["read_only"] is True and omzet["network_mode"] == "none"
+    assert f'"{verwacht}"*)' in script
+    # de uitkomst tegen models.lock: de regels van siglip2-b32-256 met url -, zonder bron/
+    assert "lock=$SRC/api/app/analyse/models.lock" in script
+    assert '"$BEELD_MAP"/bron/*) continue ;;' in script
+    assert '[ "$url" = - ] || continue' in script
