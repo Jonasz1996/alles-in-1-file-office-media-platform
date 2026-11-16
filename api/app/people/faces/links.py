@@ -7,8 +7,10 @@
 - **Een kader met de hand** (Z6, put_on met een kader): een gezicht met IoU ≥ 0,5 tegen dat kader
   wordt meteen ja. Z6 heeft daar geen haak voor; daarom kijkt een luisteraar van de ORM (na elke
   flush) naar nieuwe of veranderde rijen van photo_person met source 'hand' en een kader, en doet
-  het in dezelfde transactie (in de greenlet van SQLAlchemy, dus synchroon). Alleen als gezichten
-  draaien (state.running): met ANALYSE=uit doet hij niets.
+  het in dezelfde transactie (in de greenlet van SQLAlchemy, dus synchroon). Werd er een gezicht
+  ja, dan zoals na elke keuze verdict_at en faces.group (suggest) na VERDICT_WAIT: "dan komen er
+  ook meteen voorstellen" (§3.11, Levensloop). Alleen als gezichten draaien (state.running): met
+  ANALYSE=uit doet hij niets.
 - **Een persoon zonder kader** (Z6): staat er op een foto precies één persoon zonder kader en vond
   YuNet precies één gezicht, dan wordt dat gezicht een voorstel met suggest_why = 'tag' (geen ja).
 
@@ -24,9 +26,9 @@ from sqlalchemy import delete, event, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session as OrmSession
 
-from app import face_rows
-from app.models import Face, FacePerson, Node, PhotoPerson
-from app.people.faces import drempels, state
+from app import face_rows, jobs
+from app.models import Face, FaceOwner, FacePerson, Job, Node, PhotoPerson
+from app.people.faces import drempels, group, state
 from app.search.live import own_live
 
 Box = tuple[float, float, float, float]
@@ -110,12 +112,12 @@ async def sync_links(
 # --- een kader met de hand, en de tag ------------------------------------------------------------
 
 
-def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
+def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> int:
     """Synchroon (in de flush): elk kader van photo_person op deze node maakt het gezicht met de
-    grootste IoU ≥ 0,5 ja, als dat gezicht nog geen ja heeft."""
+    grootste IoU ≥ 0,5 ja, als dat gezicht nog geen ja heeft. Geeft het aantal nieuwe ja's."""
     live = select(Node.id).where(Node.id == node, own_live(Node, owner))
     if conn.execute(live).first() is None:
-        return
+        return 0
     faces = list(
         conn.execute(
             select(Face.id, Face.x, Face.y, Face.w, Face.h).where(
@@ -126,7 +128,8 @@ def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
         )
     )
     if not faces:
-        return
+        return 0
+    made = 0
     taken = set(
         conn.execute(
             select(FacePerson.face_id).where(
@@ -161,6 +164,7 @@ def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
         if best is None:
             continue
         taken.add(best)
+        made += 1
         conn.execute(
             delete(FacePerson).where(FacePerson.face_id == best, FacePerson.person_id == person)
         )
@@ -175,6 +179,36 @@ def _boxes_to_ja(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
             .where(Face.id == best)
             .values(suggest_id=None, suggest_score=None, suggest_why=None, cluster=None)
         )
+    return made
+
+
+def _queue_suggest(conn: Any, owner: uuid.UUID) -> None:
+    """Synchroon, zoals verdicts._after na een keuze: verdict_at op nu en faces.group (suggest)
+    na VERDICT_WAIT, tenzij die al klaarstaat of loopt (de key van group.queue_group). Zonder rij
+    in face_owner is er nooit gescand: dan niets."""
+    at = state.now()
+    done = conn.execute(update(FaceOwner).where(FaceOwner.owner_id == owner).values(verdict_at=at))
+    if not done.rowcount:
+        return
+    key = f"{group.GROUP}:suggest:{owner.hex}"
+    busy = conn.execute(
+        select(Job.id).where(Job.key == key, Job.status.in_(jobs.ACTIVE)).limit(1)
+    ).first()
+    if busy is not None:
+        return
+    conn.execute(
+        insert(Job).values(
+            id=uuid.uuid4(),
+            type=group.GROUP,
+            key=key,
+            payload={"owner": owner.hex, "mode": "suggest"},
+            status="queued",
+            attempts=0,
+            max_attempts=jobs.MAX_ATTEMPTS,
+            run_after=at + group.VERDICT_WAIT,
+            created_at=at,
+        )
+    )
 
 
 def _tag(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
@@ -216,10 +250,12 @@ def _tag(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
     )
 
 
-def reconcile(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> None:
-    """Kaders naar ja, dan de tag; synchroon op een Connection of een Session (in de greenlet)."""
-    _boxes_to_ja(conn, owner, node)
+def reconcile(conn: Any, owner: uuid.UUID, node: uuid.UUID) -> int:
+    """Kaders naar ja, dan de tag; synchroon op een Connection of een Session (in de greenlet).
+    Geeft het aantal nieuwe ja's."""
+    made = _boxes_to_ja(conn, owner, node)
     _tag(conn, owner, node)
+    return made
 
 
 _SEEN = "platform.faces.links"
@@ -240,7 +276,8 @@ def _after_flush(session: OrmSession, _ctx: Any) -> None:
     session.info[_SEEN] = True
     try:
         conn = session.connection()
-        for owner, node in touched:
-            reconcile(conn, owner, node)
+        owners = {owner for owner, node in touched if reconcile(conn, owner, node)}
+        for owner in sorted(owners):
+            _queue_suggest(conn, owner)
     finally:
         session.info.pop(_SEEN, None)

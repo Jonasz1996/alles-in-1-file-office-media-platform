@@ -187,23 +187,51 @@ async def test_een_rij_met_de_hand_blijft_altijd(client, settings, eva):
 
 async def test_een_kader_met_de_hand_maakt_het_gezicht_ja(client, settings, eva):
     een = await gezichten(settings, eva["een"])
-    box = [0.12, 0.11, 0.19, 0.24]  # IoU met A ruim boven 0,5
-    r = await client.post(
-        f"/api/v1/files/{eva['een']}/people", json={"name": "Oma", "box": box}, headers=eva["h"]
-    )
-    assert r.status_code == 201, r.text
-    oma = uuid.UUID(
-        (await client.get("/api/v1/people", headers=eva["h"])).json()["people"][0]["id"]
-    )
-    assert await oordelen(settings) == {(een[0].id, oma, "ja")}
-    # Een kader dat nergens op valt: niets
+
+    async def van_eva() -> list[tuple[dict, datetime]]:
+        return [(p, at) for p, at in await groep_jobs(settings) if p["owner"] == eva["id"].hex]
+
+    async def verdict_at() -> datetime | None:
+        async with maker(settings)() as session:
+            row = await session.get(FaceOwner, eva["id"])
+            return None if row is None else row.verdict_at
+
+    # Een kader dat nergens op valt: geen ja, geen groepsronde en geen verdict_at
     r = await client.post(
         f"/api/v1/files/{eva['twee']}/people",
         json={"name": "Opa", "box": [0.40, 0.60, 0.10, 0.10]},
         headers=eva["h"],
     )
     assert r.status_code == 201
+    assert await oordelen(settings) == set()
+    assert await van_eva() == []
+    assert await verdict_at() is None
+
+    box = [0.12, 0.11, 0.19, 0.24]  # IoU met A ruim boven 0,5
+    before = datetime.now(UTC)
+    r = await client.post(
+        f"/api/v1/files/{eva['een']}/people", json={"name": "Oma", "box": box}, headers=eva["h"]
+    )
+    assert r.status_code == 201, r.text
+    people = (await client.get("/api/v1/people", headers=eva["h"])).json()["people"]
+    oma = uuid.UUID(next(p["id"] for p in people if p["name"] == "Oma"))
     assert await oordelen(settings) == {(een[0].id, oma, "ja")}
+    # Dan komen er ook meteen voorstellen (§3.11, Levensloop): zoals na een keuze verdict_at en
+    # faces.group suggest na 30 s, één keer
+    found = await van_eva()
+    assert [p["mode"] for p, _at in found] == ["suggest"]
+    at = found[0][1].replace(tzinfo=UTC) if found[0][1].tzinfo is None else found[0][1]
+    assert at >= before + group.VERDICT_WAIT - timedelta(seconds=1)
+    gezet = await verdict_at()
+    assert gezet is not None and gezet.replace(tzinfo=UTC) >= before - timedelta(seconds=1)
+    # Een tweede kader op dezelfde foto voor iemand anders, zonder gezicht eronder: geen tweede
+    r = await client.post(
+        f"/api/v1/files/{eva['een']}/people",
+        json={"name": "Tante", "box": [0.40, 0.60, 0.10, 0.10]},
+        headers=eva["h"],
+    )
+    assert r.status_code == 201
+    assert [p["mode"] for p, _at in await van_eva()] == ["suggest"]
 
 
 async def test_een_persoon_zonder_kader_en_een_gezicht_is_een_tag(client, settings, eva):
