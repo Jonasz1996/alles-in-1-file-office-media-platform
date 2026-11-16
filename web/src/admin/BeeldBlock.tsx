@@ -6,9 +6,10 @@
 // tab, met het gebied beeld. De stand komt uit AdminSearch.beeld (./searchApi): Z7 geeft hem mee
 // en ververst elke 5 seconden.
 //
-// Zonder stand (null: de analyse staat uit, dan kent de server zoeken op beeld niet) staat er
-// precies wat 0.8.0 toonde: "komt later". Alleen aantallen, nooit een vector, een vraag of een naam
-// (Keuze 51 en 82).
+// Zonder stand (null: de analyse staat uit of is niet helemaal geïnstalleerd, dan kent de server
+// zoeken op beeld niet) staat er wat 0.8.0 toonde, de kop en één zin; sinds 0.8.1 (I2) zegt die zin
+// dat het niet draait en waar de beheerder ziet waarom (beeld.notReady). Alleen aantallen, nooit een
+// vector, een vraag of een naam (Keuze 51 en 82).
 //
 // Na een knop: de nieuwe stand meteen (de PATCH geeft hem terug), of bij de volgende ronde van de
 // tab; de focus blijft op de knop. Alles met Tab en Enter of Spatie.

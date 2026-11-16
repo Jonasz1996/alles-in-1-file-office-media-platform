@@ -761,7 +761,7 @@ def test_zonder_analyse_ziet_niemand_iets_nieuws(
     expect(viewer.get_by_role("region", name="Gezichten", exact=True)).to_have_count(0)
 
     # De beheerder: het blok van 0.8.0, zonder schakelaar of knop; de zin zegt sinds 0.8.1 (I2) dat
-    # het uitstaat en wat de beheerder kan doen
+    # het niet draait en waar de beheerder ziet waarom (review I2, U2)
     beheer = context_as(admin).new_page()
     beheer_verkeer = Verkeer(beheer)
     beheer.goto("/beheer/zoeken")
@@ -769,9 +769,10 @@ def test_zonder_analyse_ziet_niemand_iets_nieuws(
     blok = beheer.locator("section[aria-labelledby=admin-faces-title]")
     expect(blok).to_have_text(
         "Gezichten"
-        "Gezichten herkennen staat uit op deze server: de analyse draait niet "
-        "(ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met "
-        "ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. "
+        "Gezichten herkennen draait niet op deze server: de analyse staat uit, of is niet "
+        "helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij "
+        "Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw "
+        "met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. "
         "Zie docs/runbooks/analyse.md."
     )
     expect(beheer.get_by_role("checkbox", name="Gezichtsherkenning toestaan")).to_have_count(0)

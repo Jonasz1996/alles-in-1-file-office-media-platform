@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 
+import anyio
 import numpy as np
 import pytest
 from PIL import Image
@@ -25,6 +26,23 @@ EVA = "e" * 32
 BRAM = "b" * 32
 GEHEIM = "geheimwoord7"
 SLOT = fake_beeld.DIM * 2
+# Een kind zoeken dat het tekstmodel traag laadt (LADEN_S, zoals het echte model op een trage
+# server: 284 MB lezen, de sha256 en de sessie): Models.session slaapt eerst, één keer per kind.
+LADEN_S = 1.5
+TRAAG_TEKST = (
+    "import ctypes,sys,time\n"
+    "if ctypes.CDLL(None).prctl(4,0,0,0,0):sys.exit(3)\n"
+    "sys.path.insert(0,sys.argv.pop(1))\n"
+    "from app.analyse.worker import models\n"
+    "from app.analyse.worker.ops import beeld\n"
+    "echt=models.Models.session\n"
+    "def traag(self,name):\n"
+    f"    if name==beeld.TEKST and name not in self._sessions:time.sleep({LADEN_S})\n"
+    "    return echt(self,name)\n"
+    "models.Models.session=traag\n"
+    "from app.analyse.worker.child import main\n"
+    "sys.exit(main())"
+)
 
 
 @pytest.fixture(scope="module")
@@ -344,3 +362,24 @@ async def test_afbreken_met_cancel_en_de_deadline(tmp_path):
             }
         finally:
             os.close(fd)
+
+
+async def test_opwarmen_laadt_het_tekstmodel(tmp_path, modellen):
+    """Opwarmen (rank met k = 0, wat GET /photos/beeld en de job beeld.vec doen) laadt ook het
+    tekstmodel: de eerste vraag in woorden daarna past in de klok van de app (800 ms) en blijft in
+    hetzelfde kind (bouwontwerp "De klok": de volgende vraag is dan snel; review I2, U1). Laadde
+    opwarmen alleen het bestand, dan liep die vraag in het laden van het model en viel terug."""
+    nums, mat = wereld(50, 12)
+    fd = fake_beeld.vec_fd(fake_beeld.vec_bytes(nums, mat.astype(np.float32), 1))
+    try:
+        async with echt.binnen(tmp_path, modellen, child_code=TRAAG_TEKST) as (worker, settings):
+            warm = await client.call(settings, Op.RANK, {"owner": EVA, "gen": 1, "k": 0}, fds=[fd])
+            assert warm == {"hits": []}
+            with anyio.fail_after(settings.beeld_deadline_ms / 1000):
+                got = await client.call(
+                    settings, Op.RANK, {"owner": EVA, "gen": 1, "text": "rood", "k": 3}, fds=[fd]
+                )
+            assert len(worker.kids[Child.ZOEKEN].pids) == 1
+    finally:
+        os.close(fd)
+    assert len(wire.RankData.model_validate(got).hits) == 3

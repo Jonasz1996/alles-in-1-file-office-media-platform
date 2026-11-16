@@ -12,8 +12,8 @@
 // treffers: "Geen foto met deze naam?" (Keuze 81).
 //
 // Stand beeld: het veld met zijn eigen plaatshouder en uitleg (ImageHint), en het raster van X3
-// (lazy, met het gebied beeld; tot X3 er is, één zin dat zoeken op beeld later komt, die ImageHint
-// ook in de beschrijving van het veld zet). De pagina vraagt dan zelf niets aan /search:
+// (lazy, met het gebied beeld; kent de server zoeken op beeld niet, één zin dat het uitstaat, die
+// ImageHint ook in de beschrijving van het veld zet). De pagina vraagt dan zelf niets aan /search:
 // het raster leest q en like uit de URL. Kom je er zonder vraag (de knop "Zoeken op beeld" op
 // /fotos), dan staat de focus in het veld (Keuze 81).
 

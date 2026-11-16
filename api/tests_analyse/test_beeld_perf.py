@@ -22,18 +22,23 @@ de worker met zijn kinderen (die erven het van de test).
 **Met modellen van de echte vorm** (BEELD_PERF_MODELLEN en BEELD_PERF_LOCK, samen; de een zonder
 de ander faalt): dezelfde test met die map en die lock in plaats van de nep, bijvoorbeeld SigLIP 2
 op ware grootte met willekeurige gewichten (siglip_vol.py, omgezet zoals de job beeld-model). Dan
-telt het tekstmodel van ware grootte op één core mee in elke vraag, met dezelfde grens van 100 ms.
-Dat is strenger dan het ontwerp: daar is 100 ms alles behalve het tekstmodel, en het geheel met het
-echte model is BZ6 (≤ 250 ms, in de belastingtest). Op de sandbox van I2 haalde de echte vorm
-100 ms niet bij 100.000 foto's (p95 105,7 ms warm en 113,0 ms na opwarmen; het tekstmodel kost
-daar ±40 ms per vraag op één core), de nep wel (69,0 en 68,8 ms).
+zit het tekstmodel van ware grootte op één core in elke vraag, en meet de test beide getallen van
+het ontwerp (de tabel bij "Tijden" in X3): alles behalve het tekstmodel p95 ≤ 100 ms (GRENS_MS),
+en het geheel p95 ≤ 250 ms (BZ6_MS). Wat het tekstmodel kost, meet hij per vraag: na de reeks een
+embed_text met dezelfde tekst in hetzelfde kind zoeken (warm; de tokenizer en het model, zoals
+text_vector in rank, dat geen cache heeft), min een rondgang zonder werk naar dat kind (forget van
+een eigenaar die er niet is). Na de reeks en niet tussen de vragen door: dat verstoorde de reeks
+(de eerste vragen na opwarmen p95 175–190 ms in plaats van ±115 ms). Vóór de review van I2 (C1)
+gold hier de grens van 100 ms voor het geheel met het tekstmodel erin: strenger dan het ontwerp,
+en rood voor een goed systeem (op de sandbox p95 105,7 ms warm en 113,0 ms na opwarmen bij
+100.000 foto's; het tekstmodel kost daar ±40 ms per vraag op één core). Met de nep kost het
+tekstmodel bijna niets: daar is de grens van 100 ms op de hele tijd precies de regel van het
+ontwerp, en dat blijft zo.
 
 Vóór de eerste vraag laadt een embed_text in zoeken de tokenizer en het tekstmodel (de regel
 "beeld-perf tekstmodel laden" noemt de tijd; 1,65 s op de sandbox). Dat is langer dan
-PLATFORM_BEELD_DEADLINE_MS (800 ms): de eerste vraag na de start van de worker valt in de app terug
-op slow. Zoeken laadt dan verder en houdt het model (nagegaan op de sandbox: na 800 ms afgebroken,
-hetzelfde kind, de volgende embed_text 40 ms). Wat gemeten wordt, is daarna. Zonder die
-variabelen verandert er niets.
+PLATFORM_BEELD_DEADLINE_MS (800 ms); daarom laadt opwarmen (rank met k = 0) het sinds de review van
+I2 (U1) ook. Wat gemeten wordt, is daarna. Zonder die variabelen verandert er niets.
 """
 
 from __future__ import annotations
@@ -74,7 +79,9 @@ pytestmark = pytest.mark.anyio
 N_KLEIN, N_GROOT = 55_000, 100_000
 VRAGEN = 40
 NIEUW = 20
-GRENS_MS = 100.0
+GRENS_MS = 100.0  # alles behalve het tekstmodel, via HTTP (api-analyse)
+BZ6_MS = 250.0  # het geheel met het tekstmodel van ware grootte (BZ6), alleen in de echte vorm
+LEEG = "0" * 32  # een eigenaar zonder bestand: forget is dan een rondgang zonder werk
 STUK = 10_000
 MODELLEN_ENV, LOCK_ENV = "BEELD_PERF_MODELLEN", "BEELD_PERF_LOCK"
 
@@ -247,6 +254,23 @@ async def _tekstmodel_laden(settings: Settings) -> float:
     return time.perf_counter() - begin
 
 
+async def _tekstmodel_ms(settings: Settings, q: str) -> float:
+    """Wat het tekstmodel van de vraag q kost in het kind zoeken (ms): embed_text met dezelfde
+    tekst (de tokenizer en het model, warm, zoals text_vector in rank) min een rondgang zonder werk
+    naar hetzelfde kind (forget van LEEG)."""
+    uit = wire.out_memfd("uit")
+    try:
+        begin = time.perf_counter()
+        await analyse.call(settings, Op.EMBED_TEXT, wire.EmbedTextArgs(text=q), fds=[uit])
+        embed = time.perf_counter() - begin
+    finally:
+        wire.close_all([uit])
+    begin = time.perf_counter()
+    await analyse.call(settings, Op.FORGET, wire.ForgetArgs(owner=LEEG))
+    rond = time.perf_counter() - begin
+    return max(0.0, embed - rond) * 1000
+
+
 async def _vraag(client, headers, q: str) -> float:  # noqa: F811
     begin = time.perf_counter()
     r = await client.get("/api/v1/search", params={"mode": "image", "q": q}, headers=headers)
@@ -270,7 +294,16 @@ async def test_p95_bij_55000_en_100000_fotos(
     eva, eva_id = await person(client, jonas, "eva@example.nl")
     eigenaar = uuid.UUID(eva_id)
     dbpad = settings.data_dir / "platform.db"
+    echte = siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV) is not None
     gemeten: dict[str, list[float]] = {}
+    tekstmodel: dict[str, list[float]] = {}  # alleen in de echte vorm: per vraag, in ms
+
+    async def tekst_van(naam: str, vragen: list[str]) -> None:
+        """In de echte vorm: wat het tekstmodel van elke vraag van naam kost, ná die reeks (een
+        embed_text tussen de vragen door verstoort de gemeten reeks)."""
+        if echte:
+            tekstmodel[naam] = [await _tekstmodel_ms(settings, q) for q in vragen]
+
     try:
         monitor._set_quiet(await monitor.check(settings))
         assert bjobs.ready(), monitor.status()
@@ -279,7 +312,7 @@ async def test_p95_bij_55000_en_100000_fotos(
         assert r.status_code == 200, r.text
         await run_jobs(settings)
         map_ = uuid.UUID((await root(client, eva))["folder"]["id"]).hex
-        if siglip_vol.uit_omgeving(MODELLEN_ENV, LOCK_ENV) is not None:
+        if echte:
             laden = await _tekstmodel_laden(settings)
             print(f"\nbeeld-perf tekstmodel laden (echte vorm, één core): {laden:.2f} s")
         klaar = 0
@@ -288,25 +321,45 @@ async def test_p95_bij_55000_en_100000_fotos(
             klaar = n
             assert _bestand(settings, dbpad, eigenaar, seed=n) == n
             await _vraag(client, eva, "rood")  # laadt het bestand in het kind zoeken
-            gemeten[f"warm {n}"] = [await _vraag(client, eva, f"rood {i}") for i in range(VRAGEN)]
+            naam, vragen = f"warm {n}", [f"rood {i}" for i in range(VRAGEN)]
+            gemeten[naam] = [await _vraag(client, eva, q) for q in vragen]
+            await tekst_van(naam, vragen)
         # de eerste vraag na een nieuw bestand dat al is opgewarmd (K2-13)
+        naam, vragen = f"eerste na opwarmen {N_GROOT}", [f"blauw {i}" for i in range(NIEUW)]
         eerste = []
-        for i in range(NIEUW):
+        for q in vragen:
             _vul(dbpad, eigenaar, map_, klaar, 1)
             klaar += 1
-            assert _bestand(settings, dbpad, eigenaar, seed=1_000 + i) == klaar
+            assert _bestand(settings, dbpad, eigenaar, seed=1_000 + len(eerste)) == klaar
             assert await bjobs.warm(settings, eigenaar)
-            eerste.append(await _vraag(client, eva, f"blauw {i}"))
-        gemeten[f"eerste na opwarmen {N_GROOT}"] = eerste
+            eerste.append(await _vraag(client, eva, q))
+        gemeten[naam] = eerste
+        await tekst_van(naam, vragen)
         # alles op één core: de worker en zijn kinderen ook
         for pid in (worker.pid, *worker.children()):
             assert os.sched_getaffinity(pid) == {een_kern}, pid
     finally:
         _schoon()
+    # Zonder het tekstmodel: in de echte vorm de tijd van de vraag min wat het tekstmodel van
+    # dezelfde vraag kost; met de nep de tijd zelf (het nepmodel kost bijna niets)
+    rest = {
+        naam: [h - t for h, t in zip(tijden, tekstmodel[naam], strict=True)] if echte else tijden
+        for naam, tijden in gemeten.items()
+    }
     for naam, tijden in gemeten.items():
         print(
             f"beeld-perf {naam}: p50 {sorted(tijden)[len(tijden) // 2]:.1f} ms, "
             f"p95 {p95(tijden):.1f} ms, max {max(tijden):.1f} ms ({len(tijden)} vragen)"
         )
-    for naam, tijden in gemeten.items():
+        if echte:
+            print(
+                f"beeld-perf {naam} zonder het tekstmodel: p50"
+                f" {sorted(rest[naam])[len(rest[naam]) // 2]:.1f} ms, p95 {p95(rest[naam]):.1f}"
+                f" ms (grens {GRENS_MS:.0f}); het tekstmodel p95 {p95(tekstmodel[naam]):.1f} ms;"
+                f" het geheel p95 {p95(tijden):.1f} ms (BZ6, grens {BZ6_MS:.0f})"
+            )
+    for naam, tijden in rest.items():
         assert p95(tijden) <= GRENS_MS, (naam, sorted(tijden))
+    if echte:
+        for naam, tijden in gemeten.items():
+            assert p95(tijden) <= BZ6_MS, (naam, sorted(tijden))

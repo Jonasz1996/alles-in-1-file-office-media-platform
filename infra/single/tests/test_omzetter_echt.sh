@@ -53,7 +53,25 @@ BOOM=${OMZETTER_SRC:-$top}
 FAILED=0
 
 umask 022
+docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+[ -n "$docker_root" ] && [ -d "$docker_root" ] || docker_root=/
+
+compose=()
+cleanup() {
+  local rc=$?
+  if [ "${#compose[@]}" -gt 0 ]; then
+    "${compose[@]}" --profile omzetten down --remove-orphans --timeout 10 >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$WERK"
+  echo "df (na het opruimen):"
+  df -h -- "${TMPDIR:-/tmp}" "$docker_root" || true
+  if [ "$rc" = 0 ] && [ "$FAILED" != 0 ]; then rc=1; fi
+  exit "$rc"
+}
+# Het opruimen staat meteen na mktemp: faalt daarna iets (OMZETTER_OUT niet te schrijven), dan
+# blijft $WERK niet liggen (review I2, V1)
 WERK=$(mktemp -d "${TMPDIR:-/tmp}/omzettertest.XXXXXX")
+trap cleanup EXIT
 chmod 0755 "$WERK"
 if [ -n "$OUT" ]; then
   mkdir -p "$OUT"
@@ -70,26 +88,10 @@ fout() {
   FAILED=1
 }
 
-docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
-[ -n "$docker_root" ] && [ -d "$docker_root" ] || docker_root=/
 schijf() {
   echo "df ($1):"
   df -h -- "$WERK" "$docker_root" 2>/dev/null || df -h -- "${TMPDIR:-/tmp}" "$docker_root"
 }
-
-compose=()
-cleanup() {
-  local rc=$?
-  if [ "${#compose[@]}" -gt 0 ]; then
-    "${compose[@]}" --profile omzetten down --remove-orphans --timeout 10 >/dev/null 2>&1 || true
-  fi
-  rm -rf -- "$WERK"
-  echo "df (na het opruimen):"
-  df -h -- "${TMPDIR:-/tmp}" "$docker_root" || true
-  if [ "$rc" = 0 ] && [ "$FAILED" != 0 ]; then rc=1; fi
-  exit "$rc"
-}
-trap cleanup EXIT
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || {
   fout "het image $IMAGE is er niet (OMZETTER_IMAGE)"
@@ -154,10 +156,18 @@ print(" ".join([
     "cpus", str(s.get("cpus", "geen")),
 ]))
 '); then
+  # De grenzen precies, niet met * erachter (review I2, U5): kan docker ze geven, dan die van
+  # compose.analyse-limits.yaml (3 GB en 1 cpu); anders laat compose_files dat bestand weg, en dan
+  # geen. Zelf gevraagd aan docker, niet via limits_supported van install.sh
+  if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}' 2>/dev/null)" = "true true" ]; then
+    grenzen="mem_limit 3072MiB cpus 1" waar=""
+  else
+    grenzen="mem_limit geen cpus geen" waar=" (docker geeft hier geen grenzen)"
+  fi
   case "$dienst" in
-    "user omzetten read_only network none tmpfs /tmp:size=64m,mode=1777 cap_drop ALL no-new-privileges:true "*)
-      goed "de dienst analyse-omzetten: $dienst" ;;
-    *) fout "de dienst analyse-omzetten is niet afgeschermd zoals compose.analyse.yaml zegt: $dienst" ;;
+    "user omzetten read_only network none tmpfs /tmp:size=64m,mode=1777 cap_drop ALL no-new-privileges:true $grenzen")
+      goed "de dienst analyse-omzetten: $dienst$waar" ;;
+    *) fout "de dienst analyse-omzetten is niet afgeschermd zoals compose.analyse.yaml en compose.analyse-limits.yaml zeggen: $dienst (verwacht aan het eind: $grenzen)" ;;
   esac
 else
   fout "compose config: $(tail -n 2 "$WERK/config.err" | tr '\n' ' ')"

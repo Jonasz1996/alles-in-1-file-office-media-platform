@@ -861,10 +861,7 @@ def test_de_knop_zoeken_op_beeld(fien, context_as):
     )
     # I1 (review R4): de beschrijving van het veld zegt zelf dat zoeken op beeld uitstaat, zonder
     # op de lazy chunk van BeeldResults te wachten (een verborgen zin in ImageHint)
-    uit = (
-        "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). "
-        "De beheerder kan het aanzetten met ANALYSE=aan."
-    )
+    uit = "Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten."
     expect(veld).to_have_accessible_description(f"{uit} Zoekt in je eigen foto's. Druk op Enter.")
     expect(page.get_by_role("radio", name="Wat er op de foto staat", exact=True)).to_be_checked()
     # I1 (S8): zonder raster één zin zonder versienummer (sinds 0.8.1: dat het uitstaat). Zichtbaar

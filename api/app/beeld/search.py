@@ -186,8 +186,12 @@ async def _call(settings: Settings, args: wire.RankArgs, fd: int) -> Any:
             return await client.call(settings, Op.RANK, args, fds=[fd])
     except TimeoutError:
         raise Fallback("slow") from None
-    except (client.AnalyseDown, client.AnalyseBusy):
+    except client.AnalyseDown:
         raise Fallback("down") from None
+    except client.AnalyseBusy:
+        # Het kind zoeken is nog bezig (bijvoorbeeld met een vraag die de klok niet haalde): de
+        # container is er wel, dus te traag en niet weg (review I2, U3)
+        raise Fallback("slow") from None
     except client.AnalyseFailed as exc:
         if exc.code == Code.MODEL_MISSING:
             raise Fallback("no_model") from None

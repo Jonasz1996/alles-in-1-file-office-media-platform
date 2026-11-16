@@ -5,7 +5,8 @@
 // AdminSearch.faces (./searchApi); de tab ververst hem elke 5 s.
 //
 // null (de analyse staat uit of de map met sleutels ontbreekt: gezichten draaien niet op deze
-// server) houdt precies het blok van 0.8.0: de kop en "komt later", zonder knop of schakelaar.
+// server) houdt het blok van 0.8.0: de kop en één zin, zonder knop of schakelaar; sinds 0.8.1 (I2)
+// zegt die zin dat het niet draait en waar de beheerder ziet waarom (photos_faces.notReady).
 // Met een stand (X2b) de regels van Keuze 67; de kwaliteit is "niet gemeten" tot app.cli
 // analyse-kwaliteit draaide (Vraag 8).
 //

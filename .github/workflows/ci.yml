@@ -147,10 +147,11 @@ jobs:
       # zijn), 1 (test_geheugen_samen.py, BZ5 met de nepmodellen), 1 (herladen laat het oude
       # bestand los), 1 (de voorbewerking van de worker) en 1 (test_group_perf.py: de meting
       # telt de piek van pytest niet mee); en van CI op dc5dfe5: 1 (test_beeld_omzetten.py: de
-      # maxrss van de omzetter telt de piek van pytest niet mee); gedeselecteerd: de 16 tests
-      # van de job beeld-model (5 van het rapport). Noem hun marker hier niet: test_beeld_ci.py
-      # eist dat deze job hem precies één keer noemt (-m)
-      ANALYSE_TESTS: "330"
+      # maxrss van de omzetter telt de piek van pytest niet mee); en van de review van I2: 1
+      # (opwarmen laadt ook het tekstmodel); gedeselecteerd: de 16 tests van de job beeld-model
+      # (5 van het rapport). Noem hun marker hier niet: test_beeld_ci.py eist dat deze job hem
+      # precies één keer noemt (-m)
+      ANALYSE_TESTS: "331"
       ANALYSE_DESELECTED: "16"
     steps:
       - uses: actions/checkout@v4

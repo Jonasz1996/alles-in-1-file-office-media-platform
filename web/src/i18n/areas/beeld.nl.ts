@@ -1,16 +1,18 @@
 // Zoeken op beeld (fase 6, X3; Keuze 81 en 82): de stand "Wat er op de foto staat" op /zoeken, het
 // raster, "Meer zoals deze" in het infopaneel, de schakelaar en het blok op /beheer. Het gebied is
 // van X3; Z0b zette het leeg neer (Keuze 55). Geen versienummer in een tekst: of zoeken op beeld er
-// is, zegt de server. Met de analyse uit zeggen notReady en later sinds 0.8.1 (I2) dat het uitstaat
-// en wat de beheerder kan doen (in 0.8.0: "komt later").
+// is, zegt de server. Kent de server zoeken op beeld niet (de analyse staat uit, of is niet helemaal
+// geïnstalleerd), dan zeggen notReady en later sinds 0.8.1 (I2) dat het niet draait (in 0.8.0:
+// "komt later"); notReady wijst de beheerder naar de eindtekst van het installatiescript, en later
+// noemt geen pad of variabele van de server (review I2, U2 en V2).
 export default {
   title: "Zoeken op beeld",
-  // Het blok op /beheer zonder stand (de analyse staat uit): wat de beheerder kan doen
+  // Het blok op /beheer zonder stand: waar de beheerder ziet waarom, en wat hij dan kan doen
   notReady:
-    "Zoeken op beeld staat uit op deze server: de analyse draait niet (ANALYSE=uit in /opt/platform/.env). Aanzetten: draai het installatiescript opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md.",
-  // De stand beeld op /zoeken als de server zoeken op beeld niet kent (I1, S8; de analyse staat
-  // uit): zonder versienummer, voor iedereen
-  later: "Zoeken op beeld staat uit op deze server (ANALYSE=uit in /opt/platform/.env). De beheerder kan het aanzetten met ANALYSE=aan.",
+    "Zoeken op beeld draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto's. Zie docs/runbooks/analyse.md.",
+  // De stand beeld op /zoeken als de server zoeken op beeld niet kent (I1, S8): voor iedereen,
+  // zonder versienummer, pad of variabele
+  later: "Zoeken op beeld staat uit op deze server. De beheerder kan het aanzetten.",
   grid: {
     label: "Foto's die passen bij '{q}'",
     labelLike: "Foto's die lijken op de gekozen foto",

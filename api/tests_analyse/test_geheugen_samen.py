@@ -12,10 +12,12 @@ de nepmodellen van fake_models.py en fake_beeld.py, en tegelijk:
 
 Gemeten: VmHWM (maxrss) van pid 1, werk en zoeken, en elke 20 ms de som van hun VmRSS (de piek
 tegelijk). De poort van BZ5 is maxrss ≤ 2,5 GB voor de container onder mem_limit: 3g. Wat de
-echte modellen meer kosten dan de nep, telt er hier bij, met de getallen van §3.11 van het
-ontwerp: in werk de modellen van gezichten (224 MB, de hele maxrss van werk in B6, dus ruim) en
-het beeldmodel (+165 MB, B6), in zoeken het tekstmodel (+340 MB, B6) en de tokenizer (≤ 100 MB,
-het doel van BZ7). Zo moet ook elk kind onder zijn RLIMIT_DATA blijven. En geen opdracht faalt,
+echte modellen meer kosten dan de nep, telt er hier bij: in werk de getallen van §3.11 van het
+ontwerp, de modellen van gezichten (224 MB, de hele maxrss van werk in B6, dus ruim) en het
+beeldmodel (+165 MB, B6); in zoeken het gemeten verschil met modellen van de echte vorm (780 MB:
+zoeken 1.285 MB tegen 506 MB met de nep, I2; de schatting van §3.11, tekstmodel +340 MB en
+tokenizer ≤ 100 MB, was 339 MB te laag; review I2, C2). Zo moet ook elk kind onder zijn
+RLIMIT_DATA blijven. En geen opdracht faalt,
 geen kind wordt vervangen (de wachter doodt een kind boven zijn grens), en zoeken blijft ook
 tijdens het herladen bij de grens van de cache plus de import: vóór de samenvoeging hield
 Cache.get de oude matrix van Eva vast tot na het laden (zoeken 801 MB in plaats van 507 MB;
@@ -26,10 +28,11 @@ een zonder de ander faalt): dezelfde test met die map en die lock in plaats van 
 SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py, omgezet zoals de job
 beeld-model) en de echte YuNet en SFace. Dan laadt werk vóór de groepsronde YuNet, SFace en het
 beeldmodel (een faces- en een embed-opdracht, zoals tijdens de backfill), en laadt zoeken de
-tokenizer en het tekstmodel bij de vraag midden in de ronde. ECHT_ERBIJ en IMPORT (de schatting
-van wat de nep niet kost, en de ruimte van zoeken naast de cache met de nep) gelden dan niet: de
-poort is de som ≤ 2,5 GB en elk kind onder zijn RLIMIT_DATA, en de regel noemt per kind het
-gemeten getal en zijn RLIMIT_DATA. Zonder die variabelen verandert er niets.
+tokenizer en het tekstmodel bij de vraag midden in de ronde. De poort is dan de som ≤ 2,5 GB en
+elk kind onder zijn RLIMIT_DATA (de modellen zitten er zelf in: geen schatting erbij), en zoeken
+blijft tijdens het herladen onder de cache plus de import plus ECHT_ERBIJ van zoeken: dezelfde
+grens als met de nep, en zo ook het bewijs dat ECHT_ERBIJ de echte vorm dekt. De regel noemt per
+kind het gemeten getal en zijn RLIMIT_DATA. Zonder die variabelen verandert er niets.
 
 Wat alleen CI of de LXC meet: het echte SigLIP 2 en YuNet en SFace in dezelfde container, en de
 piek van de cgroup (memory.peak onder mem_limit: 3g). Zie x3b.md, Open 3.
@@ -60,8 +63,10 @@ pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
 MB = 1024 * 1024
 GRENS = 2_500_000_000  # maxrss van de container (BZ5): 2,5 GB
 IMPORT = 200 * MB  # wat zoeken naast de cache mag hebben: de import, de nepmodellen, een stuk
-# Wat de echte modellen meer kosten dan de nep (§3.11, de tabel van het geheugen)
-ECHT_ERBIJ = {Child.WERK: (224 + 165) * MB, Child.ZOEKEN: (340 + 100) * MB}
+# Wat de echte modellen meer kosten dan de nep: werk volgens §3.11 (de tabel van het geheugen;
+# gemeten +345 MB met de echte vorm), zoeken gemeten met de echte vorm (+779 MB, I2; §3.11 schatte
+# 340 + 100 MB)
+ECHT_ERBIJ = {Child.WERK: (224 + 165) * MB, Child.ZOEKEN: 780 * MB}
 OPEN, BEKEND = 60_000, 6_000
 EVA, BRAM = "e" * 32, "b" * 32
 N_EVA, N_BRAM = 100_000, 36_000
@@ -236,6 +241,10 @@ async def test_groeperen_een_volle_cache_en_herladen_tegelijk_onder_2_5_gb(worke
         assert som <= GRENS
         for soort, waarde in hwm.items():
             assert waarde < wire.CHILDREN[soort].rlimit_data, (soort, waarde)
+        # Herladen houdt zoeken bij de cache plus de import, nu met de echte modellen erin; zo
+        # dekt ECHT_ERBIJ ook wat de echte vorm meer kost dan de nep
+        grens_zoeken = wire.ANALYSE_BEELD_CACHE_MB * MB + IMPORT + ECHT_ERBIJ[Child.ZOEKEN]
+        assert hwm[Child.ZOEKEN] <= grens_zoeken, (hwm[Child.ZOEKEN] / MB, grens_zoeken / MB)
     else:
         erbij = sum(ECHT_ERBIJ.values())
         print(

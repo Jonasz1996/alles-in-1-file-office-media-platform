@@ -511,6 +511,15 @@ def rank(job: Job, cache: Cache | None = None) -> dict:
         raise OpFailed(Code.BAD_REQUEST, vt.BAD_FILE)
     entry = cache.get(args.owner, args.gen, fd, head, job)
     if args.k == 0:
+        # Opwarmen (K2-13) is het bestand én het tekstmodel: anders laadt de eerste vraag in
+        # woorden het model onder de klok van de app (800 ms) en valt terug (review I2, U1). Na
+        # het bestand, zodat opwarmen zonder tekstmodel het bestand toch laadt ("Meer zoals deze").
+        try:
+            job.models.session(TEKST)
+            tokenizer(job.models)
+        except OpFailed as exc:
+            if exc.code != Code.MODEL_MISSING:
+                raise
         return wire.RankData().model_dump(mode="json")
     skip: int | None = None
     if args.num is not None:

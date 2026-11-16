@@ -8,7 +8,7 @@ const en: Translation<typeof nl> = {
     placeholder: "A name or a word from the text",
     placeholderImage: "Describe the photo, for example: dog on the beach",
     hintImage: "Searches your own photos. Press Enter.",
-    imageLater: "Search by image is off on this server (ANALYSE=uit in /opt/platform/.env). The administrator can turn it on with ANALYSE=aan.",
+    imageLater: "Search by image is off on this server. The administrator can turn it on.",
     submit: "Search",
   },
   mode: {
