@@ -17,7 +17,8 @@ grenzen, dezelfde fd's). Wat de proef doet, kiest de test met de eerste bytes va
 - anders: de echte faces.
 
 embed_text (zoeken): de tekst GEHEIM geeft een uitzondering met die tekst; anders de omgeving,
-sys.path en of PIL geladen is (zoeken decodeert nooit een beeld, Keuze 75).
+sys.path en of PIL en onnxruntime geladen zijn (zoeken decodeert nooit een beeld, Keuze 75).
+rank en forget blijven de echte.
 """
 
 from __future__ import annotations
@@ -136,6 +137,7 @@ def embed_text(job: child.Job) -> dict:
         "env": dict(os.environ),
         "path": list(sys.path),
         "pil": "PIL" in sys.modules,
+        "onnxruntime": "onnxruntime" in sys.modules,
         "dumpable": child.dumpable(),
         "pid": os.getpid(),
     }

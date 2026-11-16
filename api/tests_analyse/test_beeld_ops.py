@@ -15,9 +15,9 @@ import pytest
 from PIL import Image
 
 from app.analyse import client, wire
-from app.analyse.wire import Code, Op
+from app.analyse.wire import Child, Code, Op
 from app.beeld import types as vt
-from tests_analyse import echt, fake_beeld, fake_models
+from tests_analyse import echt, fake_beeld, fake_models, proef
 
 pytestmark = [pytest.mark.anyio, pytest.mark.analyse_echt]
 
@@ -289,24 +289,27 @@ async def test_niets_van_de_vraag_op_stderr(worker):
     assert GEHEIM.encode() not in worker.stderr()
 
 
-async def test_zoeken_laadt_nooit_pillow(worker):
-    """Het kind zoeken decodeert nooit een beeld (Keuze 75): na rank en embed_text staat Pillow
-    niet in zijn geheugen."""
+async def test_zoeken_laadt_nooit_pillow(tmp_path, modellen):
+    """Het kind zoeken decodeert nooit een beeld (Keuze 75): na een echte rank met een vraag (het
+    tekstmodel draait) staat Pillow niet in zijn sys.modules, onnxruntime wel. Het kind zegt het
+    zelf: de proef (proef.py) vult alleen embed_text in, rank blijft de echte. Niet via
+    /proc/<pid>/maps: het kind is niet dumpbaar, en dan leest alleen root die (in CI draait
+    api-analyse als gewone gebruiker: PermissionError op dc5dfe5)."""
     nums, mat = wereld(50, 10)
     data = fake_beeld.vec_bytes(nums, mat.astype(np.float32), 1)
-    await rank(worker.settings(), data, {"owner": BRAM, "gen": 1, "text": "rood", "k": 3})
-    (maps,) = [_maps(pid) for pid in worker.children() if b"zoeken" in _argv(pid)]
-    assert "onnxruntime" in maps and "PIL" not in maps
-
-
-def _argv(pid: int) -> list[bytes]:
-    with open(f"/proc/{pid}/cmdline", "rb") as f:
-        return f.read().split(b"\0")
-
-
-def _maps(pid: int) -> str:
-    with open(f"/proc/{pid}/maps") as f:
-        return f.read()
+    async with echt.binnen(tmp_path, modellen, child_code=proef.BOOT) as (worker, settings):
+        top = await rank(settings, data, {"owner": BRAM, "gen": 1, "text": "rood", "k": 3})
+        out = wire.out_memfd("uit")
+        try:
+            kind = await client.call(
+                settings, Op.EMBED_TEXT, wire.EmbedTextArgs(text="pil"), fds=[out]
+            )
+        finally:
+            os.close(out)
+        # hetzelfde kind deed de rank en zegt wat het geladen heeft
+        assert worker.kids[Child.ZOEKEN].pids == [kind["pid"]]
+    assert len(top) == 3
+    assert kind["onnxruntime"] is True and kind["pil"] is False
 
 
 async def test_afbreken_met_cancel_en_de_deadline(tmp_path):

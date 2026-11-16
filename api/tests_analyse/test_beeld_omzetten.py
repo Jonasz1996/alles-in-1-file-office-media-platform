@@ -10,7 +10,8 @@ float64, rechtstreeks uit de gewichten en de regels van SiglipModel (niet uit de
 - int8 is sinds VERSIE 3 per token (MatMulInteger, CI op 011bf2d); de vorm van VERSIE 2 (per
   tensor, DynamicQuantizeMatMul) geeft met per_token=False nog byte voor byte de bestanden van toen;
 - twee omzettingen, in twee processen, geven dezelfde sha256 voor elk bestand;
-- maxrss en tijd van het proces worden gemeten (en begrensd);
+- maxrss (de piek die de omzetter zelf meldt, VmHWM) en tijd van het proces worden gemeten (en
+  begrensd);
 - een safetensors met een kop die liegt, en elke andere bron die niet klopt, geeft OmzetFout:
   code 2, één zin, geen traceback, en de uitvoermap blijft leeg.
 
@@ -24,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -61,6 +63,9 @@ TOL = 1e-5
 COS = 0.99
 MAXRSS_MIB = 400  # het kleine model; het echte begrenst BZ2 (≤ 1,5 GB)
 TEKSTEN = ["hond op het strand", "Hond Op Het Strand!", "", "€ σ ς", "a" * 200]
+# De laatste regel van de omzetter op stderr, zoals BZ2 hem leest (tools/beeld/beeld_model.py)
+_KLAAR = re.compile(r"omzetten: klaar in [0-9.]+ s, maxrss ([0-9]+) MiB")
+MB = 1024 * 1024
 
 
 # --- de eigen numpy-versie (float64), uit de regels van SiglipModel ------------------------------
@@ -149,7 +154,10 @@ def ref_tekst(tokens: np.ndarray, w: dict) -> np.ndarray:
 
 def _start_meet(bron: Path, uit: Path, *extra: str) -> tuple[subprocess.CompletedProcess, dict]:
     """De dienst analyse-omzetten na: python -I -c OMZET_BOOT <api> --bron … --uit …, met een
-    lege omgeving. Geeft het resultaat en de tijd en maxrss van precies dat proces (wait4)."""
+    lege omgeving. Geeft het resultaat, de tijd van precies dat proces (wait4) en de maxrss die
+    de omzetter zelf meldt in zijn regel "klaar" (VmHWM, die BZ2 ook leest; None zonder die
+    regel). Niet ru_maxrss van wait4: Linux geeft bij (v)fork en exec de piek van de ouder door,
+    en dan telt de piek van pytest mee (411 MiB in api-analyse op dc5dfe5)."""
     argv = [sys.executable, "-I", "-c", OMZET_BOOT, str(API), "--bron", str(bron)]
     argv += ["--uit", str(uit), *extra]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"}
@@ -157,13 +165,14 @@ def _start_meet(bron: Path, uit: Path, *extra: str) -> tuple[subprocess.Complete
     begin = time.monotonic()
     with out_pad.open("wb") as o, err_pad.open("wb") as e:
         p = subprocess.Popen(argv, stdout=o, stderr=e, env=env)
-        _, status, gebruik = os.wait4(p.pid, 0)
+        _, status, _ = os.wait4(p.pid, 0)
     p.returncode = os.waitstatus_to_exitcode(status)
     duur = time.monotonic() - begin
     res = subprocess.CompletedProcess(argv, p.returncode, out_pad.read_text(), err_pad.read_text())
     out_pad.unlink()
     err_pad.unlink()
-    return res, {"s": duur, "maxrss_mib": gebruik.ru_maxrss / 1024}
+    klaar = _KLAAR.findall(res.stderr)
+    return res, {"s": duur, "maxrss_mib": float(klaar[-1]) if klaar else None}
 
 
 def _sha(pad: Path) -> str:
@@ -344,10 +353,32 @@ def test_regels_voor_models_lock(omgezet):
 def test_maxrss_en_tijd_gemeten(omgezet):
     _, runs = omgezet
     for _, res, meting in runs:
+        assert meting["maxrss_mib"] is not None, res.stderr
         assert meting["maxrss_mib"] <= MAXRSS_MIB, meting
         assert meting["s"] <= 120, meting
-        assert "klaar in" in res.stderr and "maxrss" in res.stderr
     print(f"omzetten klein: {[(round(m['s'], 2), round(m['maxrss_mib'])) for *_, m in runs]}")
+
+
+def test_de_maxrss_van_de_omzetter_telt_de_piek_van_pytest_niet_mee():
+    """Houdt pytest 256 MB vast, dan meldt bouw.maxrss_mib() in een kind toch alleen de piek van
+    dat kind (VmHWM sinds exec); ru_maxrss van datzelfde kind (de oude meting) neemt de 256 MB van
+    pytest mee. Zo was de poort van 400 MiB rood in api-analyse op dc5dfe5 (411 MiB)."""
+    blok = np.ones(256 * MB // 8)  # aangeraakt: 256 MB in de RSS van pytest
+    try:
+        kind = (
+            "import resource\n"
+            "from app.analyse.worker.omzetten import bouw\n"
+            "print(bouw.maxrss_mib(), resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", kind], cwd=API, capture_output=True, text=True, timeout=60
+        )
+    finally:
+        del blok
+    assert done.returncode == 0, done.stderr[-2000:]
+    piek, oud = map(float, done.stdout.split())
+    assert oud >= 256, (piek, oud)
+    assert piek < 128, (piek, oud)
 
 
 def test_meta_json(omgezet):

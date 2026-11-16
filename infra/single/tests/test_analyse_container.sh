@@ -38,7 +38,9 @@
 # - als root op de host: pid 1 en elk kind zijn niet-dumpbaar, CapEff 0, NoNewPrivs 1, de sleutel
 #   niet in de cmdline en niet in de omgeving van een kind; pid 1 start uit python-tekst (dan
 #   vanaf de exec niet dumpbaar: review golf 5, veilig F6), zonder onnxruntime en numpy in zijn
-#   geheugen; het kind werk start uit python-tekst, met nice 19 en RLIMIT_DATA 1 GiB;
+#   geheugen; er zijn precies twee kinderen: werk (uit python-tekst, met nice 19 en RLIMIT_DATA
+#   1 GiB) en zoeken (X3b: de proef vroeg embed_text; uit python-tekst, nice 0 en RLIMIT_DATA
+#   1,5 GiB, zonder einde), allebei met onnxruntime geladen;
 # - de kinderen in de echte container: werk SIGKILL (bij zijn PID) → pid 1 blijft, de volgende
 #   opdracht werkt met een nieuw kind; na 8 opdrachten is werk weg, en de negende start een
 #   nieuw (ANALYSE_CHILD_BATCHES);
@@ -649,10 +651,12 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 fout = []
 p1, kids = d["pid1"], d["kinderen"]
-werk = [k for k in kids if k["naam"] == "werk"]
+# De grenzen van CHILDREN in app/analyse/wire.py. zoeken leeft sinds X3b na de embed_text van de
+# proef, zonder einde (max_ops en max_age_s None); werk tot ANALYSE_CHILD_BATCHES opdrachten
+SPEC = {"werk": (19, str(1024**3), "1 GiB"), "zoeken": (0, str(3 * 1024**3 // 2), "1,5 GiB")}
 if p1["nspid"] != 1:
     fout.append(f"pid 1 is {p1['nspid']}")
-if len(werk) != 1 or len(kids) != 1:
+if sorted(k["naam"] for k in kids) != sorted(SPEC):
     fout.append(f"kinderen: {[k['naam'] for k in kids]}")
 for p in [p1, *kids]:
     n = p["naam"]
@@ -668,17 +672,21 @@ if p1["onnxruntime of numpy"]:
     fout.append("pid 1 heeft onnxruntime of numpy geladen")
 if not p1["python-tekst"]:
     fout.append("pid 1 start niet uit python-tekst (dan dumpbaar tot zijn prctl)")
-for k in werk:
+for k in kids:
+    n = k["naam"]
+    nice, data, _ = SPEC.get(n, (None, None, None))
     if k["sleutel in environ"]:
-        fout.append("werk: de sleutel in de omgeving")
-    if not k["python-tekst"] or k["nice"] != 19 or k["data"] != str(1024**3):
-        fout.append(f"werk: python-tekst {k['python-tekst']}, nice {k['nice']}, RLIMIT_DATA {k['data']}")
+        fout.append(f"{n}: de sleutel in de omgeving")
+    if not k["python-tekst"] or k["nice"] != nice or k["data"] != data:
+        fout.append(f"{n}: python-tekst {k['python-tekst']}, nice {k['nice']}, RLIMIT_DATA {k['data']}")
     if not k["onnxruntime of numpy"]:
-        fout.append("werk heeft onnxruntime niet geladen")
+        fout.append(f"{n} heeft onnxruntime niet geladen")
 print("; ".join(fout) if fout else (
-    f"pid 1 en werk (pid {werk[0]['nspid']} in de container) niet-dumpbaar, CapEff 0, NoNewPrivs 1, "
-    "de sleutel niet in de cmdline en niet in de omgeving van werk; pid 1 uit python-tekst, zonder "
-    "onnxruntime en numpy; werk uit python-tekst, nice 19, RLIMIT_DATA 1 GiB"))
+    "pid 1 en de kinderen ("
+    + ", ".join(f"{k['naam']} pid {k['nspid']}" for k in kids)
+    + " in de container) niet-dumpbaar, CapEff 0, NoNewPrivs 1, de sleutel niet in de cmdline en "
+    "niet in de omgeving van een kind; pid 1 uit python-tekst, zonder onnxruntime en numpy; "
+    + "; ".join(f"{n} uit python-tekst, nice {v[0]}, RLIMIT_DATA {v[2]}" for n, v in SPEC.items())))
 sys.exit(1 if fout else 0)
 PY
 if kort="$(python3 -I "$WORK/procs_kort.py" "$WORK/procs.json" 2>&1)"; then
@@ -687,7 +695,8 @@ else
   fout "als root op de host: $kort"
 fi
 
-# Een tweede proces van analyse in de container (uid 10003) kan /proc/<pid> van pid 1 en werk
+# Een tweede proces van analyse in de container (uid 10003) kan /proc/<pid> van pid 1 en de
+# kinderen (werk en zoeken)
 # niet lezen: alleen EACCES
 nspids="$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" ".join(str(p["nspid"]) for p in [d["pid1"], *d["kinderen"]]))' "$WORK/procs.json")"
 cat > "$WORK/peek.py" << 'PY'
@@ -711,9 +720,9 @@ sys.exit(0 if codes == ["EACCES"] and len(uit) == 3 * (len(sys.argv) - 1) else 1
 PY
 # shellcheck disable=SC2086 # nspids: losse getallen
 if in_analyse python -I - $nspids < "$WORK/peek.py" > "$WORK/peek.txt" 2>&1; then
-  goed "uid 10003 in de container leest /proc/<pid>/environ, mem en fd van pid 1 en werk niet: $(tail -n 1 "$WORK/peek.txt")"
+  goed "uid 10003 in de container leest /proc/<pid>/environ, mem en fd van pid 1, werk en zoeken niet: $(tail -n 1 "$WORK/peek.txt")"
 else
-  fout "/proc van pid 1 en werk: $(mask < "$WORK/peek.txt" | tail -n 3)"
+  fout "/proc van pid 1 en de kinderen: $(mask < "$WORK/peek.txt" | tail -n 3)"
 fi
 
 # --- de kinderen in de echte container --------------------------------------------------------

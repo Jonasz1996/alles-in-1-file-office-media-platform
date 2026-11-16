@@ -1002,4 +1002,15 @@ def _omzet(bron, uit, *, fp32, melden, gemaakt, per_token) -> list[Uitkomst]:
 
 
 def maxrss_mib() -> float:
+    """De piek van dit proces sinds exec, in MiB: VmHWM. Niet ru_maxrss: Linux geeft bij fork (en
+    vfork) en exec de piek van de ouder door. Zo telde in api-analyse de piek van pytest mee (411
+    MiB op dc5dfe5, voor een omzetting van het kleine model); zie test_beeld_omzetten.py en
+    test_group_perf.py. Zonder /proc: ru_maxrss."""
+    try:
+        with open("/proc/self/status") as f:
+            for regel in f:
+                if regel.startswith("VmHWM:"):
+                    return int(regel.split()[1]) / 1024
+    except OSError:
+        pass
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024

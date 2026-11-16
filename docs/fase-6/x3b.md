@@ -738,6 +738,27 @@ kleine (R7-2, R7-3). Elk punt eerst zelf nagegaan.
 `uv run --with playwright==1.65.2` (9 groen in 197 s, met de Chromium van de sandbox); ruff schoon
 op `e2e/test_zoek_beeld.py`. In CI na de push: de jobs `web` en `e2e`.
 
+### CI op dc5dfe5 (golf 6 gepusht)
+
+Run 43888472609. **`beeld-model` is groen, ook de stap "Uitslag"** (`models.lock en beeld.tsv
+waren er al; geen voorstel`): BZ2 twee keer dezelfde sha256 en precies de pins van
+`models.lock`, BZ4 op de 120 foto's van `beeld.tsv` met de ondergrenzen van Keuze 85 (nl 0,692,
+fp32 0,692; slechtste vraag buiten 'bergen' en 'boot' 2/5; combinaties 6/6; int8 zakt 0,000;
+meer zoals deze 0,475; kleuren 3/3), BZ6 34,7 ms per foto op een Xeon 6975P-C met VNNI. Ook
+groen: `web`, `api-media`, `https`, `ocr`, `media-image`, `infra`, `office`, `e2e-media` en de
+twee rapporten. Rood waren drie tests die alleen in CI draaien; geen ervan was een fout in de
+app:
+
+| Job | Wat | Oorzaak | Herstel |
+|---|---|---|---|
+| `analyse-image` | `als root op de host: kinderen: ['werk', 'zoeken']` | Sinds X3b draait embed_text in het kind zoeken, en de proef van de container vraagt embed_text. De controle in `test_analyse_container.sh` eiste nog precies één kind | De controle eist nu precies werk en zoeken, elk met de grenzen van `CHILDREN` in `wire.py` (werk nice 19 en RLIMIT_DATA 1 GiB, zoeken nice 0 en 1,5 GiB), allebei uit python-tekst, met onnxruntime, zonder de sleutel in hun omgeving. Nagegaan op gemaakte invoer: met alleen werk, twee keer zoeken, een onbekend kind, of zoeken met de grenzen van werk, de sleutel, zonder onnxruntime of dumpbaar is de controle rood |
+| `api-analyse` | `test_maxrss_en_tijd_gemeten`: 411 MiB, poort 400 | ru_maxrss van wait4: Linux geeft bij (v)fork en exec de piek van de ouder door, hier die van pytest (dezelfde fout als in `test_group_perf.py`, gerepareerd in golf 6). De omzetting van het kleine model zelf is ±35 MiB | `bouw.maxrss_mib()` meldt VmHWM (de piek sinds exec), en de test leest die regel "klaar", zoals BZ2. De output van de omzetter verandert niet. Nieuwe test `test_de_maxrss_van_de_omzetter_telt_de_piek_van_pytest_niet_mee` (met de oude meting rood: 350 MiB); `ANALYSE_TESTS` 330 |
+| `api-analyse` | `test_zoeken_laadt_nooit_pillow`: PermissionError op `/proc/<pid>/maps` | Het kind zoeken is niet dumpbaar; dan leest alleen root zijn maps, en `api-analyse` draait als gewone gebruiker | Het kind zegt het zelf: de test draait de worker met de proef (`proef.py`, die nu ook `onnxruntime` in `sys.modules` meldt), doet een echte rank met een vraag en vraagt daarna aan hetzelfde kind of PIL en onnxruntime geladen zijn. Als nobody groen; de oude test als nobody rood |
+
+Gedraaid na het herstel: `tests_analyse` met `-m "not beeld_echt"` als root en als nobody (330
+groen, 16 niet gekozen), de zeven API-tests die `ci.yml` lezen (246 groen), `bash -n` en
+shellcheck op `test_analyse_container.sh`, ruff.
+
 ### Open na golf 6
 
 - **Alleen in CI, na de push:** `beeld-model` streng: BZ2 met dezelfde sha256 als de pins, BZ4
