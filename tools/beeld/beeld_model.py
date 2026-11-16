@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import email.utils
 import hashlib
+import html
 import http.client
 import importlib.util
 import json
@@ -233,13 +234,14 @@ PAUZE_S = 1.0  # tussen twee vragen aan upload.wikimedia.org (en aan de API met 
 # De API van Commons heeft sinds maart 2026 grenzen per soort client (wikitech-l, 2 maart 2026,
 # "New global API rate limits": eerst lage grenzen voor anonieme vragen, vanaf april hogere voor
 # wie zich identificeert). De getallen staan op mediawiki.org, "Wikimedia APIs/Rate limits"; die
-# pagina was vanaf hier niet te lezen. Wie haar citeert (stand november 2026): zonder
+# pagina was vanaf hier niet te lezen. Wie haar citeert (in september 2026): zonder
 # identificatie (alleen een IP-adres) 10 vragen per minuut, per IP; met een User-Agent volgens de
 # richtlijn (met contact: e-mail, een URL of een gebruikerspagina) 200; aangemeld meer. Een
-# oudere kopie van de pagina noemde 500 per uur zonder identificatie. Onze User-Agent heeft geen
-# contact, dus geldt 10 per minuut, en dat budget hoort bij het IP van de runner, dat ook ander
-# verkeer kan hebben. Op 3148c2f gaf de API zo vanaf de eerste vraag een 429 (Retry-After 50);
-# eerder die dag (f16ed5a, 9ebf298) kwam set met 1 vraag per seconde wel door de keuze.
+# oudere kopie van de pagina, uit de tijd van de invoering, noemde 500 per uur zonder
+# identificatie. Onze User-Agent heeft geen contact, dus geldt die laagste grens, en dat budget
+# hoort bij het IP van de runner, dat ook ander verkeer kan hebben. Op 3148c2f gaf de API zo al
+# vóór de eerste foto steeds een 429 (Retry-After 50); eerder die dag (f16ed5a, 9ebf298) kwam set
+# met 1 vraag per seconde wel door de keuze.
 # Tussen twee vragen aan de API (elke poging telt, ook een herhaling na een 429) zit daarom
 # minstens PAUZE_API_S: met een vaste tussentijd g zitten er in een venster van 60 s hooguit
 # floor(60 / g) + 1 vragen, bij 8 s dus 8 (op 0, 8, ..., 56 s), onder de 10 met ruimte voor een
@@ -396,12 +398,32 @@ def _antwoord(tekst: str) -> str:
     return next((r for r in regels if _zegt_iets(" ".join(r.split()))), "")
 
 
+def _zonder_contact(tekst: str, *, heel: bool = True) -> str:
+    """Tekst van de server zonder BEELD_CONTACT, vóór die in het log komt (_uitleg). Een
+    foutpagina die de User-Agent herhaalt, zette het contact anders in de fout en in kort.txt.
+    Ook HTML-gecodeerd ("&amp;"), en hield het antwoord na MAX_ANTWOORD op (heel False), ook een
+    begin van het contact aan het eind. Op zijn plaats komt "[contact]", zonder < en >: _antwoord
+    haalt tags weg."""
+    if _contact is None:
+        return tekst
+    vormen = sorted({_contact, html.escape(_contact, quote=False), html.escape(_contact)}, key=len)
+    for vorm in reversed(vormen):
+        tekst = tekst.replace(vorm, "[contact]")
+    if not heel:  # het langste begin van een van de vormen
+        begin = [n for vorm in vormen for n in range(1, len(vorm)) if tekst.endswith(vorm[:n])]
+        if begin:
+            tekst = tekst[: -max(begin)] + "[contact]"
+    return tekst
+
+
 def _uitleg(e: urllib.error.HTTPError, retry_after: str | None, stop: str | None = None) -> str:
     """Wat het log zegt als _open het opgeeft na een 429 of 5xx: de laatste Retry-After die hij
     zag, waarom hij meteen stopte (stop, als dat zo was) en de tekst van het antwoord volgens
     _antwoord, alleen afdrukbare ASCII en hooguit MAX_REGEL tekens. Niets anders van het
-    antwoord."""
-    ra = f"Retry-After {_leesbaar(retry_after, 64)}" if retry_after else "geen Retry-After"
+    antwoord, en nooit BEELD_CONTACT (_zonder_contact)."""
+    ra = "geen Retry-After"
+    if retry_after:
+        ra = f"Retry-After {_leesbaar(_zonder_contact(retry_after), 64)}"
     if stop:
         ra = f"{ra}; {stop}"
     try:
@@ -410,7 +432,8 @@ def _uitleg(e: urllib.error.HTTPError, retry_after: str | None, stop: str | None
         data = b""
     finally:
         e.close()
-    regel = _leesbaar(_antwoord(data.decode("ascii", errors="replace")), MAX_REGEL)
+    tekst = _zonder_contact(data.decode("ascii", errors="replace"), heel=len(data) < MAX_ANTWOORD)
+    regel = _leesbaar(_antwoord(tekst), MAX_REGEL)
     return f"{ra}; antwoord: {regel}" if regel else f"{ra}; antwoord zonder tekst"
 
 

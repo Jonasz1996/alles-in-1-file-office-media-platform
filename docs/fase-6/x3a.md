@@ -1033,29 +1033,34 @@ Met de nieuwe tool: `tests/analyse` 372 groen.
 | BZ6 | beeld int8 op één core 776 foto's per minuut (poort ≥ 500); een vraag p95 71,7 ms (≤ 250 ms). **Goed** |
 | BZ4 | niet gerekend: de stap `set` (een voorstel, zonder `beeld.tsv`) liep van 23:01:28 tot 23:19:10 en stopte op "FOUT set: commons.wikimedia.org: HTTP 429 (Retry-After 50; 50 s wachten past niet in wat er over is van WACHT_TOTAAL_S (32 van 900 s), dus meteen gestopt; antwoord: You are making too many requests to the API.) (bij foto 1 van 120, 0,0 MB opgehaald)". **Rood** |
 
-**Deze keer was het de API van Commons, en vanaf het begin.** Niet upload.wikimedia.org maar
-commons.wikimedia.org (`/w/api.php`) gaf de 429, en al vóór de eerste foto: van de 900 s in
-`WACHT_TOTAAL_S` was 868 s gewacht na een 429 voordat de eerste foto van de eerste combinatie
-binnen was. Of de thumbnails de 429 op upload voorkomen, zei deze run dus niet. Hoeveel vragen de
-API had gekregen en hoeveel daarvan 429 waren, stond nergens.
+**Deze keer was het de API van Commons.** Niet upload.wikimedia.org maar commons.wikimedia.org
+(`/w/api.php`) gaf de 429, en al vóór de eerste foto: van de 900 s in `WACHT_TOTAAL_S` was 868 s
+gewacht na een 429 voordat de eerste foto van de eerste combinatie binnen was. Of al de eerste
+vraag van `set` een 429 kreeg, zegt het log niet; de vraag van BZ1 aan dezelfde API, om 23:00:32,
+kreeg nog HTTP 200. Of de thumbnails de 429 op upload voorkomen, zei deze run dus niet. Hoeveel
+vragen de API had gekregen en hoeveel daarvan 429 waren, stond nergens.
 
 Wat erbij past: Wikimedia kondigde op 2 maart 2026 op wikitech-l "New global API rate limits" aan
 ([de aankondiging](https://www.mail-archive.com/wikitech-l@lists.wikimedia.org/msg97202.html)):
 eerst lage grenzen voor anonieme vragen, vanaf april hogere voor wie zich identificeert. De
 getallen staan op mediawiki.org,
 ["Wikimedia APIs/Rate limits"](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits); die
-pagina was vanaf hier niet te lezen. Wie haar citeert, stand november 2026: zonder identificatie
+pagina was vanaf hier niet te lezen. Wie haar citeert (in september 2026): zonder identificatie
 (alleen een IP-adres) 10 vragen per minuut, per IP; met een User-Agent volgens de richtlijn van
 Wikimedia (met contact: een e-mailadres, een URL of een gebruikerspagina) 200 per minuut;
 aangemeld meer ([craigtrim/axiom, issue 22](https://github.com/craigtrim/axiom/issues/22), 30
 september 2026;
 [fuzheado/Wikipedia-AI-Skills, `SKILL.md`](https://github.com/fuzheado/Wikipedia-AI-Skills/blob/main/.claude/skills/wikimedia-api-access/SKILL.md):
-10, 200 en 2000 per minuut). Een oudere kopie van de pagina noemde 500 per uur zonder
-identificatie. De User-Agent van de job heeft geen contact (zo besloten: geen gegevens van de
-eigenaar), dus geldt 10 per minuut, en `set` vroeg de API één keer per seconde (`PAUZE_S`). Dat
-`f16ed5a` (20:25) en `9ebf298` (21:18) eerder die dag met hetzelfde tempo wel door de keuze
-kwamen, past bij een budget per IP: hoeveel ervan al op is, hangt af van wat de runner en zijn IP
-eerder deden.
+10, 200 en 2000 per minuut, "last_verified" 8 september 2026). Een oudere kopie van de pagina,
+uit de tijd van de invoering
+([een spiegel](https://backiee.wasmer.app/https_www_mediawiki_org/wiki/Special:MyLanguage/Wikimedia_APIs/Rate_limits)),
+noemde 500 per uur zonder identificatie en "low" voor alleen een User-Agent, in fasen ingevoerd in
+maart en april 2026; de aankondiging zelf noemt geen getallen. Officieel bevestigd zijn de
+getallen hier dus niet. De User-Agent van de job heeft geen contact (zo besloten: geen gegevens
+van de eigenaar), dus valt de job in de laagste klasse, en `set` vroeg de API één keer per seconde
+(`PAUZE_S`). Dat `f16ed5a` (20:25) en `9ebf298` (21:18) eerder die dag met hetzelfde tempo wel
+door de keuze kwamen, past bij een budget per IP: hoeveel ervan al op is, hangt af van wat de
+runner en zijn IP eerder deden.
 
 Hersteld na de run (`tools/beeld/beeld_model.py`, `.github/workflows/ci.yml`; de tests in
 `api/tests/analyse/test_beeld_tools.py`):
@@ -1087,7 +1092,11 @@ Hersteld na de run (`tools/beeld/beeld_model.py`, `.github/workflows/ci.yml`; de
    ±2 minuten (de bron 26 s, drie omzettingen 29 s, BZ3 en BZ7 8 s, BZ6 42 s); BZ4 zelf draaide
    nog niet en is niet gemeten. Met 60 minuten bleef naast 15 minuten wachten (`WACHT_TOTAAL_S`)
    en ±15 minuten voor de rest ±30 minuten voor de API over: ±225 vragen, krap voor een voorstel
-   met een paar tekorten. 90 minuten draagt ±450 vragen. Het uiterste van de code (750 vragen, 100
+   met een paar tekorten. 90 minuten draagt ±450 vragen. Een nieuwe poging is daarbij een vraag
+   als elke andere: hij kost minstens `PAUZE_API_S`, ook als het wachten dat `WACHT_TOTAAL_S`
+   telt korter is (de eigen 2 of 4 s na een 5xx, of na een 429 zonder of met een korte
+   Retry-After, kosten elk 8 s). Na een Retry-After van 50 s, zoals op `3148c2f`, is er geen
+   verschil. Het uiterste van de code (750 vragen, 100
    minuten) past niet: dan heeft Commons bijna niets bruikbaars, en is de set toch rood.
    `timeout-minutes` is een grens van CI, geen poort.
 
@@ -1154,6 +1163,28 @@ van `test_een_beeld_contact_dat_niet_klopt_gaat_nooit_weg` (de oude kende `BEELD
 in de oude tool zijn ze alle 5 rood om de goede reden: twee vragen aan de API 1 s na elkaar
 ("1.0 >= 8.0"), en de vraag van `bereik` aan de API zonder contact in de User-Agent. Met de nieuwe
 tool: `test_beeld_tools.py` 111 groen, `tests/analyse` 394 groen.
+
+### De review van de reparatie
+
+Eén review van `a32694b`, vijf bevindingen. Elke bevinding eerst zelf nagekeken, ook de bronnen
+en het log van run 43772387468; ze klopten alle vijf. Per bevinding met code een test die zonder
+de reparatie faalt.
+
+| Bevinding | Wat er was | Wat er gedaan is | Test (rood zonder de reparatie) |
+|---|---|---|---|
+| R1 (should) | De beslissing vraagt ook de 5xx te tellen, maar geen test keek naar de teller van de 5xx of naar "… keer 5xx" in de regel: in elke test van `set` gaf de nep alleen 200, 404 of 429. Van welke 429 "eerste 429 na" rekent, lag ook niet vast. De reviewer haalde de telling, de tekst en de index weg (drie mutaties): alle tests bleven groen | Alleen een test; de code klopte | `test_een_5xx_telt_apart_en_een_tweede_set_telt_vanaf_zijn_eigen_begin` (nieuw): de API zegt 503 (Retry-After 3) en 502 (zonder), de eerste thumbnail eerst 503, en één 429; de regel "API: 93 vragen, 1 keer 429, 2 keer 5xx, eerste 429 na 64 s; upload: 121 vragen, 0 keer 429, 1 keer 5xx", ook na een 5xx minstens `PAUZE_API_S` tussen twee vragen aan de API. Dan een tweede `set` in hetzelfde proces: alleen zijn eigen verkeer, geen 5xx van de eerste, en de eerste 429 gemeten van zijn eigen begin tot zijn eigen eerste 429 ("na 28 s"; de eerste vraag wacht nog de rest van de pauze na de vorige `set`). Rood op elk van de drie mutaties |
+| R2 (should) | "vanaf de eerste vraag een 429" (in de noot van het bouwontwerp, een opmerking in `beeld_model.py` en een docstring): het log zegt alleen dat de 429's vóór de eerste foto kwamen, en de vraag van BZ1 aan dezelfde API kreeg om 23:00:32 nog HTTP 200. En "sinds maart 2026 10 vragen per minuut per IP" stond in het bouwontwerp en in de boodschap van `a32694b` als feit; de officiële pagina was ook voor de reviewer niet te lezen (hier opnieuw geprobeerd: `url_not_found`), de aankondiging noemt geen getallen, en 10 en 200 per minuut komen alleen uit bronnen van augustus en september 2026. "Stand november 2026" was dus te los | "al vóór de eerste foto (steeds) een 429" in het bouwontwerp, `beeld_model.py` en de test; in het bouwontwerp en het runbook "volgens wie mediawiki.org citeert (september 2026)"; hier "Wie haar citeert (in september 2026)", met de datum van `SKILL.md` en een link naar de spiegel van de oudere kopie (500 per uur, "low" voor alleen een User-Agent). De boodschap van `a32694b` blijft zoals hij is; de boodschap van deze reparatie zegt het | geen (tekst) |
+| R3 (nit) | De opmerking bij `timeout-minutes` zei hooguit 15 minuten wachten na 429 en 5xx. Een nieuwe poging gaat ook door `_pauze`: hij kost max(wachten, `PAUZE_API_S`), maar `WACHT_TOTAAL_S` telt alleen het wachten. Met de eigen 2 of 4 s kost een nieuwe poging 8 s (in `test_te_lang_of_buiten_het_budget_stopt_meteen`: 6 s geteld, 16 s verstreken) | "plus `PAUZE_API_S` per nieuwe poging" in `ci.yml` en hierboven; de ±450 vragen die 90 minuten dragen, tellen nieuwe pogingen mee. Na een Retry-After van 50 s, zoals op `3148c2f`, is er geen verschil; 90 minuten blijft | geen (opmerking) |
+| R4 (nit) | Het runbook zette `BEELD_CONTACT` op de `env:` van de job. Dan toont GitHub het bovenaan elke stap van de job (in het log van `3148c2f` staat de `env:` van de job bovenaan 14 stappen), en kijkt elke stap van `beeld_model.py` het na: een fout erin hield ook `bron`, `vergelijk` en `uitslag` tegen, die Commons nooit vragen | Het runbook zet de regel op de twee stappen die Commons vragen (`BZ1 bereik per host` en `BZ4 de 120 foto's`), met een voorbeeld; de opmerking over een secret voor een e-mailadres blijft | geen (tekst) |
+| R5 (nit) | `_uitleg` neemt tot 160 tekens tekst van de server over in de fout en in `kort.txt`. Een foutpagina die de User-Agent herhaalt, zette zo `BEELD_CONTACT` in het log | `_zonder_contact`: vóór `_antwoord` gaat het contact uit de tekst van de server (en uit Retry-After), ook HTML-gecodeerd ("&amp;"), en als het antwoord na `MAX_ANTWOORD` ophoudt ook het langste begin ervan aan het eind; op zijn plaats "[contact]" (zonder < en >, want `_antwoord` haalt tags weg). Meer dan het voorstel van de review (alleen de letterlijke vorm, na het inkorten): dan bleven een gecodeerd contact en een afgekapt begin staan, en kon het inkorten tot 160 tekens een stuk van het contact laten staan | `test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log` (nieuw, 3 gevallen: in de titel, HTML-gecodeerd in de eerste `<p>` met een `&` in de URL, en afgekapt na 4096 bytes midden in het contact): de fout zegt precies "antwoord: Too many requests from beeld-model-meting/1.0 ([contact]; …)", en nergens in het log of de werkmap staat het contact of een begin ervan. Op de tool van `a32694b` alle 3 rood; met alleen de letterlijke vorm 2 rood |
+
+Teruggedraaid getest (een kopie van de tool terug, de nieuwe tests ongewijzigd; daarna de nieuwe
+weer terug, met `cmp` en `git status` nagekeken), `test_beeld_tools.py`: de tool van `a32694b` 3
+rood (de 3 gevallen van R5), 112 groen; de drie mutaties van R1 (de 5xx niet geteld, "… keer
+5xx" weg, de eerste 429 van het proces in plaats van die van `set`) elk 1 rood (de nieuwe test van
+R1), 114 groen; alleen de letterlijke vorm van het contact 2 rood, 113 groen; de tool van
+`3148c2f` 34 rood (de 30 van hierboven en de 4 nieuwe), 81 groen. Met de nieuwe tool:
+`test_beeld_tools.py` 115 groen, `tests/analyse` 398 groen.
 
 ### Open na 3148c2f
 

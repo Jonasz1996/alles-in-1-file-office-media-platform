@@ -192,9 +192,10 @@ de robotregels staan 25 Mbps toe), en elke foto als thumbnail van 1280 px breed,
 (op de originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298").
 Is het origineel niet breder dan 1280, dan is het origineel zelf de thumbnail. De API van Commons
 (commons.wikimedia.org) krijgt hooguit één vraag per 8 s, en ook een nieuwe poging na een 429
-telt: zonder contact in de User-Agent staat Wikimedia 10 vragen per minuut per IP toe (x3a.md,
-"CI op 3148c2f"). Een voorstel doet ±90 tot 200 vragen aan de API en duurt daardoor ±12 tot 27
-minuten; met `beeld.tsv` vraagt `set` de API niets. Upload krijgt hooguit één vraag per seconde.
+telt: zonder contact in de User-Agent staat Wikimedia volgens wie de grenzen citeert (september
+2026) 10 vragen per minuut per IP toe (x3a.md, "CI op 3148c2f"). Een voorstel doet ±90 tot 200
+vragen aan de API en duurt daardoor ±12 tot 27 minuten; met `beeld.tsv` vraagt `set` de API
+niets. Upload krijgt hooguit één vraag per seconde.
 Na een 429 of 503 vraagt de job nooit eerder opnieuw dan Retry-After zegt (seconden, ook met
 decimalen, of een HTTP-datum). Zegt die meer dan 600 s, is hij niet te lezen, of past het wachten
 niet meer in 900 s per stap (ook de eigen 2 tot 32 s na een 5xx tellen), dan stopt hij meteen,
@@ -221,7 +222,8 @@ Het blok `=== kort ===` staat aan het eind van het log, met per regel:
   langer te wachten dan mag; tussen haakjes de laatste Retry-After, waarom de job meteen stopte
   (als dat zo was) en de reden uit zijn antwoord: de titel, of als die alleen "Wikimedia Error"
   zegt (de foutpagina van Wikimedia) de eerste alinea, anders de eerste regel tekst; alleen
-  afdrukbare ASCII en hooguit 160 tekens. Bij `set` staat erachter hoe ver hij kwam, wat hij
+  afdrukbare ASCII en hooguit 160 tekens. Herhaalt het antwoord de User-Agent met
+  `BEELD_CONTACT`, dan staat daar `[contact]`. Bij `set` staat erachter hoe ver hij kwam, wat hij
   ophaalde en het verkeer met Commons, bijvoorbeeld `(bij foto 37 van 120, een thumbnail van
   1280 px, 12,3 MB opgehaald; API: 111 vragen, 0 keer 429; upload: 37 vragen, 0 keer 429;
   contact: nee)` of `(…, een origineel, …)`. Zegt de API `… keer 429` bij weinig vragen en een
@@ -240,8 +242,8 @@ het log, niet in het blok: aan het begin van `set` de regel `BZ4 set: de API van
 
 De User-Agent van de job is algemeen: `beeld-model-meting/1.0 (CI van een zelf-gehost
 fotoplatform)`, zonder persoon, e-mail of repository. Wikimedia telt zo'n client als niet
-geïdentificeerd: 10 vragen per minuut aan de API, per IP (stand november 2026; x3a.md, "CI op
-3148c2f"). Daarom vraagt `set` de API hooguit één keer per 8 s. Met contactgegevens in de
+geïdentificeerd: 10 vragen per minuut aan de API, per IP (zo geciteerd in september 2026; x3a.md,
+"CI op 3148c2f"). Daarom vraagt `set` de API hooguit één keer per 8 s. Met contactgegevens in de
 User-Agent, zoals de richtlijn van Wikimedia voor de User-Agent vraagt, is de grens 200 per
 minuut; dan vraagt de job de API hooguit één keer per seconde.
 
@@ -252,27 +254,31 @@ API en upload; Hugging Face en andere hosts nooit). De eigenaar heeft daar niet 
 
 1. Kies wat Wikimedia mag zien: een https://-URL (bijvoorbeeld de pagina van het repository) of
    een e-mailadres. Alleen afdrukbare ASCII, zonder `;`, `(` of `)`, hooguit 200 tekens. Iets
-   anders geeft bij de start van elke stap van `beeld_model.py` een fout
-   (`FOUT set: BEELD_CONTACT: …`, zonder de waarde), en dan gaat er niets weg.
-2. Zet het in `.github/workflows/ci.yml` op de job `beeld-model`, onder `env:` naast
-   `UV_PROJECT_ENVIRONMENT` (dan geldt het voor BZ1 en BZ4 `set`, de twee stappen die Commons
-   vragen), bijvoorbeeld de pagina van het repository:
+   anders geeft bij de start van de stap een fout (`FOUT set: BEELD_CONTACT: …`, zonder de
+   waarde), en dan gaat er niets weg.
+2. Zet het in `.github/workflows/ci.yml` in de job `beeld-model` op de twee stappen die Commons
+   vragen, `BZ1 bereik per host` en `BZ4 de 120 foto's (beeld.tsv, of een voorstel uit
+   Commons)`, elk met een eigen `env:`. Niet op de job: dan staat het bovenaan elke stap van de
+   job in het log, en kijkt elke stap van `beeld_model.py` het na, zodat een fout erin ook
+   `bron`, `vergelijk` en `uitslag` tegenhoudt. Bijvoorbeeld de pagina van het repository:
 
    ```yaml
-   env:
-     UV_PROJECT_ENVIRONMENT: .venv-analyse
-     BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
+   - name: BZ1 bereik per host
+     if: steps.poort.outputs.draaien == 'ja'
+     env:
+       BEELD_CONTACT: ${{ github.server_url }}/${{ github.repository }}
+     run: python3 -I ../tools/beeld/beeld_model.py bereik --werk "$WERK"
    ```
 
-   Een e-mailadres hoort in een secret, niet in `ci.yml`:
-   `BEELD_CONTACT: ${{ secrets.BEELD_CONTACT }}`.
+   en dezelfde regel onder `env:` van de stap `BZ4 de 120 foto's`. Een e-mailadres hoort in een
+   secret, niet in `ci.yml`: `BEELD_CONTACT: ${{ secrets.BEELD_CONTACT }}`.
 3. `test_zonder_beeld_contact_gaat_er_geen_contact_mee` in
    `api/tests/analyse/test_beeld_tools.py` eist dat geen workflow `BEELD_CONTACT` noemt. Die eis
    gaat in dezelfde commit bewust mee om, met in de boodschap dat de eigenaar het besloot.
 
 De tool schrijft het contact nooit in het log of in het verslag, alleen `contact: ja` of
-`contact: nee`. GitHub zelf toont de waarden onder `env:` wel bovenaan elke stap in het log,
-behalve wat uit een secret komt (dan `***`). Uitzetten: de regel weer weghalen; zonder
+`contact: nee`. GitHub zelf toont de waarden onder `env:` wel bovenaan die twee stappen in het
+log, behalve wat uit een secret komt (dan `***`). Uitzetten: de regel weer weghalen; zonder
 `BEELD_CONTACT`, of met een lege, is alles weer zoals hierboven.
 
 ### Na de eerste run: de regels vastzetten

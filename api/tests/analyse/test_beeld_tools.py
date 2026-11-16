@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import email.utils
 import hashlib
+import html
 import importlib.util
 import itertools
 import json
@@ -603,10 +604,10 @@ def test_te_lang_of_buiten_het_budget_stopt_meteen(nep, tmp_path, monkeypatch):
 
 
 def test_tussen_twee_vragen_aan_commons_zit_een_pauze(nep, monkeypatch):
-    """CI op 3148c2f: met één vraag per seconde gaf de API van Commons vanaf de eerste vraag 429
-    (Retry-After 50). Nu nooit twee vragen aan de API binnen PAUZE_API_S (8 s), aan upload binnen
-    PAUZE_S; elk op zijn eigen klok, en elke vraag telt. Andere hosts (Hugging Face) wachten niet
-    en tellen niet."""
+    """CI op 3148c2f: met één vraag per seconde gaf de API van Commons al vóór de eerste foto
+    steeds 429 (Retry-After 50). Nu nooit twee vragen aan de API binnen PAUZE_API_S (8 s), aan
+    upload binnen PAUZE_S; elk op zijn eigen klok, en elke vraag telt. Andere hosts (Hugging
+    Face) wachten niet en tellen niet."""
     klok = [1000.0]
     slapen: list[float] = []
 
@@ -1529,6 +1530,61 @@ def test_een_api_die_429_blijft_zeggen_staat_met_de_tellers_in_de_fout(
     assert bm._gewacht == bm.WACHT_TOTAAL_S == 900.0
 
 
+def test_een_5xx_telt_apart_en_een_tweede_set_telt_vanaf_zijn_eigen_begin(
+    nep, commons, werk, tmp_path, monkeypatch
+):
+    """De tellers per dienst tellen ook de 5xx ("… keer 5xx", alleen als die er waren), en ook na
+    een 5xx zit tussen twee vragen aan de API minstens PAUZE_API_S. Een tweede set in hetzelfde
+    proces zegt alleen zijn eigen verkeer: geen 5xx van de eerste, en de eerste 429 gemeten vanaf
+    zijn eigen begin, op zijn eigen eerste 429 (de review van de reparatie, R1)."""
+    klok, slapen = _nepklok(monkeypatch)
+    n = [0]
+    weigeringen = {
+        3: (503, b"", {"Retry-After": "3"}),
+        5: (502, b"", {}),
+        9: (429, b"", {"Retry-After": "5"}),
+    }
+
+    def druk(q):
+        n[0] += 1
+        return weigeringen.get(n[0])
+
+    commons.druk = druk
+    # de eerste foto (auto+sneeuw, de thumbnail van bestand 1002) geeft eerst een 503
+    eerste = urllib.parse.urlsplit(commons.duim_url(1002)).path
+    nep.paden[eerste].insert(0, (503, b"", {"Retry-After": "1"}))
+    assert bm.set_(werk, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    assert bm.lees_set(werk.voorstel_set.read_text())[0].url == commons.duim_url(1002)
+    assert _kortste(_api_tijden(nep)) >= bm.PAUZE_API_S
+    verkeer = (
+        "API: 93 vragen, 1 keer 429, 2 keer 5xx, eerste 429 na 64 s; "
+        "upload: 121 vragen, 0 keer 429, 1 keer 5xx; contact: nee"
+    )
+    assert verkeer == _verkeer(nep, begin=1000.0)
+    assert _kort(werk)[0].endswith(f" in {sum(slapen):.0f} s; {verkeer})")
+    # een tweede set in hetzelfde proces (de tellers lopen door): een 429 op zijn vierde vraag
+    n[0] = 0
+    weigeringen.clear()
+    weigeringen[4] = (429, b"", {"Retry-After": "5"})
+    van, begin, voor = len(nep.vragen), klok[0], sum(slapen)
+    laatste = _api_tijden(nep)[-1]
+    werk2 = bm.Werk(tmp_path / "werk2")
+    assert bm.set_(werk2, tmp_path / "beeld.tsv") == bm.VOORSTEL
+    tweede = _verkeer(nep, van=van, begin=begin)
+    # de eerste vraag aan de API wacht nog de rest van de pauze na de laatste van de eerste set;
+    # de 429 is de vierde, 24 s later
+    tijden = [t for t in _api_tijden(nep) if t >= begin]
+    assert begin < tijden[0] == laatste + bm.PAUZE_API_S and tijden[3] == tijden[0] + 24.0
+    assert round(tijden[3] - begin) == 28
+    assert tweede == (
+        "API: 91 vragen, 1 keer 429, eerste 429 na 28 s; upload: 120 vragen, 0 keer 429; "
+        "contact: nee"
+    )
+    assert _kort(werk2)[0].endswith(f" in {sum(slapen) - voor:.0f} s; {tweede})")
+    api = bm._tellers["API"]
+    assert (api.vragen, api.n429, api.n5xx) == (184, 2, 2)
+
+
 def _stop_bij_de_zevende_vraag(commons) -> None:
     """Vanaf de zevende vraag aan de API zegt de nep 404: set stopt dan snel, bij foto 3."""
     n = [0]
@@ -1624,6 +1680,68 @@ def test_met_beeld_contact_alleen_naar_commons_en_nooit_in_het_log(
     for tekst in teksten:
         assert contact not in tekst
         assert "example.org" not in tekst
+
+
+HERHAALD = (
+    "Too many requests from beeld-model-meting/1.0 ([contact]; CI van een zelf-gehost fotoplatform)"
+)
+
+
+def _herhaalt(contact: str, vorm: str) -> tuple[bytes, str]:
+    """Een 429 van de API die de User-Agent herhaalt (met BEELD_CONTACT erin), en wat de fout dan
+    als antwoord hoort te zeggen."""
+    ua = bm.UA_MET_CONTACT.format(contact=contact)
+    if vorm == "titel":
+        body = f"<html><head><title>Too many requests from {ua}</title></head></html>"
+        return body.encode(), HERHAALD
+    if vorm == "html":  # de foutpagina van Wikimedia, met de User-Agent HTML-gecodeerd
+        body = (
+            "<!DOCTYPE html><html><head><title>Wikimedia Error</title></head><body><h1>Error</h1>"
+            f"<p>Too many requests from {html.escape(ua)}</p><details>{ua}</details></body></html>"
+        )
+        return body.encode(), HERHAALD
+    # afgekapt: na MAX_ANTWOORD bytes staan er nog 12 tekens van het contact
+    kop, voor = "<style>", "</style><p>Too many requests from beeld-model-meting/1.0 ("
+    vulling = "x" * (bm.MAX_ANTWOORD - 12 - len(kop) - len(voor))
+    body = f"{kop}{vulling}{voor}{contact}; CI van een zelf-gehost fotoplatform)</p>".encode()
+    assert body[: bm.MAX_ANTWOORD].endswith(contact[:12].encode())
+    return body, "Too many requests from beeld-model-meting/1.0 ([contact]"
+
+
+@pytest.mark.parametrize(
+    ("contact", "vorm"),
+    [
+        ("beeld-model+ci@example.org", "titel"),
+        ("https://example.org/over?wie=ci&van=beeld", "html"),
+        ("https://example.org/beeld-model", "afgekapt"),
+    ],
+    ids=["in de titel", "HTML-gecodeerd in de eerste p", "afgekapt na MAX_ANTWOORD"],
+)
+def test_een_antwoord_dat_de_user_agent_herhaalt_zet_het_contact_niet_in_het_log(
+    nep, commons, werk, tmp_path, monkeypatch, capsys, contact, vorm
+):
+    """De uitleg van een opgegeven 429 neemt tekst van de server over (_uitleg). Een foutpagina
+    die de User-Agent herhaalt, zette zo BEELD_CONTACT in de fout en in kort.txt. Nu staat er
+    "[contact]": ook als de pagina het HTML-gecodeerd herhaalt ("&amp;"), en ook als het antwoord
+    na MAX_ANTWOORD ophoudt midden in het contact (de review van de reparatie, R5)."""
+    monkeypatch.setenv("BEELD_CONTACT", contact)
+    _nepklok(monkeypatch)
+    body, regel = _herhaalt(contact, vorm)
+    commons.druk = lambda q: (429, body, {"Retry-After": "1000"})
+    assert _set(werk, tmp_path) == 1
+    # de nep kreeg precies de User-Agent die zijn antwoord herhaalt
+    assert [ua for _, ua in nep.vragen] == [bm.UA_MET_CONTACT.format(contact=contact)]
+    assert _kort(werk) == [
+        "FOUT set: 127.0.0.1: HTTP 429 (Retry-After 1000; langer dan MAX_WACHT_S (600 s), dus "
+        f"meteen gestopt; antwoord: {regel}) (bij foto 1 van 120, 0,0 MB opgehaald; API: 1 vraag, "
+        "1 keer 429, eerste 429 na 0 s; upload: 0 vragen; contact: ja)"
+    ]
+    uit, fout = capsys.readouterr()
+    teksten = [uit, fout] + [
+        p.read_text(encoding="utf-8", errors="replace") for p in werk.map.rglob("*") if p.is_file()
+    ]
+    for tekst in teksten:
+        assert contact not in tekst and "exam" not in tekst
 
 
 @pytest.mark.parametrize(
