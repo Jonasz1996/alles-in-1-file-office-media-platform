@@ -1,18 +1,20 @@
 # Runbook: de analyse (gezichten en zoeken op beeld)
 
 De analyse is het deel van het platform dat met modellen naar foto's kijkt: gezichten vinden
-(fase 6, X2) en later zoeken op wat er op een foto staat (X3). Het rekenen gebeurt in een eigen
+(fase 6, X2) en zoeken op wat er op een foto staat (X3). Het rekenen gebeurt in een eigen
 container, `platform-analyse-1`: zonder netwerk, alleen-lezen, als een eigen gebruiker (uid
 10003), zonder capabilities. De app geeft hem per foto alleen de preview (als bestand dat al open
 is, nooit een pad), en krijgt kaders en getallen terug. Wat de analyse is en hoe je hem aan- en
-uitzet, staat in `infra/single/README.md` (Gezichten: de container analyse). Dit runbook gaat over
+uitzet, staat in `infra/single/README.md` (Gezichten en zoeken op beeld: de container analyse).
+Dit runbook gaat over
 wat het script doet, de stand, de afscherming, uitzetten, de modellen, de sleutels en terug naar
 0.8.0; het deel over zoeken op beeld (X3) staat onder "Zoeken op beeld (X3)".
 
-**Tot 0.8.1 staat de analyse uit.** Zonder `ANALYSE` in `/opt/platform/.env` doet het script
-precies wat 0.8.0 deed: geen download, geen container, geen nieuwe regel in `.env`. Aanzetten
-vóór 0.8.1 is alleen om te proberen: elke gebruiker ziet dan onder Account de schakelaar voor
-gezichten. Wat gezichten doen en bewaren: [gezichten.md](gezichten.md).
+**Sinds 0.8.1 staat de analyse standaard aan.** Zonder `ANALYSE` in `/opt/platform/.env` zet het
+script `ANALYSE=aan` erbij, haalt het de modellen op en start het de container. Voor elke
+gebruiker staan gezichten en zoeken op beeld daarna nog uit, tot hij ze zelf aanzet bij Account →
+Foto's. Liever zonder: `ANALYSE=uit` (hieronder, "Uitzetten en weer aan"); dan doet het script wat
+0.8.0 deed. Wat gezichten doen en bewaren: [gezichten.md](gezichten.md).
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -23,20 +25,22 @@ Het installatiescript is steeds de nieuwste versie:
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash
 ```
 
-Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
-`curl … | ANALYSE=aan bash`. Zolang deze versie nog niet op `main` staat, gebruik je het adres
-van de branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md`.
+Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, na `PLATFORM_BRANCH`,
+zoals `curl … | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 ANALYSE=uit bash`. Zolang 0.8.1
+niet op `main` staat, hoort `PLATFORM_BRANCH` er altijd bij, zoals in `infra/single/README.md`.
 
 ## Wat het script bij elke run met de analyse doet
 
 1. Het leest `ANALYSE` uit de omgeving vóór `/opt/platform/.env`. Alleen `aan` of `uit`; iets
    anders stopt het script meteen, vóór er iets verandert.
-2. Staat er geen `ANALYSE` in `.env` en vraag je er niet om, dan houdt het hier op: geen stap
-   "Analyse", geen regel in de eindtekst (tot 0.8.1).
+2. Staat er geen `ANALYSE` in `.env` en vraag je er niet om, dan geldt de standaard: sinds 0.8.1
+   `aan`. (Tot en met 0.8.0 was dat uit, en hield het hier op: geen stap "Analyse", geen regel in
+   de eindtekst.)
 3. Bij `aan` komen in `.env` (rechten 600), als ze er nog niet zijn: `ANALYSE=aan`,
    `ANALYSE_WORKER_KEY` (64 tekens, één keer gemaakt en nooit vervangen, ook niet na uit en weer
-   aan), `MODELLEN_ROOT=/opt/platform/modellen` en `SLEUTELS_ROOT=/opt/platform/sleutels/gezichten`.
-   Een bestaande waarde blijft altijd staan. Met `ANALYSE=uit` verandert alleen die regel.
+   aan), `MODELLEN_ROOT=/opt/platform/modellen`, `SLEUTELS_ROOT=/opt/platform/sleutels/gezichten`
+   en `BEELD=aan`. Een bestaande waarde blijft altijd staan. Met `ANALYSE=uit` komt of verandert
+   alleen die regel; hij blijft daarna staan, ook als een volgende run geen `ANALYSE` meegeeft.
 4. **De mappen.** `MODELLEN_ROOT` wordt een map van root (0755), `SLEUTELS_ROOT` een map van de
    app (uid 10001, 0700). Het script weigert, met uitleg, als een pad niet absoluut is, `.` of
    `..` bevat, onder `DATA_ROOT` ligt (of `DATA_ROOT` eronder), als de een in de ander ligt, of
@@ -52,14 +56,17 @@ van de branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md`.
      gezichten wachten tot de volgende installatie.` De container start toch, en zegt
      `models_missing`;
    - een `*.onnx` die niet meer in `models.lock` staat, gaat weg (`Oud model weg: …`);
+   - is er minder dan 105 MB vrij in `DATA_ROOT`, dan zegt het `Let op: weinig ruimte in
+     <DATA_ROOT> voor de gezichten (105 MB aangeraden; ±90 MB per 100.000 gezichten). De analyse
+     gaat door.` Het is een waarschuwing, geen stop;
    - de licenties (`yunet-MIT.txt`, `sface-Apache-2.0.txt` en, voor zoeken op beeld,
      `siglip2-Apache-2.0.txt`) komen naast de modellen.
 6. **De start**, na de app en media: `up -d --no-deps analyse`, met `--force-recreate` als er
    een model veranderde (de worker leest de modellen bij de start). Daarna
    `app.cli analyse-status --wait 20`. Lukt de start niet, of is de stand niet `ok`, dan alleen
    `Let op: …`: het platform werkt verder.
-7. **De eindtekst** zegt `Gezichten (de container analyse): aan.`, of waarom niet, en hoe het
-   verder kan (opnieuw proberen, uit, aan).
+7. **De eindtekst** zegt `Gezichten (de container analyse): aan; elke gebruiker zet het zelf aan
+   (Account → Foto's).`, of waarom niet, en hoe het verder kan (opnieuw proberen, uit, aan).
 
 ## De stand lezen
 
@@ -67,21 +74,30 @@ van de branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md`.
 dc exec -T platform python -m app.cli analyse-status
 ```
 
-Als alles goed is (de grenzen alleen als de kernel ze kan zetten):
+Als alles goed is, met het model van zoeken op beeld (de grenzen alleen als de kernel ze kan
+zetten):
 
 ```
 Analyse: ok
   model face_detection_yunet_2026may.onnx (versie ebafce4e3c11): klopt
   model face_recognition_sface_2021dec.onnx (versie 0ba9fbfa01b5): klopt
+  model siglip2-b32-256/beeld.int8.onnx (versie ddc76fc08a1c): klopt
+  model siglip2-b32-256/tekst.int8.onnx (versie 258337dbc659): klopt
+  model siglip2-b32-256/tokenizer.bin (versie 1516dde1739c): klopt
+  model siglip2-b32-256/meta.json (versie dfb3d153f941): klopt
+  model siglip2-b32-256/siglip2-Apache-2.0.txt (versie 0d542e0c8804): klopt
   grenzen: 1 cpus, 3072 MB geheugen
-  opdrachten: cancel, caps, faces, group
+  opdrachten: cancel, caps, embed_image, embed_text, faces, forget, group, rank
 ```
 
 De eerste regel is de stand: `ok`, `off`, `down (<reden>)` of `models_missing (<modellen>)`.
-Daarna, als de worker antwoordt: per model of het klopt (de versie is het begin van de sha256),
-de grenzen die de container zelf ziet, en de opdrachten die de worker kent. Tot X3 klaar is, zijn
-dat er vier; de opdrachten van beeld zeggen `not_built`. De exitcode is 0 bij `ok`
-en `off`, anders 1 (met `--wait N` altijd 0).
+Daarna, als de worker antwoordt: per model of het klopt (de versie is het begin van de sha256,
+in de volgorde van `models.lock`), de grenzen die de container zelf ziet, en de opdrachten die
+de worker kent. Dat zijn er acht: `caps` en `cancel`, `faces` en `group` voor gezichten, en
+`embed_image`, `embed_text`, `rank` en `forget` voor zoeken op beeld. De vijf regels onder
+`siglip2-b32-256/` staan er pas als die map er is, dus na de omzetting (met `BEELD=uit` nooit);
+de bronnen van de omzetting nooit. De exitcode is 0 bij `ok` en `off`, anders 1 (met `--wait N`
+altijd 0).
 
 | De eerste regel | Wat het betekent | Wat je doet |
 |---|---|---|
@@ -96,6 +112,21 @@ en `off`, anders 1 (met `--wait N` altijd 0).
 `docker inspect --format '{{.State.Health.Status}}' platform-analyse-1` zegt `healthy` zodra de
 worker op zijn socket antwoordt; een worker die door een gefaalde zelftest alles weigert, wordt
 `unhealthy`.
+
+**Het geheugen op de LXC.** De container mag hooguit 3 GB (`mem_limit: 3g`). Na een paar dagen
+werk op de achtergrond (de eerste ronde van gezichten en beeld) zie je zo hoeveel hij op zijn
+hoogst gebruikte, en of de kernel er een proces van stopte [niet getest in de sandbox: daar
+draait de container zonder die grens]:
+
+```bash
+docker inspect --format '{{.State.OOMKilled}}' platform-analyse-1
+dc exec -T analyse /usr/bin/env -i /bin/cat /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.events
+```
+
+`OOMKilled` hoort `false` te zijn. `memory.peak` is de piek in bytes sinds de start van de
+container; onder 2,5 GB is de poort van het ontwerp gehaald (BZ5). In `memory.events` hoort
+`oom_kill 0` te staan. Zie je iets anders, zeg het dan tegen de ontwikkelaar, met die drie
+getallen.
 
 ## De afscherming nakijken
 
@@ -141,7 +172,18 @@ rm -rf /opt/platform/modellen
 ```
 
 (alleen met de analyse uit; met aan haalt het volgende script ze opnieuw). Weer aan: hetzelfde
-commando met `ANALYSE=aan`. De sleutel in `.env` blijft dezelfde.
+commando met `ANALYSE=aan`. De sleutel in `.env` blijft dezelfde. `ANALYSE=uit` blijft in `.env`
+staan: ook een volgende run zonder `ANALYSE` laat de analyse uit. Het script zegt dan
+`Analyse: uit (ANALYSE=uit in /opt/platform/.env)`.
+
+**Uit nadat hij aan stond.** De app doet dan weer wat 0.8.0 deed. De routes van gezichten en van
+zoeken op beeld geven `501` (zoals de lege routes van 0.8.0), de schakelaars bij Account → Foto's
+verdwijnen, en in het antwoord voor `/beheer` zijn de delen voor gezichten en beeld leeg (`null`).
+De web zegt op `/beheer` dat de analyse niet draait (`ANALYSE=uit in /opt/platform/.env`) en hoe
+hij weer aan gaat. Uitzetten wist niets: de gezichten, de vectoren van beeld en de sleutels
+blijven staan, en zijn er weer zodra de analyse weer aan staat. Wil je ze echt kwijt, wis ze dan
+eerst met de analyse aan (per gebruiker "uit" bij Account → Foto's, of op `/beheer`
+"Gezichtsherkenning toestaan" uit en "Beeldindex wissen") en zet de analyse daarna pas uit.
 
 ## De sleutels
 
@@ -161,27 +203,31 @@ commando met `ANALYSE=aan`. De sleutel in `.env` blijft dezelfde.
 
 Zoals in `docs/runbooks/zoeken.md`, "Terug naar 0.8.0 van `59e0250`", ook met de analyse aan.
 Het script van 0.8.0 kent de analyse niet: het start de app zonder `compose.analyse.yaml`, en
-`--remove-orphans` haalt de container weg. `.env` (met `ANALYSE=aan` en de sleutel), de modellen
-en de sleutels blijven. Weer vooruit: het script van de branch, zonder `PLATFORM_SRC_REF`; de
-modellen kloppen nog, dus het haalt niets opnieuw, en de container start weer.
+`--remove-orphans` haalt de container weg. `.env` (met `ANALYSE=aan`, `BEELD=aan` en de sleutel),
+de modellen en de sleutels blijven. Weer vooruit: het script van de branch, zonder
+`PLATFORM_SRC_REF`; de modellen kloppen nog, dus het haalt niets opnieuw (ook de 1,55 GB van
+zoeken op beeld niet), en de container start weer. `db-downgrade 0010` haalde de beeldindex en de
+gezichten weg: zoeken op beeld staat daarna voor iedereen uit, en wie gezichten aan had, krijgt een
+nieuwe scan (zie [gezichten.md](gezichten.md), "Terug naar 0.8.0").
 
 ## Zoeken op beeld (X3)
 
-Golf 5 (X3a) bouwt de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Golf 6
-(X3b) bouwt de rest: het model op de LXC, de opdrachten in de container, het zoeken in de app, de
+Golf 5 (X3a) bouwde de tokenizer, de omzetter van SigLIP 2 en de CI-job `beeld-model`. Golf 6
+(X3b) bouwde de rest: het model op de LXC, de opdrachten in de container, het zoeken in de app, de
 web, het blok op `/beheer` en `beeld-status`, `beeld-bench` en `beeld-kwaliteit`. Wat er gebouwd
 is en wat nog open staat: [docs/fase-6/x3a.md](../fase-6/x3a.md) en
 [docs/fase-6/x3b.md](../fase-6/x3b.md).
 
-Tot 0.8.1 staat ook zoeken op beeld uit: met de analyse uit kent de app het niet (elke route van
-beeld geeft `501`, zoals in 0.8.0), en de web toont wat 0.8.0 toonde.
+Zoeken op beeld zit in 0.8.1 (Keuze 85), en staat met de analyse aan; per gebruiker staat het uit
+tot hij het zelf aanzet. Met de analyse uit kent de app het niet (elke route van beeld geeft
+`501`, zoals in 0.8.0), en de web toont wat 0.8.0 toonde.
 
 ### Het model op de LXC (`BEELD`, X3b)
 
-Alleen met de analyse aan (`ANALYSE=aan`): dan zet `install.sh` één keer `BEELD=aan` in `.env`,
-en haalt het na de start van de app het model op en zet het om (Keuze 84). Zonder `ANALYSE`, met
-`ANALYSE=uit` of met `BEELD=uit` doet het niets: geen download, geen omzetting, geen map, geen
-regel.
+Alleen met de analyse aan (sinds 0.8.1 de standaard): dan zet `install.sh` één keer `BEELD=aan`
+in `.env`, en haalt het na de start van de app het model op en zet het om (Keuze 84). Dat gebeurt
+één keer: staat het model er al goed, dan haalt een volgende run niets. Met `ANALYSE=uit` of met
+`BEELD=uit` doet het niets: geen download, geen omzetting, geen map, geen regel.
 
 1. Eerst de ruimte (`df`): in `MODELLEN_ROOT` de bron en twee keer de uitkomst plus 100 MB
    (±2,44 GB), in `DATA_ROOT` 1 GB voor de vectoren en de cache. Te weinig: `Let op: te weinig
@@ -204,9 +250,10 @@ opnieuw probeert. Staat het model er al goed, dan zegt het script `Zoeken op bee
 staat er al (…)` en haalt het niets. Een symlink of iets anders dan een map op de plek van
 `siglip2-b32-256`, of een symlink op de plek van een bestand erin, raakt het niet aan.
 
-Uit: `curl … | BEELD=uit bash`. Dan haalt het niets meer op; een model dat er al staat, blijft
-staan (gooi `MODELLEN_ROOT/siglip2-b32-256` zelf weg als je de ruimte terug wilt). Aan:
-`curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op beeld daarna zelf aan bij Account → Foto's.
+Uit: `curl … | BEELD=uit bash`. Dat komt in `.env` en blijft: ook een volgende run zonder `BEELD`
+haalt niets meer op. Een model dat er al staat, blijft staan (gooi `MODELLEN_ROOT/siglip2-b32-256`
+zelf weg als je de ruimte terug wilt). Aan: `curl … | BEELD=aan bash`. Elke gebruiker zet zoeken op
+beeld daarna zelf aan bij Account → Foto's.
 
 ### De job `beeld-model`
 
@@ -224,9 +271,8 @@ Er is geen knop om hem met de hand te starten. Het model komt nooit uit een cach
 de bron van huggingface.co. De 120 foto's wel, zodra `beeld.tsv` er is: een cache op de sha256
 van `beeld.tsv`, omdat de robotregels van Wikimedia zo weinig mogelijk downloads vragen. `set`
 kijkt elke foto uit de cache na (grootte en sha256) en haalt alleen wat ontbreekt of niet klopt.
-De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt (zolang
-`models.lock` de regels van SigLIP mist, is hij dat altijd); nooit een halve set, want een sleutel
-bewaart maar één keer. Elke foto komt als thumbnail van 1280 px breed, niet als origineel (op de
+De cache wordt bewaard direct na een goede `set`, ook als de job daarna rood eindigt; nooit een
+halve set, want een sleutel bewaart maar één keer. Elke foto komt als thumbnail van 1280 px breed, niet als origineel (op de
 originelen gaf upload.wikimedia.org een 429 met Retry-After 600; x3a.md, "CI op 9ebf298"). De
 thumbnails staan sinds september 2026 op thumb.wikimedia.org (volgens bronnen uit de tweede hand;
 de oude URL's op upload.wikimedia.org werken nog; x3a.md, "CI op 45bb926"); `beeld.tsv` heeft de
@@ -503,6 +549,9 @@ weer na een nieuwe omzetter of een nieuwe set.)
      (`test_de_twee_modellen_van_gezichten` kent nu alleen de twee regels van de gezichten).
 6. Push. De job draait dan weer (de lock is veranderd), nu streng: een andere sha256 of grootte
    is rood. Groen is BZ2 en BZ4 gehaald: dan kan de go/no-go van X3 (Keuze 73) beslist worden.
+   [Gedaan: de regels van `VERSIE` 3 en `beeld.tsv` staan er sinds `dc5dfe5`, en de job was daar
+   helemaal groen, ook de stap "Uitslag" (x3b.md, "CI op dc5dfe5"). Jonas koos op 16 november
+   2026 "Toch uitbrengen": zoeken op beeld zit in 0.8.1 (Keuze 85).]
 
 Neem de regels van `beeld.int8.onnx`, `tekst.int8.onnx` en `meta.json` uit een run op een commit
 met `VERSIE` 3 (na `011bf2d`). Die van de runs ervoor (beeld `96c602da`, tekst `afc9dd55`, meta
@@ -519,11 +568,11 @@ het eind van stap 4. Zo ook als een vaste foto later toch fout blijkt: zet je zi
 `beeld_niet.tsv`, dan stopt `set` met `FOUT set: beeld.tsv: regel … (<sleutel>) staat in
 beeld_niet.tsv regel … (<reden>); …` tot die regel van `beeld.tsv` vervangen is.
 
-Let op bij stap 5: zet de regels pas samen met X3b (de stap `BEELD` van `install.sh`) in
-`models.lock`. `install.sh` haalt de regels onder `siglip2-b32-256/` niet (de 1,51 GB van
-`model.safetensors` is van die stap), maar de container meldt elke regel van `models.lock`: zonder
-de stap `BEELD` maakt niemand de omzetting, en zegt `/beheer` dat er modellen ontbreken
-(`models_missing`; gezichten werken wel). `beeld_model.py uitslag` zegt het ook (x3a.md, Open 1).
+Let op bij stap 5 (voor een volgende `VERSIE`): de regels horen samen met de stap `BEELD` van
+`install.sh` in `models.lock`. Zonder die stap maakt niemand de omzetting, en zegt `/beheer` dat
+er modellen ontbreken (`models_missing`; gezichten werken wel). `beeld_model.py uitslag` zegt het
+ook (x3a.md, Open 1). Voor `VERSIE` 3 is dat zo gebeurd: de regels en X3b kwamen samen op de
+branch (`dc5dfe5`).
 
 ### De omzetter met de hand draaien (alleen om te testen)
 
@@ -663,8 +712,13 @@ stderr, code 1.
 ## Wat er nog niet is
 
 - ~~het vinden van gezichten in de app, de voorstellen, `/beheer` en `app.cli analyse-bench` en
-  `analyse-kwaliteit`~~ [golf 6: gebouwd door X2b, zie [gezichten.md](gezichten.md); uit tot 0.8.1];
-- zoeken op beeld voor gebruikers: het is gebouwd (X3a en X3b, hierboven), maar staat tot 0.8.1
-  uit, net als de rest van de analyse. Nog niet gedaan: BZ9 en BZ10 op de LXC van Jonas
-  (`beeld-bench` en `beeld-kwaliteit --personen`, hierboven), en de strenge run van `beeld-model`
-  met `beeld.tsv` (BZ4); zie [docs/fase-6/x3b.md](../fase-6/x3b.md), Open.
+  `analyse-kwaliteit`~~ [golf 6: gebouwd door X2b, zie [gezichten.md](gezichten.md); in 0.8.1
+  standaard aan, per gebruiker uit];
+- ~~zoeken op beeld voor gebruikers~~ [gebouwd door X3a en X3b (hierboven); in 0.8.1 standaard
+  aan, per gebruiker uit (Keuze 85). De strenge run van `beeld-model` met `beeld.tsv` (BZ4) was
+  groen op `dc5dfe5`];
+- metingen die alleen op de LXC van Jonas kunnen: BZ9 en BZ10 (`beeld-bench` en `beeld-kwaliteit
+  --personen`, hierboven), `analyse-bench` en `analyse-kwaliteit` ([gezichten.md](gezichten.md)),
+  en het geheugen van de container onder de echte grens (hierboven, "Het geheugen op de LXC").
+  Wat er verder open is: [docs/fase-6/x3b.md](../fase-6/x3b.md), Open, en
+  [docs/fase-6/integratie-2.md](../fase-6/integratie-2.md).
