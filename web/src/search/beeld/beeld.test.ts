@@ -339,20 +339,22 @@ describe("de teksten van het gebied beeld", () => {
         "foto's zoeken. Uit wist wat alleen voor jou bewaard is. Snapshots die de beheerder zelf van de server " +
         "maakt, houden het tot ze verlopen. Wat je mag verwachten: één woord geeft meestal een paar goede foto's " +
         "bovenaan. Sommige woorden vinden weinig; zoek dan op 'berg' in plaats van 'bergen', of op 'bootje' in " +
-        "plaats van 'boot'. Bij 'Meer zoals deze' gaat ongeveer de helft over hetzelfde onderwerp.",
+        "plaats van 'boot'. Bij 'Meer zoals deze' gaat ongeveer de helft van de eerste foto's over hetzelfde " +
+        "onderwerp.",
     );
   });
 
   it("de uitleg in het Engels zegt alleen wat gemeten is (Keuze 85)", () => {
     // Gemeten zijn alleen Nederlandse vragen: 'bergen' werd 'berg', 'boot' werd 'bootje' (geen
-    // enkelvoud); de Engelse vragen van BZ4 haalden allemaal 3 of meer van 5.
+    // enkelvoud); de Engelse vragen van BZ4 haalden allemaal 3 of meer van 5. "Meer zoals deze" is
+    // gemeten op de top 4 (0,475), niet op alles wat /zoeken laat zien: de zin noemt de eerste foto's.
     expect(en["switch.hint"]).toBe(
       "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). " +
         "This happens on this server; nothing goes outside. Only you can search your own photos this way. Off " +
         "erases what is kept only for you. Snapshots the administrator makes of the server keep it until they " +
         "expire. What to expect: one word usually puts a few good photos at the top. Some words find little; " +
-        "then try a different word for the same thing. About half of what 'More like this' shows is about the " +
-        "same subject.",
+        "then try a different word for the same thing. Of the first few photos 'More like this' shows, about " +
+        "half are about the same subject.",
     );
   });
 

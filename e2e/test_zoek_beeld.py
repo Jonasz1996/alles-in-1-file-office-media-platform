@@ -90,7 +90,7 @@ HINT = (
     "beheerder zelf van de server maakt, houden het tot ze verlopen. Wat je mag verwachten: één "
     "woord geeft meestal een paar goede foto's bovenaan. Sommige woorden vinden weinig; zoek dan "
     "op 'berg' in plaats van 'bergen', of op 'bootje' in plaats van 'boot'. Bij 'Meer zoals "
-    "deze' gaat ongeveer de helft over hetzelfde onderwerp."
+    "deze' gaat ongeveer de helft van de eerste foto's over hetzelfde onderwerp."
 )
 UIT_JIJ = "Zoeken op beeld staat uit. Je zet het aan bij Account → Foto's."
 UIT_BEHEER = "Zoeken op beeld staat uit voor dit platform."
