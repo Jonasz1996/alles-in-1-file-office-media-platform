@@ -763,7 +763,10 @@ NEP
 # De installatietest (bouwontwerp fase 5, §2 M10, "De installatietest"), zoals
 # test_install_update.sh van fase 4: de echte install.sh in een container met Debian 12 (de
 # "LXC"), met de docker-socket en de docker-cli van de host, en de werkmap op hetzelfde absolute
-# pad. Office blijft uit (OFFICE=uit): dat bewijst test_install_update.sh. Per omgeving:
+# pad. Office blijft uit (OFFICE=uit): dat bewijst test_install_update.sh. De analyse ook
+# (ANALYSE=uit bij elke stap): sinds 0.8.1 staat die standaard aan, en deze job haalt geen
+# modellen (bouwontwerp fase 6, §4.6, media-image); de analyse bewijzen test_install_analyse.sh
+# en test_install_beeld.sh. Per omgeving:
 #
 #   | Stap | Sandbox | CI (media-image) |
 #   |---|---|---|
@@ -1163,7 +1166,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       -v "$(command -v docker)":/usr/bin/docker:ro \
       -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
       -v "$WORK:$WORK" \
-      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit \
+      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit -e ANALYSE=uit \
       -e GIT_CONFIG_GLOBAL="$WORK/gitconfig" \
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
