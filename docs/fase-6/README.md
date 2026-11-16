@@ -26,9 +26,12 @@ beeld) draait alleen in de mediaworker, dus alleen met media aan. Het image word
 groter, voor tesseract, het programma dat de tekst herkent.
 
 Gezichten en zoeken op beeld rekenen in een eigen afgeschermde container, `analyse`: zonder
-netwerk en zonder je bestanden. Sinds 0.8.1 zet het installatiescript die standaard aan
-(`ANALYSE=uit` houdt hem uit) en haalt het de modellen één keer op. Per gebruiker staat alles uit,
-tot die het zelf aanzet bij Account → Foto's. Het image is ±118–141 MB groter, voor numpy en
+netwerk en zonder je bestanden. Sinds 0.8.1 zet het installatiescript die standaard aan en haalt
+het de modellen één keer op: ±39 MB voor gezichten, en ±1,55 GB voor zoeken op beeld, dat het op je
+server omzet naar een model van ±400 MB. Met `ANALYSE=uit` blijft alles uit, met `BEELD=uit` alleen
+zoeken op beeld. Is er weinig ruimte voor de gezichten, of lukt een download niet, dan zegt het
+script `Let op: …` en gaat het door. Per gebruiker staat alles uit, tot die het zelf aanzet bij
+Account → Foto's. Het image is ±118–141 MB groter, voor numpy en
 onnxruntime, ook met de analyse uit.
 
 Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gezichten en beeld)
