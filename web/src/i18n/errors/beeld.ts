@@ -1,5 +1,7 @@
 // Foutcodes van zoeken op beeld (fase 6, X3; Keuze 80). Z0b zette de codes van het contract neer
-// (Keuze 55); de Nederlandse tekst komt van de server, dit is de Engelse.
+// (Keuze 55); X3b toetste ze aan wat de API echt geeft (search/beeld/beeld.test.ts): beeld_off en
+// beeld_no_vector uit app/beeld/search.py, beeld_off en beeld_not_installed uit app/prefs.py. De
+// Nederlandse tekst komt van de server, dit is de Engelse.
 export default {
   beeld_off: { en: "Search by image is turned off" },
   beeld_no_vector: { en: "This photo has not been looked at yet; try again later" },

@@ -380,14 +380,29 @@ describe("de blokken Gezichten en Zoeken op beeld met een stand (alleen aantalle
     );
   });
 
-  it("Zoeken op beeld: bekeken, vragen het afgelopen uur en mislukt", () => {
+  // X3b (Keuze 82): het hele blok, met de drie knoppen, het model, de container, mislukt per code,
+  // het afgelopen uur, de ruimte, bench en kwaliteit, en de vaste zin over snapshots
+  it("Zoeken op beeld: de stand, de knoppen, aantallen per code en de vaste zin", () => {
     const html = renderToStaticMarkup(createElement(BeeldBlock, { beeld: BEELD }));
     expect(html).toBe(
-      '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Zoeken op beeld</h3>' +
+      '<section aria-labelledby="admin-beeld-title"><div class="admin-head"><h3 id="admin-beeld-title">Zoeken op beeld</h3></div>' +
+        '<p data-search="beeld-on">Zoeken op beeld: <span class="badge ok">aan</span></p>' +
+        '<p><button type="button" class="btn" data-search="beeld-switch">Zet uit voor iedereen</button> ' +
+        '<button type="button" class="btn" data-search="beeld-rebuild">Opnieuw berekenen</button> ' +
+        '<button type="button" class="btn danger" data-search="beeld-wipe">Beeldindex wissen</button></p>' +
         '<dl class="admin-totals" data-search="beeld">' +
-        "<div><dt>Bekeken</dt><dd>900 van 1.000 foto&#x27;s</dd></div>" +
-        "<div><dt>Vragen het afgelopen uur</dt><dd>8</dd></div>" +
-        "<div><dt>Mislukt</dt><dd>4</dd></div></dl></section>",
+        '<div><dt>Model</dt><dd data-search="beeld-model">SigLIP 2 B/32-256 (Google, Apache-2.0), int8. In orde.</dd></div>' +
+        '<div><dt>Container analyse</dt><dd data-search="beeld-analyse">draait</dd></div>' +
+        '<div><dt>Bekeken</dt><dd data-search="beeld-seen">900 van 1.000 foto&#x27;s</dd></div>' +
+        '<div><dt>Mislukt</dt><dd data-search="beeld-failed">decode: 4</dd></div>' +
+        '<div><dt>Het afgelopen uur</dt><dd data-search="beeld-hour">8 vragen, p95 300 ms; terug naar gewoon zoeken: ' +
+        "0 keer te traag, 0 keer zonder container, 0 keer zonder model</dd></div>" +
+        '<div><dt>Ruimte</dt><dd data-search="beeld-space">1 B in de database, 2 B in de cache, 3 B aan modellen</dd></div>' +
+        '<div><dt>beeld-bench</dt><dd data-search="beeld-bench">nog niet gedaan</dd></div>' +
+        '<div><dt>beeld-kwaliteit</dt><dd data-search="beeld-quality">nog niet gedaan</dd></div></dl>' +
+        '<p class="muted">De vectoren beschrijven wat er op een foto staat. Reservekopieën die het platform maakt, ' +
+        "bevatten ze niet. Maak je zelf snapshots van /data (ZFS, restic), dan staan ze daar wel in, tot je die " +
+        "snapshot weggooit.</p></section>",
     );
   });
 
