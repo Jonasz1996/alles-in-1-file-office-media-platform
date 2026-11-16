@@ -36,7 +36,7 @@ is: [x3b.md](x3b.md).
 
 | Toets | Wat |
 |---|---|
-| typen in "Zoekwoorden", Enter | zoekt (`GET /search?mode=image&q=…`); de URL krijgt `&q=…`; de focus blijft in het veld |
+| typen in "Zoekwoorden", Enter | zoekt (`GET /search?mode=image&q=…`); de URL wordt `/zoeken?q=…&mode=image`; de focus blijft in het veld |
 | Tab | naar het raster: één tabstop, de foto met de focus (eerst de eerste) |
 | ← → | de foto ernaast |
 | ↑ ↓ | de foto erboven of eronder; op de korte laatste rij brengt ↓ je naar de laatste foto |
@@ -129,8 +129,8 @@ knop.
       gekozen en met de focus; de beschrijving van het veld is "Zoekt in je eigen foto's. Druk op
       Enter."; de zin "komt in een volgende versie" staat er niet.
 - [ ] Shift+Tab naar het veld, "strand", Enter: de twee oranje foto's bovenaan, dan de rest; de URL
-      heeft `&q=strand`; het raster heet "Foto's die passen bij 'strand'"; elke foto heeft zijn naam
-      en datum; geen melding; de focus in het veld.
+      is `/zoeken?q=strand&mode=image`; het raster heet "Foto's die passen bij 'strand'"; elke foto
+      heeft zijn naam en datum; geen melding; de focus in het veld.
 - [ ] Tab naar het raster, →, Enter: de viewer met de tweede foto; Esc: dicht, de focus op die foto;
       Esc: de focus in het veld.
 - [ ] Vanuit het raster een oranje foto openen, `i`, Tab naar "Meer zoals deze", Enter:
@@ -141,7 +141,8 @@ knop.
 - [ ] Een vraag die te lang duurt: de melding "Zoeken op beeld duurde te lang. Dit zijn de treffers
       op naam en tekst." en de foto die op naam gevonden is, in hetzelfde raster.
 - [ ] Account → Foto's: "Zoeken op beeld" staat standaard uit, met de uitleg als beschrijving;
-      Spatie: aan, "Opgeslagen."; Spatie: uit, de focus op het vinkje. Daarna in de stand beeld:
+      Spatie: aan, "Opgeslagen."; Spatie: uit, de focus op het vinkje; na elke keer vraagt de pagina
+      de stand opnieuw (na uit: "uit"). Daarna in de stand beeld:
       "Zoeken op beeld staat uit. Je zet het aan bij Account → Foto's.", geen raster en geen vraag
       aan `/search`.
 - [ ] `/beheer` → "Zoeken en foto's": het blok met de stand, het model, de container, "6 van 6
