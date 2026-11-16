@@ -366,17 +366,27 @@ describe("de tab Zoeken en foto's (Z7)", () => {
   });
 });
 
-describe("de blokken Gezichten en Zoeken op beeld met een stand (alleen aantallen, Keuze 51)", () => {
-  it("Gezichten: aantallen, nooit een naam, een gebruiker of een model", () => {
+describe("de blokken Gezichten (Keuze 67) en Zoeken op beeld (alleen aantallen, Keuze 51) met een stand", () => {
+  it("Gezichten (X2b, Keuze 67): de analyse, de modellen, de rij en aantallen; nooit een naam of een gebruiker", () => {
     const html = renderToStaticMarkup(createElement(FacesBlock, { faces: FACES }));
     expect(html).toBe(
       '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Gezichten</h3>' +
         '<dl class="admin-totals" data-search="faces">' +
-        "<div><dt>Gezichten</dt><dd>1.234</dd></div>" +
-        "<div><dt>Waarvan benoemd</dt><dd>56</dd></div>" +
-        "<div><dt>Gebruikers met gezichten aan</dt><dd>3</dd></div>" +
-        "<div><dt>Foto&#x27;s in de rij</dt><dd>40</dd></div>" +
-        "<div><dt>Mislukt</dt><dd>3</dd></div></dl></section>",
+        '<div><dt>Analyse</dt><dd data-search="faces-analyse">werkt</dd></div>' +
+        '<div><dt>Modellen</dt><dd data-search="faces-models">detector, versie 1: sha256 klopt</dd></div>' +
+        '<div><dt>Grenzen</dt><dd data-search="faces-limits">zonder grenzen</dd></div>' +
+        '<div><dt>Gebruikers met gezichten aan</dt><dd data-search="faces-users">3</dd></div>' +
+        '<div><dt>Rij analyse</dt><dd data-search="faces-queue">40 wachtend, 12 in het laatste uur</dd></div>' +
+        '<div><dt>Mislukt</dt><dd data-search="faces-failed">decode 2, timeout 1</dd></div>' +
+        '<div><dt>Totaal</dt><dd data-search="faces-total">1.234 gezichten, waarvan 56 benoemd; ±1000 B in de database</dd></div>' +
+        '<div><dt>Snelheid</dt><dd data-search="faces-speed">niet gemeten (app.cli analyse-bench)</dd></div>' +
+        '<div><dt>Kwaliteit</dt><dd data-search="faces-quality">niet gemeten</dd></div></dl>' +
+        '<p><label class="check"><input type="checkbox" data-search="faces-allowed" checked=""/>' +
+        "Gezichtsherkenning toestaan</label></p>" +
+        '<p class="muted">Reservekopieën die het platform maakt, bevatten geen gezichten. Maak je zelf snapshots ' +
+        "van /data (ZFS, restic), dan staan ze daar versleuteld in. Na &#x27;uit&#x27; zijn ze daar niet meer te " +
+        "lezen, zolang de map met sleutels niet in die snapshots zit.</p>" +
+        '<p><button type="button" class="btn" data-search="faces-retry">Mislukte opnieuw</button></p></section>',
     );
   });
 
