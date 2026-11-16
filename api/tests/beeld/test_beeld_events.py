@@ -18,6 +18,7 @@
 | de beheerder wist de beeldindex | test_beeld_wipe |
 | een nieuwe versie van de stap | test_beeld_version |
 | te laat, weg, geen model | test_beeld_fallback |
+| het kind zoeken is bezig | test_beeld_busy |
 | een openbare link zoekt nooit | test_public_never_search |
 """
 
@@ -30,8 +31,10 @@ import sqlalchemy as sa
 
 from app import analysis, jobs
 from app.analyse import monitor
+from app.analyse.wire import Child
 from app.analysis import Step
 from app.beeld import jobs as bjobs
+from app.beeld import search as bsearch
 from app.beeld import vecfile
 from app.models import Node
 from app.routers.public import router as public_router
@@ -493,6 +496,28 @@ async def test_beeld_fallback(client, mensen, beeld):
     assert await nep.row(settings, groen["sha"]) == ("wait", None)
     r = await nep.zoek(client, eva, like=rood["id"])
     assert (r.status_code, r.json()["results"], r.json()["fallback"]) == (200, [], "no_model")
+
+
+async def test_beeld_busy(client, mensen, beeld):
+    """Het kind zoeken heeft nog een opdracht (busy, Keuze 56; bijvoorbeeld een vraag die de klok
+    niet haalde): de container is er wel. Dus de treffers van gewoon zoeken met fallback slow, niet
+    down ("de container is weg"), ook in het uur van /beheer (review I2, U3)."""
+    (eva, _), _ = mensen
+    fake, settings = beeld
+    await aan(client, settings, eva)
+    rood = await foto(client, eva, settings, "rood.jpg", "rood")
+    await nep.embed_all(settings)
+    voor = bsearch.hour()
+    fake.fake.busy.add(Child.ZOEKEN)
+    try:
+        r = await nep.zoek(client, eva, "rood")
+    finally:
+        fake.fake.busy.discard(Child.ZOEKEN)
+    body = r.json()
+    assert (r.status_code, body["mode"], body["fallback"]) == (200, "text", "slow"), body
+    assert [h["node"]["id"] for h in body["results"]] == [rood["id"]]
+    na = bsearch.hour()
+    assert (na.slow - voor.slow, na.down - voor.down) == (1, 0)
 
 
 async def test_public_never_search(client, admin, mensen, beeld):
