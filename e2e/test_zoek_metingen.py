@@ -1069,3 +1069,506 @@ def test_zaai_office_klaar_geeft_de_inhaalronde_van_o3_niets_te_doen(
     assert {tuple(r) for r in rijen} == {(None, 0), ("ready", zb.PDF_VERSION_07)}  # ook rtf
     # De stap text heeft de PDF (die er niet is) alleen voor doc, xls en ppt nodig
     assert not {d.mime for d in docs} & LEGACY_MIMES
+
+
+# --- zoek_samen --analyse: §4.5 stap 2 met de analyse aan (I2, 0.8.1) ---
+
+
+def _beeldvraag(**over: Any) -> dict[str, Any]:
+    """Eén beeldvraag zoals Beeldvragen.vraag hem opschrijft: gelukt, de index vol."""
+    vraag = {"fase": "achtergrond", "t_s": 1.0, "ms": 40.0, "status": 200, "mode": "image",
+             "terugval": None, "vectoren": 300, "in_bestand": 300, "bij": True,
+             "vol": True}  # fmt: skip
+    vraag.update(over)
+    return vraag
+
+
+def _worker(**over: Any) -> dict[str, Any]:
+    """Wachter.stand(): pid 1, één zoeken, werk twee keer gestart (na 8 opdrachten)."""
+    stand = {"pid1": [4_194_501, 70], "pid1_weg": False,
+             "processen": {"pid1": [[4_194_501, 70]], "zoeken": [[4_194_503, 80]],
+                           "werk": [[4_194_502, 75], [4_194_504, 90]]},
+             "hwm_kb": {"pid1": 60_000, "zoeken": 900_000, "werk": 500_000},
+             "hwm_som_bytes": 1_460_000 * 1024, "gestopt": [], "oom_kill": 0,
+             "cores": [3]}  # fmt: skip
+    stand.update(over)
+    return stand
+
+
+def _met_analyse(vragen: list[dict[str, Any]] | None = None, **worker: Any) -> dict[str, Any]:
+    beeld = zs.beeld_samenvatting([_beeldvraag(ms=float(40 + i)) for i in range(12)]
+                                  if vragen is None else vragen)  # fmt: skip
+    return _stap2(analyse={"voortgang": {}, "beeld": beeld, "worker": _worker(**worker)})
+
+
+def test_de_poorten_van_de_analyse_naast_de_tien_van_stap_2() -> None:
+    """--analyse zet er drie poorten bij; oordeel() houdt zijn tien, ook met "analyse" in de
+    stap."""
+    stap = _met_analyse()
+    assert len(zs.oordeel(stap, NUL)) == 10
+    poorten = zs.oordeel_analyse(stap)
+    assert [ok for _, ok in poorten] == [True, True, True], poorten
+    assert poorten[0][0] == "zoeken op beeld p95 ≤ 250 ms (warm, de index vol)"
+    assert poorten[1][0].endswith("≤ 2,5 GB (1.50 GB)")
+    assert "pid 1 dezelfde, zoeken 1 en werk 2 keer gestart" in poorten[2][0]
+    assert zs.geslaagd(zs.oordeel(stap, NUL) + poorten)
+    assert zs.POORT_ANALYSE == {"beeld_p95_ms": 250.0, "hwm_bytes": 2_500_000_000}
+
+
+def test_beeld_p95_en_de_grens() -> None:
+    langzaam = [_beeldvraag(ms=float(m)) for m in [100.0] * 18 + [260.0, 300.0]]
+    assert zs.oordeel_analyse(_met_analyse(langzaam))[0][1] is False
+    precies = [_beeldvraag(ms=250.0) for _ in range(5)]
+    assert zs.oordeel_analyse(_met_analyse(precies))[0][1] is True
+    # een mislukte vraag (geen 200 of geen antwoord) haalt de poort niet
+    mislukt = [_beeldvraag(), _beeldvraag(ms=None, status=503, mode=None)]
+    regel, ok = zs.oordeel_analyse(_met_analyse(mislukt))[0]
+    assert ok is False and regel.endswith("(1 mislukt)")
+
+
+def test_beeld_is_ongeldig_als_de_index_nooit_vol_was() -> None:
+    """CRITIC bij M4: zonder volle index meet de p95 een leeg bestand. Dan "niet te meten"
+    (ongeldig), nooit gehaald, ook als de tijden mooi zijn."""
+    leeg = [_beeldvraag(ms=5.0, in_bestand=0, bij=False, vol=False) for _ in range(10)]
+    regel, ok = zs.oordeel_analyse(_met_analyse(leeg))[0]
+    assert ok is None
+    assert (
+        "ongeldig: de index was bij 10 van de 10 vragen niet vol (0 foto's in het bestand)" in regel
+    )
+    half = [_beeldvraag(), _beeldvraag(in_bestand=120, vol=False)]
+    assert zs.oordeel_analyse(_met_analyse(half))[0][1] is None
+    regel, ok = zs.oordeel_analyse(_met_analyse([]))[0]
+    assert ok is None and "geen beeldvraag in deze stap" in regel
+    assert not zs.geslaagd(zs.oordeel_analyse(_met_analyse(leeg)))
+    assert zs.oordeel_analyse(_stap2())[0][1] is None  # stap zonder analyse: niets gemeten
+
+
+def test_het_geheugen_van_de_analyse_samen() -> None:
+    assert zs.oordeel_analyse(_met_analyse(hwm_som_bytes=2_500_000_000))[1][1] is True
+    regel, ok = zs.oordeel_analyse(_met_analyse(hwm_som_bytes=2_500_000_001))[1]
+    assert ok is False and regel.endswith("(2.50 GB)")
+    regel, ok = zs.oordeel_analyse(_met_analyse(hwm_som_bytes=None))[1]
+    assert ok is None and regel.endswith("(niet gemeten)")
+
+
+@pytest.mark.parametrize(
+    ("over", "ok", "tekst"),
+    [
+        ({}, True, "pid 1 dezelfde, zoeken 1 en werk 2 keer gestart"),
+        ({"pid1_weg": True}, False, "pid 1 is weg of een ander proces"),
+        ({"processen": {"pid1": [[1, 1]], "zoeken": [[2, 2], [3, 3]]}}, False,
+         "zoeken 2 keer gestart"),
+        ({"gestopt": ["kind werk (pid 9) gestopt: boven de geheugengrens"]}, False,
+         "pid 1 meldt een gestopt kind: kind werk (pid 9) gestopt: boven de geheugengrens"),
+        ({"oom_kill": 1}, False, "de kernel meldt 1 OOM-kill(s) tijdens de meting"),
+        ({"pid1": None}, None, "de worker liep niet"),
+    ],
+)  # fmt: skip
+def test_de_container_analyse_leeft_nog(over: dict[str, Any], ok: bool | None, tekst: str) -> None:
+    """werk opnieuw gestart (ANALYSE_CHILD_BATCHES) hoort zo; een ander pid 1, een tweede zoeken,
+    een gestopt kind in de log van pid 1 of een OOM-kill van de kernel niet."""
+    assert zs.analyse_overleefd(_worker(**over)) == (ok, tekst)
+    assert zs.analyse_overleefd(None) == (None, "de worker liep niet")
+
+
+def test_beeld_samenvatting_telt_de_terugval_en_de_index() -> None:
+    vragen = [
+        _beeldvraag(ms=float(i), terugval="slow" if i % 4 == 0 else None) for i in range(1, 21)
+    ]
+    vragen += [_beeldvraag(ms=None, status=None, vol=False, in_bestand=0)]
+    s = zs.beeld_samenvatting(vragen)
+    assert (s["n"], s["mislukt"], s["index_vol"]) == (21, 1, 20)
+    assert s["terugval"] == {"slow": 5} and s["terugval_deel"] == 0.25
+    assert s["p95_ms"] == round(zs.percentile([float(i) for i in range(1, 21)], 95), 1)
+    assert s["vragen"] == vragen
+    leeg = zs.beeld_samenvatting([])
+    assert (leeg["n"], leeg["p95_ms"], leeg["terugval_deel"]) == (0, None, None)
+
+
+def test_de_wachter_houdt_de_hoogste_vmhwm_per_proces_bij(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Per proces (pid en starttijd) de hoogste VmHWM; een nieuw werk telt apart, de som neemt de
+    hoogste per soort. pids boven pid_max: die bestaan nergens."""
+    pid1, werk, zoeken, werk2 = 4_194_501, 4_194_502, 4_194_503, 4_194_504
+    hwm = {pid1: 50_000, werk: 400_000, zoeken: 800_000, werk2: 300_000}
+    namen = {werk: "werk", zoeken: "zoeken", werk2: "werk"}
+    monkeypatch.setattr(zs, "vmhwm_kb", lambda pid: hwm.get(pid))
+    monkeypatch.setattr(zs, "kind_naam", lambda pid: namen.get(pid, "kind"))
+    monkeypatch.setattr(zs, "oom_kills", lambda: 7)
+    log = tmp_path / "worker.log"
+    log.write_text("analyse-worker luistert\nkind werk (pid 4194502) gestart (pid 4194502)\n")
+    w = zs.Wachter(pid1, log)
+    w.peil({pid1: (1, 70, "S"), werk: (pid1, 75, "S"), zoeken: (pid1, 80, "S"), 1: (0, 1, "S")})
+    hwm[werk] = 650_000  # het werk groeit nog
+    w.peil({pid1: (1, 70, "S"), werk: (pid1, 75, "S"), zoeken: (pid1, 80, "S")})
+    w.peil({pid1: (1, 70, "S"), werk2: (pid1, 95, "S"), zoeken: (pid1, 80, "S")})  # werk nieuw
+    stand = w.stand()
+    assert stand["pid1"] == [pid1, 70] and stand["pid1_weg"] is False
+    assert stand["processen"] == {"pid1": [[pid1, 70]], "werk": [[werk, 75], [werk2, 95]],
+                                  "zoeken": [[zoeken, 80]]}  # fmt: skip
+    assert stand["hwm_kb"] == {"pid1": 50_000, "werk": 650_000, "zoeken": 800_000}
+    assert stand["hwm_som_bytes"] == (50_000 + 650_000 + 800_000) * 1024
+    assert stand["gestopt"] == [] and stand["oom_kill"] == 0
+    assert zs.analyse_overleefd(stand)[0] is True
+    # pid 1 met een andere starttijd: een ander proces (de container herstartte)
+    w.peil({pid1: (1, 99, "S")})
+    assert w.stand()["pid1_weg"] is True
+    log.write_text(log.read_text() + "kind werk (pid 4194504) stopte met code 1\n")
+    assert w.gestopt() == ["kind werk (pid 4194504) stopte met code 1"]
+
+
+def test_vmhwm_en_oom_uit_proc() -> None:
+    import os
+
+    assert (zs.vmhwm_kb(os.getpid()) or 0) > 0
+    assert zs.vmhwm_kb(4_194_999) is None  # boven pid_max: bestaat niet
+    assert zs.kind_naam(os.getpid()) == "kind"
+    assert zs.oom_erbij(3, 5) == 2 and zs.oom_erbij(None, 5) is None
+    oom = zs.oom_kills()
+    assert oom is None or oom >= 0
+
+
+def test_de_sleutel_nooit_in_argv_en_alleen_waar_hij_hoort(tmp_path: Path) -> None:
+    from app.analyse import runtime
+
+    nep = zs.Analyse(zs.NEP, None, tmp_path)
+    echt = zs.Analyse("/modellen", Path("/modellen.lock"), tmp_path)
+    argv = echt.argv(3)
+    assert argv[:3] == ["taskset", "-c", "3"]
+    assert argv[3] == str(zs.ANALYSE_PYTHON) and "--local" in argv
+    assert argv[argv.index("--lock") + 1] == "/modellen.lock"
+    assert argv[argv.index("--models") + 1] == "/modellen"
+    assert nep.argv(2)[:3] == ["taskset", "-c", "2"] and zs.NEP_BOOT in nep.argv(2)
+    for a in (nep, echt):
+        assert len(a.sleutel) == 64 and a.sleutel not in " ".join(a.argv(3))
+        assert a.sleutel not in repr(a)
+        assert set(a.omgeving()) == {"PATH", runtime.KEY_ENV}
+        env = a.app_env(tmp_path / "sleutels")
+        assert env[runtime.KEY_ENV] == a.sleutel
+        assert env["PLATFORM_ANALYSE_ENABLED"] == "true"
+        assert env["PLATFORM_ANALYSE_WORKER"] == str(tmp_path / "run" / "worker.sock")
+        assert env["PLATFORM_FACES_KEYS"] == str(tmp_path / "sleutels")
+    assert nep.sleutel != echt.sleutel
+
+
+def test_media_loadtest_krijgt_de_sleutel_niet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from app.analyse import runtime
+
+    gekregen: dict[str, str] = {}
+
+    def run(*_a: Any, env: dict[str, str], **_kw: Any) -> Any:
+        gekregen.update(env)
+        return argparse.Namespace(stdout="", stderr="geen json")
+
+    server = argparse.Namespace(environment=lambda: {runtime.KEY_ENV: "ab" * 32, "PATH": "/bin"})
+    monkeypatch.setattr(zs.subprocess, "run", run)
+    uit = zs.belastingtest(server, 1, 1, tmp_path / "media.json")  # type: ignore[arg-type]
+    assert uit["passed"] is False
+    assert gekregen == {"PATH": "/bin"}
+
+
+def test_de_nep_worker_luistert_en_stopt(tmp_path: Path) -> None:
+    """--analyse nep in een eigen proces (NEP_BOOT): hij luistert op de socket, de wachter ziet
+    pid 1 met een VmHWM, en SIGTERM stopt hem netjes."""
+    analyse = zs.Analyse(zs.NEP, None, tmp_path)
+    analyse.start()
+    try:
+        assert analyse.proc is not None and analyse.socket.exists()
+        w = zs.Wachter(analyse.proc.pid, analyse.log)
+        w.peil()
+        stand = w.stand()
+        assert stand["pid1"] and stand["pid1"][0] == analyse.proc.pid
+        assert (stand["hwm_som_bytes"] or 0) > 0 and stand["cores"] == [analyse.core]
+        assert analyse.sleutel not in Path(f"/proc/{analyse.proc.pid}/cmdline").read_text()
+    finally:
+        analyse.stop()
+    assert analyse.proc.returncode == 0
+    assert analyse.sleutel not in analyse.log.read_text()
+
+
+def _beeld_db(data_dir: Path, eigenaar: str, gen: int, gebouwd: int, rijen: int) -> None:
+    import uuid
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(data_dir / "platform.db")
+    try:
+        con.execute("CREATE TABLE beeld_owner (user_id TEXT, gen INT, built_gen INT, "
+                    "built_rows INT)")  # fmt: skip
+        con.execute("CREATE TABLE blob_embed (blob_sha TEXT)")
+        con.execute("INSERT INTO beeld_owner VALUES (?, ?, ?, ?)",
+                    (uuid.UUID(eigenaar).hex, gen, gebouwd, rijen))  # fmt: skip
+        con.executemany("INSERT INTO blob_embed VALUES (?)", [(str(i),) for i in range(rijen)])
+        con.commit()
+    finally:
+        con.close()
+
+
+EIGENAAR = "0b9c2f8e-5d1a-4c3e-9f7a-2b6d8e1c4a90"
+
+
+def test_beeld_index_en_vol(tmp_path: Path) -> None:
+    assert zs.beeld_index(tmp_path / "geen", EIGENAAR) == {
+        "vectoren": 0, "in_bestand": 0, "bij": False}  # fmt: skip
+    _beeld_db(tmp_path, EIGENAAR, gen=12, gebouwd=12, rijen=30)
+    index = zs.beeld_index(tmp_path, EIGENAAR)
+    assert index == {"vectoren": 30, "in_bestand": 30, "bij": True}
+    assert zs.index_vol(index, 30) and not zs.index_vol(index, 31)
+    assert not zs.index_vol({**index, "bij": False}, 30)
+    assert not zs.index_vol(index, 0)  # zonder foto's is er niets te meten
+    assert zs.analyse_voortgang(tmp_path) == {"embed": {}, "scan": {}, "gezichten": 0}
+
+
+class _Http:
+    """httpx.Client voor Beeldvragen.vraag: schrijft op wat er gevraagd werd."""
+
+    def __init__(self, status: int, body: dict[str, Any] | None = None) -> None:
+        self.status, self.body = status, body or {}
+        self.gevraagd: list[dict[str, Any]] = []
+
+    def get(self, path: str, params: dict[str, Any], headers: dict[str, str]) -> _Antwoord:
+        self.gevraagd.append({"path": path, **params})
+        return _Antwoord(self.status, self.body)
+
+
+def test_een_beeldvraag_schrijft_nooit_het_woord_op(tmp_path: Path) -> None:
+    _beeld_db(tmp_path, EIGENAAR, gen=3, gebouwd=2, rijen=20)
+    server = argparse.Namespace(data_dir=tmp_path, url="http://x", token=lambda _a: "t")
+    vragen = zs.Beeldvragen(server, argparse.Namespace(id=EIGENAAR), lambda: 20)  # type: ignore[arg-type]
+    http = _Http(200, {"mode": "image", "fallback": "slow", "items": [{"name": "strand.jpg"}]})
+    uit = vragen.vraag(http, "achtergrond", "strand")  # type: ignore[arg-type]
+    assert http.gevraagd == [{"path": "/api/v1/search", "q": "strand", "mode": "image"}]
+    assert uit["fase"] == "achtergrond" and uit["status"] == 200 and uit["ms"] is not None
+    assert (uit["mode"], uit["terugval"]) == ("image", "slow")
+    assert (uit["vectoren"], uit["in_bestand"], uit["bij"], uit["vol"]) == (20, 20, False, False)
+    assert "strand" not in repr(uit)
+    mislukt = vragen.vraag(_Http(409, {"code": "beeld_off"}), "pauze", "hond")  # type: ignore[arg-type]
+    assert mislukt["ms"] is None and mislukt["status"] == 409 and "hond" not in repr(mislukt)
+
+
+def _analyse_stap(naam: str = "achtergrond") -> dict[str, Any]:
+    stap = _stap2(office=None, ds=None)
+    stap.update(stap=naam, media={"passed": True, "samenvatting": ["fase b: ok"]}, zoeken_n=10,
+                mem_min_mb=3072, tekst_klaar_voor=0, tekst_klaar_na_media=5, tekst_klaar_na=9,
+                fouten={}, ocr={"voor": {}, "na_media": {}, "na": {}}, fotos=None)  # fmt: skip
+    vragen = [_beeldvraag(fase=naam, ms=float(30 + i)) for i in range(12)]
+    voortgang = {
+        "voor": {"embed": {"done": 300}, "scan": {"wait": 300}, "gezichten": 0},
+        "na_media": {"embed": {"done": 300}, "scan": {"wait": 300}, "gezichten": 0},
+        "na": {"embed": {"done": 300}, "scan": {"done": 120, "wait": 180}, "gezichten": 4},
+    }
+    stap["analyse"] = {"voortgang": voortgang, "beeld": zs.beeld_samenvatting(vragen),
+                       "worker": _worker()}  # fmt: skip
+    return stap
+
+
+def test_kort_blok_met_de_analyse_en_zonder_een_woord_van_de_vragen() -> None:
+    import json
+    import re
+
+    stappen = [_analyse_stap("pauze"), _analyse_stap("achtergrond")]
+    poorten = zs.oordeel(stappen[1], stappen[0]) + zs.oordeel_analyse(stappen[1])
+    ana = {"bron": "nep", "core": 3, "poort": zs.POORT_ANALYSE,
+           "voorbereiding": {"klaar": True, "s": 41.5, "stand": "ok", "fotos": 300,
+                             "vectoren": 300, "in_bestand": 300, "bij": True,
+                             "voortgang": {"embed": {"done": 300}}},
+           "worker": _worker()}  # fmt: skip
+    uitkomst = {"soort": "kort", "opzet": "x", "duur_s": 1, "stappen": stappen,
+                "poorten": poorten, "geslaagd": False, "rapport": True, "analyse": ana,
+                "overgeslagen": []}  # fmt: skip
+    blok = zs.kort_blok(uitkomst)
+    assert len([r for r in blok if r.startswith("poort (stap achtergrond): ")]) == 13
+    assert blok[-1] == "uitkomst: rapport"
+    assert ("analyse (nep, core 3): voorbereiding klaar na 41.5 s, beeld ok, 300 van 300 foto's "
+            "in het bestand, embed {'done': 300}") in blok  # fmt: skip
+    regel = next(r for r in blok if r.startswith("achtergrond: analyse: "))
+    assert "embed klaar 300 → 300 (na media) → 300" in regel
+    assert "gezichten gescand 0 → 0 (na media) → 120 (open 180), 4 gevonden" in regel
+    assert "beeld p95 " in regel and "over 12 vragen (0 mislukt), terugval geen" in regel
+    assert "index vol bij 12 van 12" in regel and "cores 3" in regel
+    assert "VmHWM samen 1425 MB" in regel
+    tekst = "\n".join(blok) + json.dumps(uitkomst, ensure_ascii=False)
+    gevonden = [w for w in zs.BEELDWOORDEN if re.search(rf"\b{w}\b", tekst, re.IGNORECASE)]
+    assert gevonden == []
+    # niet klaar: dat staat er, en de poort zegt waarom
+    ana["voorbereiding"]["klaar"] = False
+    assert (
+        "voorbereiding NIET klaar (de poort van beeld is dan ongeldig)" in zs.kort_blok(uitkomst)[2]
+    )
+    # zonder --analyse: geen regel van de analyse, en --kort blijft een rapport
+    stap = {k: v for k, v in stappen[1].items() if k != "analyse"}
+    gewoon = {**uitkomst, "stappen": [stap], "poorten": zs.oordeel(stap, stappen[0]),
+              "analyse": None}  # fmt: skip
+    del gewoon["rapport"]
+    blok = zs.kort_blok(gewoon)
+    assert not any("analyse" in r for r in blok) and blok[-1] == "uitkomst: rapport"
+
+
+def test_analyse_van_stap_telt_alleen_de_vragen_van_die_stap(tmp_path: Path) -> None:
+    oud = [_beeldvraag(fase="voorbereiding", ms=900.0)]
+    deze = [_beeldvraag(fase="achtergrond", ms=float(i)) for i in range(1, 6)]
+    te_laat = [_beeldvraag(fase="pauze", ms=800.0)]  # liep nog toen de vorige stap stopte
+    vragen = argparse.Namespace(fase="achtergrond", vragen=oud + te_laat + deze)
+    wachter = argparse.Namespace(stand=lambda: _worker())
+    opzet = argparse.Namespace(vragen=vragen, wachter=wachter,
+                               server=argparse.Namespace(data_dir=tmp_path))  # fmt: skip
+    ana = zs.analyse_van_stap(opzet, "achtergrond", 1, {"embed": {}}, None)  # type: ignore[arg-type]
+    assert vragen.fase is None  # de beeldvragen stoppen tot de volgende stap
+    assert ana["beeld"]["n"] == 5 and ana["beeld"]["vragen"] == deze
+    assert ana["voortgang"]["voor"] == {"embed": {}} and ana["voortgang"]["na_media"] is None
+    assert ana["voortgang"]["na"] == {"embed": {}, "scan": {}, "gezichten": 0}
+    assert ana["worker"] == _worker()
+
+
+class _BeeldServer:
+    def __init__(self, data_dir: Path, staten: list[str]) -> None:
+        self.data_dir, self.staten = data_dir, staten
+        self.verzoeken: list[tuple[str, str, Any]] = []
+
+    def call(self, _account: Any, method: str, path: str, json: Any = None, **_kw: Any) -> Any:
+        self.verzoeken.append((method, path, json))
+        if method == "PATCH":
+            return _Antwoord(200, json)
+        return _Antwoord(200, {"state": self.staten.pop(0) if self.staten else "ok", "done": 1.0})
+
+
+def test_voorbereiding_wacht_op_beeld_en_een_vol_bestand(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _beeld_db(tmp_path, EIGENAAR, gen=4, gebouwd=4, rijen=30)
+    slaap: list[float] = []
+    monkeypatch.setattr(zs.time, "sleep", slaap.append)
+    server = _BeeldServer(tmp_path, ["bezig", "bezig"])
+    vragen = argparse.Namespace(fase=None)
+    opzet = argparse.Namespace(server=server, admin=argparse.Namespace(id=EIGENAAR), vragen=vragen,
+                               fotos=30)  # fmt: skip
+    uit = zs.voorbereiding(opzet)  # type: ignore[arg-type]
+    assert server.verzoeken[0] == ("PATCH", "/api/v1/me/photo-settings",
+                                   {"beeld": "aan", "faces": "aan"})  # fmt: skip
+    assert len(server.verzoeken) == 4 and slaap == [2.0, 2.0]
+    assert uit["klaar"] is True and uit["stand"] == "ok" and uit["in_bestand"] == 30
+    assert vragen.fase is None
+
+
+def test_voorbereiding_gaat_door_als_beeld_niet_klaar_komt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _beeld_db(tmp_path, EIGENAAR, gen=9, gebouwd=4, rijen=10)  # 10 van 30, en niet bij
+    monkeypatch.setattr(zs, "VOORBEREIDING_S", 0.0)
+    monkeypatch.setattr(zs, "VOORBEREIDING_PER_FOTO_S", 0.0)
+    monkeypatch.setattr(zs.time, "sleep", lambda _s: None)
+    opzet = argparse.Namespace(server=_BeeldServer(tmp_path, []), fotos=30,
+                               admin=argparse.Namespace(id=EIGENAAR),
+                               vragen=argparse.Namespace(fase=None))  # fmt: skip
+    uit = zs.voorbereiding(opzet)  # type: ignore[arg-type]
+    assert uit["klaar"] is False and uit["in_bestand"] == 10 and uit["bij"] is False
+    assert '"klaar": false' in capsys.readouterr().out
+
+
+def test_zaai_stap_met_de_fotos_van_de_analyse_ervoor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--analyse: eerst de foto's (1024 × 768 met het voorbeeld van 1024), dan in stap 1 de
+    documenten en de scans zonder de foto's nog eens."""
+    rijen: list[tuple[int, dict[str, Any]]] = []
+    gezaaid: list[int] = []
+    monkeypatch.setattr(zb, "zaai", lambda *_a, office_klaar=False: None)
+    monkeypatch.setattr(zf, "fotos", lambda n, **kw: rijen.append((n, kw)) or ["f"] * n)
+    monkeypatch.setattr(zf, "zaai", lambda _d, _e, _r, fotos, _s: gezaaid.append(len(fotos))
+                        or {"fotos": len(fotos), "met_gps": 0})  # fmt: skip
+    admin = argparse.Namespace(id="eigenaar", root_id="root")
+    opzet = zs.Opzet(server=object(), admin=admin)  # type: ignore[arg-type]
+    args = argparse.Namespace(office=False, fotos=7, scans=0)
+    zs.zaai_fotos(Path("/x"), admin, args, opzet, analyse=True)
+    assert rijen == [(7, {"formaat": zf.ANALYSE, "groot": True})] and opzet.fotos == 7
+    zs.zaai_stap(Path("/x"), admin, [], args, opzet, last=True, fotos=False)
+    assert gezaaid == [7]  # niet nog eens
+    zs.zaai_stap(Path("/x"), admin, [], args, opzet, last=True)
+    assert rijen[-1] == (7, {}) and gezaaid == [7, 7]  # zonder --analyse zoals voorheen
+
+
+@pytest.mark.parametrize(
+    ("argv", "fout"),
+    [
+        (["--analyse-lock", "{lock}"], "--analyse-lock hoort bij --analyse"),
+        (["--analyse", "nep", "--analyse-lock", "{lock}"], "--analyse nep heeft geen"),
+        (["--analyse", "{map}"], "heeft --analyse-lock <bestand> nodig"),
+        (["--analyse", "{map}/niet", "--analyse-lock", "{lock}"], "is geen map"),
+        (["--analyse", "{map}", "--analyse-lock", "{map}/niet.lock"], "is geen bestand"),
+    ],
+)
+def test_de_argumenten_van_de_analyse(
+    zonder_server: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    fout: str,
+) -> None:
+    (tmp_path / "m.lock").write_text("")
+    argv = [a.format(lock=tmp_path / "m.lock", map=tmp_path) for a in argv]
+    with pytest.raises(SystemExit) as e:
+        zs.main(["--kort", *argv])
+    assert e.value.code == 2 and fout in capsys.readouterr().err
+
+
+def test_zonder_venv_analyse_een_duidelijke_stop(
+    zonder_server: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "m.lock").write_text("")
+    monkeypatch.setattr(zs, "ANALYSE_PYTHON", tmp_path / "geen" / "python")
+    with pytest.raises(SystemExit) as e:
+        zs.main(["--kort", "--analyse", str(tmp_path), "--analyse-lock", str(tmp_path / "m.lock")])
+    assert "UV_PROJECT_ENVIRONMENT=.venv-analyse uv sync --frozen --extra analyse" in str(
+        e.value.code)  # fmt: skip
+
+
+@pytest.mark.parametrize("echt", [False, True])
+def test_main_met_analyse_tot_de_server(
+    zonder_server: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    echt: bool,
+) -> None:
+    """Met --analyse start de worker voor de app, en krijgt de app de analyse zoals
+    compose.analyse.yaml hem instelt (de sleutelmap 0700, buiten de datamap)."""
+    import os
+    import stat
+
+    from app.analyse import runtime
+
+    gestart: list[zs.Analyse] = []
+    env: dict[str, str] = {}
+
+    def analyse_start(self: zs.Analyse) -> None:
+        self.core, self.proc = 3, _Proc(4_194_600, klaar=0)  # type: ignore[assignment]
+        gestart.append(self)
+
+    def start(_base: Path, omgeving: dict[str, str], _office: bool) -> None:
+        env.update(omgeving)
+        sleutels = Path(omgeving["PLATFORM_FACES_KEYS"])
+        assert stat.S_IMODE(sleutels.stat().st_mode) == 0o700
+        raise _Gestart
+
+    monkeypatch.setattr(zs.Analyse, "start", analyse_start)
+    monkeypatch.setattr(zs, "start", start)
+    monkeypatch.setattr(zs, "ANALYSE_PYTHON", Path(sys.executable))
+    (tmp_path / "m.lock").write_text("")
+    argv = ["--kort", "--docs", "1"]
+    argv += (
+        ["--analyse", str(tmp_path), "--analyse-lock", "m.lock"] if echt else ["--analyse", "nep"]
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(_Gestart):
+        zs.main(argv)
+    (a,) = gestart
+    assert a.nep is not echt
+    if echt:
+        assert a.lock == tmp_path / "m.lock" and Path(a.bron).is_absolute()
+    assert env[runtime.KEY_ENV] == a.sleutel and env["PLATFORM_ANALYSE_ENABLED"] == "true"
+    assert not Path(env["PLATFORM_FACES_KEYS"]).exists()  # de tijdelijke map is weer weg
+    uit = capsys.readouterr().out
+    assert a.sleutel not in uit and "worker analyse" in uit and "op core 3" in uit
+    assert ("analyse echt (" if echt else "analyse nep (FakeAnalyseWorker)") in uit
+    assert ("SFace en het groeperen" if echt else "de echte analyse: --analyse nep") in uit
+    assert os.environ.get(runtime.KEY_ENV) is None
