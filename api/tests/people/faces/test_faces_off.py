@@ -1,7 +1,9 @@
 """Uit is onzichtbaar (fase 6, X2b; FEITEN van golf 6): zonder PLATFORM_ANALYSE_ENABLED (zoals
 0.8.0 en de .env van Jonas), of zonder de map PLATFORM_FACES_KEYS, is gezichten er niet.
 
-- elke nieuwe route geeft 409 faces_unavailable (ook aan een gast, na de inlog);
+- elke route van gezichten geeft na de inlog wat de stub van Z0b in 0.8.0 gaf: 501
+  not_built("X2"), ook aan een gast (de samenvoeging van golf 6; tests/uit080/ vergelijkt elke
+  route met 0.8.0); met de analyse aan maar zonder de map met sleutels 409 faces_unavailable;
 - GET en PATCH /me/photo-settings antwoorden precies als 0.8.0 (zonder aanmelding van X2);
 - /admin/search precies als 0.8.0: geen blok, faces_allowed en "opnieuw" 501 not_built vóór er
   iets verandert (ook niet de pauze uit dezelfde PATCH);
@@ -36,6 +38,7 @@ pytestmark = pytest.mark.anyio
 
 ID = "00000000-0000-4000-8000-000000000001"
 ADMIN = "/api/v1/admin/search"
+NOT_BUILT = {"message": "Nog niet gebouwd (X2)", "code": "not_built", "params": {"package": "X2"}}
 UNAVAILABLE = {
     "message": "Gezichtsherkenning is op deze server niet geïnstalleerd",
     "code": "faces_unavailable",
@@ -123,14 +126,15 @@ async def face_rows(settings) -> int:
         return int(a or 0) + int(b or 0)
 
 
-async def test_elke_route_van_gezichten_geeft_409_faces_unavailable(client, settings, huis):
-    """Eva en de gast Gijs, ook met een eigen foto: 409 met de vaste melding, geen job."""
-    assert not state.running(settings)
+async def test_elke_route_van_gezichten_antwoordt_als_in_080(client, settings, huis):
+    """Eva en de gast Gijs, ook met een eigen foto: 501 not_built("X2") zoals de stubs van
+    0.8.0, geen job."""
+    assert not settings.analyse_on and not state.running(settings)
     for who in ("h_eva", "h_gast"):
         for method, path, body in routes(str(huis["foto"])):
             r = await client.request(method, path, json=body, headers=huis[who])
-            assert r.status_code == 409, (who, path, r.text)
-            assert r.json()["detail"] == UNAVAILABLE, (who, path)
+            assert r.status_code == 501, (who, path, r.text)
+            assert r.json()["detail"] == NOT_BUILT, (who, path)
     assert await jobs_of(settings) == []
     assert await face_rows(settings) == 0
 

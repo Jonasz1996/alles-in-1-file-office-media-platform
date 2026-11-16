@@ -6,10 +6,13 @@ Deze router komt in main.py vóór routers/people.py, zodat /people/faces/... no
 krijgt bij GET /files/{id}/faces [], anders 404. Aan- en uitzetten gaat via PATCH
 /me/photo-settings (routers/photo_prefs.py, de schakelaar van app/people/faces/register.py).
 
-**Uit is onzichtbaar.** Draaien gezichten niet op dit platform (PLATFORM_ANALYSE_ENABLED uit, of
-geen PLATFORM_FACES_KEYS: state.running), dan geeft elke route hier 409 faces_unavailable, na de
-inlog; er komt dan geen job en geen bestand. Een gast krijgt 403 guest. Met gezichten uit voor de
-eigenaar: 409 faces_off (behalve de status, en wipe-unnamed).
+**Uit is onzichtbaar.** Met de analyse uit (PLATFORM_ANALYSE_ENABLED niet aan, of geen SQLite:
+analyse_on) antwoordt elke route hier na de inlog zoals de stub van Z0b in 0.8.0: 501
+not_built("X2"), ook voor een gast (FEITEN van golf 6; de samenvoeging van golf 6,
+tests/uit080/). Staat de analyse aan maar is er geen map PLATFORM_FACES_KEYS (state.running),
+dan 409 faces_unavailable. In beide gevallen komt er geen job en geen bestand. Draaien gezichten,
+dan krijgt een gast 403 guest, en met gezichten uit voor de eigenaar 409 faces_off (behalve de
+status, en wipe-unnamed).
 
 GET /people/faces/suggestions heeft twee vormen: zonder person per persoon
 (SuggestionsByPerson), met person de gezichten van die persoon (FacePage).
@@ -45,7 +48,7 @@ from app.people.faces_types import (
     FacesStatus,
     SuggestionsByPerson,
 )
-from app.routers.stubs import QueryInt
+from app.routers.stubs import QueryInt, not_built
 from app.search.live import own_live
 from app.security import CurrentUser
 from app.storage import BlobStore
@@ -77,6 +80,8 @@ def _limit(log: dict[uuid.UUID, list[float]], user: uuid.UUID, n: int, window: f
 
 def _running(settings: Settings) -> None:
     state.configure(settings)
+    if not settings.analyse_on:
+        raise not_built("X2")  # de analyse uit: zoals 0.8.0
     if not state.running(settings):
         raise errors.fail(
             409, "faces_unavailable", "Gezichtsherkenning is op deze server niet geïnstalleerd"

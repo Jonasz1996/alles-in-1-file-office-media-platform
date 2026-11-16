@@ -661,8 +661,12 @@ def test_zonder_analyse_ziet_niemand_iets_nieuws(
     instellingen = server.call(lisa, "GET", f"{API}/me/photo-settings", expect=200).json()
     assert instellingen["faces"] == "uit"
     assert instellingen["faces_available"] is False and instellingen["faces_forbidden"] is False
+    # Zoals de stub van 0.8.0 (de samenvoeging van golf 6; api/tests/uit080/)
     weg = server.call(lisa, "GET", f"{API}/people/faces/status")
-    assert (weg.status_code, weg.json()["detail"]["code"]) == (409, "faces_unavailable")
+    assert (weg.status_code, weg.json()["detail"]) == (
+        501,
+        {"message": "Nog niet gebouwd (X2)", "code": "not_built", "params": {"package": "X2"}},
+    )
     assert server.call(admin, "GET", f"{API}/admin/search", expect=200).json()["faces"] is None
 
     page = context_as(lisa).new_page()
