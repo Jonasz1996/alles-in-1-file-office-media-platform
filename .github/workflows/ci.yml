@@ -505,11 +505,12 @@ jobs:
       - name: Chromium voor Playwright
         run: uv run --with playwright python -m playwright install --with-deps chromium
       # Zonder media (fase 5, §4.8): die draait in e2e-media en e2e-media-perf. Zoeken (marker
-      # zoek, fase 6) draait hier mee; ocr (echte tesseract) niet: die draait in de job ocr van
-      # §4.6 (X1)
+      # zoek, fase 6) draait hier mee, ook analyse (de nep-worker, X2b); ocr (echte tesseract) niet:
+      # die draait in de job ocr van §4.6 (X1); analyse_echt (de echte container) ook niet: die
+      # draait in de job analyse-image (X2b)
       - run: >-
           uv run --with playwright python -m pytest ../e2e
-          -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
+          -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr and not analyse_echt"
       - name: Office met de nep-DS (marker office, fase 4 §4.4; in elke run)
         run: uv run --with playwright python -m pytest ../e2e -m office
 
@@ -1387,6 +1388,26 @@ jobs:
           ANALYSE_TEST_MODELLEN: ${{ runner.temp }}/analyse-modellen
           ANALYSE_TEST_OUT: ${{ runner.temp }}/analyse-image
         run: bash infra/single/tests/test_analyse_container.sh
+      # X2b: de e2e met de echte scan (marker analyse_echt) tegen hetzelfde image en dezelfde
+      # modellen, in een eigen compose-project. Precies 1 passed; overgeslagen is rood
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        with:
+          python-version: "3.12"
+      - name: De echte scan in de e2e (test_zoek_gezichten_echt.py, X2b)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        working-directory: api
+        env:
+          E2E_ANALYSE_IMAGE: platform:ci
+          E2E_ANALYSE_MODELLEN: ${{ runner.temp }}/analyse-modellen
+        run: |
+          set -o pipefail
+          uit="$RUNNER_TEMP/analyse-image/gezichten-echt.txt"
+          mkdir -p "$RUNNER_TEMP/analyse-image"
+          uv sync --frozen
+          uv run --with playwright python -m pytest ../e2e/test_zoek_gezichten_echt.py \
+            -m analyse_echt -q -rs | tee "$uit"
+          grep -Eq '^1 passed in ' "$uit"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1399,6 +1420,12 @@ jobs:
           echo "=== kort ==="
           echo "X2a de container analyse (test_analyse_container.sh):"
           sed 's/^/  /' "$RUNNER_TEMP/analyse-image/analyse.txt" 2> /dev/null || echo "  liep niet"
+          echo "X2b de echte scan in de e2e (test_zoek_gezichten_echt.py):"
+          if [ -f "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" ]; then
+            tail -n 1 "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
 
   # Fase 6, X3a (Keuze 73, 74, 83; BZ1–BZ4, BZ6 ruw en BZ7): het echte beeldmodel, SigLIP 2
   # B/32-256. Alleen als de omzetter, de tokenizer, onnxw.py of models.lock verandert, of wat de job
