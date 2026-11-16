@@ -125,32 +125,34 @@ knop.
 
 ## Afgevinkt met de e2e
 
-- [ ] `/zoeken`, Tab naar "Namen en tekst", →: `/zoeken?mode=image`, "Wat er op de foto staat"
+- [x] `/zoeken`, Tab naar "Namen en tekst", →: `/zoeken?mode=image`, "Wat er op de foto staat"
       gekozen en met de focus; de beschrijving van het veld is "Zoekt in je eigen foto's. Druk op
       Enter."; de zin "komt in een volgende versie" staat er niet.
-- [ ] Shift+Tab naar het veld, "strand", Enter: de twee oranje foto's bovenaan, dan de rest; de URL
+- [x] Shift+Tab naar het veld, "strand", Enter: de twee oranje foto's bovenaan, dan de rest; de URL
       is `/zoeken?q=strand&mode=image`; het raster heet "Foto's die passen bij 'strand'"; elke foto
       heeft zijn naam en datum; geen melding; de focus in het veld.
-- [ ] Tab naar het raster, →, Enter: de viewer met de tweede foto; Esc: dicht, de focus op die foto;
+- [x] Tab naar het raster, →, Enter: de viewer met de tweede foto; Esc: dicht, de focus op die foto;
       Esc: de focus in het veld.
-- [ ] Vanuit het raster een oranje foto openen, `i`, Tab naar "Meer zoals deze", Enter:
+- [x] Esc meteen na het sluiten van de viewer, ook als elk frame een halve seconde later komt: de
+      focus in het veld, en daar blijft hij.
+- [x] Vanuit het raster een oranje foto openen, `i`, Tab naar "Meer zoals deze", Enter:
       `/zoeken?mode=image&like=…` zonder `q`, de twee oranje foto's bovenaan, het raster heet
       "Foto's die lijken op de gekozen foto", de viewer is dicht en de focus staat op de eerste foto.
-- [ ] 50 foto's: het raster toont er 48; Tab naar "Meer foto's laden", Enter: `offset=48`, 50
+- [x] 50 foto's: het raster toont er 48; Tab naar "Meer foto's laden", Enter: `offset=48`, 50
       foto's, de knop weg en de focus op de 49e foto.
-- [ ] Een vraag die te lang duurt: de melding "Zoeken op beeld duurde te lang. Dit zijn de treffers
+- [x] Een vraag die te lang duurt: de melding "Zoeken op beeld duurde te lang. Dit zijn de treffers
       op naam en tekst." en de foto die op naam gevonden is, in hetzelfde raster.
-- [ ] Account → Foto's: "Zoeken op beeld" staat standaard uit, met de uitleg als beschrijving;
+- [x] Account → Foto's: "Zoeken op beeld" staat standaard uit, met de uitleg als beschrijving;
       Spatie: aan, "Opgeslagen."; Spatie: uit, de focus op het vinkje; na elke keer vraagt de pagina
       de stand opnieuw (na uit: "uit"). Daarna in de stand beeld:
       "Zoeken op beeld staat uit. Je zet het aan bij Account → Foto's.", geen raster en geen vraag
       aan `/search`.
-- [ ] `/beheer` → "Zoeken en foto's": het blok met de stand, het model, de container, "6 van 6
+- [x] `/beheer` → "Zoeken en foto's": het blok met de stand, het model, de container, "6 van 6
       foto's"; Enter op "Zet uit voor iedereen": uit, de focus op "Zet aan voor iedereen"; Eva ziet
       "Zoeken op beeld staat uit voor dit platform." zonder vraag aan `/search`; weer aan: Eva vindt
       haar foto's weer.
-- [ ] Geen verzoek naar een andere host, in geen van de tests.
-- [ ] Met de analyse uit: de stand beeld toont alleen "Zoeken op beeld komt in een volgende
+- [x] Geen verzoek naar een andere host, in geen van de tests.
+- [x] Met de analyse uit: de stand beeld toont alleen "Zoeken op beeld komt in een volgende
       versie." (ook in de beschrijving van het veld), zonder raster, melding of vraag aan
       `/search`; Account → Foto's zonder de uitleg van beeld; de viewer zonder "Meer zoals deze";
       `/beheer` met "Zoeken op beeld komt later in fase 6." en geen knop.

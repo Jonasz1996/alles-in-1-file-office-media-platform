@@ -58,8 +58,11 @@ web toont wat 0.8.0 toonde. Zie "Met de analyse uit" hieronder voor de tests die
 | `6552879` | `BeeldSwitch.tsx` (de schakelaar met de uitleg) en `viewer/LikeRow.tsx` ("Meer zoals deze") |
 | `f3ff04a` | `beeld.test.ts` (44 tests) |
 | `4c662e7` | na "Meer foto's laden" de focus op de eerste nieuwe foto (`BeeldResults.tsx`), zoals "Meer laden" van Z4; zonder dat viel de focus weg als de knop verdween |
-| (volgt) | `e2e/test_zoek_beeld.py` (7 tests) |
-| (volgt) | dit document, `toetsenbord-x3.md`, het runbook en de README |
+| `519a414` | dit document, `toetsenbord-x3.md`, het runbook en de README |
+| `2ae5e44` | `e2e/test_zoek_beeld.py` (7 tests) |
+| `4924b30` | `app/search/admin.py` (Z7): de motor, "namen klaar" en de herbouw in `GET /admin/search` uit één lezing van `search_state`, met `test_motor_namen_en_herbouw_uit_een_lezing`. Gevonden doordat `test_zoek_beheer.py` in `slim.sh` rood werd (Afwijking 14) |
+| `4e286b9` | de focus in het raster meteen, niet een frame later (`BeeldResults.tsx`), met de achtste e2e-test `test_esc_vlak_na_de_viewer_blijft_in_het_veld` en een test in `beeld.test.ts` (45). Gevonden doordat `test_zoek_beeld.py` in `slim.sh` rood werd (zie Gedraaid) |
+| de laatste | dit document na de eindruns (Gedraaid, Klaar als) en de vinkjes in `toetsenbord-x3.md` |
 
 ## Met de analyse uit: zoals 0.8.0
 
@@ -97,17 +100,17 @@ echte model is hier niets gemeten (huggingface.co is vanuit de sandbox dicht).
 
 | Wat | Hoe | Uitkomst |
 |---|---|---|
-| p95 van een beeldvraag via HTTP, alles behalve het tekstmodel (Keuze 78, K2-13) | `test_beeld_perf.py`, 20 vragen, één core voor het kind, grens 100 ms | warm 55.000: 58,5 en 54,5 ms; warm 100.000: 74,0 en 78,3 ms; eerste vraag na een nieuw (opgewarmd) bestand bij 100.000: 93,7 en 81,6 ms (vóór `bd10d6c` en `4d2644d`). Daarna 74,1 / 90,2 / 81,1 / 89,1 ms. Eén rode run op 9 (de eerste volle `tests_analyse`, getallen niet bewaard); grens niet veranderd |
+| p95 van een beeldvraag via HTTP, alles behalve het tekstmodel (Keuze 78, K2-13) | `test_beeld_perf.py`, 20 vragen, één core voor het kind, grens 100 ms | warm 55.000: 58,5 en 54,5 ms; warm 100.000: 74,0 en 78,3 ms; eerste vraag na een nieuw (opgewarmd) bestand bij 100.000: 93,7 en 81,6 ms (vóór `bd10d6c` en `4d2644d`). Daarna 74,1 / 90,2 / 81,1 / 89,1 ms. Eén rode run op 9: de eerste volle `tests_analyse`, nog vóór `bd10d6c` en `4d2644d`, met p95 114,8 ms (max 184,9) voor de eerste vraag na opwarmen bij 100.000; grens niet veranderd |
 | de fasen van die eerste vraag bij 100.000 | eigen tijdmeting in de test | het kind 25–43 ms, SQL 9–15 ms, treffers 3–6 ms, voortgang ±1 ms, samen 51–77 ms |
 | waar de spreiding vandaan komt | `perf`-tellers en losse runs | de matmul in het kind: 25 → 45–76 ms in losse runs onder last op de machine (100.000 × 768 f32 is 307 MB, meer dan de L3 van 260 MB; 55.000 past). Niet de GC, niet de runqueue, niet THP |
 | de GC in het testproces | `gc.callbacks` | ±298.000 objecten; een gen-2 100–170 ms (eens 107,9 ms midden in "sql"); met `gc.freeze` 2–6 ms. De echte app heeft `serve.freeze_heap` |
 | de voortgang (`indexing`) per beeldvraag | vóór en na `bd10d6c` | 4,7–9,4 ms → 0,7–1,3 ms |
 | BZ8: een import van 500 foto's met en zonder de triggers van beeld | `test_bz8_…`, blokken van 25, ABBA, som per kant | 1,011 en 0,993 (grens 1,10); met een heap van 3,3 miljoen objecten 1,035. Ter controle dat de test iets ziet: een `WHEN` die 4 ms duurt geeft 1,206, 8 ms 1,442 (rood) |
 | `test_install_beeld.sh` | als root | 120 controles groen, ±6,7 s; `test_install_analyse.sh` 128, media 127, search 209, env groen |
-| de eerste lading van de web (gz) | `node scripts/budget.mjs --json`, vóór (`5792c08`, eigen build) en na; daarna de drie bestanden ruw en met de hashnamen gelijkgemaakt vergeleken | 98.039 → 98.045 B. `index`, `shell` en `vendor` zijn ruw even groot (255, 90.787 en 218.792 B) en zonder de hashnamen byte voor byte gelijk: de 6 B zijn andere hashnamen in de bestandsnamen. Grens: +0 B |
-| het raster (gebied beeld: `BeeldResults`, `BeeldSwitch`, `status`, de teksten) | idem | 10.894 B (grens 15.000) |
-| "Meer zoals deze" (`LikeRow`, `status`, de teksten) | idem | 2.555 B (grens 3.000) |
-| `SearchPage` met wat het laadt | idem | 34.337 → 34.583 B (+246; `ImageHint` vraagt de stand via een dynamische import, Afwijking 3) |
+| de eerste lading van de web (gz) | `node scripts/budget.mjs --json`, vóór (`5792c08`, eigen build) en na; daarna de drie bestanden ruw en met de hashnamen gelijkgemaakt vergeleken | 98.039 → 98.040 B (op `4e286b9`). `index`, `shell` en `vendor` zijn ruw even groot (255, 90.787 en 218.792 B) en zonder de hashnamen byte voor byte gelijk: de 1 B is een andere hashnaam in een bestandsnaam. Grens: +0 B |
+| het raster (gebied beeld: `BeeldResults`, `BeeldSwitch`, `status`, de teksten) | idem | 10.883 B (grens 15.000) |
+| "Meer zoals deze" (`LikeRow`, `status`, de teksten) | idem | 2.558 B (grens 3.000) |
+| `SearchPage` met wat het laadt | idem | 34.337 → 34.580 B (+243; `ImageHint` vraagt de stand via een dynamische import, Afwijking 3) |
 
 Met het echte model (uit `beeld-model` op `26c49ca`, x3a.md): `embed_image` 39,8 ms per foto op
 één core, 1.508 per minuut (poort ≥ 500); een vraag (tokenizer en tekstmodel) p95 35,5 ms;
@@ -154,6 +157,15 @@ niet gemeten.
 13. **Na "Meer foto's laden"** gaat de focus naar de eerste nieuwe foto, zoals "Meer laden" van Z4
     (toetsenbord-z4.md); het ontwerp zei niet waar de focus dan staat. Zo valt hij niet weg als de
     knop na de laatste pagina verdwijnt.
+14. **Een fout in `app/search/admin.py` (Z7) hersteld** (`4924b30`). De eerste `slim.sh` van
+    stap 2 werd rood op `test_zoek_beheer.py::test_de_tab_met_alleen_het_toetsenbord`: na het
+    einde van de herbouw gaf `GET /admin/search` motor `like` zonder herbouw. De oorzaak: `state()`
+    las de cursor van `search_state` twee keer, voor de motor (`engine_for`) en daarna voor de
+    herbouw (`rebuild.progress`, op een eigen verbinding). Viel het laatste stuk daartussen, dan
+    klopte het antwoord niet met zichzelf. Nu één lezing; de motor zoals `engine_for`. Geen
+    contract veranderd (de vorm van `AdminSearch` is gelijk), geen test losser. De nieuwe test
+    laat het laatste stuk midden in de GET vallen en is zonder de wijziging rood met
+    `("like", False, None)`. Niet van X3b, maar het hield de controles van deze stap tegen.
 
 **Bestanden van anderen die X3b raakte** (alleen hotspots of tests die een exacte lijst
 hebben):
@@ -169,6 +181,8 @@ hebben):
   `test_analyse_contract_real.py`, `test_analyse_kinderen.py`, `test_worker_sandbox.py`: de nieuwe
   opdrachten en de nieuwe regels van `models.lock` (nieuwe exacte lijsten, niets losser);
 - `tests/search/test_search_logs.py` (Z1), `tests/test_conftest_volgorde.py`;
+- `app/search/admin.py` en `tests/search/test_admin_search.py` (Z7): de stand in één lezing
+  (Afwijking 14);
 - `infra/single/install.sh` (gedeeld), `.env.example` (een regel als commentaar),
   `tests/test_analyse_container.sh` (de nieuwe lijst opdrachten; `embed_text` zonder SigLIP is nu
   `model_missing` in plaats van `not_built`), `.github/workflows/ci.yml` (`ANALYSE_TESTS` 235,
@@ -199,8 +213,10 @@ Geen contract van A0 of Z0b is veranderd (`app/search/types.py`, `web/src/search
    van Keuze 82: dan geeft "Meer zoals deze" niets op een foto met een gevonden gezicht, en gelden
    voor beeld de regels van gezichten. Die regel is niet gebouwd; dat is een beslissing na de
    meting.
-6. **`test_beeld_perf.py`** eens rood in negen runs onder last op de machine (de eerste vraag na
-   een nieuw bestand bij 100.000). In CI in de gaten houden; de grens blijft 100 ms.
+6. **`test_beeld_perf.py`** eens rood in negen runs (de eerste vraag na een nieuw bestand bij
+   100.000: p95 114,8 ms), in de eerste volle `tests_analyse`, nog vóór `bd10d6c` en `4d2644d`.
+   Daarna groen, met p95 tot 90,2 ms: weinig ruimte onder de 100 ms. In CI in de gaten houden; de
+   grens blijft 100 ms.
 7. **`infra/single/README.md`** zegt bij de analyse "vóór 0.8.1 doet de app er nog niets mee:
    alleen de status". Met X2b en X3b op de branch klopt dat niet meer voor wie de analyse nu al
    aanzet; die zin is van de analyse als geheel (X2), dus voor de samenvoeging of I2.
@@ -222,15 +238,15 @@ Jonas.
 | De echte omzetting (BZ2) in `beeld-model`, de sha256's in `models.lock` | `beeld-model` op `26c49ca`; `0a90be0` | gedaan; de pins van de uitkomst moeten na de samenvoeging opnieuw (Open 2) |
 | De opdrachten in de container met nepmodellen; `rank` gelijk aan brute force | `tests_analyse/test_beeld_ops.py` (13), `test_beeld_cache.py` (9) | groen in de volle `tests_analyse` van stap 1; in CI (`api-analyse`, 235) |
 | Zoeken: alleen eigen, levende foto's; elk filter; de terugval; geen vector en geen score; schone logs; `429`; een nieuwe vraag stopt de oude | `test_beeld_search.py`, `test_beeld_access.py`, `test_beeld_never_out.py`, `test_search_logs.py`, `test_beeld_events.py::test_beeld_fallback` | groen in stap 1 (zie Gedraaid); in CI |
-| Uit en wissen: 0 rijen, geen bestand, `forget`; `blob_embed` niet in de reservekopie; de beheerder kan uitzetten | `test_beeld_off.py`, `test_beeld_events.py` (`off`, `wipe`, `admin_off`), `test_backup_gezichten.py` (A0); `e2e/test_zoek_beeld.py` (schakelaar, beheerder) | API: groen in stap 1 (zie Gedraaid); e2e: zie Gedraaid |
+| Uit en wissen: 0 rijen, geen bestand, `forget`; `blob_embed` niet in de reservekopie; de beheerder kan uitzetten | `test_beeld_off.py`, `test_beeld_events.py` (`off`, `wipe`, `admin_off`), `test_backup_gezichten.py` (A0); `e2e/test_zoek_beeld.py` (schakelaar, beheerder) | API: groen in stap 1 en in de volle suite op `4924b30` (Gedraaid); e2e: groen op `4e286b9` |
 | De kwaliteitspoort (BZ4) groen | `test_beeld_kwaliteit.py` in `beeld-model` | **open**: in CI na de push, met `beeld.tsv` (Open 1) |
 | De tijden: p95 ≤ 100 ms zonder tekstmodel; ≤ 250 ms warm met het echte model, ook bij 100.000 en de eerste vraag; ≥ 500 foto's per minuut | `test_beeld_perf.py`; `test_beeld_echt_perf.py` in `beeld-model` | ≤ 100 ms: groen, eens rood in 9 (Metingen, Open 6); ≥ 500 per minuut: 1.508 op `26c49ca`; ≤ 250 ms met het echte model: in CI |
 | Het geheugen (BZ5) | — | **open** (Open 3) |
 | BZ10 gemeten | `beeld-kwaliteit --personen` | **op de LXC**, niet gedaan (Open 5) |
 | `test_install_beeld.sh` groen in `infra`; `BEELD=uit` werkt; een mislukking is niet fataal | `test_install_beeld.sh` | 120 controles groen hier (stap 1); in CI |
-| De web: vitest en e2e met alleen het toetsenbord groen; de eerste lading +0 B; het raster ≤ 15 kB; `toetsenbord-x3.md` | `beeld.test.ts` (44), `e2e/test_zoek_beeld.py` (7), `npm run budget` | zie Gedraaid en Metingen |
+| De web: vitest en e2e met alleen het toetsenbord groen; de eerste lading +0 B; het raster ≤ 15 kB; `toetsenbord-x3.md` | `beeld.test.ts` (45), `e2e/test_zoek_beeld.py` (8), `npm run budget` | groen op `4e286b9` (Gedraaid); +0 B ruw, 10.883 B en 2.558 B (Metingen); de vinkjes in `toetsenbord-x3.md` |
 | Het blok op `/beheer`, het runbook, de README en het document | `BeeldBlock.tsx`, `searchTab.test.ts`, `beeld.test.ts`; dit document | gedaan |
-| `e2e/slim.sh` groen, alle bestaande jobs groen (ook `zoek-perf` met 200 ms) | `slim.sh`, de e2e-set van CI hier; de rest in CI | zie Gedraaid; `zoek-perf` in CI |
+| `e2e/slim.sh` groen, alle bestaande jobs groen (ook `zoek-perf` met 200 ms) | `slim.sh`, de e2e-set van CI hier; de rest in CI | `slim.sh` en de e2e-set groen op `4e286b9` (Gedraaid); `zoek-perf` en de andere jobs in CI |
 
 ### Bewijs BZ1–BZ10
 
@@ -259,4 +275,27 @@ met de nep-worker: `test_beeld_upload_then_found`, `test_beeld_other_uploader`,
 
 ## Gedraaid
 
-(volgt)
+Alles op deze machine, naast X2b. De zware runs (de volle api-suite, `tests_analyse`, `slim.sh`,
+de e2e) onder het gedeelde slot en `taskset -c 0-2`.
+
+**Stap 1** (de container, de app, `install.sh`):
+
+| Wat | Op | Uitkomst |
+|---|---|---|
+| de volle api-suite, eenmaal | `4d2644d` | 4 rood, 6.541 groen, 2 overgeslagen, 240 niet gekozen (46:46). De vier: `test_own_live.py::test_elke_fotofunctie_gebruikt_own_live` (hersteld in `866595c`), `test_jobs_lanes.py::test_de_bestaande_soorten_veranderen_niet` (`9aa699d`), `test_conftest_volgorde.py::test_elke_submap_met_een_conftest_staat_in_de_lijst` (`ff5dd6d`) en `test_beeld_gen.py::test_bz8_…` (1,101 in de volle suite, boven 1,10; de meting in blokken om de beurt, `5792c08`). Daarna alleen gericht: groen |
+| `test_search_logs.py` en de tests van de container, gericht | vóór `70ba0f0` | 2 rood in `test_search_logs.py` (de test hing aan de volgorde van de logregels) en de oude exacte lijst van opdrachten in `test_worker_sandbox.py`; beide in `70ba0f0` |
+| `tests_analyse` met `ANALYSE=aan` | vóór `70ba0f0`; daarna `5792c08` | de eerste keer 2 rood en 233 groen: `test_worker_sandbox.py` (hierboven) en `test_beeld_perf.py` (Open 6); op `5792c08` drie keer 235 groen |
+| `test_install_beeld.sh`, `test_install_analyse.sh`, `_media`, `_search`, `_env` | `0a90be0` en later | 120, 128, 127 en 209 controles groen; env groen |
+
+**Stap 2** (de web, e2e, de documenten):
+
+| Wat | Op | Uitkomst |
+|---|---|---|
+| de web: `typecheck`, `npm test`, `build`, `check:i18n --strict`, `budget` (build en budget direct na elkaar) | `4e286b9` | groen: 121 bestanden en 1.311 tests, 0 meldingen in 290 bestanden, binnen het budget (Metingen) |
+| `e2e/test_zoek_beeld.py`, de eerste keer (toen 7) | vóór `2ae5e44` | 2 rood door fouten in de test zelf (de volgorde van `q` en `mode` in de URL; een antwoord dat te laat gelezen werd); daarna 7 groen in 29 s |
+| eindketen 1: `slim.sh`, daarna de e2e-set van CI | `2ae5e44` | `slim.sh` stap 1: 1.307 groen (817 s); stap 3: 1 rood, 107 groen, `test_zoek_beheer.py::test_de_tab_met_alleen_het_toetsenbord` (Afwijking 14, hersteld in `4924b30`). De e2e-set na 65 groen gestopt (SIGINT, opruimen netjes): de code veranderde eronder |
+| de volle api-suite, eenmaal (de api veranderde in `4924b30`) | `4924b30` | 6.532 groen, 2 overgeslagen, 240 niet gekozen, 1 rood en 16 fouten (46:05). Alle 17 waren `OSError: AF_UNIX path too long` in `tests/ocr/test_ocr_worker.py` en `tests/analyse/test_analyse_monitor.py::test_down_als_niemand_luistert`: ik gaf `--basetemp` een lange map in mijn scratch, en de sockets van die tests werden langer dan de 108 tekens van Linux. Die tests opnieuw met de gewone basetemp: 18 groen. Na `4924b30` is geen code van de api meer veranderd |
+| eindketen 2: `slim.sh` | `4924b30` | stap 1: 1.308 groen (833 s); stap 3: 1 rood, 107 groen: `test_zoek_beeld.py::test_zoeken_op_beeld_met_alleen_het_toetsenbord`. Na Esc in de viewer en meteen nog een Esc stond de focus niet in het veld. De oorzaak: `moveTo` in `BeeldResults.tsx` zette de focus in een `requestAnimationFrame`; op een drukke machine kwam dat frame na de tweede Esc en zette de focus terug op de foto. Hersteld in `4e286b9` (de focus meteen; elke cel staat al in de pagina). De nieuwe test `test_esc_vlak_na_de_viewer_blijft_in_het_veld` laat elk frame een halve seconde later komen: rood op de oude build, groen op de nieuwe. De keten daarna gestopt (de web moest veranderen) |
+| eindketen 3: `slim.sh` | `4e286b9` | stap 1: 1.308 groen (820 s); stap 3: 109 groen (222 s) |
+| eindketen 3: de e2e-set van CI (`-m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"`) | `4e286b9` | 246 groen, 135 niet gekozen (892 s) |
+| eindketen 3: `e2e/test_zoek_beeld.py` | `4e286b9` | 8 groen (35 s) |
