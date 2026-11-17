@@ -22,6 +22,7 @@ import pytest
 from app import cli, jobs, main
 from app.analyse import client, lock, monitor, wire
 from app.analyse.wire import Child, Code, Op
+from app.beeld import jobs as bjobs
 from app.config import Settings, get_settings
 from app.main import app
 from app.models import Job
@@ -382,6 +383,9 @@ async def started(tmp_path, monkeypatch, **env):
             yield
     finally:
         get_settings.cache_clear()
+        # Met de analyse aan meldt de lifespan beeld aan (bjobs.on_start); weer weg, zoals
+        # tests/beeld/conftest.py doet, zodat een volgende test de soorten van 0.8.0 ziet
+        bjobs.disable()
         for name in ("certs", "security"):
             with contextlib.suppress(AttributeError, KeyError):
                 delattr(app.state, name)
