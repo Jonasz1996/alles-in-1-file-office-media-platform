@@ -7,7 +7,10 @@ slimme albums, sinds Z3 (stap 1) de plek, de kaart, de plaatsen en de bronnen, e
 (stap 2) share-check en de duplicaten.
 
 Z0b (Keuze 55) zette de routes van gezichten (X2) en zoeken op beeld (X3) erbij, ook als stub;
-zoeken met mode=image of like geeft 501 not_built("X3").
+zoeken met mode=image of like geeft 501 not_built("X3"). Golf 6 bouwde ze (X2b: tests/people/faces/,
+X3b: tests/beeld/), maar met de analyse uit (zoals hier en in 0.8.0) antwoorden ze na de inlog
+nog zoals de stubs: 501 not_built("X2") en ("X3") (de FEITEN van golf 6; tests/uit080/ vergelijkt
+elke route met 0.8.0). Daarom staan ze hier niet in BUILT.
 """
 
 from __future__ import annotations
@@ -297,6 +300,7 @@ BUILT = {
     ("POST", "/api/v1/admin/search/retry"),
     # X1: tekst herkennen (tests/ocr/test_ocr_limits.py, test_ocr_access.py)
     ("POST", "/api/v1/files/{node_id}/ocr"),
+    # X2b en X3b (golf 6) niet: met de analyse uit geven hun routes 501 zoals 0.8.0
 }
 # De vraag die een stub nodig heeft om bij de route te komen
 QUERY = {
@@ -392,7 +396,8 @@ async def test_een_vast_getal_in_de_query_string_komt_bij_de_stub(client, admin)
     """Een keuze uit vaste getallen in de query (?size=96, ?hidden=1) komt als tekst binnen, zoals
     de web hem stuurt (wireQuery). Literal[96, 192] alleen neemt geen "96": dan gaf elke waarde
     422 en kwam niemand bij de route (gevonden bij de samenvoeging van Z0b). Een stub geeft dan
-    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1)."""
+    501, een gebouwde route zijn gewone antwoord (Z6: GET /people?hidden=1), een route van
+    gezichten met ANALYSE uit ook 501 (X2b, zoals 0.8.0)."""
     headers, _ = admin
     schema = app.openapi()["paths"]
     gezien = set()
@@ -551,8 +556,35 @@ async def test_zoeken_op_beeld_is_van_x3(client, admin):
         assert r.status_code == 422, (params, r.status_code)
 
 
+async def test_gezichten_uit_antwoorden_als_in_080(client, admin, settings):
+    """X2b: met ANALYSE uit (zoals 0.8.0) draaien gezichten niet. Elke route van gezichten geeft
+    na de inlog 501 not_built("X2"), zoals de stub in 0.8.0 (een gast en een ander: tests/people/
+    faces/test_faces_off.py); zonder inlog 401 (test_zonder_login_geen_toegang_en_beheer_...)."""
+    assert not settings.analyse_on
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    node = (await put(client, headers, root_id, "foto.jpg", b"\xff\xd8\xff")).json()
+    gezien = []
+    for method, path, body, _who, *_rest, package in ENDPOINTS:
+        if package != "X2":
+            continue
+        params = {"size": "96"} if path.endswith("/crop") else {}
+        r = await client.request(
+            method, url_of(path, node["id"]), json=body, params=params, headers=headers
+        )
+        assert r.status_code == 501, (method, path, r.status_code, r.text)
+        assert r.json()["detail"] == {
+            "message": "Nog niet gebouwd (X2)",
+            "code": "not_built",
+            "params": {"package": "X2"},
+        }, (method, path)
+        gezien.append((method, path))
+    assert len(gezien) == 12
+
+
 async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
-    """De bodies van X2 worden gelezen voor de stub antwoordt: een fout geeft 422."""
+    """De bodies van X2 worden gelezen voor de route antwoordt: een fout geeft 422, ook als
+    gezichten niet draaien (dan is het antwoord daarna 501 not_built, zoals 0.8.0)."""
     headers, _ = admin
     url = "/api/v1/people/faces/confirm"
     for body in (
@@ -565,7 +597,7 @@ async def test_gezichten_bevestigen_met_id_of_naam_niet_allebei(client, admin):
         r = await client.post(url, json=body, headers=headers)
         assert r.status_code == 422, (body, r.status_code)
     r = await client.post(url, json={"faces": [ID], "person_id": ID}, headers=headers)
-    assert r.status_code == 501
+    assert r.status_code == 501 and r.json()["detail"]["params"] == {"package": "X2"}
     r = await client.get(f"/api/v1/people/faces/{ID}/crop", params={"size": 128}, headers=headers)
     assert r.status_code == 422
 

@@ -7,7 +7,8 @@
 // bovenaan, AppBarSearch.tsx, gaat met een gewone link naar /zoeken).
 //
 // Z0b (Keuze 80): zoeken op beeld (X3) gaat via dezelfde search() met mode "image" en q of like;
-// beeldStatus() is GET /photos/beeld. Tot X3 er is, geeft de API daar 501 not_built.
+// beeldStatus() is GET /photos/beeld. Met de analyse uit geeft de API op beide 501 not_built
+// ("X3"), zoals in 0.8.0.
 
 import { api, errorFromBody, fetchOrNetworkError } from "../api";
 import type { Analysis, BeeldStatus, PageWords, SearchPage, SearchParams, Suggestions } from "./types";

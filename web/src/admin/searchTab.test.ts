@@ -17,19 +17,21 @@ import type { AdminBeeld, AdminFaces, AdminSearch } from "./searchApi";
 
 // De tab "Zoeken en foto's" op /beheer (Z7, Keuze 51), met onderaan de blokken "Gezichten" (X2)
 // en "Zoeken op beeld" (X3) van Z0b (Keuze 55). Zonder X2 en X3 (faces en beeld null) houden die
-// blokken precies hun kop en "komt later", zonder getallen of andere verzonnen stand.
+// blokken precies hun kop en één zin, zonder getallen of andere verzonnen stand: sinds 0.8.1 (I2)
+// dat het niet draait en dat de eindtekst van het installatiescript zegt waarom (review I2, U2), in
+// plaats van "komt later".
 const FACES_NL =
   '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Gezichten</h3>' +
-  '<p class="muted">Gezichten herkennen komt later in fase 6.</p></section>';
+  '<p class="muted">Gezichten herkennen draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>';
 const BEELD_NL =
   '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Zoeken op beeld</h3>' +
-  '<p class="muted">Zoeken op beeld komt later in fase 6.</p></section>';
+  '<p class="muted">Zoeken op beeld draait niet op deze server: de analyse staat uit, of is niet helemaal geïnstalleerd. Waarom staat in de eindtekst van het installatiescript, bij Gezichten (de container analyse). Stond daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan bij Account → Foto&#x27;s. Zie docs/runbooks/analyse.md.</p></section>';
 const FACES_EN =
   '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Faces</h3>' +
-  '<p class="muted">Face recognition comes later in phase 6.</p></section>';
+  '<p class="muted">Face recognition is not running on this server: the analysis is off, or not fully installed. The end text of the install script says why, at Gezichten (de container analyse). If it says ANALYSE=uit, run the script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.</p></section>';
 const BEELD_EN =
   '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Search by image</h3>' +
-  '<p class="muted">Search by image comes later in phase 6.</p></section>';
+  '<p class="muted">Search by image is not running on this server: the analysis is off, or not fully installed. The end text of the install script says why, at Gezichten (de container analyse). If it says ANALYSE=uit, run the script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.</p></section>';
 
 // Laden: alleen de kop en "laden" (de eerste GET loopt nog)
 const LOADING_NL =
@@ -141,7 +143,7 @@ describe("de tab Zoeken en foto's met de blokken van X2 en X3 (Z0b)", () => {
     expect(SEARCH_TAB_AREAS).toEqual(["photos_faces", "beeld"]);
   });
 
-  it("nl: onder het deel van Z7 eerst Gezichten, dan Zoeken op beeld, elk alleen met komt later", () => {
+  it("nl: onder het deel van Z7 eerst Gezichten, dan Zoeken op beeld, elk alleen met de zin dat het uitstaat", () => {
     const html = view(state());
     expect(html.endsWith(FACES_NL + BEELD_NL)).toBe(true);
     expect(sections(html)).toEqual(["admin-search-title", ...PARTS, "admin-faces-title", "admin-beeld-title"]);
@@ -366,28 +368,53 @@ describe("de tab Zoeken en foto's (Z7)", () => {
   });
 });
 
-describe("de blokken Gezichten en Zoeken op beeld met een stand (alleen aantallen, Keuze 51)", () => {
-  it("Gezichten: aantallen, nooit een naam, een gebruiker of een model", () => {
+describe("de blokken Gezichten (Keuze 67) en Zoeken op beeld (alleen aantallen, Keuze 51) met een stand", () => {
+  it("Gezichten (X2b, Keuze 67): de analyse, de modellen, de rij en aantallen; nooit een naam of een gebruiker", () => {
     const html = renderToStaticMarkup(createElement(FacesBlock, { faces: FACES }));
     expect(html).toBe(
       '<section aria-labelledby="admin-faces-title"><h3 id="admin-faces-title">Gezichten</h3>' +
         '<dl class="admin-totals" data-search="faces">' +
-        "<div><dt>Gezichten</dt><dd>1.234</dd></div>" +
-        "<div><dt>Waarvan benoemd</dt><dd>56</dd></div>" +
-        "<div><dt>Gebruikers met gezichten aan</dt><dd>3</dd></div>" +
-        "<div><dt>Foto&#x27;s in de rij</dt><dd>40</dd></div>" +
-        "<div><dt>Mislukt</dt><dd>3</dd></div></dl></section>",
+        '<div><dt>Analyse</dt><dd data-search="faces-analyse">werkt</dd></div>' +
+        '<div><dt>Modellen</dt><dd data-search="faces-models">detector, versie 1: sha256 klopt</dd></div>' +
+        '<div><dt>Grenzen</dt><dd data-search="faces-limits">zonder grenzen</dd></div>' +
+        '<div><dt>Gebruikers met gezichten aan</dt><dd data-search="faces-users">3</dd></div>' +
+        '<div><dt>Rij analyse</dt><dd data-search="faces-queue">40 wachtend, 12 in het laatste uur</dd></div>' +
+        '<div><dt>Mislukt</dt><dd data-search="faces-failed">decode 2, timeout 1</dd></div>' +
+        '<div><dt>Totaal</dt><dd data-search="faces-total">1.234 gezichten, waarvan 56 benoemd; ±1000 B in de database</dd></div>' +
+        '<div><dt>Snelheid</dt><dd data-search="faces-speed">niet gemeten (app.cli analyse-bench)</dd></div>' +
+        '<div><dt>Kwaliteit</dt><dd data-search="faces-quality">niet gemeten</dd></div></dl>' +
+        '<p><label class="check"><input type="checkbox" data-search="faces-allowed" checked=""/>' +
+        "Gezichtsherkenning toestaan</label></p>" +
+        '<p class="muted">Reservekopieën die het platform maakt, bevatten geen gezichten. Maak je zelf snapshots ' +
+        "van /data (ZFS, restic), dan staan ze daar versleuteld in. Na &#x27;uit&#x27; zijn ze daar niet meer te " +
+        "lezen, zolang de map met sleutels niet in die snapshots zit.</p>" +
+        '<p><button type="button" class="btn" data-search="faces-retry">Mislukte opnieuw</button></p></section>',
     );
   });
 
-  it("Zoeken op beeld: bekeken, vragen het afgelopen uur en mislukt", () => {
+  // X3b (Keuze 82): het hele blok, met de drie knoppen, het model, de container, mislukt per code,
+  // het afgelopen uur, de ruimte, bench en kwaliteit, en de vaste zin over snapshots
+  it("Zoeken op beeld: de stand, de knoppen, aantallen per code en de vaste zin", () => {
     const html = renderToStaticMarkup(createElement(BeeldBlock, { beeld: BEELD }));
     expect(html).toBe(
-      '<section aria-labelledby="admin-beeld-title"><h3 id="admin-beeld-title">Zoeken op beeld</h3>' +
+      '<section aria-labelledby="admin-beeld-title"><div class="admin-head"><h3 id="admin-beeld-title">Zoeken op beeld</h3></div>' +
+        '<p data-search="beeld-on">Zoeken op beeld: <span class="badge ok">aan</span></p>' +
+        '<p><button type="button" class="btn" data-search="beeld-switch">Zet uit voor iedereen</button> ' +
+        '<button type="button" class="btn" data-search="beeld-rebuild">Opnieuw berekenen</button> ' +
+        '<button type="button" class="btn danger" data-search="beeld-wipe">Beeldindex wissen</button></p>' +
         '<dl class="admin-totals" data-search="beeld">' +
-        "<div><dt>Bekeken</dt><dd>900 van 1.000 foto&#x27;s</dd></div>" +
-        "<div><dt>Vragen het afgelopen uur</dt><dd>8</dd></div>" +
-        "<div><dt>Mislukt</dt><dd>4</dd></div></dl></section>",
+        '<div><dt>Model</dt><dd data-search="beeld-model">SigLIP 2 B/32-256 (Google, Apache-2.0), int8. In orde.</dd></div>' +
+        '<div><dt>Container analyse</dt><dd data-search="beeld-analyse">draait</dd></div>' +
+        '<div><dt>Bekeken</dt><dd data-search="beeld-seen">900 van 1.000 foto&#x27;s</dd></div>' +
+        '<div><dt>Mislukt</dt><dd data-search="beeld-failed">decode: 4</dd></div>' +
+        '<div><dt>Het afgelopen uur</dt><dd data-search="beeld-hour">8 vragen, p95 300 ms; terug naar gewoon zoeken: ' +
+        "0 keer te traag, 0 keer zonder container, 0 keer zonder model</dd></div>" +
+        '<div><dt>Ruimte</dt><dd data-search="beeld-space">1 B in de database, 2 B in de cache, 3 B aan modellen</dd></div>' +
+        '<div><dt>beeld-bench</dt><dd data-search="beeld-bench">nog niet gedaan</dd></div>' +
+        '<div><dt>beeld-kwaliteit</dt><dd data-search="beeld-quality">nog niet gedaan</dd></div></dl>' +
+        '<p class="muted">De vectoren beschrijven wat er op een foto staat. Reservekopieën die het platform maakt, ' +
+        "bevatten ze niet. Maak je zelf snapshots van /data (ZFS, restic), dan staan ze daar wel in, tot je die " +
+        "snapshot weggooit.</p></section>",
     );
   });
 

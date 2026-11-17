@@ -1,6 +1,7 @@
-// De regels van scripts/budget.mjs voor fase 6 (Z0 en Z0b): de grenzen, de pagina's, de lazy
-// plekken en de delen van gezichten (X2) en zoeken op beeld (X3). Exacte lijsten: een regel erbij
-// of eraf laat deze test falen. Of de build binnen de grenzen blijft, meet `npm run budget` zelf.
+// De regels van scripts/budget.mjs voor fase 6 (Z0, Z0b en I2): de grenzen, de pagina's (ook
+// /over), de lazy plekken en de delen van gezichten (X2) en zoeken op beeld (X3). Exacte lijsten:
+// een regel erbij of eraf laat deze test falen. Of de build binnen de grenzen blijft, meet
+// `npm run budget` zelf.
 
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -26,7 +27,7 @@ function files(dir) {
 }
 
 describe("de regels van het budget (fase 6)", () => {
-  it("de grenzen: precies deze, met faces, beeld en likeRow van Z0b", () => {
+  it("de grenzen: precies deze, met faces, beeld en likeRow van Z0b en about van I2", () => {
     expect(LIMITS).toEqual({
       initialJs: 100 * KB,
       filesRoute: 45 * KB,
@@ -45,16 +46,18 @@ describe("de regels van het budget (fase 6)", () => {
       faces: 12 * KB,
       beeld: 15 * KB,
       likeRow: 3 * KB,
+      about: 8 * KB,
     });
   });
 
-  it("de pagina's van fase 6 met hun woordenboeken en hun grens", () => {
+  it("de pagina's van fase 6 met hun woordenboeken en hun grens, ook /over (I2)", () => {
     expect(ZOEK_PAGES).toEqual({
       "src/search/SearchPage.tsx": [["browser", "sharing", "search"], "search"],
       "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
       "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
       "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
       "src/photos/people/PersonPage.tsx": [["photos_people"], "people"],
+      "src/about/AboutPage.tsx": [["about"], "about"],
     });
   });
 
@@ -92,11 +95,19 @@ describe("de regels van het budget (fase 6)", () => {
       "src/dupes/api.ts",
       "src/ocr/OcrRow.tsx",
       "src/ocr/PhotoWords.tsx",
+      "src/about/AboutPage.tsx",
+      "src/about/sources.ts",
     ]) {
       expect(ZOEK_MODULE.test(m), m).toBe(true);
     }
     // De blokken op /beheer zitten in de chunk van de tab, niet bij de modules van fase 6
-    for (const m of ["src/photos/PhotosPage.tsx", "src/admin/FacesBlock.tsx", "src/admin/BeeldBlock.tsx", "src/viewer/LikeRow.tsx"]) {
+    for (const m of [
+      "src/photos/PhotosPage.tsx",
+      "src/admin/FacesBlock.tsx",
+      "src/admin/BeeldBlock.tsx",
+      "src/viewer/LikeRow.tsx",
+      "src/Account.tsx",
+    ]) {
       expect(ZOEK_MODULE.test(m), m).toBe(false);
     }
     expect([...ZOEK_INITIAL].sort()).toEqual(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);

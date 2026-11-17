@@ -178,6 +178,17 @@ class Settings(BaseSettings):
     faces_min_px: int = 40
     faces_max_per_photo: int = 40
     faces_group_max: int = 60000
+    # Zoeken op beeld (X3, Keuze 77, 78): de klok op de tocht naar de container (ms), vragen
+    # tegelijk en wachtenden voor de hele app, kandidaten uit rank, previews per embed_image, het
+    # bestand per eigenaar hooguit eens per zoveel seconden opnieuw, en de map met die bestanden
+    # (leeg: data_dir/cache/beeld). Alleen met analyse_on doet iets hiervan mee.
+    beeld_deadline_ms: int = Field(default=800, ge=50, le=30_000)
+    beeld_inflight: int = Field(default=1, ge=1, le=16)
+    beeld_queue: int = Field(default=10, ge=0, le=1000)
+    beeld_top_k: int = Field(default=1000, ge=1, le=1000)
+    beeld_batch: int = Field(default=16, ge=1, le=16)
+    beeld_rebuild_s: float = Field(default=300.0, ge=0)
+    beeld_cache: Path | None = None
 
     @model_validator(mode="after")
     def _geo_paths(self) -> "Settings":
@@ -205,6 +216,14 @@ class Settings(BaseSettings):
         gezichten en beeld uit, zoals FTS (Keuze 76; review A0, veilig F5). De monitor zegt dan
         down met no_sqlite, de rij analyse draait niet en de schakelaars gaan niet aan."""
         return self.analyse_enabled and self.db_url.startswith("sqlite")
+
+    @property
+    def beeld_dir(self) -> Path:
+        """De bestanden per eigenaar van zoeken op beeld (Keuze 76): PLATFORM_BEELD_CACHE, of
+        data_dir/cache/beeld. Een cache: niet in de reservekopie."""
+        return (
+            self.beeld_cache if self.beeld_cache is not None else self.data_dir / "cache" / "beeld"
+        )
 
     @property
     def blob_dir(self) -> Path:

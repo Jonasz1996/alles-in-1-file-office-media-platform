@@ -37,6 +37,10 @@
 // - src/photos/faces/ hoort bij de modules van fase 6 (nooit in de eerste lading of in
 //   Bestanden), en LikeRow is een lazy plek zoals Plek en Personen.
 //
+// Fase 6 (I2): de pagina /over (src/about/AboutPage.tsx met het gebied about, ≤ 8 kB), een rij
+// in ZOEK_PAGES; src/about/ hoort bij de modules die nooit in de eerste lading of in Bestanden
+// zitten. De regel in de routetabel zelf zit wel in de eerste lading (een paar tientallen bytes).
+//
 // Gebruik: node scripts/budget.mjs [--json]
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -72,6 +76,8 @@ export const LIMITS = {
   faces: 12 * KB,
   beeld: 15 * KB,
   likeRow: 3 * KB,
+  // Fase 6 (I2): /over, vaste tekst zonder aanroepen
+  about: 8 * KB,
 };
 
 /** Woordenboeken die in de eerste lading mogen (statisch in i18n/index.ts). */
@@ -97,12 +103,13 @@ export const ZOEK_PAGES = {
   "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
   "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
   "src/photos/people/PersonPage.tsx": [["photos_people"], "people"],
+  "src/about/AboutPage.tsx": [["about"], "about"],
 };
 /** Modules van fase 6; in de eerste lading alleen ZOEK_INITIAL (het zoekveld, Keuze 45). Met
  * gezichten (src/photos/faces/, X2) erbij; het raster van beeld valt onder src/search/. X1 zette
  * src/ocr/ erbij (de rij Tekst in beeld en de woorden in een foto): ook nooit in de eerste lading
- * of in de route Bestanden. */
-export const ZOEK_MODULE = /^src\/(search|dupes|ocr|photos\/(map|people|faces))\//;
+ * of in de route Bestanden. I2 zette src/about/ erbij (de pagina /over). */
+export const ZOEK_MODULE = /^src\/(search|dupes|ocr|about|photos\/(map|people|faces))\//;
 export const ZOEK_INITIAL = new Set(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);
 /** De lazy plekken van fase 6: nooit in de eerste lading en nooit in de route Bestanden. LikeRow
  * kwam erbij in Z0b (X3). */

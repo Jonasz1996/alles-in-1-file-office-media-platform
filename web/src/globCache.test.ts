@@ -23,6 +23,8 @@ describe("import.meta.glob zonder typeargument (de module-cache van vitest)", ()
       .filter((p) => CALL.test(sources[p] ?? ""))
       .sort();
     expect(callers).toEqual([
+      // De licentieteksten van de modellen naast /over (I2)
+      "./about/about.test.ts",
       "./i18n/i18n.test.ts",
       "./i18n/index.ts",
       "./player/playback.ts",
@@ -36,5 +38,6 @@ describe("import.meta.glob zonder typeargument (de module-cache van vitest)", ()
     expect(wrong).toEqual([]);
     expect((sources["./i18n/index.ts"] ?? "").match(PLAIN)).toHaveLength(2);
     expect((sources["./player/playback.ts"] ?? "").match(PLAIN)).toHaveLength(1);
+    expect((sources["./about/about.test.ts"] ?? "").match(PLAIN)).toHaveLength(1);
   });
 });

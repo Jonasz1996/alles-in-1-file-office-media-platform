@@ -91,13 +91,26 @@ De container analyse (fase 6, Keuze 59; gezichten en zoeken op beeld):
     python -m app.cli analyse-status [--wait 20]
 
 analyse-status zegt de stand: ok, off, down (met de reden) of models_missing (met de modellen).
-Met --wait wacht hij hooguit zoveel seconden tot de stand ok is (install.sh, na de start van
-de container) en is de exitcode altijd 0: de regel zegt wat er is, zoals media-status. Zonder
---wait is de exitcode 1 bij down en models_missing. Staat de analyse uit, dan raakt hij de
-socket niet aan.
+Antwoordt de worker, dan volgen per model of het klopt, de grenzen van de container en de
+opdrachten die hij kent (app/analyse/status.py, X2a). Met --wait wacht hij hooguit zoveel
+seconden tot de stand ok is (install.sh, na de start van de container) en is de exitcode altijd
+0: de regels zeggen wat er is, zoals media-status. Zonder --wait is de exitcode 1 bij down en
+models_missing. Staat de analyse uit, dan raakt hij de socket niet aan.
 
-analyse-bench en analyse-kwaliteit (X2), en beeld-bench, beeld-kwaliteit en beeld-status (X3)
-zijn nog stubs (§3.5): ze zeggen welk pakket ze bouwt, met exitcode 1.
+Gezichten meten (X2b, app/people/faces/meten.py; alleen als gezichten draaien, anders doen ze
+niets):
+
+    python -m app.cli analyse-bench [--fotos 200]
+    python -m app.cli analyse-kwaliteit
+
+analyse-bench stuurt gemaakte foto's door de worker en geeft ms per foto, foto's per minuut en
+de geschatte tijd voor wat er wacht; analyse-kwaliteit meet de precisie van de voorstellen tegen
+de eigen ja en nee, en de zuiverheid en recall van de groepen (exitcode 3 als een poort niet
+gehaald is). Allebei: alleen getallen, de uitkomst ook op /beheer; exitcode 1 als er niets
+gemeten is.
+
+beeld-status, beeld-bench en beeld-kwaliteit (X3) staan in app/beeld/cli.py; met de analyse uit
+doen ze niets (exitcode 1).
 """
 
 import argparse
@@ -119,6 +132,7 @@ from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
+from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
 from app.geo import load as geo_load
@@ -506,14 +520,10 @@ def _backup(settings: Settings) -> int:
 # is gebouwd (Z3, app/geo/load.py)
 SEARCH_STUBS: dict[str, tuple[str, str]] = {}
 # De commando's van gezichten (X2) en zoeken op beeld (X3), als stub van A0 (§3.5); wie er een
-# bouwt, haalt hem hier weg. analyse-status is gebouwd (A0)
-ANALYSE_STUBS: dict[str, tuple[str, str]] = {
-    "analyse-bench": ("X2", "gezichten op deze CPU meten"),
-    "analyse-kwaliteit": ("X2b", "de kwaliteit van gezichten meten"),
-    "beeld-bench": ("X3", "zoeken op beeld op deze CPU meten"),
-    "beeld-kwaliteit": ("X3", "de kwaliteit van zoeken op beeld meten"),
-    "beeld-status": ("X3", "de stand van zoeken op beeld"),
-}
+# bouwt, haalde hem hier weg. analyse-status is gebouwd (A0), analyse-bench en analyse-kwaliteit
+# (X2b, FACES_COMMANDS), beeld-status, beeld-bench en beeld-kwaliteit (X3b, app/beeld/cli.py):
+# er is geen stub meer
+ANALYSE_STUBS: dict[str, tuple[str, str]] = {}
 
 
 def _db_copy(settings: Settings, target: str, empty_first: bool) -> int:
@@ -533,26 +543,24 @@ def _stub(name: str) -> int:
     return 1
 
 
+FACES_COMMANDS = ("analyse-bench", "analyse-kwaliteit")
+
+
+def _faces_measure(settings: Settings, args: argparse.Namespace) -> int:
+    """analyse-bench en analyse-kwaliteit (app/people/faces/meten.py, X2b)."""
+    from app.people.faces import meten
+
+    return meten.run(settings, args.command, getattr(args, "fotos", meten.FOTOS))
+
+
 def _analyse_status(settings: Settings, wait: float) -> int:
-    """analyse-status: de stand van Keuze 59, één regel. Met wait hooguit zoveel seconden
-    opnieuw kijken (elke seconde) tot de stand ok is."""
-    from app.analyse import monitor
+    """analyse-status: de stand van Keuze 59 (app/analyse/status.py, X2a). Met wait hooguit
+    zoveel seconden opnieuw kijken (elke seconde) tot de stand ok is."""
+    from app.analyse import status
 
-    async def run() -> monitor.AnalyseStatus:
-        loop = asyncio.get_running_loop()
-        end = loop.time() + max(wait, 0)
-        while True:
-            found = await monitor.check(settings)
-            if found.state in ("ok", "off") or loop.time() >= end:
-                return found
-            await asyncio.sleep(min(1.0, max(end - loop.time(), 0)))
-
-    found = asyncio.run(run())
-    problem = monitor.analyse_problem(found)
-    print(f"Analyse: {found.state}" + (f" ({problem})" if problem else ""))
-    if wait > 0 or found.state in ("ok", "off"):
-        return 0
-    return 1
+    lines, code = asyncio.run(status.collect(settings, wait))
+    print("\n".join(lines))
+    return code
 
 
 def _media_failed(exc: HTTPException) -> int:
@@ -719,9 +727,19 @@ def main(argv: list[str] | None = None) -> int:
     analyse.add_argument(
         "--wait", type=float, default=0.0, help="hooguit zoveel seconden wachten tot hij ok is"
     )
+    faces_bench = commands.add_parser(
+        "analyse-bench", help="gezichten vinden meten op deze CPU, met de uitkomst op /beheer"
+    )
+    faces_bench.add_argument(
+        "--fotos", type=int, default=200, help="zoveel gemaakte foto's (standaard 200)"
+    )
+    commands.add_parser(
+        "analyse-kwaliteit", help="de kwaliteit van de voorstellen meten tegen de eigen ja en nee"
+    )
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
+    beeld_cli.parsers(commands)
     for name, (package, what) in {**SEARCH_STUBS, **ANALYSE_STUBS}.items():
         commands.add_parser(name, help=f"{what} (nog niet gebouwd, {package})")
     _media_parsers(commands)
@@ -735,6 +753,8 @@ def main(argv: list[str] | None = None) -> int:
         return benchlos.run(settings, args)
     if args.command in geo_load.COMMANDS:
         return geo_load.run(settings, args)
+    if args.command in beeld_cli.COMMANDS:
+        return beeld_cli.run(settings, args)
     if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
     if args.command == "db-backup":
@@ -751,6 +771,8 @@ def main(argv: list[str] | None = None) -> int:
         return _recheck(settings)
     if args.command == "analyse-status":
         return _analyse_status(settings, args.wait)
+    if args.command in FACES_COMMANDS:
+        return _faces_measure(settings, args)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

@@ -196,10 +196,18 @@ def test_samen_bewerken_geeft_een_versie_met_beide_teksten(office: Office, offic
     now = text(office, d.anna, d.node)
     assert "Anna was hier" in now and "Bram ook" in now
 
-    # Allebei sluiten: terug naar de map (er was geen stap terug), status 2
-    for page in (page_a, page_b):
-        page.get_by_role("button", name="Sluiten", exact=True).click()
-        expect(page).to_have_url(re.compile(rf"/map/{d.folder}$"))
+    # Allebei sluiten: terug naar de map (er was geen stap terug), status 2. Eerst Anna. Haar
+    # vertrek komt als office.presence bij Bram, en pas daarna klikt hij: zijn statusregel wordt
+    # dan smaller, en Sluiten schuift in de kopbalk (een flexrij) ±80 px naar rechts. Viel dat
+    # bericht tussen het indrukken en het loslaten van zijn klik (Playwright kijkt alleen bij het
+    # indrukken of de knop eronder ligt), dan liet hij los naast de knop en bleef hij op
+    # /bewerken (docs/fase-6/x2a.md, Open 7)
+    page_a.get_by_role("button", name="Sluiten", exact=True).click()
+    expect(page_a).to_have_url(re.compile(rf"/map/{d.folder}$"))
+    alone = rf"^{WORDS['nl']['editing']} · {WORDS['nl']['saved']} \d"
+    expect(page_b.locator(".editor-status")).to_have_text(re.compile(alone))
+    page_b.get_by_role("button", name="Sluiten", exact=True).click()
+    expect(page_b).to_have_url(re.compile(rf"/map/{d.folder}$"))
     callback(office, key, 2)
     assert fake_info(office, key)["open"] is False
     listed = versions(office, d.anna, d.node)

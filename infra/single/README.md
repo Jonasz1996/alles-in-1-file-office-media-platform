@@ -36,14 +36,77 @@ Een andere poort kiezen kan bij de eerste installatie met `curl … | PORT=8080 
 commando hierboven, met `PORT=8080` vóór `bash`), of later in `/opt/platform/.env` (daarna het
 script opnieuw draaien).
 
+## Bijwerken naar 0.8.1 (gezichten en zoeken op beeld)
+
+Versie 0.8.1 maakt fase 6 af met twee dingen die op deze server zelf rekenen, zonder internet:
+
+- **gezichten**: het platform vindt gezichten op je foto's en stelt voor wie het is ("Is dit
+  Eva?"). Niets wordt vanzelf bevestigd;
+- **zoeken op beeld**: je vindt foto's op wat erop staat ("hond op het strand"), of vanuit een
+  eigen foto met **Meer zoals deze**.
+
+0.8.1 staat net als 0.8.0 op de branch `claude/stappenplan-uitwerken-lu4uv3`, niet op `main`. Je
+werkt dus bij met hetzelfde commando als bij 0.8.0 (de uitleg over het adres en `PLATFORM_BRANCH`
+staat daar, hieronder):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
+```
+
+Wat er bij het bijwerken van 0.8.0 naar 0.8.1 gebeurt (draai je nog 0.7.1 of ouder, dan komt wat
+0.8.0 bracht in dezelfde run erbij; zie "Bijwerken naar 0.8.0" hieronder):
+
+- **de analyse gaat aan.** In `/opt/platform/.env` komen `ANALYSE=aan`, één keer een eigen
+  sleutel `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT=/opt/platform/modellen`,
+  `SLEUTELS_ROOT=/opt/platform/sleutels/gezichten` en `BEELD=aan`. Een regel die er al staat,
+  blijft zoals hij is;
+- het haalt de twee modellen voor gezichten op (±39 MB, met hun sha256 nagekeken) en zet hun
+  licenties ernaast. Is er minder dan 105 MB vrij in `/tank/platform`, dan zegt het
+  `Let op: weinig ruimte in … voor de gezichten …` en gaat het gewoon door;
+- het maakt de gewone reservekopie van de database, bouwt het nieuwe platform en start het. Kwam
+  je van 0.8.0 van `59e0250`, dan krijgt de database bij de start migratie 0011 en 0012
+  (seconden; de tabellen voor gezichten en zoeken op beeld);
+- daarna haalt het **één keer** de bron van het model voor zoeken op beeld op (SigLIP 2 van
+  Google, ±1,55 GB, met de sha256 nagekeken). Het zet die om in een aparte container zonder
+  netwerk (`analyse-omzetten`) en gooit de bron weg. Het model zelf is ±400 MB, in
+  `/opt/platform/modellen/siglip2-b32-256`. Daarvoor moet er ±2,5 GB vrij zijn in `/opt/platform`
+  en 1 GB in `/tank/platform`. Een volgende run haalt niets meer op: staat het model er met de
+  juiste sha256, dan doet het script niets. Alleen na een mislukte omzetting probeert het opnieuw;
+- het start de container `platform-analyse-1`: zonder netwerk, alleen-lezen, met hooguit 3 GB
+  geheugen en 1 core;
+- lukt een download, de omzetting of de start niet, dan zegt het script `Let op: …` en werkt het
+  platform gewoon verder. De volgende run probeert het opnieuw;
+- de eindtekst zegt `Gezichten (de container analyse): aan; elke gebruiker zet het zelf aan
+  (Account → Foto's).` en `Zoeken op beeld: het model staat klaar; elke gebruiker zet het zelf
+  aan.`, elk met het commando om het uit te zetten.
+
+**Daarna staat het voor elke gebruiker nog uit.** Niemand ziet iets nieuws tot hij het zelf aanzet
+bij Account → Foto's: **Gezichten herkennen in mijn foto's** (eerst komt een tekst over wat dat
+betekent) en **Zoeken op beeld**. De container rekent dan op de achtergrond alleen de foto's van
+die gebruiker. Op `/beheer` → **Zoeken en foto's** (Alt+9) staan de stand en de knoppen: bij
+Gezichten **Gezichtsherkenning toestaan**, bij Zoeken op beeld **Zet uit voor iedereen**,
+**Beeldindex wissen** en **Opnieuw berekenen**. Gebruik je het platform voor anderen dan je
+gezin, lees dan eerst `docs/runbooks/gezichten.md`, "De wet (AVG)".
+
+**Liever niet.** Zonder de analyse: `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3
+ANALYSE=uit bash`. Dan komt `ANALYSE=uit` in `.env`, en ook een volgende run zonder `ANALYSE`
+laat hem uit: geen download, geen container, en verder doet het script wat 0.8.0 deed. Alleen
+zoeken op beeld niet (geen download van 1,55 GB): `… | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3
+BEELD=uit bash`. Ook dat blijft in `.env` staan; een model dat er al is, blijft staan. Meer over
+de container, elke melding en wat er in welke map staat: "Gezichten en zoeken op beeld: de
+container analyse" hieronder, en `docs/runbooks/analyse.md`.
+
+**Terug naar 0.8.0** kan ook met de analyse aan: zie hieronder, bij 0.8.0.
+
 ## Bijwerken naar 0.8.0 (zoeken en foto's)
 
 Versie 0.8.0 is de kern van fase 6: zoeken in de inhoud van documenten, ook van scans met OCR
 (tekstherkenning: het platform haalt de letters uit een plaatje), plaatsnamen en een kaart,
 dubbele bestanden, personen die je zelf aanwijst, herinneringen en slimme albums. Gezichten
-vanzelf herkennen en zoeken op wat er op een foto staat, zitten er nog niet in. 0.8.0 staat nog
-niet op `main`, maar op de branch `claude/stappenplan-uitwerken-lu4uv3`. Tot hij op `main` staat,
-werk je zo bij (en geldt dit ook voor elk ander commando hieronder met `curl … | bash`):
+vanzelf herkennen en zoeken op wat er op een foto staat, kwamen met 0.8.1 (hierboven). 0.8.0 en
+0.8.1 staan niet op `main`, maar op de branch `claude/stappenplan-uitwerken-lu4uv3`. Tot ze op
+`main` staan, werk je zo bij (en geldt dit ook voor elk ander commando hieronder met
+`curl … | bash`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
@@ -72,8 +135,8 @@ ouder, kijk dan ook bij "Van 0.7.0 of 0.6.0" hieronder):
   niet, dan stopt het script daar: er is dan nog niets veranderd, en de app draait zoals hij
   draaide;
 - het bouwt het nieuwe platform en start het; de database krijgt bij de start migratie 0010 tot en
-  met 0012 (seconden; 0011 en 0012 zijn de tabellen voor gezichten en zoeken op beeld, die nog uit
-  staan). Zoeken op naam werkt meteen. De inhoud van documenten, de plekken en de hashes van
+  met 0012 (seconden; 0011 en 0012 zijn de tabellen voor gezichten en zoeken op beeld van 0.8.1,
+  hierboven). Zoeken op naam werkt meteen. De inhoud van documenten, de plekken en de hashes van
   foto's komen op de achtergrond (voor 20.000 documenten en 55.000 foto's ±15–20 minuten werk
   voor één core, geschat); de stand staat op `/beheer` → **Zoeken en foto's**. Gescande pagina's
   in PDF's leest OCR daarna ook op de achtergrond, na de tekst; dat gaat langzamer (zie
@@ -92,12 +155,10 @@ nooit weg door een volgende update. De kopie heeft geen gezichten en geen beeld 
 na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afgeschermd als de
 `.env`. Hoe je hem terugzet, de index herbouwt en zoeken meet: `docs/runbooks/zoeken.md`.
 
-**Terug naar 0.8.0 van `59e0250`.** De versie heet nog 0.8.0, maar de branch heeft sinds 12
-november ook de basis voor gezichten en zoeken op beeld (migratie 0011 en 0012; de analyse staat
-uit). Werkt de branch sindsdien niet goed, ga dan eerst hierheen terug en niet naar 0.7.1: alles
-van 0.8.0 blijft. Het zijn deze commando's, in deze volgorde en met de volledige commit van 0.8.0
-(`dc` uit Handige commando's hieronder; de uitleg per stap staat in `docs/runbooks/zoeken.md`,
-"Terug naar 0.8.0 van `59e0250`"):
+**Terug naar 0.8.0 van `59e0250`.** Werkt 0.8.1 niet goed, ga dan eerst hierheen terug en niet
+naar 0.7.1: alles van 0.8.0 blijft. Dat gaat ook met de analyse aan. Het zijn deze commando's, in
+deze volgorde en met de volledige commit van 0.8.0 (`dc` uit Handige commando's hieronder; de
+uitleg per stap staat in `docs/runbooks/zoeken.md`, "Terug naar 0.8.0 van `59e0250`"):
 
 ```bash
 git -C /opt/platform/src fetch -q origin
@@ -115,6 +176,16 @@ gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen d
 vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
 `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
 Weer vooruit: het commando van de branch hieronder, zonder `PLATFORM_SRC_REF`.
+
+Wat er van 0.8.1 overblijft. Het script van 0.8.0 kent de analyse niet: het haalt de container
+`platform-analyse-1` weg wanneer het platform start. De regels `ANALYSE`, `ANALYSE_WORKER_KEY`,
+`MODELLEN_ROOT`, `SLEUTELS_ROOT` en `BEELD` blijven in `.env` staan, en de mappen
+`/opt/platform/modellen` en `/opt/platform/sleutels/gezichten` ook; 0.8.0 doet er niets mee. Wil
+je de sleutels kwijt, gooi dan die map weg (wat dat betekent: `docs/runbooks/gezichten.md`). Weer
+vooruit naar 0.8.1: de modellen worden niet opnieuw gehaald, want ze staan er al met de juiste
+sha256. Zoeken op beeld staat daarna voor iedereen weer uit, en de gevonden gezichten zijn weg
+(personen die je zelf benoemde of bevestigde, blijven). Wie gezichten aan had, krijgt een nieuwe
+scan.
 
 **Terug naar 0.7.1.** Alleen als 0.8.0 niet goed werkt. Het zijn deze commando's, in deze
 volgorde en met de volledige commit van 0.7.1 (`dc` uit Handige commando's hieronder; de uitleg
@@ -256,6 +327,10 @@ Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/p
 | Reservekopieën van de database | `/tank/platform/backup` (rechten 700): vóór elke update één, `platform-<schemaversie>-<tijd>.db` (rechten 600), zonder gezichten en beeld; per schemaversie blijft de nieuwste |
 | Plaatsnamen en landen | `/tank/platform/geo`: de twee bronnen en `places.sqlite` |
 | Instellingen van zoeken | `/opt/platform/.env`: `PLAATSEN`; de rest op `/beheer` → Zoeken en foto's |
+| Analyse (gezichten en zoeken op beeld; sinds 0.8.1 standaard aan) | de container `platform-analyse-1` (niet met `ANALYSE=uit`), zonder netwerk en zonder je bestanden; hij krijgt per opdracht alleen een preview van de app, over de socket in het Docker-volume `platform_analyse-run` |
+| Modellen van de analyse | `/opt/platform/modellen` (`MODELLEN_ROOT`, van root, alleen-lezen in de container), met hun licenties ernaast |
+| Sleutels van gezichten | `/opt/platform/sleutels/gezichten` (`SLEUTELS_ROOT`, rechten 700, van de app), bewust niet in `/tank` |
+| Instellingen van de analyse | `/opt/platform/.env`: `ANALYSE`, `ANALYSE_WORKER_KEY`, `MODELLEN_ROOT`, `SLEUTELS_ROOT` en `BEELD` (de laatste vier alleen als de analyse ooit aan stond); de rest op `/beheer` → Zoeken en foto's |
 
 Bijwerken: draai het installatiescript opnieuw (met de branch: zie hierboven). Het laat eerst de
 open documenten opslaan, maakt een reservekopie van de database (vanaf 0.8.0), vervangt dan het
@@ -287,6 +362,12 @@ dc() {
   elif [ -f "$d/compose.media-local.yaml" ] && grep -qx 'MEDIA_SANDBOX=uit' /opt/platform/.env; then
     f+=(-f "$d/compose.media-local.yaml")
   fi
+  if docker container inspect platform-analyse-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.analyse.yaml")
+    if [ "$limits" = "true true" ]; then
+      f+=(-f "$d/compose.analyse-limits.yaml")
+    fi
+  fi
   docker compose --project-directory "$d" --env-file /opt/platform/.env "${f[@]}" "$@"
 }
 ```
@@ -297,14 +378,16 @@ dc logs -f platform
 dc logs --tail 100 office
 dc logs --tail 100 media
 dc exec -T platform python -m app.cli media-status --sessions
+dc logs --tail 100 analyse
+dc exec -T platform python -m app.cli analyse-status
 ```
 
 Iets veranderen (aan, uit, bijwerken, opnieuw starten) doe je met het installatiescript, niet
 met `docker compose up` of `down`. Vooral nooit `docker compose up -d` met alleen
 `compose.yaml`: dan start het platform zonder de instellingen van office en media (geen editor
 en geen worker meer) en blijven DS en de worker los draaien. Draai daarna gewoon het
-installatiescript opnieuw; dat zet het recht. Nooit `dc exec media` zonder `env -i` (zie
-`docs/runbooks/media.md`).
+installatiescript opnieuw; dat zet het recht. Nooit `dc exec media` of `dc exec analyse` zonder
+`env -i` (zie `docs/runbooks/media.md` en `docs/runbooks/analyse.md`).
 
 ## Office: documenten bewerken in de browser
 
@@ -453,6 +536,65 @@ op `main`, dan mag `main` in het adres, zonder `PLATFORM_BRANCH`.
 Meer, zoals de status lezen, de cache opruimen en de belastingtest op de LXC, staat in
 `docs/runbooks/media.md`.
 
+## Gezichten en zoeken op beeld: de container analyse
+
+Sinds 0.8.1 vindt het platform gezichten op je foto's, als voorstel bij de personen, en kun je
+foto's zoeken op wat erop staat. Het installatiescript zet de analyse standaard aan (zie
+"Bijwerken naar 0.8.1" hierboven). Voor elke gebruiker staat het daarna nog uit, tot hij het zelf
+aanzet bij Account → Foto's.
+
+**De container.** Het zoeken naar gezichten draait in een eigen container, `platform-analyse-1`,
+uit hetzelfde image als het platform: zonder netwerk, alleen-lezen, als een eigen gebruiker
+(10003), zonder capabilities, en met hooguit 3 GB geheugen en 1 core (als de kernel die grenzen
+kan zetten, zoals bij office en media). Hij kan je bestanden niet openen: de app geeft hem per
+foto alleen de preview, en krijgt alleen kaders en getallen terug. Twee kleine modellen van
+OpenCV (YuNet, MIT, en SFace, Apache-2.0) staan in `/opt/platform/modellen`; de container mag ze
+alleen lezen.
+
+**Wat het script doet** (standaard; wat de schakelaars bewaren staat in
+`docs/runbooks/gezichten.md` en `docs/runbooks/analyse.md`): het haalt de modellen (±39 MB, met
+hun sha256 nagekeken), zet de licenties ernaast, maakt `/opt/platform/sleutels/gezichten`, zet één
+keer een eigen sleutel `ANALYSE_WORKER_KEY` in `.env`, en start de container. Stond de analyse uit
+(`ANALYSE=uit` in `.env`), dan zet dit commando hem weer aan:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 ANALYSE=aan bash
+```
+
+Staat er minder dan 105 MB vrij in `/tank/platform`, dan zegt het script
+`Let op: weinig ruimte in … voor de gezichten (105 MB aangeraden; ±90 MB per 100.000 gezichten). De analyse gaat door.`
+Lukt een download of de start niet, dan zegt het script `Let op: …` en werkt het platform gewoon
+verder; het volgende script probeert het opnieuw. De stand:
+`dc exec -T platform python -m app.cli analyse-status` (de eerste regel is `Analyse: ok`, of
+`down` met de reden).
+
+**Zoeken op beeld.** Met de analyse aan haalt het script ook het model voor zoeken op beeld op
+(SigLIP 2 van Google, Apache-2.0; ±1,55 GB, met hun sha256 nagekeken), zet het één keer om in een
+container zonder netwerk en gooit de bron daarna weg; het model zelf is ±400 MB, in
+`/opt/platform/modellen/siglip2-b32-256`. Er moet ±2,5 GB vrij zijn in `/opt/platform` en 1 GB in
+`/tank/platform`; anders zegt het script `Let op: …` en werkt de rest gewoon. Dat ophalen en
+omzetten gebeurt één keer: staat het model er met de juiste sha256, dan haalt een volgende run
+niets op. Niet willen: `curl … | BEELD=uit bash` (dat blijft in `.env` staan; een model dat er al
+staat, blijft staan). Meer: `docs/runbooks/analyse.md`, "Zoeken op beeld".
+
+Zonder `ANALYSE=uit` ziet een gebruiker de schakelaars bij Account → Foto's. Elke gebruiker zet
+zoeken op beeld zelf aan (standaard uit). Dan bekijkt de container op de achtergrond alleen de eigen
+foto's van die gebruiker, en vindt hij ze op `/zoeken` in de stand "Wat er op de foto staat" met
+woorden ("hond op het strand"), of vanuit een eigen foto met "Meer zoals deze" in het infopaneel. Er
+gaat niets naar buiten. Is het te traag of draait de container niet, dan krijgt hij de treffers van
+gewoon zoeken met een melding. Op `/beheer` → Zoeken en foto's staat de stand, met de knoppen om het
+voor iedereen uit te zetten en de beeldindex te wissen. Hoe snel het op deze CPU is, meet
+`dc exec -T platform python -m app.cli beeld-bench` (het runbook, BZ9).
+
+**Uit:** hetzelfde commando met `ANALYSE=uit`. Dat komt in `.env` en blijft: ook een volgende
+run zonder `ANALYSE` laat hem uit. Dan geen download en geen container meer; de modellen blijven
+in `/opt/platform/modellen` tot je die map zelf weggooit. Zet je hem uit nadat hij aan stond, dan
+verdwijnen de schakelaars bij Account → Foto's, en zeggen `/beheer` en `/zoeken` dat het op deze
+server uit staat en hoe het weer aan gaat. Terug naar 0.8.0 (hierboven) gaat ook met de analyse
+aan: het script van 0.8.0 haalt de container weg, en de modellen, de sleutels en `.env` blijven;
+weer vooruit wordt er niets opnieuw gehaald. Meer, ook wat elke melding betekent:
+`docs/runbooks/analyse.md`.
+
 ## 2FA kwijt
 
 Ben je je telefoon én je herstelcodes kwijt, dan kan een andere beheerder je 2FA uitzetten
@@ -476,4 +618,9 @@ Vanaf 0.8.0 maakt het installatiescript vóór elke update ook een kopie van de 
 `DATA_ROOT/backup`: `/tank/platform/backup`, zonder `/tank` `/opt/platform/data/platform/backup`
 (zie "Bijwerken naar 0.8.0 (zoeken en foto's)"). Dat is een vangnet voor de update, geen
 back-up: hij staat op dezelfde schijf.
+Sinds 0.8.1 staan twee dingen bewust niet in `/tank`, maar in `/opt/platform` op de rootdisk: de
+modellen (`/opt/platform/modellen`; die haalt het script zo weer op) en de sleutels van gezichten
+(`/opt/platform/sleutels/gezichten`). Een snapshot van `/tank` heeft de sleutels dus niet: zo zijn
+gewiste gezichten in die snapshot niet meer te lezen. Een backup van de hele container heeft ze
+wel; hoe je ze daar uit houdt, staat in `docs/runbooks/gezichten.md`.
 Offsite-backups volgen in fase 1 deel 2.

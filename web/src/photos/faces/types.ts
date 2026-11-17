@@ -6,8 +6,8 @@
 // De velden die X2 in de typen van Z0 zet (faces in de foto-instellingen, het blok op /beheer,
 // "faces" bij herbouwen en in search.progress) staan in photos/people/types.ts,
 // admin/searchApi.ts en search/types.ts. De vormen hieronder zijn het voorstel van Z0b uit de
-// tabel van de API van X2; A0 legt ze vast met app/people/faces_types.py. Tot X2 er is, geven de
-// routes 501 not_built (de stubs van Z0b).
+// tabel van de API van X2; A0 legt ze vast met app/people/faces_types.py. Met de analyse uit
+// geven de routes 501 not_built("X2"), zoals de stubs van Z0b in 0.8.0.
 
 import type { AnalyseState, PersonRef } from "../../search/types";
 import type { Box, OnOff } from "../people/types";

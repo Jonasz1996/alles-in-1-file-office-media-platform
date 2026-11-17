@@ -1,12 +1,14 @@
 # Fase 6: de tests van zoeken
 
 Hoe de tests van zoeken en foto's werken, hoe je elke marker draait (lokaal en in CI), welke
-meetscripts er zijn, en welke job in CI hard is en welke alleen een rapport geeft. Gemaakt in I1.
+meetscripts er zijn, en welke job in CI hard is en welke alleen een rapport geeft. Gemaakt in I1;
+bijgewerkt in I2 (0.8.1) met de tests van gezichten (X2) en zoeken op beeld (X3).
 Het ontwerp staat in [bouwontwerp.md](bouwontwerp.md), §4.0 tot en met §4.6. Het harnas, de
 fixtures, de wereld en `e2e/slim.sh` kwamen met Z0-e2e; de uitleg daarvan staat in
 [z0-e2e.md](z0-e2e.md). Hoe de tests van media werken, staat in [fase 5](../fase-5/e2e.md). De
-uitslag van I1 komt onder [Uitslag I1](#uitslag-i1); de integratie zelf in
-[integratie.md](integratie.md) en de getallen in [metingen.md](metingen.md).
+uitslag van I1 en I2 staat onder [Uitslag I1](#uitslag-i1) en [Uitslag I2](#uitslag-i2); de
+integratie zelf in [integratie.md](integratie.md) en [integratie-2.md](integratie-2.md), en de
+getallen in [metingen.md](metingen.md).
 
 ## In het kort
 
@@ -17,14 +19,21 @@ uitslag van I1 komt onder [Uitslag I1](#uitslag-i1); de integratie zelf in
 | `zoek_perf` | `api/tests/search`, `api/tests/photos` | `python:3.12-slim` (SQLite 3.46.1, zoals het image), op 3 cores | `zoek-perf` | hard (de p95), rapport (de p99, de max) |
 | `ocr` | `api/tests` en `e2e/` | de echte tesseract van Ubuntu met nld, eng en osd, en DejaVu Sans | `ocr` | hard |
 | `zoek` | `e2e/` | de echte app; in Chromium met alleen het toetsenbord (`test_zoek_z2.py` alleen via de API) | `e2e` | hard |
+| `analyse` | `e2e/` | de echte app met `PLATFORM_ANALYSE_ENABLED` en de nep-worker van de analyse in een draad (`api/tests/people/faces/schijven.py`, zonder numpy); `test_zoek_gezichten.py` (X2b) en `test_zoek_beeld.py` (X3b) | `e2e` | hard |
+| `analyse_echt` | `e2e/` | de echte compose met het image en de echte modellen van `models.lock`, alleen via de API; `test_zoek_gezichten_echt.py` (X2b) | `analyse-image` | hard (overgeslagen is rood) |
+| `analyse_echt` en zonder marker | `api/tests_analyse` | de echte worker van de analyse met numpy en onnxruntime uit `api/.venv-analyse` (laag 2), en met de echte YuNet en SFace van `models.lock` (laag 3) | `api-analyse` | hard, met een vaste telling (op `e535332`: 330 goed, 16 niet gekozen; sinds `4aa42e1`, de review van I2: 331 en 16) |
+| `beeld_echt` | `api/tests_analyse` | het echte SigLIP 2, in de job omgezet: de pins (BZ2), de tokenizer (BZ3, BZ7), de kwaliteit op `beeld.tsv` (BZ4) en de tijd op één core (BZ6) | `beeld-model`, alleen als iets verandert dat het model raakt of met de regel "beeld-model: ja" in de PR | hard |
 | (meetscript) | `e2e/perf/zoek_ui.py` | Chromium met het profiel van `first_view.py` | `perf` | alleen een rapport |
 | (meetscript) | `e2e/perf/zoek_samen.py --kort` en `e2e/perf/zoek_backfill.py` | de app met media aan, de lokale worker en echte ffmpeg | `e2e-media-perf` | alleen een rapport |
 
-- `api/pyproject.toml` laat `media`, `media_perf`, `provider_real`, `zoek_perf`, `ocr` en `geo`
-  standaard weg (`addopts`). `zoek` en `triggers` draaien gewoon mee; ze zijn er om te kiezen,
-  niet om over te slaan.
-- `e2e/pytest.ini` kent `zoek` en `ocr`. De job `e2e` sluit `ocr` uit met zijn markerexpressie;
-  `zoek` draait daar mee.
+- `api/pyproject.toml` laat `media`, `media_perf`, `provider_real`, `zoek_perf`, `ocr`, `geo` en
+  `beeld_echt` standaard weg (`addopts`). `zoek`, `triggers` en `analyse` draaien gewoon mee; ze
+  zijn er om te kiezen, niet om over te slaan. `api/tests_analyse` draait alleen in zijn eigen
+  omgeving `api/.venv-analyse` (Keuze 57: `api/.venv` heeft geen numpy).
+- `e2e/pytest.ini` kent `zoek`, `ocr`, `analyse`, `analyse_echt` en `beeld_echt`. De job `e2e`
+  sluit `ocr` en `analyse_echt` uit met zijn markerexpressie; `zoek` en `analyse` draaien daar
+  mee (X2b). `beeld_echt` heeft in `e2e/` geen test: het echte beeldmodel draait alleen in
+  `api/tests_analyse` (job `beeld-model`).
 - Beide `pytest`-configuraties houden `--strict-markers`: een tikfout in een marker faalt.
 - Een test met de nep-worker vervangt nooit een test met de echte tesseract, en andersom: de
   marker `ocr` draait alleen waar tesseract er echt is, en overslaan telt in de job `ocr` als
@@ -66,8 +75,17 @@ taskset -c 0-2 uv run pytest -q -m ocr -rs
 taskset -c 0-2 uv run --with playwright python -m pytest ../e2e -m ocr -rs
 taskset -c 0 uv run python -m tests.ocr.poort
 
-# de e2e zoals de job e2e (zoek draait mee, ocr niet)
-uv run --with playwright python -m pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr"
+# de e2e zoals de job e2e (zoek en analyse draaien mee, ocr en analyse_echt niet)
+uv run --with playwright python -m pytest ../e2e -m "not perf and not media and not media_perf and not office and not office_real and not provider_real and not ocr and not analyse_echt"
+
+# tests_analyse zoals de job api-analyse: de omgeving met numpy en onnxruntime, nooit api/.venv
+UV_PROJECT_ENVIRONMENT=.venv-analyse uv sync --frozen --extra analyse
+ANALYSE_MODELLEN=/pad/naar/modellen UV_PROJECT_ENVIRONMENT=.venv-analyse \
+  taskset -c 0-2 uv run --no-sync pytest -q -p no:cacheprovider tests_analyse -m "not beeld_echt" -rs
+
+# de echte scan zoals de job analyse-image (X2b): het image en de modellen van models.lock
+E2E_ANALYSE_IMAGE=platform:ci E2E_ANALYSE_MODELLEN=/pad/naar/modellen \
+  uv run --with playwright python -m pytest ../e2e/test_zoek_gezichten_echt.py -m analyse_echt -rs
 
 # alleen de e2e van zoeken (zoals stap 3 van slim.sh)
 uv run --with playwright python -m pytest ../e2e -m "zoek and not ocr and not perf and not media and not media_perf"
@@ -153,6 +171,23 @@ browser.
 - `test_zoek_beheer.py` (Z7): de tab "Zoeken en foto's" op `/beheer`.
 - `test_zoek_ocr.py` (X1, marker `ocr`): een PDF zonder tekstlaag en een foto van een bon, zoeken,
   de snippet, de markering in de viewer, en een kopie van Bram die de tekst van Eva niet vindt.
+- `test_zoek_gezichten.py` (X2b; de tests met de analyse hebben ook de marker `analyse`): gezichten
+  aanzetten met de toestemming, de scan met de nep-worker, "Wie is dit?" en "Is dit …?", J, N en
+  Ctrl+Z, zoeken op een persoon, en Bram die niets ziet. Sinds I2 (P2, `44262c7`) ook `/over` met
+  alleen het toetsenbord, met de analyse aan.
+- `test_zoek_gezichten_echt.py` (X2b, marker `analyse_echt`, job `analyse-image`): de echte
+  container met de echte modellen, alleen via de API; de scan, het wissen, en geen merkteken of
+  sleutel in de logs.
+- `test_zoek_beeld.py` (X3b, markers `zoek` en `analyse`): zoeken op beeld met de nep van beeld,
+  "Meer zoals deze", de terugval, de schakelaar onder Account → Foto's, het blok op `/beheer`, en
+  met de analyse uit wat 0.8.0 toonde, op de zinnen van 0.8.1 na (dat zoeken op beeld uitstaat op
+  deze server; sinds `d538cbb` zonder pad of variabele).
+- `test_uit080.py` (de samenvoeging van golf 6; zonder marker, dus in de job `e2e`): met de analyse
+  uit is elke pagina, voor elke rol, gelijk aan de web van 0.8.0. Sinds I2 (P2) staat in de test
+  precies wat 0.8.1 met de analyse uit anders toont: de zinnen die zeggen dat gezichten en zoeken
+  op beeld uitstaan, de link naar `/over` op `/account`, en `/over` zelf voor de gast.
+- `test_zoek_metingen.py` (I1): de rekenkant van de meetscripts, zonder server; sinds I2 (P4) ook
+  `zoek_samen --analyse`.
 
 ## De jobs in CI
 
@@ -169,13 +204,18 @@ in het log (het blok `=== kort ===`) en in het artefact.
 | `e2e` | de e2e met `zoek`, naast de rest zonder `ocr` | hard |
 | `media-image` | de handdruk (S11) en `test_ocr_container.sh` in het echte image | hard |
 | `images` | de grootte van het image met tesseract (Vraag 15) | hard |
-| `infra` | `test_install_search.sh`, de functies en `--stappen` (de update en terug naar 0.7.1); `shellcheck` over onder meer `e2e/slim.sh` | hard |
+| `infra` | `test_install_search.sh`, de functies en `--stappen` (de update en terug naar 0.7.1); sinds X2a en X3b ook `test_install_analyse.sh` en `test_install_beeld.sh`; `shellcheck` over onder meer `e2e/slim.sh` | hard |
+| `api-analyse` | `api/tests_analyse` zonder `beeld_echt`, met een vaste telling (`ANALYSE_TESTS` en `ANALYSE_DESELECTED` in `ci.yml`); de licenties gelijk aan die van opencv_zoo | hard |
+| `analyse-image` | `test_analyse_container.sh` (de container met de echte modellen), daarna `test_zoek_gezichten_echt.py`; sinds P7 de stap "De echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh, X3)", alleen als de poort `omzet-poort` ja zegt (een wijziging in het image, `install.sh`, compose, de omzetter of `models.lock`, of "beeld-model: ja" in de PR); uitslag: groen in run 43981579405 op `ae163ac`: de echte bron van SigLIP 2 in de dienst `analyse-omzetten` (alleen lezen, geen netwerk, `mem_limit 3072MiB`, `cpus 1`) omgezet in 9,6 s met maxrss 351 MiB; de vijf bestanden precies die van `models.lock` (grootte en sha256), en geen bron of tijdelijke map achtergebleven | hard |
+| `beeld-model` | het echte SigLIP 2: omzetten, de pins (BZ2), de tokenizer (BZ3, BZ7), de kwaliteit (BZ4, Keuze 85), de tijd (BZ6) en de stap "Uitslag"; alleen als iets verandert dat het model raakt, of met "beeld-model: ja" in de PR | hard |
 | `web` | typecheck, vitest, de build, i18n streng en de begrotingen | hard |
 | `perf` | `e2e/perf/zoek_ui.py`, na `run_all.py` | rapport (`continue-on-error`) |
 | `e2e-media-perf` | `zoek_samen.py --kort` en `zoek_backfill.py` (kort), na `-m media_perf` | rapport (`continue-on-error`) |
 
-Geen nieuwe actions (§4.6): de jobs gebruiken alleen wat `ci.yml` al gebruikte. De jobs van X2 en
-X3 (`api-analyse`, `analyse-image`, `beeld-model`) komen later, niet in I1.
+Geen nieuwe actions (§4.6): de jobs gebruiken alleen wat `ci.yml` al gebruikte. ~~De jobs van X2 en
+X3 (`api-analyse`, `analyse-image`, `beeld-model`) komen later, niet in I1.~~ [I2: ze staan in de
+tabel; ze kwamen met X2a, X3a en X3b. `e2e-media-perf` draait sinds I2 (P4) ook `zoek_samen.py
+--kort --analyse nep`, als rapport.]
 
 **Wat I1 hier veranderde.** Twee punten van I1 raken deze tabel, en de tabel staat er al mee.
 I1 (A3, `f211d7b`) gaf `zoek-perf` de stap "Churn en de triggers op 3.46.1"
@@ -189,9 +229,22 @@ na de push van I1 zien.
 
 ## Uitslag I1
 
-Nog leeg. Dit vult stap B van I1, met de checks en de metingen op de kop van I1 en de run in CI
-daarna. De getallen komen in [metingen.md](metingen.md), de checks in
-[integratie.md](integratie.md).
+~~Nog leeg. Dit vult stap B van I1, met de checks en de metingen op de kop van I1 en de run in CI
+daarna.~~ [I2: I1 vulde dit niet hier in.] De getallen staan in [metingen.md](metingen.md), de
+checks in [integratie.md](integratie.md).
+
+## Uitslag I2
+
+De checks van I2 (0.8.1) op de samengevoegde kop staan in [integratie-2.md](integratie-2.md), "De
+controles"; de metingen M10–M13 in [metingen.md](metingen.md#gezichten-en-beeld-081). Kort:
+
+- de e2e van CI, met `test_zoek_gezichten.py`, `test_zoek_beeld.py` en `test_uit080.py`:
+  285 goed en 136 niet gekozen (golf 6: 249); office 30 goed; de vier bestanden van I2 met de
+  metingen erbij 115 goed en 1 overgeslagen (`test_zoek_gezichten_echt.py`: geen image, dat zet de
+  job `analyse-image`), allemaal op `e41b724`;
+- `tests_analyse` zoals `api-analyse`: precies `331 passed, 16 deselected`, zoals `ci.yml` nu eist
+  (`ANALYSE_TESTS` 331 sinds `4aa42e1`);
+- CI op de kop van I2: run 43981579405 op `ae163ac`: alle 19 jobs groen, met `api-analyse` precies `331 passed, 16 deselected` (165 s, Xeon 6975P-C met VNNI en AMX), `beeld-model` met BZ2, BZ4, BZ6 en BZ7 goed, `infra` met `--stappen` 79 goed en 0 fout, en `analyse-image` met de echte omzetting (X3) en `test_zoek_gezichten_echt.py` groen.
 
 Zie ook: [z7.md](z7.md) en [x1.md](x1.md) voor de laatste golf, en het runbook
 [zoeken.md](../runbooks/zoeken.md) voor de metingen op de LXC.

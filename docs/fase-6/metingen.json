@@ -698,5 +698,273 @@
   "keten_s": 0.26,
   "stukken": 7,
   "uitkomst": "gehaald"
+ },
+ "I2": {
+  "omschrijving": "De metingen van gezichten en zoeken op beeld bij de integratie I2 (0.8.1): M10–M13 in de sandbox en de getallen uit CI; zie metingen.md, Gezichten en beeld (0.8.1). M10–M13 met SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py, seed 85) en de echte YuNet en SFace: tijd en geheugen, geen kwaliteit; de kwaliteit komt alleen uit BZ4 in CI. kop_I2 is de run van CI op de commit van 0.8.1 (ae163ac), ingevuld na de push.",
+  "datum": "2026-11-16",
+  "omstandigheden": {
+   "machine": "sandbox, 4 cores, 15 GB, root; docker info 'true true'",
+   "commit": "e41b724",
+   "cores": "elke meting alleen; M11 taskset -c 0-2; M12 core 0 (de test zelf); M13 niet onder taskset (de mediaworker op 0-2, de analyse op 3), DS --memory 2g --memory-swap 2g --cpus 2; M10 niet opnieuw gedraaid (P3, P7)",
+   "ci": {
+    "dc5dfe5": {
+     "id": 43888472609,
+     "cpu": "Xeon 6975P-C met VNNI",
+     "beeld_model": "groen, ook Uitslag"
+    },
+    "e535332": {
+     "id": 43892193604,
+     "jobs_groen": 19,
+     "api_analyse": "330 goed, 16 niet gekozen",
+     "cpu": "Xeon 6975P-C met VNNI"
+    },
+    "kop_I2": {
+     "id": 43981579405,
+     "commit": "ae163ac",
+     "commit_volledig": "ae163ac69470343de7bc8d876db1a48e7da9331e",
+     "jobs_groen": 19,
+     "api_analyse": "331 goed, 16 niet gekozen (165 s)",
+     "cpu": "Xeon 6975P-C met VNNI en AMX",
+     "beeld_model": "BZ6 32,6 ms per foto, vraag p95 21,5 ms; BZ7 0,107 s, 32,4 MB erbij",
+     "x3_omzetten": "9,6 s, maxrss 351 MiB, sha256 als models.lock",
+     "stappen": "79 goed, 0 fout"
+    }
+   }
+  },
+  "gezichten_per_minuut": {
+   "waarde": 1043,
+   "ms_zonder_gezicht": 28.1,
+   "ms_per_gezicht": 29.4,
+   "werk_maxrss_mb": 224,
+   "poort": 250,
+   "bron": "test_models_real.py op 9228eb6 (x2b.md, De nacontrole)",
+   "uitkomst": "gehaald",
+   "e41b724": {
+    "waarde": 1231,
+    "ms_zonder_gezicht": 23.2,
+    "ms_per_gezicht": 25.6,
+    "werk_maxrss_mb": 241,
+    "bron": "tests_analyse met ANALYSE_RAPPORT op e41b724 (stap 2 van I2)"
+   }
+  },
+  "beeld_bz6": {
+   "ms_per_foto": 33.8,
+   "ms_per_foto_dc5dfe5": 34.7,
+   "poort_ms_per_foto": 120,
+   "vraag_p95_ms": 22.2,
+   "bron": "beeld-model in CI op e535332",
+   "uitkomst": "gehaald"
+  },
+  "beeld_bz4": {
+   "nl_precisie_5": 0.692,
+   "poort_nl": 0.6,
+   "meer_zoals_deze": 0.475,
+   "poort_meer_zoals_deze": 0.4,
+   "slechtste_vraag_buiten_bergen_boot": "2/5",
+   "combinaties": "6/6",
+   "int8_zakt": 0.0,
+   "kleuren": "3/3",
+   "bron": "beeld-model in CI op dc5dfe5 (Keuze 85)",
+   "uitkomst": "gehaald"
+  },
+  "gezichten_zonder_gereedschap": {
+   "portretten_95": "niet gemeten, geen gereedschap",
+   "kleurvolgorde_0_05": "niet gemeten, geen gereedschap",
+   "vraag": "Vraag 8"
+  },
+  "schijf": {
+   "modellen_gezichten": "±39 MB",
+   "siglip_omgezet": "±400 MB (de bron van ±1,55 GB gaat na de omzetting weg)",
+   "vectoren": {
+    "beeld_vec_bytes_per_foto": 1552,
+    "beeld_vec_kop_bytes": 64,
+    "beeld_vec_5000_fotos_bytes": 7760064,
+    "beeld_vec_mb_per_1000": 1.55,
+    "blob_embed_mb_per_1000": 2.14,
+    "blob_embed_5000": {
+     "vec_bytes": 7680000,
+     "pagina_bytes": 10268672,
+     "index_bytes": 409600
+    },
+    "gezichten": "niet gemeten: de testfoto's hebben geen gezichten; per gezicht AES-GCM over 128 × float32 (512 B klare tekst)",
+    "bron": "M13, eerste run, bij 5000 foto's"
+   }
+  }
+ },
+ "M10": {
+  "script": "tests_analyse/siglip_vol.py en de omzetter van analyse-omzetten",
+  "bron": "P3 en P7, niet opnieuw gedraaid in stap 2",
+  "bron_maken_s": 11.9,
+  "model_safetensors_bytes": 1507473288,
+  "tokenizer_json": "256.000 stukken, 600.000 merges, seed 85",
+  "grootte_uitkomst": {
+   "beeld.int8.onnx": 102609072,
+   "tekst.int8.onnx": 284248004,
+   "tokenizer.bin": 12388813,
+   "tokenizer.bin_echt": 12414446,
+   "meta.json": 2363
+  },
+  "tijd_s": 13.0,
+  "vmhwm_omzetter_mb": 338,
+  "eenheid_mb": "MiB",
+  "analyse_omzetten_p7": {
+   "tijd_s": [
+    13.1,
+    12.7
+   ],
+   "maxrss_mib": 339,
+   "cgroup_piek_mib": [
+    527.0,
+    528.4
+   ],
+   "cgroup_piek_bevat": "page cache (rss 314 en 301, cache 381)",
+   "grens_mib": 3072,
+   "tmp": "0 van 64 MiB",
+   "beeld_model_wandtijd_s": [
+    20,
+    19
+   ],
+   "sha256_gelijk": true
+  },
+  "ruimte_echte_bron_gb": 2.44,
+  "uitkomst": "gemeten (een rapport, geen poort)"
+ },
+ "M11": {
+  "script": "tests_analyse/test_geheugen_samen.py met ANALYSE_GEHEUGEN_MODELLEN en ANALYSE_GEHEUGEN_LOCK",
+  "pid1_mb": 37,
+  "werk_mb": 619,
+  "zoeken_mb": 1178,
+  "som_mb": 1835,
+  "piek_tegelijk_mb": 1788,
+  "poort_mb": 2500,
+  "commit": "e41b724",
+  "eenheid_mb": "MiB (het script schrijft MB)",
+  "rlimit_data_mb": {
+   "werk": 1024,
+   "zoeken": 1536
+  },
+  "poort_mib": 2384,
+  "duur_s": 35.8,
+  "uitkomst": "gehaald"
+ },
+ "M12": {
+  "script": "tests_analyse/test_beeld_perf.py met BEELD_PERF_MODELLEN en BEELD_PERF_LOCK",
+  "p95_warm_55000_ms": 90.2,
+  "p95_warm_100000_ms": 97.5,
+  "p95_na_opwarmen_100000_ms": 106.9,
+  "poort_ms": 250,
+  "eigen_grens_ms": 100,
+  "eerder_p3_sandbox": {
+   "p95_warm_100000_ms": 105.7,
+   "p95_na_opwarmen_100000_ms": 113.0,
+   "nep_ms": [
+    69.0,
+    68.8
+   ],
+   "tekstmodel_laden_s": 1.65,
+   "bron": "toelichting van test_beeld_perf.py, e8c4a02"
+  },
+  "commit": "e41b724",
+  "max_na_opwarmen_100000_ms": 150.8,
+  "zonder_tekstmodel_p95_ms": {
+   "warm_55000": 58.7,
+   "warm_100000": 65.9,
+   "na_opwarmen_100000": 73.3
+  },
+  "tekstmodel_p95_ms": {
+   "warm_55000": 40.5,
+   "warm_100000": 33.7,
+   "na_opwarmen_100000": 41.5
+  },
+  "tekstmodel_laden_s": 1.78,
+  "duur_s": 89.4,
+  "eigen_grens_geldt_voor": "alles behalve het tekstmodel (sinds 8934ee3, review C1)",
+  "uitkomst": "gehaald"
+ },
+ "M13": {
+  "script": "e2e/perf/zoek_samen.py --office --sessies 2 --bewerkers 3 --duur 300 --docs 5000 --analyse <map> --analyse-lock <lock>",
+  "commit": "e41b724",
+  "datum": "2026-11-16",
+  "run": 2,
+  "duur_s": 2348,
+  "voorbereiding_s": 338.9,
+  "fotos": 5000,
+  "documenten": 5000,
+  "scans": 500,
+  "beeld_p95_ms": 191.8,
+  "beeld_vragen": 106,
+  "beeld_terugval": 0.0,
+  "beeld_mislukt": 0,
+  "vectoren_bij_start": 5000,
+  "in_bestand_bij_start": 5000,
+  "analyse_vmhwm_som_mb": 1512,
+  "analyse_vmhwm_bytes": 1512415232,
+  "analyse_vmhwm_mib": {
+   "pid1": 37,
+   "werk": 525,
+   "zoeken": 881
+  },
+  "oomkilled": false,
+  "analyse_gestart": {
+   "zoeken": 1,
+   "werk": 40
+  },
+  "poorten_stap_2": {
+   "media_start_s": {
+    "fase_a": [
+     2.0,
+     2.46
+    ],
+    "fase_b": [
+     2.15,
+     1.34
+    ]
+   },
+   "haperen": 0,
+   "zoeken_p95_ms": 53.4,
+   "zoeken_vragen": 1014,
+   "files_root_p95_ms": 80.5,
+   "health_p95_ms": 5.0,
+   "mem_available_min_mib": 11268,
+   "ds_oomkilled": false,
+   "ds_herstarts": 0,
+   "app_en_worker_dezelfde": true,
+   "index_leest_weer_s": 14.7,
+   "office_opslaan_s": 8.3,
+   "office_grens_s": 8.9,
+   "office_nulmeting_s": 7.4,
+   "office_woorden": "354/354",
+   "api_p95_ms": 63.3,
+   "gehaald": "13 van 13"
+  },
+  "rapport_pauze": {
+   "zoeken_p95_ms": 46.0,
+   "files_root_p95_ms": 75.8,
+   "health_p95_ms": 4.3,
+   "mem_available_min_mib": 11430,
+   "beeld_p95_ms": 141.0,
+   "beeld_vragen": 123,
+   "office_opslaan_s": 7.4,
+   "office_woorden": "359/359"
+  },
+  "rapport_zonder_defer": {
+   "zoeken_p95_ms": 92.5,
+   "files_root_p95_ms": 135.4,
+   "health_p95_ms": 7.2,
+   "mem_available_min_mib": 11375,
+   "beeld_p95_ms": 290.4,
+   "beeld_vragen": 103,
+   "beeld_boven_250": 9,
+   "beeld_max_ms": 679,
+   "werk_gestart": 197,
+   "office_opslaan_s": 9.4,
+   "office_woorden": "344/344",
+   "let_op": "de gezichtenscan van 5000 foto's liep hier naast zoeken; in stap 1 en 2 wachtte faces.plan op de index (Keuze 65)"
+  },
+  "niet_gemeten": "SFace en het groeperen: de testfoto's hebben geen gezichten (YuNet las ze wel)",
+  "eerste_run": "afgebroken: de vrije ruimte op / zakte van 11,69 naar 9,63 GiB, onder DISK_MIN 10 GiB (Keuze 31); elke speler 503 media_busy, reden disk; geen codefout. Run 2 begon op 14,81 GiB, minimum 12,21 GiB",
+  "poort_beeld_ms": 250,
+  "poort_analyse_mb": 2500,
+  "uitkomst": "gehaald"
  }
 }

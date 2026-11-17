@@ -19,9 +19,12 @@ Voor beide motoren gelijk (review golf 1): q boven 200 tekens is 400 search_quer
 person (Z6), place, country en camera (Z3) zijn 501 not_built tot dat pakket het filter aanmeldt;
 library van een bibliotheek die je niet ziet is 404 (like.check_library).
 
-Zoeken op beeld (X3, Keuze 80; Z0b): mode=image of like geeft na de inlog 501 not_built("X3")
-tot X3 er is. Zonder mode (of met mode=text) is het een vraag zoals ervoor, met hetzelfde
-antwoord; daarin staan dan mode "text" en fallback null (de standaard van SearchPage).
+Zoeken op beeld (X3, Keuze 78–80): mode=image of like gaat naar app/beeld/search.py, alleen met
+de analyse aan (FACTS van golf 6: met de analyse uit blijft het na de inlog 501
+not_built("X3"), zoals in 0.8.0). Lukt beeld niet (te laat, container weg, geen model), dan geeft
+dezelfde vraag de treffers van gewoon zoeken met fallback slow, down of no_model (Keuze 9).
+Zonder mode (of met mode=text) is het een vraag zoals ervoor, met hetzelfde antwoord; daarin
+staan dan mode "text" en fallback null (de standaard van SearchPage).
 """
 
 import asyncio
@@ -39,6 +42,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import analysis, errors, events
+from app.beeld import jobs as beeld_jobs
+from app.beeld import search as beeld_search
 from app.config import Settings, get_settings
 from app.db import Session
 from app.models import Node, NodeTag, Tag, User
@@ -51,7 +56,15 @@ from app.search.filters import FILTERS
 from app.search.like import own_tag, search_roots
 from app.search.limits import Replaced, admit
 from app.search.query import MAX_CHARS, QueryTooLong
-from app.search.types import FileType, Groups, SearchMode, SearchPage, SearchParams, Suggestions
+from app.search.types import (
+    BeeldFallback,
+    FileType,
+    Groups,
+    SearchMode,
+    SearchPage,
+    SearchParams,
+    Suggestions,
+)
 from app.security import CurrentUser
 from app.text import CONTROL, fold
 
@@ -139,8 +152,9 @@ async def search(
     ook als begin van een woord, en daarna op stukken van namen. Zonder q en zonder filter:
     400 search_bad_filter. mode=image en like (zoeken op beeld, ook "Meer zoals deze") zijn
     van X3."""
-    if mode == "image" or like is not None:
-        raise not_built("X3")
+    image = mode == "image" or like is not None
+    if image and beeld_jobs.enabled() is None:
+        raise not_built("X3")  # de analyse uit: zoals 0.8.0
     _not_too_long(q)
     if offset > MAX_OFFSET:
         raise errors.fail(
@@ -170,6 +184,14 @@ async def search(
         # dan een gewone 422 (invalid_input, zonder de waarde), geen 500 met q in de log
         found = [{**err, "loc": ("query", *err["loc"])} for err in e.errors()]
         raise RequestValidationError(found) from None
+    fallback: BeeldFallback | None = None
+    if image:
+        try:
+            return await beeld_search.search(session, user, settings, params, q=q, like=like)
+        except beeld_search.Fallback as exc:
+            fallback = exc.reason  # gewoon zoeken met dezelfde vraag en filters (Keuze 9)
+        if not q.strip() and not params.has_filter():
+            return SearchPage(results=[], more=False, offset=offset, fallback=fallback)
     if not q.strip() and not params.has_filter():
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
     engine = await engine_for(settings, await session.connection())
@@ -177,6 +199,7 @@ async def search(
         page = await engine.search(session, user, params)
         page.indexing = await analysis.indexing(session)
         page.groups = await _groups(session, user, params)
+        page.fallback = fallback
         return page
     token = engines.SETTINGS.set(settings)
     # De tijd per stap in Server-Timing, alleen voor tests en metingen (Keuze 13)
@@ -204,6 +227,7 @@ async def search(
     page.indexing = await analysis.indexing(session)
     # Z6 en Z3: de groepen bovenaan (personen, plaatsen), ook buiten admit
     page.groups = await _groups(session, user, params)
+    page.fallback = fallback
     return page
 
 

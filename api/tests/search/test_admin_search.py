@@ -225,6 +225,34 @@ async def test_een_herbouw_van_de_index_met_voortgang(client, admin, settings):
     assert r.json()["detail"]["code"] == "search_rebuild_running"
 
 
+async def test_motor_namen_en_herbouw_uit_een_lezing(client, admin, settings, monkeypatch):
+    """Het laatste stuk van een herbouw kan midden in een GET vallen. De motor, "namen klaar" en
+    de herbouw komen uit één lezing van search_state: nooit "like" zonder herbouw. Met twee
+    lezingen zag de e2e van /beheer (test_zoek_beheer.py) eens "like" terwijl de herbouw al weg
+    was."""
+    headers, _ = admin
+    engine = db.get_engine(settings)
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(
+            "UPDATE search_state SET cursor = 0, started_at = '2026-11-09T10:00:00+00:00', "
+            "what = 'text' WHERE id = 1"
+        )
+    echte = search_admin._index
+
+    async def laatste_stuk_tussendoor(*args, **kwargs):
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("UPDATE search_state SET cursor = NULL WHERE id = 1")
+        return await echte(*args, **kwargs)
+
+    monkeypatch.setattr(search_admin, "_index", laatste_stuk_tussendoor)
+    herbouw = {"what": "text", "started_at": "2026-11-09T10:00:00+00:00", "done": 0.0}
+    loopt, klaar = ("like", False, herbouw), ("fts", True, None)
+    got = (await client.get(ADMIN, headers=headers)).json()
+    assert (got["engine"], got["index"]["names_done"], got["rebuild"]) in (loopt, klaar), got
+    got = (await client.get(ADMIN, headers=headers)).json()
+    assert (got["engine"], got["index"]["names_done"], got["rebuild"]) == klaar, got
+
+
 # --- PATCH: pauze en de schakelaars van X1, X2 en X3 ---------------------------------------------
 
 
