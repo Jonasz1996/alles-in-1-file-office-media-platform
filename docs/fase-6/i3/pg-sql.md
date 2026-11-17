@@ -40,7 +40,7 @@ precies de oude code, op PostgreSQL een eigen vorm.
 | `beeld/search.py` | `unnest(CAST(:nums AS integer[])) WITH ORDINALITY` voor `json_each(:nums)`, en een gewone JOIN voor `_CrossJoin` |
 | `search/access.py` `ranges_sql` | met `dialect="postgresql"`: `jsonb_array_elements(CAST(:ranges AS jsonb))` met `->> 0`/`->> 1`, en `FALSE` voor `0` als er geen bereik is |
 | `search/snippets.py` | `left(kolom, WINDOW)` voor `substr(CAST(kolom AS BLOB), 1, 4 × WINDOW)` (een cast naar bytea faalt op een backslash) en `string_agg` voor `group_concat` |
-| `media/progress.py` `_bad_value` | kent ook de fout van PostgreSQL: SQLSTATE klasse 22 (zoals 22003 buiten bereik) en de `DataError` van asyncpg (een `ValueError`, de oorzaak van de fout) |
+| `media/progress.py` `_bad_value` | kent ook de fout van PostgreSQL: SQLSTATE klasse 22. Dat is 22003 (buiten bereik) van de server, en 22000 als asyncpg de parameter zelf al weigert |
 | `people/faces/wipe.py` | `PRAGMA secure_delete = ON` alleen op SQLite (`_checkpoint()` deed op PostgreSQL al niets) |
 | `cli.py` `db-backup` | op PostgreSQL: "Een reservekopie van PostgreSQL maakt dit commando niet: gebruik pg_dump (cluster: platform-ctl.sh db-backup).", exitcode 2 |
 

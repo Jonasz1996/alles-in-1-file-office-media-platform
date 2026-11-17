@@ -674,6 +674,11 @@ async def test_een_stand_buiten_bereik_is_een_fout_in_de_waarde(settings):
         with pytest.raises(Exception) as caught:  # noqa: B017 - elke database zijn eigen soort
             await db.execute(select(bindparam("v", 2**70, type_=Integer)))
         assert progress._bad_value(caught.value)
+        if _pg(db):
+            # asyncpg weigert de parameter zelf: SQLSTATE 22000, en de oorzaak is geen
+            # ValueError. De klasse 22 vangt hem dus (review F5)
+            assert caught.value.orig.sqlstate == "22000"
+            assert not isinstance(caught.value.orig.__cause__, ValueError)
         await db.rollback()
         with pytest.raises(DBAPIError) as caught:
             await db.execute(text("SELECT x FROM bestaat_niet"))
