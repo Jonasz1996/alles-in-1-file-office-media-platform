@@ -226,9 +226,13 @@ def prefixes(fd: int, nums: list[int]) -> dict[int, bytes]:
     return out
 
 
-def is_current(directory: Path, user_id: uuid.UUID) -> bool:
+def is_current(directory: Path, user_id: uuid.UUID, built_gen: int | None = None) -> bool:
     """Het bestand is er en is van het model en de versie van nu (een nieuwe versie van de stap
-    embed: dan opnieuw, met alleen de nieuwe vectoren)."""
+    embed: dan opnieuw, met alleen de nieuwe vectoren).
+
+    Met built_gen (0.8.2, P4) ook: de gen in de kop is die van beeld_owner.built_gen. Anders is
+    het bestand niet het bestand dat de database noemt (een andere node maakte het, of de
+    database of de map kwam uit een kopie) en wordt het opnieuw gemaakt."""
     fd = open_for_worker(directory, user_id)
     if fd is None:
         return False
@@ -238,4 +242,6 @@ def is_current(directory: Path, user_id: uuid.UUID) -> bool:
         return False
     finally:
         os.close(fd)
+    if built_gen is not None and head.gen != built_gen:
+        return False
     return (head.model, head.version, head.dim) == (vt.MODEL, VERSIONS[Step.EMBED], vt.DIM)
