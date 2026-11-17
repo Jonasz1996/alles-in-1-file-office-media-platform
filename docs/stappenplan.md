@@ -731,7 +731,30 @@ gebruiken; de app zit niets in de weg, maar levert ook geen lijst met bronnen me
 Volgorde: kan starten na fase 5; bouwen pas als fase 6 (zoeken en foto's) klaar is.
 Afspelen op de TV blijft fase 9.
 
-Deel A: de Plex-ervaring (bovenop fase 5)
+Bouwvolgorde (Jonas, 17-11-2026): het hoeft niet op Plex te lijken, Jellyfin-achtig mag ook.
+Wat telt: torrents downloaden en films kijken met upscaling en ondertitels. Daarom eerst deel
+B (de keten van zoeken tot importeren), dan de ondertitels en de upscaling, dan de verzoeken,
+en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stappen:
+
+1. Bouwstenen: releasenamen, profielen, Torznab, qBittorrent (klaar, 17-11-2026)
+2. Database (migratie 0016), instellingen op `/beheer`, containers voor qBittorrent en
+   Prowlarr (los en in ClusterForge), titels volgen en de kalender
+3. De keten: zoeken, kiezen, downloaden, vastgelopen vervangen, uitpakken, importeren
+4. Ondertitels: OpenSubtitles en timing verschuiven
+5. Upscaling bij het afspelen (zie hieronder)
+6. Verzoeken en meldingen
+7. Home met rijen, collecties, activiteit, profielen, kinderslot, intro overslaan
+8. Opruimregels, de stappen voor ClusterForge en de eindtest
+
+- [ ] Upscaling bij het afspelen. Twee lagen: (a) in de speler zelf, met een eigen
+  WebGL-shader (scherper opschalen en randen verfijnen, zoals FSR 1 of Anime4K doen) die op
+  de grafische kaart van het kijktoestel draait; de server heeft er dus geen GPU voor nodig,
+  en een knop in de speler zet hem aan of uit. (b) Op de server, bij een transcode, een
+  betere schaler van ffmpeg (lanczos) naar de resolutie van het scherm; met AI-modellen pas
+  als er een GPU is (open beslissing over de GPU). Op een TV-app (fase 9) geldt alleen (b)
+  tot de TV zelf shaders kan
+
+Deel A: de Plex- of Jellyfin-ervaring (bovenop fase 5)
 
 - [ ] Home met rijen: Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
   verschenen, en per bibliotheek; titelpagina's met samenvatting, cast, seizoenen en
