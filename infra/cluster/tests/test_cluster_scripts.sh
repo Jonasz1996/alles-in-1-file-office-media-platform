@@ -697,8 +697,12 @@ rm "$W/pg_dump_faalt"
 nieuw_cluster
 rm "$W/nodes/n2/bin/pg_dump" "$W/nodes/n2/bin/pg_restore" "$W/nodes/n2/bin/psql"
 zet_versie v082
+for n in $NODES; do chmod 0755 "$(eigen "$n")"; done
 rc=0; draai_cluster platform-bijwerken.sh || rc=$?
 check "bijwerken: het hele cluster, n1 en n2 eerst, n3 (VIP) als laatste" is "$rc $GEDRAAID" "0  n1:0 n2:0 n3:0"
+# In de eigen map staan harde links naar de dumps (pg_dump maakt ze 0644): alleen root mag erin.
+check "bijwerken: de eigen map is 0700 op elke node" \
+  is "$(stat -c %a "$(eigen n1)") $(stat -c %a "$(eigen n2)") $(stat -c %a "$(eigen n3)")" "700 700 700"
 for n in n1 n2 n3; do
   check "bijwerken: $n heeft 0.8.2 als cf-platform:local en 0.8.1 als cf-platform:vorige" \
     bash -c '[ "$1" = "$3" ] && [ "$2" = "$4" ] && [ -z "$5" ] && [ "$(cat "$6/vorige.rev")" = "$7" ]' _ \
@@ -912,8 +916,11 @@ check "terug: slot bezet, niets veranderd" terug_niets_veranderd
 # --- Platform terug: gelukt -----------------------------------------------------------------
 
 na_update
+for n in $NODES; do chmod 0755 "$(eigen "$n")"; done
 rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
 check "terug: met de database, het hele cluster" is "$rc $GEDRAAID" "0  n1:0 n2:0 n3:0"
+check "terug: de eigen map is 0700 op elke node (voor-terug.dump staat erin)" \
+  is "$(stat -c %a "$(eigen n1)") $(stat -c %a "$(eigen n2)") $(stat -c %a "$(eigen n3)")" "700 700 700"
 for n in n1 n2 n3; do
   check "terug: $n heeft 0.8.1 als cf-platform:local, 0.8.2 als cf-platform:teruggezet" \
     is "$(tag $n local) $(tag $n teruggezet)" "$A $B"
