@@ -32,7 +32,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import BigInteger, Integer, bindparam, cast, func, select, text, update
+from sqlalchemy import BigInteger, Integer, bindparam, cast, event, func, select, text, update
 from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg
 from sqlalchemy.dialects.sqlite import aiosqlite
 from sqlalchemy.exc import DBAPIError
@@ -830,6 +830,90 @@ async def test_gezichten_wissen(settings, scope):
             assert rows == [] and owner_rows == []
             for table in (FacePerson, FaceScan):
                 assert await db.scalar(select(func.count()).select_from(table)) == 0
+
+
+# Het contract met migratie 0013 (P2, review F1): voor elke volgorde van read.py op PostgreSQL een
+# index met precies die volgorde. Dan loopt PostgreSQL de index af tot de LIMIT en sorteert hij
+# niets. Een index met suggest_score DESC (zonder NULLS LAST) past niet: daar staat NULL vooraan.
+FACE_SEQ_INDEXES = (
+    "CREATE INDEX ix_face_open_seq ON face"
+    " (owner_id, suggest_id, suggest_score DESC NULLS LAST, seq)"
+    " WHERE suggest_id IS NOT NULL AND hidden = 0",
+    "CREATE INDEX ix_face_cluster_seq ON face (owner_id, cluster, seq DESC)"
+    " WHERE cluster IS NOT NULL AND hidden = 0",
+)
+
+
+async def _sent(db: Any, run: Any) -> list[tuple[str, Any]]:
+    """Elke vraag die run() naar de database stuurt: de tekst en de parameters zoals de driver
+    ze krijgt."""
+    sent: list[tuple[str, Any]] = []
+
+    def grab(conn, cursor, statement, parameters, context, executemany) -> None:
+        sent.append((statement, parameters))
+
+    engine = db.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", grab)
+    try:
+        await run()
+    finally:
+        event.remove(engine, "before_cursor_execute", grab)
+    return sent
+
+
+@requires_pg
+@pytest.mark.anyio
+async def test_de_volgorde_van_de_gezichten_loopt_een_index_af(settings):
+    """person_suggestions, group en _firsts (suggest_id en cluster) sorteren niet: elke vraag
+    met een ORDER BY loopt een index op face af. Met 0013 gelden de indexen van de migratie;
+    zonder 0013 maakt de test face.seq en FACE_SEQ_INDEXES zelf, in de vorm van het contract.
+    enable_sort uit: een plan dat moet sorteren, sorteert dan nog steeds (en de test ziet het);
+    een plan dat een index met de goede volgorde heeft, kiest die."""
+    async with maker(settings)() as db:
+        has_seq = await db.scalar(
+            text(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_name = 'face' AND column_name = 'seq'"
+            )
+        )
+        if not has_seq:
+            await _face_seq(db)
+            for sql in FACE_SEQ_INDEXES:
+                await db.execute(text(sql))
+        user = await create_user(db, "eva@example.nl")
+        foto = await _image(db, user, "a.jpg")
+        person = Person(owner_id=user.id, name="Bram", search_name="bram")
+        db.add(person)
+        await db.flush()
+        for score in (0.9, None, 0.3, 0.5):
+            db.add(
+                Face(node_id=foto.id, owner_id=user.id, x=0.1, y=0.1, w=0.2, h=0.2, score=0.99,
+                     px=80, version=1, cluster=7, suggest_id=person.id, suggest_score=score)
+            )  # fmt: skip
+            await db.flush()
+        await db.commit()
+
+        calls = {
+            "person_suggestions": lambda: read.person_suggestions(db, user.id, person.id, None, 10),
+            "group": lambda: read.group(db, user.id, 0, 7, None),
+            "firsts_suggest": lambda: read._firsts(db, user.id, "suggest_id", [person.id]),
+            "firsts_cluster": lambda: read._firsts(db, user.id, "cluster", [7]),
+        }
+        conn = await db.connection()
+        await conn.exec_driver_sql("SET LOCAL enable_sort = off")
+        await conn.exec_driver_sql("SET LOCAL enable_incremental_sort = off")
+        for name, run in calls.items():
+            ordered = [(s, p) for s, p in await _sent(db, run) if "ORDER BY" in s]
+            assert ordered, name
+            for statement, parameters in ordered:
+                rows = await conn.exec_driver_sql("EXPLAIN " + statement, parameters)
+                plan = "\n".join(r[0] for r in rows)
+                assert "Sort" not in plan, (name, plan)
+                assert re.search(r"Index (Only )?Scan (Backward )?using \w+ on face\b", plan), (
+                    name,
+                    plan,
+                )
+        await db.rollback()
 
 
 def test_db_backup_op_postgresql_verwijst_naar_pg_dump(tmp_path):

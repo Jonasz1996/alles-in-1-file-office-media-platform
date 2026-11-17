@@ -50,6 +50,23 @@ PostgreSQL alleen als de vergelijking op bytes gaat. Dat geeft P2 met `COLLATE "
 parameter krijgt de collatie van de kolom, dus P1 hoeft hier niets te doen. De lokale database
 van de tests is ook met `--locale=C` gemaakt.
 
+### Het contract met 0013: de volgorde van de gezichten
+
+Op SQLite loopt elke vraag hieronder een index van 0011 af (`rowid` staat daar achter elke
+index). Op PostgreSQL maakt 0013 de index met `face.seq`. Die index moet precies de volgorde
+van de vraag hebben, ook `NULLS LAST`. Anders sorteert PostgreSQL alle gezichten van die
+persoon of groep, in plaats van de index af te lopen tot de LIMIT (review F1).
+
+| Vraag (`people/faces/read.py`) | ORDER BY op PostgreSQL | Index van 0013 |
+|---|---|---|
+| `person_suggestions`, `_firsts(…, "suggest_id")` | `suggest_score DESC NULLS LAST, seq` | `ix_face_open_seq ON face (owner_id, suggest_id, suggest_score DESC NULLS LAST, seq) WHERE suggest_id IS NOT NULL AND hidden = 0` |
+| `group`, `_firsts(…, "cluster")` | `seq DESC` | `ix_face_cluster_seq ON face (owner_id, cluster, seq DESC) WHERE cluster IS NOT NULL AND hidden = 0` |
+
+`NULLS LAST` hoort bij de vraag: zo staat een score zonder waarde achteraan, net als op SQLite.
+`test_de_volgorde_van_de_gezichten_loopt_een_index_af` bewaakt dit contract (alleen
+PostgreSQL). Met 0013 gebruikt de test de indexen van de migratie; zonder 0013 maakt hij ze
+zelf, in de vorm hierboven.
+
 ## Het bewijs dat SQLite gelijk blijft
 
 Drie metingen, elk met de code van vóór P1 (`aa6fa8b`, een eigen worktree) en die van erna.
