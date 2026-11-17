@@ -1211,3 +1211,37 @@ Index("ux_fp_ja", FacePerson.face_id, unique=True, sqlite_where=text("verdict = 
 Index("ix_fp_person", FacePerson.owner_id, FacePerson.person_id, FacePerson.verdict)
 Index("ix_face_scan_todo", FaceScan.state, FaceScan.owner_id, FaceScan.prio.desc())
 Index("ux_blob_embed_sha", BlobEmbed.blob_sha, unique=True)
+
+
+# --- Nextcloud-clients (0014): app-wachtwoorden en de inlogflow v2 ---------------------------
+
+
+class AppPassword(Base):
+    """Een gekoppeld apparaat (Nextcloud-client, rclone). Alleen de SHA-256 van het wachtwoord;
+    dat wachtwoord ziet de gebruiker of de client één keer. Werkt alleen voor WebDAV en de
+    Nextcloud-API's, niet voor /api/v1 (daar blijft 2FA gelden)."""
+
+    __tablename__ = "app_password"
+    __table_args__ = (Index("ix_app_password_user", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NcLoginFlow(Base):
+    """Een lopende inlogflow v2: de client peilt met het poll-token, de browser opent de
+    pagina met het login-token. Na goedkeuren staan login_name en secret (het nieuwe
+    app-wachtwoord) klaar voor één peiling; daarna is de rij weg. Hooguit 20 minuten."""
+
+    __tablename__ = "nc_login_flow"
+
+    poll_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    login_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    client: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    login_name: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    secret: Mapped[str | None] = mapped_column(String(128), nullable=True)

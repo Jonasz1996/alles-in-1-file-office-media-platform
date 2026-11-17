@@ -51,6 +51,7 @@ from app.routers import (
     archive,
     auth,
     batch,
+    dav,
     beeld,
     duplicates,
     files,
@@ -66,6 +67,7 @@ from app.routers import (
     media_subs,
     memories,
     myshares,
+    nc_ocs,
     ocr,
     office,
     office_internal,
@@ -615,6 +617,10 @@ app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)
 app.include_router(stream_file.router)
+# Nextcloud-clients en WebDAV (app/nc/)
+app.include_router(nc_ocs.router)
+app.include_router(nc_ocs.api)
+app.include_router(dav.router)
 
 # Wat de document server aanroept, op een eigen luisteraar (Keuze 8, app/serve.py): de
 # publieke poorten kennen /internal/ niet. Deelt app.state (database, blob-opslag,

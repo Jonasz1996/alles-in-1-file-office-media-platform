@@ -8,7 +8,7 @@ ook echt vindt.
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any
 
 # Wie zoveel gebeurtenissen achterloopt, haakt af en moet opnieuw verbinden (en laadt dan
@@ -91,7 +91,12 @@ class Hub:
 
 
 hub = Hub()
+# Wie elke gebeurtenis ook wil zien, synchroon en zonder I/O: (type, data). Nu de map-ETags
+# van WebDAV (app/nc/etags.py).
+taps: list[Callable[[str, dict[str, Any]], None]] = []
 
 
 def publish(user_ids: Iterable[uuid.UUID], type: str, data: dict[str, Any]) -> None:
+    for tap in taps:
+        tap(type, data)
     hub.publish(user_ids, type, data)
