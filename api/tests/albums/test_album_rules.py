@@ -33,6 +33,7 @@ from tests.factories import (
     maker,
     params_of,
 )
+from tests.search import motoren
 from tests.test_photos import login, photo
 
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
@@ -47,7 +48,7 @@ def _filters():
     rule_router.register()
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> str:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")

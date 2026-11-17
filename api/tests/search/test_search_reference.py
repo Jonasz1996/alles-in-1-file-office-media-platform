@@ -33,6 +33,7 @@ from app.search import engine as engines
 from app.search.query import QueryTooLong
 from app.search.types import SearchParams
 from tests.factories import maker
+from tests.search import motoren
 from tests.search import referentie as R
 from tests.search.migratie import MADE
 from tests.search.test_referentie import _Verbinding
@@ -124,6 +125,7 @@ async def _tekst(settings, node_id: str, body: str) -> None:
 
 
 @pytest.mark.usefixtures("_ruim")
+@motoren.needs_fts
 async def test_de_naam_staat_boven_de_tekst(client, admin, settings):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
@@ -135,6 +137,7 @@ async def test_de_naam_staat_boven_de_tekst(client, admin, settings):
 
 
 @pytest.mark.usefixtures("_ruim")
+@motoren.needs_fts
 async def test_een_heel_woord_staat_boven_een_stuk_van_een_naam(client, admin):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]
@@ -154,6 +157,7 @@ async def test_een_heel_woord_staat_boven_een_stuk_van_een_naam(client, admin):
 
 
 @pytest.mark.usefixtures("_ruim")
+@motoren.needs_fts
 async def test_bij_gelijke_score_op_num_ook_over_de_paginas(client, admin):
     headers, _ = admin
     root_id = (await root(client, headers))["folder"]["id"]

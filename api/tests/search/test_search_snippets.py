@@ -34,6 +34,7 @@ from app.search import limits, snippets
 from app.search.query import parse
 from app.search.snippets import WINDOW, Snip, Source, build, pattern, snippet
 from app.text import fold
+from tests.search import motoren
 from tests.search import wereld as W
 from tests.search.test_search_access import kop
 
@@ -297,6 +298,7 @@ async def _zoek(client, headers, q: str) -> dict[uuid.UUID, dict]:
     return {uuid.UUID(h["node"]["id"]): h for h in page["results"]}
 
 
+@motoren.needs_fts
 async def test_de_snippet_in_het_antwoord(client, settings):
     w = await W.bouw_async(settings)
     eva = await kop(client, "eva")
@@ -312,6 +314,7 @@ async def test_de_snippet_in_het_antwoord(client, settings):
     assert hits[w.ids["doc"]]["snippet"] is None
 
 
+@motoren.needs_fts
 async def test_een_treffer_na_teken_20000(client, settings):
     """De tekst van Plan.txt: 19.988 tekens vulling, dan binnenwoord (eindigt op teken 19.999),
     een spatie, dan buitenwoord (begint op teken 20.001). FTS vindt beide (de hele tekst staat
@@ -330,6 +333,7 @@ async def test_een_treffer_na_teken_20000(client, settings):
     assert buiten["match"] == "text" and buiten["snippet"] is None
 
 
+@motoren.needs_fts
 async def test_ss_in_de_tekst_via_de_api(client, settings):
     w = await W.bouw_async(settings)
     async with _sessions(settings)() as db:
@@ -341,6 +345,7 @@ async def test_ss_in_de_tekst_via_de_api(client, settings):
         assert "Straße" in gemarkeerd, q
 
 
+@motoren.needs_fts
 async def test_de_ocr_van_een_foto_alleen_voor_de_eigenaar(client, settings):
     """Eva vindt haar foto op de OCR-tekst, met de snippet uit die tekst. De SQL leest die
     tekst niet voor Bram, ook niet als hij de foto op naam vindt."""
@@ -415,6 +420,7 @@ def test_in_stappen_gevouwen_zoals_in_een_keer(plek):
         assert stappen is not None and [p.t for p in stappen if p.m] == verwacht
 
 
+@motoren.needs_fts
 async def test_in_een_thread_met_een_limiter_van_1(client, settings, monkeypatch):
     w = await W.bouw_async(settings)
     eva = await kop(client, "eva")
@@ -433,6 +439,7 @@ async def test_in_een_thread_met_een_limiter_van_1(client, settings, monkeypatch
     assert snippets._thread() is snippets._thread()
 
 
+@motoren.needs_fts
 async def test_server_timing_alleen_met_search_timing(client, settings, monkeypatch):
     await W.bouw_async(settings)
     eva = await kop(client, "eva")

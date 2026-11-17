@@ -30,6 +30,7 @@ from app.search import engine as engines
 from app.search import limits
 from app.search.deadline import STOP, deadline
 from tests.factories import code_of, create_user, maker
+from tests.search import motoren
 from tests.test_files import put, root
 
 pytestmark = pytest.mark.anyio
@@ -163,6 +164,7 @@ async def test_een_fout_in_release_laat_de_rij_kloppen(settings):
     assert state.running == 0 and not state.waiting
 
 
+@motoren.needs_fts
 async def test_een_tweede_vraag_van_dezelfde_gebruiker_stopt_de_eerste(settings):
     ik = iemand()
     gestopt = asyncio.Event()
@@ -391,6 +393,7 @@ async def koppen(settings, n: int) -> list[dict[str, str]]:
     ]
 
 
+@motoren.needs_fts
 async def test_25_tegelijk_geeft_search_busy(client, admin, settings, monkeypatch):
     los = asyncio.Event()
     binnen: list[str] = []
@@ -432,6 +435,7 @@ async def test_25_tegelijk_geeft_search_busy(client, admin, settings, monkeypatc
     assert state.running == 0 and not state.waiting
 
 
+@motoren.needs_fts
 async def test_de_tweede_vraag_stopt_de_eerste_via_de_api(client, admin, settings, monkeypatch):
     """De eerste vraag zit in ronde A (die alleen eindigt als ze stopt, met een grens van 60 s);
     de tweede stopt haar: de eerste geeft meteen een lege, gedeeltelijke pagina, zonder ronde B
@@ -479,6 +483,7 @@ async def test_de_tweede_vraag_stopt_de_eerste_via_de_api(client, admin, setting
 
 
 @pytest.mark.parametrize("pad", ["/api/v1/search", "/api/v1/search/suggest"])
+@motoren.needs_fts
 async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
     """H4 via de API, met één plek: A loopt, X1 wacht; X2 neemt de plek van X1 over. X1 krijgt
     meteen 200 met een lege (gedeeltelijke) uitkomst, X2 is na A aan de beurt."""
@@ -516,6 +521,7 @@ async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
     assert state.running == 0 and not state.waiting
 
 
+@motoren.needs_fts
 async def test_de_snelheid_via_de_api(client, settings, monkeypatch):
     nepklok(monkeypatch)
     (kop,) = await koppen(settings, 1)
