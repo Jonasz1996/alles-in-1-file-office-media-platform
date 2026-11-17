@@ -15,19 +15,26 @@ Wat er gebeurt:
    Berekende kolommen (node.ftype) rekent PostgreSQL zelf.
 4. De reeksen van de primaire sleutels komen achter de hoogste id, en per tabel moet het aantal
    rijen in bron en doel gelijk zijn; anders faalt het commando.
+5. Vanaf revisie 0013 heeft PostgreSQL eigen triggers (num, mpath, dead, photo_geo, beeld,
+   gezichten). Tijdens het kopiëren staan die uit (DISABLE TRIGGER USER: alleen eigenaar van de
+   tabel nodig), want de rijen komen met hun eigen num, mpath en dead; daarna loopt fase6_fill()
+   ze na (verwacht: niets te herstellen) en zet hij node_num_seq achter het hoogste num. Alles in
+   de transactie van de kopie. face gaat in de volgorde van rowid, zodat face.seq (de volgorde
+   van rowid op PostgreSQL) dezelfde volgorde krijgt.
 
 Bestanden (blobs, media, office) gaan niet mee: die staan in de datamap, die het cluster deelt.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, literal_column, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
@@ -36,6 +43,8 @@ from app.config import Settings
 from app.db import Base
 
 BATCH = 2000
+# De tabellen met triggers van 0013 (PostgreSQL), uit tijdens het kopiëren
+TRIGGER_TABLES = ("node", "photo_geo", "person")
 
 
 class CopyError(Exception):
@@ -135,6 +144,20 @@ async def _restore_foreign_keys(conn: AsyncConnection, deferred: list[tuple[str,
         )
 
 
+def _order(table, cols: list) -> list:
+    """De volgorde van kopiëren: de primaire sleutel; face in de volgorde van rowid (de bron is
+    SQLite), zodat face.seq op PostgreSQL dezelfde volgorde krijgt (0013)."""
+    if table.name == "face":
+        return [literal_column("rowid")]
+    return list(table.primary_key.columns) or cols[:1]
+
+
+async def _has_fill(conn: AsyncConnection) -> bool:
+    """Heeft het doel de triggers en fase6_fill() van 0013?"""
+    found = await conn.execute(text("SELECT to_regprocedure('fase6_fill(boolean)') IS NOT NULL"))
+    return bool(found.scalar())
+
+
 async def _fix_sequences(conn: AsyncConnection, table) -> None:
     for col in table.primary_key.columns:
         seq = (
@@ -212,12 +235,15 @@ async def db_copy(
             # erin staat (verplaatsen), dus op volgorde kopiëren volstaat niet. Daarvoor is
             # geen superuser nodig, alleen eigenaar van de tabellen (Alembic maakte ze net).
             deferred = await _defer_foreign_keys(dst)
+            fill = await _has_fill(dst)
+            if fill:
+                for name in TRIGGER_TABLES:
+                    await dst.execute(text(f"ALTER TABLE {_quote(name)} DISABLE TRIGGER USER"))
             for table in Base.metadata.sorted_tables:
                 if table.name not in src_names:
                     continue
                 cols = [c for c in _copyable(table) if c.name in src_cols[table.name]]
-                order = list(table.primary_key.columns) or cols[:1]
-                stmt = select(*cols).order_by(*order)
+                stmt = select(*cols).order_by(*_order(table, cols))
                 copied = 0
                 stream = await src.stream(stmt)
                 async for part in stream.partitions(BATCH):
@@ -226,6 +252,16 @@ async def db_copy(
                 result.rows[table.name] = copied
                 await _fix_sequences(dst, table)
             await _restore_foreign_keys(dst, deferred)
+            if fill:
+                found = await dst.execute(text("SELECT fase6_fill()::text"))
+                counts = json.loads(found.scalar_one())
+                say(
+                    "Nagelopen met fase6_fill: "
+                    + ", ".join(f"{k} {counts[k]}" for k in sorted(counts))
+                    + " (verwacht 0 voor num, tree en photo_geo)."
+                )
+                for name in TRIGGER_TABLES:
+                    await dst.execute(text(f"ALTER TABLE {_quote(name)} ENABLE TRIGGER USER"))
             for name, count in result.rows.items():
                 table = Base.metadata.tables[name]
                 got = (await dst.execute(select(func.count()).select_from(table))).scalar_one()

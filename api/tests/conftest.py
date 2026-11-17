@@ -102,13 +102,38 @@ async def _pg_database(name: str, drop: bool = False) -> str:
     return PG_URL.rsplit("/", 1)[0] + "/" + name
 
 
+def pytest_collection_modifyitems(config, items):
+    """Marker pg: de test vraagt PostgreSQL (PLATFORM_TEST_DATABASE_URL), zonder slaat hij over.
+    Marker sqlite_only: de test gaat alleen over SQLite, met PostgreSQL slaat hij over, met de
+    reden uit de marker (@pytest.mark.sqlite_only("waarom"))."""
+    for item in items:
+        if not PG_URL and item.get_closest_marker("pg") is not None:
+            item.add_marker(
+                pytest.mark.skip(reason="vraagt PostgreSQL (PLATFORM_TEST_DATABASE_URL)")
+            )
+        only = item.get_closest_marker("sqlite_only")
+        if PG_URL and only is not None:
+            why = only.args[0] if only.args else "alleen SQLite"
+            item.add_marker(pytest.mark.skip(reason=f"alleen SQLite: {why}"))
+
+
 @pytest.fixture
-async def settings(tmp_path):
-    extra = {}
-    name = ""
-    if PG_URL:
-        name = "t_" + uuid.uuid4().hex
-        extra["database_url"] = await _pg_database(name)
+async def database_url(tmp_path):
+    """De database van deze test als URL: zonder PLATFORM_TEST_DATABASE_URL het SQLite-bestand
+    platform.db in tmp_path (gelijk aan Settings.db_url), anders een eigen, nieuwe
+    PostgreSQL-database die na de test weer weg is. Voor tests en sub-conftests die zelf
+    Settings maken."""
+    if not PG_URL:
+        yield f"sqlite+aiosqlite:///{tmp_path / 'platform.db'}"
+        return
+    name = "t_" + uuid.uuid4().hex
+    yield await _pg_database(name)
+    await _pg_database(name, drop=True)
+
+
+@pytest.fixture
+async def settings(tmp_path, database_url):
+    extra = {"database_url": database_url} if PG_URL else {}
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
@@ -117,8 +142,6 @@ async def settings(tmp_path):
     # snelheidstests) trager naarmate de run langer is
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
-    if name:
-        await _pg_database(name, drop=True)
 
 
 @pytest.fixture

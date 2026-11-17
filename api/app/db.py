@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -88,6 +88,17 @@ async def get_session(
 
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+
+
+async def lock_tree(session: AsyncSession) -> None:
+    """Op PostgreSQL het slot van de boom (node_lock_tree() van migratie 0013), tot de commit.
+    Voor een schrijver die in één transactie met meer dan één statement nodes vastzet (wissen,
+    een opnamedatum): anders zet hij ze vast in een andere volgorde dan een verplaatsing erboven
+    (die gaat op volgorde van mpath), en dan stopt PostgreSQL er één met 40P01 (review PG13-1).
+    Neem het vóór de eerste rij van node in de transactie. Op SQLite niets: daar is maar één
+    schrijver."""
+    if session.get_bind().dialect.name == "postgresql":
+        await session.execute(text("SELECT node_lock_tree()"))
 
 
 # --- De WAL leegmaken ------------------------------------------------------------------------
