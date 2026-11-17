@@ -1,0 +1,66 @@
+# Office (fase 4): OnlyOffice Docs als tweede container. Alleen de app praat ermee, over het
+# interne netwerk "office" zonder uitgang naar buiten. Geen eigen poort.
+#
+# install.sh neemt dit bestand alleen mee als office aan staat (OFFICE=aan in /opt/platform/.env).
+# Zet je office uit, dan is de container een "orphan" en ruimt --remove-orphans hem op; de
+# volumes blijven staan (daar staan ook de forgotten files, docs/runbooks/office.md).
+services:
+  platform:
+    environment:
+      PLATFORM_OFFICE_URL: http://office
+      PLATFORM_OFFICE_APP_URL: http://platform:8081
+      PLATFORM_OFFICE_SECRET: ${OFFICE_JWT_SECRET:?}
+    networks: [default, office]
+    # Bij het stoppen slaat de app eerst alle open documenten tussentijds op (Keuze 18)
+    stop_grace_period: 30s
+
+  office:
+    # De tag van Docker Hub. install.sh haalt het image op digest (Docker Hub of de mirror) en
+    # zet deze tag er bij elke run lokaal op, op precies die digest. Zo vindt compose het image
+    # zelf, ook op de klassieke image-opslag van Docker, waar na een pull van de mirror geen
+    # naam `tag@digest` onder Docker Hub bestaat. Een pin staat in .env (OFFICE_IMAGE).
+    image: ${OFFICE_IMAGE:-onlyoffice/documentserver:10.0.0.1}
+    pull_policy: missing
+    restart: unless-stopped
+    depends_on: [platform]  # stopt eerst, zodat zijn laatste opslag de app nog vindt
+    networks: [office]
+    # Een nette stop slaat alles op; die duurde 30 s [gemeten]
+    stop_grace_period: 60s
+    # Eerst een oud pid-bestand van supervisord weg, dan precies het entrypoint van het image.
+    # Bij een herstart van dezelfde container (de LXC of Docker opnieuw gestart, docker restart)
+    # bleef /var/run/supervisord.pid van het vorige leven staan, en het init-script van het
+    # image ziet elk proces met dat pid als "draait al": dan startte DS zonder supervisord, dus
+    # zonder docservice en converter (docs/fase-4/metingen.md, deel 2, bevinding 7). Een echte
+    # machine begint met een lege /run; dit doet hetzelfde voor dat ene bestand.
+    entrypoint: ["/bin/sh", "-c", "rm -f /var/run/supervisord.pid && exec /app/ds/run-document-server.sh"]
+    # Gemeten met DS 10.0.0.1: met precies deze rechten start en werkt DS (Keuze 29). Geen
+    # privileged, geen AppArmor-aanpassing, geen extra rechten op de host.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, NET_BIND_SERVICE, KILL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${OFFICE_JWT_SECRET:?}
+      JWT_HEADER: Authorization
+      SECURE_LINK_SECRET: ${OFFICE_LINK_SECRET:?}
+      WELCOME_PAGE_ENABLED: "false"
+      PLUGINS_ENABLED: "false"
+    volumes:
+      # Instellingen zonder omgevingsvariabele: 8 pogingen voor een callback, geen docbuilder en
+      # geen AI, en grenzen op de XML die niet hoger zijn dan die van de app (Keuze 23, spike A11)
+      - ./office/local-production-linux.json:/etc/onlyoffice/documentserver/local-production-linux.json:ro
+      - office-lib:/var/lib/onlyoffice
+      - office-data:/var/www/onlyoffice/Data
+      - office-logs:/var/log/onlyoffice
+      - office-fonts:/usr/share/fonts/truetype/custom
+
+networks:
+  office:
+    internal: true
+
+volumes:
+  office-lib:
+  office-data:
+  office-logs:
+  office-fonts:

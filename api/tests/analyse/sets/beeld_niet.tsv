@@ -1,0 +1,75 @@
+# Foto's die een voorstel van beeld.tsv nooit neemt (fase 6, Keuze 83; runbook analyse, stap 4).
+# Leest beeld_model.py set (lees_niet); de job beeld-model draait ook als alleen dit bestand
+# verandert. Een voorstel slaat een kandidaat met een bron hieruit over, ook als tweede keus en
+# als reserve, en de volgende in dezelfde volgorde krijgt de plek. Met beeld.tsv is een foto uit
+# deze lijst een fout.
+#
+# bron: de bestandspagina, precies zoals in de kolom bron van het voorstel (vergeleken zonder
+# procentcodering en met _ voor een spatie).
+# reden: persoon | kunstwerk | niet-zichtbaar | toont-categorie
+#   persoon          er staat een herkenbaar mens op (of een portret), ook zonder P180 = mens
+#   kunstwerk        een schilderij, prent, tekening, beeld of museumvoorwerp, terwijl de
+#                    categorie het onderwerp is
+#   niet-zichtbaar   de categorie (bij anders-*: het onderwerp) is niet te zien of niet het
+#                    onderwerp
+#   toont-categorie  een anders-* die toch een van de twaalf categorieën laat zien
+# gezien: waar een mens de foto zag, zoals "stad-5 op 3a9b07d".
+#
+# Alleen om een van die vier redenen, die een mens aan de foto en zijn pagina ziet, nooit om een
+# score van het model (bz4.json heeft geen score per foto, en dat blijft zo). Een ontbrekend of
+# verkeerd gegeven op Commons zelf rechtzetten (depicts toevoegen, als prominent markeren) mag
+# ook. Geen combinatie hier zonder overleg: een vaste foto van beeld_vragen.tsv die wegvalt, kan
+# een tekort geven (x3a.md, "De set strenger").
+#
+# De eerste regels komen uit de review van het voorstel op 3a9b07d (run 43816803103), op de titel
+# van de bestandspagina; de foto's zelf waren daar niet te zien.
+bron	reden	gezien
+https://commons.wikimedia.org/wiki/File:Couple_wading_beside_fishing_boats_at_Juan_Griego_Beach,_Margarita_Island,_Venezuela.jpg	persoon	strand-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Landscape_and_banks,_Embalse_de_los_Bermejales,_Andalusia,_Spain.jpg	niet-zichtbaar	strand-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Vulpes_lagopus_in_Iceland.jpg	niet-zichtbaar	sneeuw-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:MET_DP116432.jpg	niet-zichtbaar	sneeuw-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Girl_walking_bike.jpg	persoon	fiets-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Man_carrying_boxes_on_a_bicycle.jpg	persoon	fiets-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:2013_Berlin_Brandenburg_Gate._Sad_raindrops_falling_from_a_smoky_table._Spielvogel.JPG	niet-zichtbaar	fiets-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Tramo_de_Gmunden,_vagono_100.jpg	niet-zichtbaar	berg-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Pohronska_Polhora_city_hall.JPG	niet-zichtbaar	berg-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:S%C3%B6dervidinge_kyrka,_flygfoto_2014-09-06.jpg	niet-zichtbaar	bos-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Christ_Crowned_with_Thorns_(Ecce_Homo),_and_the_Mourning_Virgin_MET_DT317652.jpg	persoon	stad-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Medal_MET_LC-2000_575-001.jpg	niet-zichtbaar	stad-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:MET_56_121_10_163200.jpg	niet-zichtbaar	eten-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Franklin_OH_neighborhood.JPG	niet-zichtbaar	zonsondergang-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Child_cast_net_in_Laguna_de_Raya.jpg	persoon	zonsondergang-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Erechtheum_Acropolis_Athens_evening_moon.jpg	niet-zichtbaar	zonsondergang-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Common_Jezebel_Delias_eucharis_by_kadavoor_3.jpg	niet-zichtbaar	anders-bloem-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Catopsilia_pomona_3_by_kadavoor.jpg	niet-zichtbaar	anders-bloem-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:MET_DP154493.jpg	niet-zichtbaar	anders-vogel-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:%22The_Elephant_Clock%22,_Folio_from_a_Book_of_the_Knowledge_of_Ingenious_Mechanical_Devices_by_al-Jazari_MET_DP234075.jpg	niet-zichtbaar	anders-vogel-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Finger_Bowl_MET_DP243795.jpg	niet-zichtbaar	anders-vogel-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Sewing_Box_MET_189936.jpg	niet-zichtbaar	anders-vogel-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Wholecloth_coverlet_MET_17822.jpg	niet-zichtbaar	anders-vogel-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:%C3%89corch%C3%A9_cavalier_Fragonard_Alfort_1.jpg	persoon	anders-paard-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Cavali%C3%A8re_Garde_R%C3%A9publicaine_Avenue_de_Friedland_14_juillet_2012.jpg	persoon	anders-paard-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Garde_et_Officier_R%C3%A9giment_cavalerie_garde_r%C3%A9publicaine.jpg	persoon	anders-paard-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:I.K._Inha,_Helsinki_d2005_132_626_(16185294897).jpg	toont-categorie	anders-trein-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Black-and-white-sky-clouds-cloudy_(24029427960).jpg	niet-zichtbaar	anders-brug-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:05516-Budapest-1904-Donaubild_mit_Dampfschiff-Br%C3%BCck_%26_Sohn_Kunstverlag.jpg	toont-categorie	anders-brug-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:08703-Budapest-1907-Elisabethbr%C3%BCcke-Br%C3%BCck_%26_Sohn_Kunstverlag.jpg	toont-categorie	anders-brug-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:F._Shaw_Brothers_Tannery,_Maine_MET_DP230684.jpg	niet-zichtbaar	anders-brug-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Statue_Andersen_by_Louis_Hasselriis_Odense_Denmark.jpg	niet-zichtbaar	anders-kerk-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Philip_Slade_MET_ap64.309.3.jpg	persoon	anders-boek-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Christ_in_Glory_MET_DT238453.jpg	niet-zichtbaar	anders-boek-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:%E7%B5%B5%E6%9C%AC%E6%95%A3%E3%81%97%E8%92%94%E7%B5%B5%E7%A1%AF%E7%AE%B1-Writing_Box_with_Illustrated_Books_MET_14_40_842a-f_O1_sf.jpg	niet-zichtbaar	anders-boek-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:%E6%A8%AA%E6%89%8B%E9%A7%85%E6%A7%8B%E5%86%85.JPG	niet-zichtbaar	anders-klok-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Interior,_1924_-_Preston_Dickinson,_MET_1971.126.jpg	niet-zichtbaar	anders-klok-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:MET_DP121339.jpg	niet-zichtbaar	anders-klok-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:MET_28297.jpg	niet-zichtbaar	anders-stoel-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Anne_K%C3%B6niger_Smith_MET_DP72018.jpg	persoon	anders-stoel-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Le_chapelet_(autre)_MET_DP228912.jpg	niet-zichtbaar	anders-stoel-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:The_Sunbeam_MET_3700.jpg	niet-zichtbaar	anders-stoel-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Psychomagic_-_guitarist_playing_Fender_MIM_Telecaster_double-cutaway_(SN_MZ4084463)_-_Bunk_Bar_(2015-06-04_22.21.29_by_Jay_Roc).jpg	persoon	anders-gitaar-1 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Sammersee_2015_-_Kandinsky_(06).jpg	persoon	anders-gitaar-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:The_Spanish_Singer_MET_dp130799.jpg	persoon	anders-gitaar-5 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Sugar_Bowl_MET_238827.jpg	niet-zichtbaar	anders-insect-2 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Vase_MET_DP161874.jpg	niet-zichtbaar	anders-insect-3 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Pair_of_Sword-Grip_Ornaments_(Menuki)_MET_LC-38_55_41a_b-001.jpg	niet-zichtbaar	anders-insect-4 op 3a9b07d
+https://commons.wikimedia.org/wiki/File:Sword_Guard_(Tsuba)_MET_38.25.39_001apr2014.jpg	niet-zichtbaar	anders-insect-5 op 3a9b07d

@@ -1,0 +1,51 @@
+# BZ3 (fase 6, Keuze 74; X3a): verwachte tokens voor het tokenizer.json van SigLIP 2 zelf.
+#
+# Met de hand afgeleid, nooit met onze tokenizer gemaakt. De job beeld-model zoekt de id van elk
+# stuk op in de woordenlijst van het echte bestand (gewone JSON, zonder tokenizer.py) en eist dat
+# onze tokenizer precies die ids geeft, met <eos> erachter en <pad> tot 64. Per soort een
+# voorwaarde die de test op het echte bestand nakijkt; klopt die niet, dan klopt de lijst niet
+# (en niet de tokenizer), en de test zegt dat.
+#
+# Kolommen: soort, tekst (JSON), stukken (JSON-lijst; "<0xEE>" is een byte), waarom.
+# - gemeten: uitkomst van tokenizers 0.23.3 in de spike (B5), het voorbeeld in Keuze 74.
+# - kleine-letters: dezelfde tekst in hoofdletters; kleine letters per teken (Keuze 74).
+# - teken: één teken na normaliseren; BPE heeft niets samen te voegen. Voorwaarde: het teken
+#   staat als stuk in de woordenlijst.
+# - bytes: een teken dat in geen enkel stuk van de woordenlijst voorkomt, dus ook in geen merge;
+#   byte fallback geeft de UTF-8-bytes. Voorwaarde: geen stuk bevat het teken. Niet U+E000 of
+#   U+E001: die staan in stukken van SigLIP 2 (CI-run op 26c49ca; icoonlettertypen gebruiken
+#   ze). Wel U+F0000 en U+10FFFD (daar groen) en de niet-tekens U+FDD0 en U+FDD1.
+# - woorden: woorden met een spatie ervoor; het stuk staat in de woordenlijst. Voorwaarde: elk
+#   stuk staat erin, en geen stuk van de woordenlijst loopt over een spatie in deze tekst heen
+#   (dan kan BPE niet over de grens samenvoegen). Aanname: een gewoon woord dat als stuk in de
+#   woordenlijst staat, komt er als dat ene stuk uit (de merges van SentencePiece-BPE maakten
+#   het stuk juist uit die tekens).
+# - afkappen: de tekst 100 keer achter elkaar; verwacht de eerste 63 stukken, dan <eos>.
+soort	tekst	stukken	waarom
+gemeten	"hond op het strand"	["h", "ond", "▁op", "▁het", "▁strand"]	Keuze 74: gemeten in B5 met tokenizers 0.23.3
+kleine-letters	"HOND OP HET STRAND"	["h", "ond", "▁op", "▁het", "▁strand"]	als gemeten, na kleine letters per teken
+kleine-letters	"Hond op het Strand"	["h", "ond", "▁op", "▁het", "▁strand"]	als gemeten, na kleine letters per teken
+woorden	" op het strand"	["▁op", "▁het", "▁strand"]	de stukken uit gemeten, zonder h en ond ervoor
+woorden	" het strand"	["▁het", "▁strand"]	de stukken uit gemeten
+woorden	" STRAND"	["▁strand"]	het stuk uit gemeten, na kleine letters
+teken	"a"	["a"]	één teken
+teken	"e"	["e"]	één teken
+teken	"x"	["x"]	één teken
+teken	"A"	["a"]	één teken, na kleine letters
+teken	" "	["▁"]	een spatie wordt ▁
+teken	"é"	["é"]	één teken
+teken	"É"	["é"]	één teken, na kleine letters
+teken	"Σ"	["σ"]	kleine letters per teken: σ, ook aan het eind
+teken	"ς"	["ς"]	de slot-sigma blijft ς
+teken	"7"	["7"]	één cijfer
+bytes	"\ufdd0"	["<0xEF>", "<0xB7>", "<0x90>"]	U+FDD0 (een niet-teken, nooit toegewezen), drie bytes in UTF-8
+bytes	"\ufdd1"	["<0xEF>", "<0xB7>", "<0x91>"]	U+FDD1 (een niet-teken)
+bytes	"\udb80\udc00"	["<0xF3>", "<0xB0>", "<0x80>", "<0x80>"]	U+F0000 (privégebruik, vlak 15), vier bytes
+bytes	"\udbff\udffd"	["<0xF4>", "<0x8F>", "<0xBF>", "<0xBD>"]	U+10FFFD (privégebruik, vlak 16)
+bytes	"\udb80\udc00\udbff\udffd"	["<0xF3>", "<0xB0>", "<0x80>", "<0x80>", "<0xF4>", "<0x8F>", "<0xBF>", "<0xBD>"]	twee tekens achter elkaar
+bytes	"a\udb80\udc00"	["a", "<0xF3>", "<0xB0>", "<0x80>", "<0x80>"]	a blijft a: met de bytes kan niets samen
+bytes	"\udb80\udc00a"	["<0xF3>", "<0xB0>", "<0x80>", "<0x80>", "a"]	idem, andersom
+bytes	"\udb80\udc00 \udb80\udc00"	["<0xF3>", "<0xB0>", "<0x80>", "<0x80>", "▁", "<0xF3>", "<0xB0>", "<0x80>", "<0x80>"]	de ▁ ertussen staat alleen
+afkappen	" strand"	["▁strand"]	100 keer: 63 keer ▁strand en dan <eos>
+afkappen	"\udb80\udc00"	["<0xF3>", "<0xB0>", "<0x80>", "<0x80>"]	100 keer: 400 bytes, de eerste 63 en dan <eos>
+afkappen	"a\udb80\udc00"	["a", "<0xF3>", "<0xB0>", "<0x80>", "<0x80>"]	100 keer: de eerste 63 stukken en dan <eos>

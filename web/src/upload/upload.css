@@ -1,0 +1,185 @@
+/* Uploaden (P3): de knoppen, de uploadlade rechtsonder en de dialogen. Alleen tokens. */
+
+.upload-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.upload-tray {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-sticky);
+  display: grid;
+  gap: var(--space-2);
+  width: min(26rem, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - 6rem);
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2);
+}
+
+.upload-tray-head {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.upload-tray-title {
+  margin: 0;
+  font-size: var(--text-m);
+}
+
+.upload-tray-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-tray-summary:empty {
+  display: none;
+}
+
+.upload-total,
+.upload-row progress {
+  width: 100%;
+  height: 0.4rem;
+  accent-color: var(--accent);
+}
+
+.upload-tray-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.upload-tray-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.upload-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-s);
+}
+
+.upload-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-status {
+  display: flex;
+  grid-column: 1;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.upload-state {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-actions {
+  display: flex;
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  gap: var(--space-1);
+}
+
+.upload-reason {
+  color: var(--bad);
+}
+
+.upload-row.state-failed .upload-name {
+  color: var(--bad);
+}
+
+.upload-interrupted {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.upload-interrupted h3 {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-s);
+}
+
+/* "Alles tonen": de lijst scrolt in de dialoog */
+.upload-all {
+  position: relative;
+  height: min(60vh, 36rem);
+  overflow: auto;
+}
+
+.upload-all .upload-row {
+  box-sizing: border-box;
+  padding-right: var(--space-2);
+}
+
+/* Dubbele bestanden */
+.conflict-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.conflict-body p {
+  margin: 0;
+}
+
+.conflict-name {
+  overflow-wrap: anywhere;
+}
+
+.conflict-all {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.conflict-options {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.conflict-option {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.conflict-option .btn {
+  min-width: 9rem;
+}
+
+@media (max-width: 40rem) {
+  .upload-tray {
+    right: var(--space-2);
+    bottom: var(--space-2);
+    left: var(--space-2);
+    width: auto;
+  }
+}

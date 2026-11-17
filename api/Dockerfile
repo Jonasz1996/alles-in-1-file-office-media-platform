@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS base
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PLATFORM_DATA_DIR=/data
+WORKDIR /srv
+
+# ffmpeg/ffprobe voor previews van video's (zonder ffmpeg krijgen video's gewoon geen preview)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY app ./app
+COPY migrations ./migrations
+
+RUN useradd --system --uid 10001 platform && install -d -o platform -g platform /data
+USER platform
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop", "--proxy-headers"]

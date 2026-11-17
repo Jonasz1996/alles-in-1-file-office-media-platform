@@ -1,0 +1,129 @@
+# Keuze 42 op echte namen (integratie punt 9): bestandsnamen zoals ze in een bibliotheek staan,
+# met het TMDB-id van de film of serie die het echt is (koppelen_tmdb.json, nepdata), of - als
+# die niet bij TMDB staat (een eigen video, een studentenfilm). Het pad begint bij de map van de
+# bibliotheek. Kolommen: groep, soort (film of serie), het goede id, het pad.
+gewoon	film	900501	Copper Coast (2003)/Copper.Coast.2003.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900502	The.Silent.Orchard.1995.720p.BluRay.x264-NEP.mkv
+gewoon	film	900503	Lantern.Road.2012.1080p.WEB-DL.DD5.1.H264-NEP.mkv
+gewoon	film	900504	Ironwood.2017.2160p.UHD.BluRay.x265.10bit.HDR-NEP.mkv
+gewoon	film	900505	A.Winter.in.Velden.2008.DVDRip.XviD-NEP.avi
+gewoon	film	900506	Saltwater Hymns (2014).mkv
+gewoon	film	900507	The.Glass.Archive.2020.1080p.AMZN.WEB-DL.DDP5.1.H.264-NEP.mkv
+gewoon	film	900508	Breaking.Tides.2006.720p.HDTV.x264-NEP.mkv
+gewoon	film	900509	Midnight.Ferry.1989.REMASTERED.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900510	The.Clockmakers.Daughter.2011.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900511	Kites.over.Kerman.2016.LIMITED.720p.BluRay.x264-NEP.mkv
+gewoon	film	900512	Hollow.Pines.2001.DVDRip.x264-NEP.mkv
+gewoon	film	900513	The Last Signal (2018) [1080p].mkv
+gewoon	film	900514	Pale.Fire.Station.2009.1080p.BluRay.DTS.x264-NEP.mkv
+gewoon	film	900515	Under.the.Linden.Tree.1977.720p.BluRay.FLAC.x264-NEP.mkv
+gewoon	film	900516	Rust.and.Bone.Yard.2013.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900517	Echoes.of.Amber.2022.1080p.WEBRip.x265-NEP.mkv
+gewoon	film	900518	Northbound.1999.PROPER.DVDRip.XviD-NEP.avi
+gewoon	film	900519	The.Paper.Kingdom.2005.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900520	Velvet.Static.2015.720p.WEB-DL.AAC2.0.H264-NEP.mkv
+gewoon	film	900521	Dark.Meridian.2019.1080p.NF.WEB-DL.DDP5.1.x264-NEP.mkv
+gewoon	film	900522	sister.lake.2010.720p.bluray.x264-nep.mkv
+gewoon	film	900523	The Orchard Keeper's Song (1992)/The Orchard Keeper's Song (1992).mkv
+gewoon	film	900524	Tin.Soldiers.of.Avon.2007.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900525	Bright.Harbour.2021.1080p.WEB.H264-NEP.mkv
+gewoon	film	900526	Fieldstone.2004.DVDRip.XviD-NEP.avi
+gewoon	film	900527	The.Wandering.Lamp.1984.1080p.BluRay.x264-NEP.mkv
+gewoon	film	900528	Moth.and.Lantern.2023.2160p.WEB-DL.DDP5.1.Atmos.HDR.H.265-NEP.mkv
+gewoon	film	900529	Quiet.Thunder.2002.720p.BluRay.x264-NEP.mkv
+gewoon	film	900530	Stone Garden Blues 1997 DVDRip.avi
+id	film	900613	Gravel Psalms (2018) {tmdb-900613}.mkv
+id	film	900614	The Ninth Lantern (2006) [imdbid-tt9006140].mkv
+voorvoegsel	film	900540	Night.Harbor.2019.1080p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900541	Night.Harbor.Blues.2019.1080p.WEB-DL.DD5.1.H264-NEP.mkv
+voorvoegsel	film	900542	Ghost.Field.2016.720p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900543	Ghost.Field.Rising.2016.1080p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900544	The.Hunt.2012.1080p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900545	The.Hunter.2012.720p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900546	Red.Lines.2015.1080p.WEB-DL.H264-NEP.mkv
+voorvoegsel	film	900547	Red.Lines.of.Fire.2015.1080p.WEB-DL.H264-NEP.mkv
+voorvoegsel	film	900548	Monster.2004.DVDRip.XviD-NEP.avi
+voorvoegsel	film	900549	Monsters.2004.1080p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900550	Home.2009.1080p.BluRay.x264-NEP.mkv
+voorvoegsel	film	900551	Home.Again.2009.720p.BluRay.x264-NEP.mkv
+voorvoegsel-jaar	film	900560	Cold.Meridian.2018.1080p.BluRay.x264-NEP.mkv
+voorvoegsel-jaar	film	900561	Cold.Meridian.Rising.2018.1080p.BluRay.x264-NEP.mkv
+voorvoegsel-jaar	film	900562	Wild.Orchard.2014.720p.BluRay.x264-NEP.mkv
+voorvoegsel-taal	film	900565	Harbor.of.Night.2014.SWEDISH.1080p.BluRay.x264-NEP.mkv
+voorvoegsel-taal	film	900566	Harbor.of.Nightfall.2014.1080p.WEB-DL.H264-NEP.mkv
+vervolg	film	900570	Iron.Valley.2008.1080p.BluRay.x264-NEP.mkv
+vervolg	film	900571	Iron.Valley.2.2011.1080p.BluRay.x264-NEP.mkv
+vervolg	film	900571	Iron.Valley.Part.2.2011.720p.HDTV.x264-NEP.mkv
+vervolg	film	900572	Iron.Valley.III.2014.1080p.BluRay.x264-NEP.mkv
+vervolg	film	900573	Iron.Valley.Reckoning.2017.1080p.WEB-DL.DD5.1.H264-NEP.mkv
+vervolg	film	900574	Harbor.Lights.2010.720p.BluRay.x264-NEP.mkv
+vervolg	film	900575	Harbor.Lights.2.2011.720p.BluRay.x264-NEP.mkv
+remake	film	900580	The.Long.Night.1962.720p.BluRay.x264-NEP.mkv
+remake	film	900581	The.Long.Night.2019.1080p.WEB-DL.DDP5.1.H264-NEP.mkv
+remake	film	900581	The.Long.Night.2020.1080p.BluRay.x264-NEP.mkv
+remake	film	900580	The.Long.Night.DVDRip.XviD-NEP.avi
+remake	film	900582	Carries.Garden.1976.DVDRip.XviD-NEP.avi
+remake	film	900583	Carries.Garden.2013.1080p.BluRay.x264-NEP.mkv
+remake	film	900584	Sospiri.1977.ITALIAN.1080p.BluRay.x264-NEP.mkv
+remake	film	900585	Sospiri.2018.1080p.WEB-DL.DDP5.1.H264-NEP.mkv
+buitenlands	film	900590	Le.Port.Fantome.2003.FRENCH.1080p.BluRay.x264-NEP.mkv
+buitenlands	film	900590	The.Phantom.Port.2003.1080p.BluRay.x264-NEP.mkv
+buitenlands	film	900590	De Spookhaven (2003).mkv
+buitenlands	film	900591	Das.Stille.Dorf.2011.GERMAN.720p.BluRay.x264-NEP.mkv
+buitenlands	film	900591	The.Silent.Village.2011.1080p.WEB-DL.H264-NEP.mkv
+buitenlands	film	900592	El.Jardin.de.Sal.2016.SPANISH.1080p.WEBRip.x264-NEP.mkv
+buitenlands	film	900593	Kaze.no.To.2009.JAPANESE.1080p.BluRay.x264-NEP.mkv
+buitenlands	film	900593	Tower.of.Wind.2009.1080p.BluRay.x264-NEP.mkv
+buitenlands	film	900594	House.by.the.Sea.2019.KOREAN.1080p.WEB-DL.H264-NEP.mkv
+buitenlands	film	900596	Zomerhitte.2008.DUTCH.1080p.WEB-DL.x264-NEP.mkv
+buitenlands	film	900597	Les.Etoiles.de.Mer.1998.FRENCH.DVDRip.XviD-NEP.avi
+getal	film	900600	2047.2019.1080p.BluRay.x264-NEP.mkv
+getal	film	900601	1922.Nights.1990.720p.BluRay.x264-NEP.mkv
+getal	film	900602	Thirteen.Lanterns.2004.DVDRip.XviD-NEP.avi
+getal	film	900603	Room.404.2016.1080p.WEB-DL.H264-NEP.mkv
+getal	film	900604	Room.101.2016.1080p.WEB-DL.H264-NEP.mkv
+getal	film	900605	The.4th.Window.2012.720p.BluRay.x264-NEP.mkv
+getal	film	900606	Apartment.5C.2009.1080p.BluRay.x264-NEP.mkv
+getal	film	900607	Highway.9.2020.1080p.WEB.H264-NEP.mkv
+getal	film	900608	Highway.99.2020.1080p.WEB.H264-NEP.mkv
+jaar-ernaast	film	900610	Wolves.at.the.Door.2012.1080p.BluRay.x264-NEP.mkv
+jaar-ernaast	film	900611	The.Amber.Tide.2016.720p.WEB-DL.H264-NEP.mkv
+jaar-ernaast	film	900612	Lowland.2006.DVDRip.XviD-NEP.avi
+ontbreekt	film	-	Bruiloft Sanne en Joost 2017.mp4
+ontbreekt	film	-	Kerstmis bij oma (2015).mp4
+ontbreekt	film	-	Family.Weekend.2018.1080p.mp4
+ontbreekt	film	-	The.Hunt.2020.1080p.mkv
+ontbreekt	film	-	Zomer 2016 Frankrijk.mp4
+ontbreekt	film	-	Night.Harbor.Live.2019.1080p.mkv
+serie	serie	900700	Harbor Watch/Season 1/Harbor.Watch.S01E01.720p.HDTV.x264-NEP.mkv
+serie	serie	900700	Harbor Watch/Season 2/Harbor.Watch.S02E05.720p.HDTV.x264-NEP.mkv
+serie	serie	900701	Harbor.Watch.New.Shift.S01E04.1080p.WEB.h264-NEP.mkv
+serie	serie	900701	Harbor.Watch.New.Shift.S01E05.1080p.WEB.h264-NEP.mkv
+serie	serie	900702	The Lodge (2005)/Season 1/The.Lodge.S01E03.DVDRip.XviD-NEP.avi
+serie	serie	900702	The Lodge (2005)/Season 1/The.Lodge.S01E04.DVDRip.XviD-NEP.avi
+serie	serie	900703	The.Lodge.2019.S01E02.720p.WEB.x264-NEP.mkv
+serie	serie	900703	The.Lodge.S01E01.720p.HDTV.x264-NEP.mkv
+serie	serie	900705	Kroniek.van.het.Dorp.S01E01.DUTCH.1080p.WEB.x264-NEP.mkv
+serie	serie	900705	Kroniek.van.het.Dorp.S01E02.DUTCH.1080p.WEB.x264-NEP.mkv
+serie	serie	900706	Blue.House.S02E05.720p.WEB.x264-NEP.mkv
+serie	serie	900706	Blue.House.S02E06.720p.WEB.x264-NEP.mkv
+serie	serie	900707	Ward 9/Season 01/Ward 9 - S01E01 - Admission.mkv
+serie	serie	900707	Ward 9/Season 01/Ward 9 - S01E02 - Night Shift.mkv
+serie	serie	900708	The.Fake.Detectives.S03E10.1080p.BluRay.x264-NEP.mkv
+serie	serie	900708	The.Fake.Detectives.S03E11.1080p.BluRay.x264-NEP.mkv
+serie	serie	900709	Midnight.Diner.S01E03.720p.WEB.H264-NEP.mkv
+serie	serie	900710	Midnight.Diner.Tokyo.Stories.S01E01.1080p.NF.WEB-DL.H264-NEP.mkv
+serie	serie	900711	Space Cadets (2022)/Season 01/S01E01 - Pilot.mkv
+serie	serie	900711	Space Cadets (2022)/Season 01/S01E02 - Launch.mkv
+serie	serie	900712	Bron.Broen.S02E01.720p.HDTV.x264-NEP.mkv
+serie	serie	900713	The.Bridge.S01E01.720p.HDTV.x264-NEP.mkv
+serie	serie	900713	The.Bridge.US.S01E02.720p.HDTV.x264-NEP.mkv
+serie	serie	900714	Late.Night.Fake.2021.03.04.720p.WEB.h264-NEP.mkv
+serie	serie	900714	Late.Night.Fake.2021.03.05.720p.WEB.h264-NEP.mkv
+serie	serie	900715	[Kaizoku] Kaze Senki - 12 [1080p][ABCD1234].mkv
+serie	serie	900715	[Kaizoku] Kaze Senki - 13 [1080p][BCDE2345].mkv
+serie	serie	900716	Lost.Harbor.S01E01.DVDRip.XviD-NEP.avi
+serie	serie	900717	Lost.Harbor.Files.S01E01.720p.HDTV.x264-NEP.mkv
+serie	serie	900719	The.Workplace.US.S02E03.720p.HDTV.x264-NEP.mkv
+serie	serie	900718	The.Workplace.S01E01.DVDRip.XviD-NEP.avi
+serie	serie	-	Vakantie Vlog/Season 1/Vakantie Vlog S01E01.mp4

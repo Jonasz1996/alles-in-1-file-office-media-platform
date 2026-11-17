@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/.venv
+**/.venv-analyse
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.tsbuildinfo
+**/.env
+api/data
+api/tests
+api/tests_analyse
+.git
+apps
+docs
+infra

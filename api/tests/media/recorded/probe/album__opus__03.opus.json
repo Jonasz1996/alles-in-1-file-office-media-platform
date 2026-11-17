@@ -1,0 +1,53 @@
+{
+ "data": {
+  "bit_rate": 133251,
+  "chapters": [],
+  "container": "ogg",
+  "duration_ms": 4006,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": null,
+    "bitrate": null,
+    "channels": 2,
+    "codec": "opus",
+    "codec_string": "opus",
+    "color": null,
+    "default": false,
+    "duration_ms": 4006,
+    "dv_profile": null,
+    "forced": false,
+    "fps": null,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": null,
+    "index": 0,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": null,
+    "layout": "stereo",
+    "level": null,
+    "pix_fmt": null,
+    "profile": null,
+    "sample_rate": 48000,
+    "start_ms": 0,
+    "title": "Nummer 3",
+    "type": "audio",
+    "width": null
+   }
+  ],
+  "tags": {
+   "album": "Sinus (opus)",
+   "artist": "Fase Vijf",
+   "date": "2025",
+   "encoder": "Lavc60.31.102 libopus",
+   "title": "Nummer 3",
+   "track": "3/3"
+  },
+  "truncated": {}
+ }
+}
