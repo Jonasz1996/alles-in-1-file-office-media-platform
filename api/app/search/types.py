@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.routers.files import NodeOut, TagRef
 
@@ -335,8 +336,9 @@ class AdminFaces(BaseModel):
     wipe_waiting: bool
     quality: AnalyseQuality | None
     # Eigenaren met versleutelde gezichten zonder sleutel (0.8.2): "sleutel ontbreekt"; alleen het
-    # aantal (app.cli sleutels-check zegt meer)
-    keys_missing: int = 0
+    # aantal (app.cli sleutels-check zegt meer). Wel in het antwoord, niet in de OpenAPI: die blijft
+    # gelijk aan die van 0.8.0 (tests/uit080/test_wandeling.py; met de analyse uit is faces None)
+    keys_missing: SkipJsonSchema[int] = 0
 
 
 class BeeldHour(BaseModel):
