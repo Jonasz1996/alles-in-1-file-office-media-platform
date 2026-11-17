@@ -103,7 +103,7 @@ async def test_beeld_other_uploader(client, mensen, beeld):
     assert r.status_code == 204, r.text
     async with nep.maker(settings)() as db:
         gast_sha = await db.scalar(
-            sa.select(Node.blob_id).where(Node.name == "gast.jpg", Node.dead.is_(False))
+            sa.select(Node.blob_id).where(Node.name == "gast.jpg", Node.dead == 0)
         )
     nep.preview(settings, gast_sha, nep.KLEUREN["blauw"])
 
