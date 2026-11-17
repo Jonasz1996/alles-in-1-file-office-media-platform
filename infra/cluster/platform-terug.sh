@@ -196,7 +196,7 @@ if [ "$DB_TERUG" = ja ]; then
   note "back-up: $dump van $(date -r "$dump" '+%Y-%m-%d %H:%M'), revisie $d_rev"
   say "Platform op alle nodes tegenhouden (markering opzij) en hier stoppen"
   trap herstel_markering EXIT
-  trap 'exit 1' INT TERM HUP
+  trap 'fail "afgebroken (Annuleren of de tijdslimiet van ClusterForge)"' INT TERM HUP
   mv "$ACTIVE" "$OPZIJ" || fail "markering opzij zetten mislukt"
   systemctl stop cf-platform
   systemctl reset-failed cf-platform 2>/dev/null
