@@ -1,6 +1,6 @@
 """nextcloud-clients: app-wachtwoorden en de inlogflow v2
 
-Revision ID: 0014
+Revision ID: 0015
 Revises: 0012
 Create Date: 2026-11-17 06:30:00.000000
 
@@ -9,14 +9,15 @@ desktop, Android, iOS, rclone); alleen de SHA-256 van het wachtwoord staat erin.
 een lopende inlogflow v2 (hooguit 20 minuten). Gewone tabellen, dus gelijk op SQLite en
 PostgreSQL.
 
-LET OP bij het samenvoegen met fase 6 (0013, alleen PostgreSQL): zet down_revision dan op
-"0013". Deze migratie is nog nergens uitgerold, dus dat mag.
+LET OP bij het samenvoegen met fase 6: 0013 en 0014 zijn van de thread "Stappenplan uitwerken"
+(PostgreSQL). Zet down_revision dan op hun laatste head ("0014"), zodat er één head blijft. Deze
+migratie is nog nergens uitgerold, dus dat mag.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0014"
+revision = "0015"
 down_revision = "0012"
 branch_labels = None
 depends_on = None

@@ -52,7 +52,8 @@ async def test_inlogflow_v2(client, admin):
     # Eén keer ophalen
     assert (await client.post("/index.php/login/v2/poll", data={"token": poll})).status_code == 404
     user = await client.get(
-        "/ocs/v1.php/cloud/user?format=json", headers=basic(creds["loginName"], creds["appPassword"])
+        "/ocs/v1.php/cloud/user?format=json",
+        headers=basic(creds["loginName"], creds["appPassword"]),
     )
     assert user.json()["ocs"]["data"]["id"] == "jonas@example.nl"
     # Uitloggen in de client trekt het wachtwoord in
