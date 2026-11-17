@@ -5,6 +5,7 @@ dezelfde foto's als /photos/map/items en de tijdlijn /photos, ook op de grens va
 zwevende tijd, app/photodate.py). Soort, camera en map doen wel de join op node (eigen poort in
 tests/photos/test_map_perf.py)."""
 
+import json
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -19,7 +20,7 @@ from app.search import filters_photo
 from app.search.types import SearchParams
 from tests.factories import maker
 from tests.geo.hulp import zonder_gps
-from tests.search.plans import assert_plan
+from tests.search.plans import assert_plan, pg_stappen
 from tests.test_previews import upload
 
 pytestmark = pytest.mark.anyio
@@ -144,13 +145,15 @@ PLANNEN = {
 @pytest.mark.parametrize("naam", list(PLANNEN))
 async def test_alleen_node_als_het_filter_hem_nodig_heeft(client, admin, settings, naam):
     """Het plan van de vraag van de cellen: datum, plaats en land langs photo_geo alleen; soort
-    en camera langs photo_geo en dan per foto de node op zijn sleutel (nooit een SCAN)."""
+    en camera langs photo_geo en dan per foto de node op zijn sleutel (nooit een SCAN). Op
+    PostgreSQL een eigen verwachting (pg_verwacht)."""
     filters, met_node = PLANNEN[naam]
     headers, tokens = admin
     await zet_fotos(client, admin, settings)
     user = User(id=uuid.UUID(tokens["user"]["id"]), role="admin")
     xs, y0, y1 = tiles.ranges(*tiles.parse_bbox(WERELD))
     engine = get_engine(settings)
+    pg = engine.dialect.name == "postgresql"
     gezien: list[tuple[str, tuple]] = []
 
     def bij(conn, cursor, statement, parameters, context, executemany):
@@ -161,11 +164,17 @@ async def test_alleen_node_als_het_filter_hem_nodig_heeft(client, admin, setting
         async with maker(settings)() as db:
             await photos_map._cells(db, user, tiles.shift(2), xs, y0, y1, SearchParams(**filters))
             sql, args = next(g for g in reversed(gezien) if "GROUP BY" in g[0])
-            plan = await db.run_sync(
-                lambda s: assert_plan(s.connection(), sql, args, require_first="photo_geo")
-            )
+            if pg:
+                stappen = await db.run_sync(lambda s: pg_stappen(s.connection(), sql, args))
+            else:
+                plan = await db.run_sync(
+                    lambda s: assert_plan(s.connection(), sql, args, require_first="photo_geo")
+                )
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", bij)
+    if pg:
+        pg_verwacht(stappen, met_node)
+        return
     regels = [t for _, _, t in plan.regels]
     assert not any(t.startswith("SCAN") for t in regels), plan.tekst()
     op_node = [t for t in regels if " node " in f"{t} "]
@@ -173,6 +182,26 @@ async def test_alleen_node_als_het_filter_hem_nodig_heeft(client, admin, setting
         assert op_node and all("(id=?)" in t for t in op_node), plan.tekst()
     else:
         assert op_node == [], plan.tekst()
+
+
+def pg_verwacht(stappen: list[dict], met_node: bool) -> None:
+    """Op PostgreSQL: node staat alleen in het plan als het filter hem nodig heeft, en dan op zijn
+    sleutel (node.id = photo_geo.node_id); elke tabel langs een index (geen Seq Scan, ook niet met
+    enable_seqscan uit). De volgorde van de tabellen kiest PostgreSQL bij vijf foto's zelf."""
+    tekst = json.dumps(stappen, indent=1)
+    tabellen = {s["Relation Name"] for s in stappen if "Relation Name" in s}
+    assert "photo_geo" in tabellen, tekst
+    assert ("node" in tabellen) is met_node, tekst
+    assert not [s for s in stappen if s["Node Type"] == "Seq Scan"], tekst
+    if met_node:
+        voorwaarden = " ".join(
+            str(s.get(k, ""))
+            for s in stappen
+            for k in ("Index Cond", "Join Filter", "Hash Cond", "Merge Cond")
+        )
+        sleutel = ("photo_geo.node_id = node.id", "node.id = photo_geo.node_id",
+                   "(id = photo_geo.node_id)")  # fmt: skip
+        assert any(vorm in voorwaarden for vorm in sleutel), tekst
 
 
 def test_de_dag_is_de_zwevende_tijd():
