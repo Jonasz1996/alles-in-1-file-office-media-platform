@@ -44,7 +44,7 @@ from app.models import (
     PhotoPerson,
     User,
 )
-from app.search import purge, schema, weekcheck
+from app.search import purge, rebuild, schema, weekcheck
 from tests.conftest import PG_URL
 from tests.factories import code_of, create_file, create_folder, create_user, maker
 from tests.pgboom import ZERO, boom, dsn, fill, nalopen, rows, run
@@ -824,6 +824,39 @@ async def test_de_wekelijkse_controle_vindt_en_herstelt(settings, caplog):
     assert "kapot" not in caplog.text
     # Pas na een week weer
     assert await weekcheck.run(settings) is None
+
+
+@pytest.mark.pg
+async def test_search_triggers_herstelt_op_postgresql(settings):
+    """Review PG13-4: rebuild.restore_triggers (app.cli search-triggers, ook de bench) op
+    PostgreSQL. Geen triggers van SQLite (dropped en created leeg), wel fase6_fill() met herstel,
+    met de aantallen per soort: numbered (num), tree (mpath en dead) en photo_rows (photo_geo).
+    Elk een ander aantal, zodat een verwisseling opvalt. Daarna klopt alles; een tweede keer
+    geeft nullen."""
+    ids = await boom(settings)
+    # Een node zonder num (dus ook een ander pad), een verkeerde dead en een kapot pad: tree 3
+    await run(settings, "UPDATE node SET num = NULL WHERE id = :id", id=ids["notities"])
+    await run(settings, "UPDATE node SET dead = 1 - dead WHERE id = :id", id=ids["verslag"])
+    await run(settings, "UPDATE node SET mpath = '/kapot/' WHERE id = :id", id=ids["werk"])
+    # Twee rijen van photo_geo die niet volgen (de trigger even uit): hun foto's liggen in de
+    # prullenbak, de rijen zeggen van niet
+    await run(settings, "ALTER TABLE photo_geo DISABLE TRIGGER USER")
+    for key in ("strand", "schelp"):
+        await run(
+            settings,
+            "INSERT INTO photo_geo (node_id, owner_id, lat, lon, x16, y16, source, dead) "
+            "VALUES (:n, :o, 52, 4, 1, 2, 'exif', 0)",
+            n=ids[key],
+            o=ids["eva"],
+        )
+    await run(settings, "ALTER TABLE photo_geo ENABLE TRIGGER USER")
+
+    found = await rebuild.restore_triggers(get_engine(settings))
+    assert found == rebuild.Restored(numbered=1, tree=3, photo_rows=2)
+    assert await fill(settings, repair=False) == ZERO
+    await nalopen(settings)
+    assert await rows(settings, "SELECT dead FROM photo_geo") == [(1,), (1,)]
+    assert await rebuild.restore_triggers(get_engine(settings)) == rebuild.Restored()
 
 
 @pytest.mark.pg
