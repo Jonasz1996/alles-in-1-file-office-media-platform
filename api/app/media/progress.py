@@ -158,9 +158,18 @@ def valid(body: ProgressIn) -> bool:
 
 
 def _bad_value(exc: BaseException) -> bool:
-    """Een fout in de waarden van één stand (te groot voor SQLite), niet van de database."""
+    """Een fout in de waarden van één stand (te groot voor de kolom), niet van de database.
+    SQLite: OverflowError en dergelijke, ook als orig. PostgreSQL: een data exception (SQLSTATE
+    klasse 22, zoals 22003 buiten bereik), of asyncpg weigert de parameter al (zijn DataError is
+    een ValueError, de oorzaak van de fout van de driver)."""
     bad = (OverflowError, ValueError, TypeError)
-    return isinstance(exc, bad) or isinstance(getattr(exc, "orig", None), bad)
+    orig = getattr(exc, "orig", None)
+    if isinstance(exc, bad) or isinstance(orig, bad):
+        return True
+    sqlstate = getattr(orig, "sqlstate", None)
+    if isinstance(sqlstate, str) and sqlstate.startswith("22"):
+        return True
+    return isinstance(getattr(orig, "__cause__", None), bad)
 
 
 def _remember(store: OrderedDict, key, value, limit: int) -> None:

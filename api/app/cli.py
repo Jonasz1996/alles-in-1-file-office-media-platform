@@ -35,7 +35,8 @@ draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de a
 de tijd: platform-0012-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
 migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
 beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
-image dat er nog draait, want dit commando bestaat in oudere images niet.
+image dat er nog draait, want dit commando bestaat in oudere images niet. Op PostgreSQL weigert
+het met exitcode 2: daar maakt pg_dump de kopie (cluster: platform-ctl.sh db-backup).
 
     docker exec <container> python -m app.cli db-copy <postgresql+asyncpg://…> [--leegmaken]
 
@@ -493,10 +494,20 @@ def _recheck(settings: Settings) -> int:
     return 0
 
 
+# Op PostgreSQL (het cluster) maakt pg_dump de reservekopie, niet dit commando (0.8.2, P1)
+PG_BACKUP = (
+    "Een reservekopie van PostgreSQL maakt dit commando niet: "
+    "gebruik pg_dump (cluster: platform-ctl.sh db-backup)."
+)
+
+
 def _backup(settings: Settings) -> int:
     try:
         target = db_backup(settings)
     except NotSqlite:
+        if make_url(settings.db_url).get_backend_name() == "postgresql":
+            print(PG_BACKUP, file=sys.stderr)
+            return 2
         print("Een reservekopie maakt dit commando alleen van SQLite.", file=sys.stderr)
         return 1
     except NoDatabase as exc:
