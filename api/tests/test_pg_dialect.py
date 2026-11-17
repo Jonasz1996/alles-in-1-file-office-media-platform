@@ -342,6 +342,13 @@ def test_op_postgresql_compileert_alles_zonder_sqlite():
     for wanted in ("face.seq", "f.seq", "NULLS LAST", "string_agg", "array_agg", "unnest"):
         assert wanted in joined, wanted
     assert "ON CONFLICT" in "\n".join(found["memories_hide"] + found["photo_hash_write"])
+    # g_place is een BIGINT (review F3): een plaats-id is 48 bits, en bij ::INTEGER weigert
+    # asyncpg een getal boven int32 al voor de vraag de server bereikt
+    for replace in (True, False):
+        stmt = photo_rows._insert(dbdialect.module_for(dbdialect.POSTGRESQL), replace)
+        compiled = stmt.compile(dialect=PG)
+        n = compiled.positiontup.index("g_place") + 1
+        assert f"${n}::BIGINT " in str(compiled), replace
 
 
 def test_de_vormen_van_dbdialect():
@@ -411,6 +418,20 @@ async def _face_seq(db: Any) -> None:
         )
 
 
+async def _place_bigint(db: Any) -> None:
+    """photo_geo.place_id als bigint op PostgreSQL, zoals migratie 0013 van P2 hem maakt (een
+    plaats-id is 48 bits; op SQLite is INTEGER al 64 bits). Is hij al bigint, dan niets."""
+    if _pg(db):
+        found = await db.scalar(
+            text(
+                "SELECT data_type FROM information_schema.columns"
+                " WHERE table_name = 'photo_geo' AND column_name = 'place_id'"
+            )
+        )
+        if found == "integer":
+            await db.execute(text("ALTER TABLE photo_geo ALTER COLUMN place_id TYPE bigint"))
+
+
 async def _paths(db: Any, rows: list[tuple[uuid.UUID, str, int]]) -> None:
     """mpath en dead op PostgreSQL: op SQLite houden de triggers van 0010 ze bij, op PostgreSQL
     straks die van P2; zolang die er niet zijn, zetten we ze hier zelf."""
@@ -443,8 +464,11 @@ async def test_elke_upsert_voegt_in_en_werkt_bij(settings):
         meta = (await db.execute(select(BlobMeta).where(BlobMeta.blob_sha == sha))).scalar_one()
         assert (meta.camera, meta.lens, meta.gps) == ("c2", "l", 1)
 
-        # photo_geo (photo_rows.write): zonder replace blijft wat er is, met replace niet
-        place = Place(id=42, name="Utrecht", admin1="Utrecht", cc="NL", km=1.0)
+        # photo_geo (photo_rows.write): zonder replace blijft wat er is, met replace niet. Een
+        # echte plaats-id van 48 bits (review F3)
+        await _place_bigint(db)
+        place_id = 150904566956734
+        place = Place(id=place_id, name="Utrecht", admin1="Utrecht", cc="NL", km=1.0)
         here, there = (
             photo_rows.Spot(52.0, 5.0, None, "exif"),
             photo_rows.Spot(51.0, 4.0, 3.0, "exif"),
@@ -452,7 +476,7 @@ async def test_elke_upsert_voegt_in_en_werkt_bij(settings):
         await photo_rows.write(db, [(sha, here, place)], replace=False)
         await photo_rows.write(db, [(sha, there, place)], replace=False)
         geo = (await db.execute(select(PhotoGeo.lat, PhotoGeo.alt, PhotoGeo.place_id))).all()
-        assert [tuple(r) for r in geo] == [(52.0, None, 42)]
+        assert [tuple(r) for r in geo] == [(52.0, None, place_id)]
         await photo_rows.write(db, [(sha, there, place)], replace=True)
         geo = (await db.execute(select(PhotoGeo.lat, PhotoGeo.alt))).all()
         assert [tuple(r) for r in geo] == [(51.0, 3.0)]
