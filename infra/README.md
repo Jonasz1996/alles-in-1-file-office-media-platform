@@ -101,6 +101,15 @@ De eerste keer bouwt elke node de images; daarna draait alles. Open
 (`ansible-vault view group_vars/all.local.yml`). Zolang `acme_staging: true` staat, waarschuwt
 de browser over het certificaat; zet het op `false` en draai het playbook opnieuw zodra alles werkt.
 
+## Het platform in een cluster van ClusterForge
+
+Draait het platform in een cluster van ClusterForge (template media-platform), dan gaan
+bijwerken en terugzetten met twee eigen commando's in ClusterForge:
+[cluster/platform-bijwerken.sh](cluster/platform-bijwerken.sh) en
+[cluster/platform-terug.sh](cluster/platform-terug.sh). Hoe je ze instelt en gebruikt, en wat je
+nooit doet: [docs/runbooks/cluster.md](../docs/runbooks/cluster.md). Nooit `install.sh` op een
+clusternode. De test met nagebootste nodes: `bash infra/cluster/tests/test_cluster_scripts.sh`.
+
 ## Lokaal controleren
 
 ```bash
