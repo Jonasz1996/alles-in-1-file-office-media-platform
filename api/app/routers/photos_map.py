@@ -129,16 +129,14 @@ def _grid(s: int, xs: list[tuple[int, int]], y0: int, y1: int) -> int:
     return sum((x1 >> s) - (x0 >> s) + 1 for x0, x1 in xs) * ((y1 >> s) - (y0 >> s) + 1)
 
 
-def _cover(dialect_name: str) -> Any:
+def _cover(dialect_name: str, node_id: Any, taken_at: Any) -> Any:
     """De omslag van een cel: de nieuwste foto erin. SQLite geeft bij max(taken_at) de kolom van
     de rij met dat maximum; PostgreSQL kent geen losse kolom naast een aggregaat en neemt de
     eerste van de node_id's op volgorde van taken_at (nieuwste eerst, zonder datum achteraan,
-    zoals in SQLite) en dan node_id."""
+    zoals in SQLite) en dan node_id. De kolommen komen van _cells, die own_live_geo toepast."""
     if dialect_name == dbdialect.SQLITE:
-        return PhotoGeo.node_id.label("cover")  # SQLite: de rij van max(taken_at)
-    newest_first = aggregate_order_by(
-        PhotoGeo.node_id, PhotoGeo.taken_at.desc().nulls_last(), PhotoGeo.node_id
-    )
+        return node_id.label("cover")  # SQLite: de rij van max(taken_at)
+    newest_first = aggregate_order_by(node_id, taken_at.desc().nulls_last(), node_id)
     return array_agg(newest_first)[1].label("cover")
 
 
@@ -157,7 +155,7 @@ async def _cells(
     shift = literal(s)
     cx = PhotoGeo.x16.op(">>")(shift).label("cx")
     cy = PhotoGeo.y16.op(">>")(shift).label("cy")
-    cover = _cover(dbdialect.name_of(session))
+    cover = _cover(dbdialect.name_of(session), PhotoGeo.node_id, PhotoGeo.taken_at)
     found: dict[tuple[int, int], list[Any]] = {}
     for x0, x1 in xs:
         sel = (

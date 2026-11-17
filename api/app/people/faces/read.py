@@ -391,12 +391,12 @@ async def suggestions(
     return SuggestionsByPerson(people=people, cursor=_next(start, len(page), PEOPLE_PAGE))
 
 
-def _best_first(db: Any) -> Any:
+def _best_first(db: Any, score: Any) -> Any:
     """De hoogste score eerst; zonder score achteraan, zoals SQLite NULL sorteert (PostgreSQL
-    zet NULL bij DESC vooraan)."""
+    zet NULL bij DESC vooraan). De kolom komt van de vraag zelf, die own_live toepast."""
     if dbdialect.is_pg(db):
-        return Face.suggest_score.desc().nulls_last()
-    return Face.suggest_score.desc()
+        return score.desc().nulls_last()
+    return score.desc()
 
 
 async def person_suggestions(
@@ -407,7 +407,7 @@ async def person_suggestions(
         await db.execute(
             _face_cols(owner, own_live)
             .where(Face.suggest_id == person)
-            .order_by(_best_first(db), ROWID)
+            .order_by(_best_first(db, Face.suggest_score), ROWID)
             .offset(start)
             .limit(limit + 1)
         )
