@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, insert, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -63,6 +63,7 @@ from app.models import (
     Album,
     AlbumItem,
     AlbumRule,
+    Analysis,
     Blob,
     BlobMeta,
     BlobText,
@@ -322,7 +323,21 @@ class _Bouwer:
         self.s.flush()
         conn = self.s.connection()
         rijen = bench.analyse_rijen(conn.exec_driver_sql(bench.ANALYSE_BLOBS).all())
-        conn.exec_driver_sql(bench.ANALYSE_SQL, rijen)
+        if conn.dialect.name == "sqlite":
+            conn.exec_driver_sql(bench.ANALYSE_SQL, rijen)
+            return
+        # PostgreSQL: ANALYSE_SQL is voor sqlite3 (? en een tijd als tekst); dezelfde rijen
+        # via de ORM-tabel, met de tijd als datetime
+        conn.execute(
+            insert(Analysis),
+            [
+                {"blob_sha": sha, "step": step, "version": versie, "state": staat, "tries": 0,
+                 "code": None, "owner_id": None,
+                 "queued_at": datetime.fromisoformat(wacht).replace(tzinfo=UTC),
+                 "updated_at": datetime.fromisoformat(bij).replace(tzinfo=UTC)}
+                for sha, step, versie, staat, wacht, bij in rijen
+            ],
+        )  # fmt: skip
 
 
 def bouw(conn: Connection, blob_dir: Path | None = None) -> Wereld:
