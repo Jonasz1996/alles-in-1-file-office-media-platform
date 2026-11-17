@@ -515,6 +515,12 @@ export class Api {
     }
   };
   revokeOtherSessions = () => this.send<void>("POST", "/api/v1/auth/sessions/revoke-others");
+  /** App-wachtwoorden voor de Nextcloud-app, rclone en andere WebDAV-clients. */
+  appPasswords = () => this.json<AppPassword[]>("/api/v1/account/app-passwords");
+  /** Het wachtwoord staat alleen in dit antwoord. */
+  makeAppPassword = (name: string) =>
+    this.send<AppPassword & { password: string; login: string }>("POST", "/api/v1/account/app-passwords", { name });
+  revokeAppPassword = (id: string) => this.send<void>("DELETE", `/api/v1/account/app-passwords/${id}`);
   /** code: uit de authenticator-app of een herstelcode, als 2FA aan staat. Andere sessies worden uitgelogd. */
   changePassword = (current_password: string, new_password: string, code?: string) =>
     this.send<void>("POST", "/api/v1/auth/password", { current_password, new_password, code });
@@ -715,3 +721,10 @@ export function formatBytes(bytes: number): string {
 export function formatDate(iso: string): string {
   return fmt.dateTime(iso);
 }
+
+export type AppPassword = {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+};
