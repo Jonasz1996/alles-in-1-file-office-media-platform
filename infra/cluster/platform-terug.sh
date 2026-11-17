@@ -2,7 +2,12 @@
 # Platform terug: eigen commando in ClusterForge (Commando's), na een
 # Platform bijwerken dat slecht uitpakte. Draai het op het hele cluster, als
 # root, tijdslimiet 3600 s, "Doorgaan bij een fout" uit. De nodes zonder VIP
-# eerst, de node met het VIP als laatste.
+# eerst, de nodes met een VIP als laatste. Een VIP is daar elk VIP van het
+# cluster, ook dat van de database: heeft een andere node dat, dan komt die ná
+# de node met het VIP van het platform. Moet de database terug, dan doet die
+# node dan nog niets (NOG NIET), de laatste node vraagt om nog een run (NOG NIET
+# KLAAR), en de tweede run maakt het af. Elke node meldt daarvoor in
+# $DATA/.cf-platform-bijwerken welk image hij heeft.
 #
 # Op elke node: cf-platform:vorige wordt weer cf-platform:local (het image
 # dat er was, blijft als cf-platform:teruggezet). Op de node met het VIP
@@ -34,6 +39,7 @@ BACKUPS=/var/backups/cf-platform
 EIGEN=/var/lib/cf-platform/bijwerken
 LOCK=/run/cf-platform-bijwerken.lock
 WACHT=900
+GEDEELD=$DATA/.cf-platform-bijwerken
 
 say() { echo "== $*"; }
 note() { echo "   $*"; }
@@ -99,6 +105,37 @@ wacht_op_app() {
   done
   return 1
 }
+# --- samen met de andere nodes (zoals in Platform bijwerken) -----------------
+eigen_naam() {
+  for paar in $(env_get PLATFORM_CLUSTER_NODES | tr ',' ' '); do
+    adres=${paar#*=}
+    if [ -n "$adres" ] && has_ip "$adres"; then echo "${paar%%=*}"; return; fi
+  done
+  hostname
+}
+meld() { mkdir -p "$GEDEELD" && schrijf "$GEDEELD/node-$NAAM" "$1 $(date -u +%Y-%m-%dT%H:%M:%SZ)"; }
+nog_niet() {
+  w=""
+  for paar in $(env_get PLATFORM_CLUSTER_NODES | tr ',' ' '); do
+    n=${paar%%=*}
+    [ -n "$n" ] && [ "$n" != "$NAAM" ] || continue
+    case "$(cat "$GEDEELD/node-$n" 2>/dev/null)" in "$1 "*) ;; *) w="$w${w:+ }$n" ;; esac
+  done
+  echo "$w"
+}
+wacht_op() {
+  # shellcheck disable=SC2086
+  mkdir -p "$GEDEELD" && { echo "$2"; printf '%s\n' $3; } >"$GEDEELD/$1.nieuw" && mv -f "$GEDEELD/$1.nieuw" "$GEDEELD/$1"
+}
+# Wat de nodes $1 zelf het laatst meldden (voor de uitvoer).
+meldingen() { for n in $1; do note "$n meldde: $(cat "$GEDEELD/node-$n" 2>/dev/null || echo niets)"; done; }
+gewacht() {
+  f=$GEDEELD/$1
+  [ "$(head -n 1 "$f" 2>/dev/null)" = "$2" ] && sed 1d "$f" | grep -qxF "$NAAM" || return 1
+  { echo "$2"; sed 1d "$f" | grep -vxF "$NAAM" || true; } >"$f.nieuw" && mv -f "$f.nieuw" "$f" || return 1
+  [ "$(wc -l <"$f")" -le 1 ] || return 1
+  rm -f "$f"
+}
 # Waar staat de database na een poging: teruggezet (revisie van het vorige
 # image), voor (nog de revisie van het begin: één transactie, dus niets
 # veranderd) of onbekend. Een paar keer proberen als hij niet te lezen is.
@@ -149,11 +186,15 @@ VIP=$(ctl_get VIP)
 [ -n "$VIP" ] || fail "VIP niet te lezen uit $CTL"
 POORT=$(env_get PORT); POORT=${POORT:-80}
 VIPHIER=nee; has_ip "$VIP" && VIPHIER=ja
+NAAM=$(eigen_naam)
 say "$(hostname): $([ "$VIPHIER" = ja ] && echo "heeft het VIP van het platform ($VIP)" || echo "zonder het VIP van het platform")"
 # De node met het VIP komt als laatste: faalt het hier vóór het image terug
-# is, dan kunnen de andere nodes al het vorige image hebben.
+# is, dan kunnen de andere nodes al het vorige image hebben. Wacht die node
+# op deze (hieronder, NOG NIET), dan geldt dat ook voor een fout hier.
 if [ "$VIPHIER" = ja ]; then
   HINT="De nodes zonder VIP hebben mogelijk al het vorige image; het platform hier draait nog de nieuwe versie. Draai Platform bijwerken om ze weer gelijk te zetten."
+elif sed 1d "$GEDEELD/wacht-terug" 2>/dev/null | grep -qxF "$NAAM"; then
+  HINT="De node met het VIP van het platform wacht op deze node en heeft nog niets gedaan; andere nodes hebben mogelijk al het vorige image. Draai Platform bijwerken om ze weer gelijk te zetten."
 fi
 if ! systemctl is-active --quiet cf-platform-mount || ! mountpoint -q "$DATA"; then
   fail "$DATA is niet gemount (journalctl -u cf-platform-mount); eerst dat oplossen"
@@ -230,7 +271,13 @@ image_terug() {
 }
 if [ "$VIPHIER" = nee ] || { ! [ -f "$ACTIVE" ] && [ "$HERVAT" = nee ]; }; then
   image_terug
+  meld "terug $doel_head $doel_rev" ||
+    fail "$GEDEELD/node-$NAAM schrijven mislukt; zonder die melding zet de node met het VIP de database niet terug"
   say "Klaar op deze node (geen VIP of geen overstap): alleen het image."
+  if gewacht wacht-terug "terug $doel_head"; then
+    echo "NOG NIET KLAAR: de node met het VIP van het platform wachtte op deze node en heeft nog niets gedaan; nu heeft elke andere node het vorige image: draai Platform terug nog een keer." >&2
+    exit 1
+  fi
   exit 0
 fi
 
@@ -243,6 +290,27 @@ if [ "$DB_TERUG" = ja ]; then
   [ "$d_rev" = "$doel_head" ] ||
     fail "de back-up $dump staat op revisie ${d_rev:-onbekend}, niet op $doel_head; niets veranderd aan de database"
   note "back-up: $dump van $(date -r "$dump" '+%Y-%m-%d %H:%M'), revisie $d_rev"
+  # Pas de database terugzetten als elke andere node het vorige image heeft.
+  # Anders kan een node die ClusterForge hierna draait (met het VIP van de
+  # database) nog weigeren, en dan draait hier het oude platform op de oude
+  # database terwijl die node het nieuwe image houdt.
+  wacht=$(nog_niet "terug $doel_head")
+  if [ -n "$wacht" ]; then
+    wacht_op wacht-terug "terug $doel_head" "$wacht" || fail "$GEDEELD/wacht-terug schrijven mislukt"
+    say "NOG NIET: het vorige image staat nog niet als cf-platform:local op $wacht"
+    meldingen "$wacht"
+    note "Deze node heeft het VIP van het platform en zet de database pas terug als elke andere"
+    note "node het vorige image heeft. ClusterForge draait $wacht na deze node (een ander VIP,"
+    note "zoals dat van de database). Hier is niets veranderd; draai Platform terug na deze run"
+    note "nog een keer. Zegt geen node daarna NOG NIET KLAAR, dan meldde een node een ander vorig"
+    note "image (een andere Alembic-revisie, zie boven)."
+    if [ "$HERVAT" = ja ]; then
+      note "Let op: de markering staat nog opzij van een eerdere Platform terug, dus het platform is"
+      note "uit tot die tweede run."
+    fi
+    exit 0
+  fi
+  rm -f "$GEDEELD/wacht-terug" "$GEDEELD/wacht-bijwerken"
   say "Platform op alle nodes tegenhouden (markering opzij) en hier stoppen"
   STAND=voor
   trap herstel_markering EXIT
@@ -285,13 +353,16 @@ if [ "$DB_TERUG" = ja ]; then
   say "Database staat op revisie $doel_head"
   image_terug
   STAND=klaar
+  meld "terug $doel_head $doel_rev" || note "let op: $GEDEELD/node-$NAAM schrijven mislukt"
   herstel_markering
   trap - EXIT INT TERM HUP
   HINT=
 else
   HINT=
+  rm -f "$GEDEELD/wacht-terug" "$GEDEELD/wacht-bijwerken"
   say "De database hoeft niet terug (revisie $db_rev)"
   image_terug
+  meld "terug $doel_head $doel_rev" || note "let op: $GEDEELD/node-$NAAM schrijven mislukt"
   if [ "$HERVAT" = ja ]; then
     mv -f "$OPZIJ" "$ACTIVE" || fail "markering terugzetten mislukt ($OPZIJ)"
     note "markering teruggezet"

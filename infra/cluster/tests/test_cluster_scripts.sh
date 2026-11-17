@@ -13,7 +13,9 @@
 # BACKUPS, EIGEN, LOCK en WACHT bovenaan worden mappen van de test), met dash als dat er is
 # (zoals /bin/sh op Debian). ClusterForge draait een commando node voor node, de nodes zonder
 # VIP eerst, en stopt bij de eerste node die faalt ("Verder op de volgende nodes als het op een
-# node mislukt" uit); draai_cluster doet dat na.
+# node mislukt" uit); draai_cluster doet dat na. Een VIP is daar elk VIP van het cluster, ook dat
+# van de database (de primary van Patroni), en de volgorde onder de VIP-houders blijft die van de
+# nodes (updates.Order, een stabiele sortering).
 #
 # Het nagebootste platform: een image heeft een Alembic-head en een versie. Start cf-platform
 # (alleen met de markering, zoals ConditionPathExists in de unit), dan migreert de app de
@@ -338,6 +340,7 @@ chmod 0755 "$fakes"/*
 # --- het cluster -----------------------------------------------------------------------------
 
 VIP=10.0.0.100
+DBVIP=10.0.0.200
 WACHTWOORD=Nep-Geheim-7f3a9c2e1d
 NODES="n1 n2 n3"
 adres_van() { case "$1" in n1) echo 10.0.0.11 ;; n2) echo 10.0.0.12 ;; n3) echo 10.0.0.13 ;; esac; }
@@ -482,7 +485,8 @@ CTL
   herschrijf "$terug_sh" "$N/cmd/platform-terug.sh" "$N"
 }
 
-# Een cluster met 0.8.1 (v081) dat al is overgestapt: n3 heeft het VIP en draait het platform.
+# Een cluster met 0.8.1 (v081) dat al is overgestapt: n3 heeft het VIP en draait het platform, en
+# heeft ook het VIP van de database.
 nieuw_cluster() {
   rm -rf "$W"
   mkdir -p "$W/nodes" "$W/data" "$W/db" "$W/heads" "$W/versions" "$W/crash"
@@ -504,6 +508,7 @@ nieuw_cluster() {
     rev_van_ref v081 >"$W/nodes/$n/root/state/platform-image.rev"
   done
   echo "$VIP/32" >>"$W/nodes/n3/ips"
+  echo "$DBVIP/32" >>"$W/nodes/n3/ips"
   date -Iseconds >"$W/data/.cf-platform-active"
   id_van_ref v081 >"$W/nodes/n3/running"
   touch "$W/nodes/n3/active"
@@ -511,6 +516,24 @@ nieuw_cluster() {
 }
 # De vingerafdruk van wat er op node $1 draait, zoals de nep-systemctl die bij de start schrijft.
 gestart() { { cat "$W/nodes/$1/root/etc/platform.env"; cat "$W/nodes/$1/running"; } | cksum >"$W/nodes/$1/hash"; }
+
+# zet_vips <node met het VIP van het platform> <node met het VIP van de database>. Het platform
+# draait daarna op de eerste (keepalived start het daar).
+zet_vips() {
+  local n
+  for n in $NODES; do
+    grep -vxF -e "$VIP/32" -e "$DBVIP/32" "$W/nodes/$n/ips" >"$W/nodes/$n/ips.nieuw" || true
+    mv "$W/nodes/$n/ips.nieuw" "$W/nodes/$n/ips"
+    if [ -e "$W/nodes/$n/active" ] && [ "$n" != "$1" ]; then
+      mv "$W/nodes/$n/running" "$W/nodes/$1/running"
+      rm -f "$W/nodes/$n/active" "$W/nodes/$n/hash"
+      touch "$W/nodes/$1/active"
+      gestart "$1"
+    fi
+  done
+  echo "$VIP/32" >>"$W/nodes/$1/ips"
+  echo "$DBVIP/32" >>"$W/nodes/$2/ips"
+}
 
 # Wijzigen, Versie, Toepassen: verandert alleen de REF-regel van de twee scripts (cf-update §1.1).
 zet_versie() {
@@ -565,12 +588,13 @@ draai() {
   { echo "### $n $s $* (rc $rc)"; cat "$LOG"; } >>"$ALLES"
   return "$rc"
 }
-# draai_cluster <script> [variant...]: zoals ClusterForge, node voor node, de nodes met het VIP
-# als laatste, en stoppen na de eerste node die faalt. GEDRAAID: de nodes met hun rc.
+# draai_cluster <script> [variant...]: zoals ClusterForge, node voor node, de nodes met een VIP
+# (van het platform of van de database) als laatste, in hun gewone volgorde, en stoppen na de
+# eerste node die faalt. GEDRAAID: de nodes met hun rc.
 draai_cluster() {
   local n rc volgorde="" zonder="" met=""
   for n in $NODES; do
-    if grep -q "^$VIP/" "$W/nodes/$n/ips"; then met="$met $n"; else zonder="$zonder $n"; fi
+    if grep -qxF -e "$VIP/32" -e "$DBVIP/32" "$W/nodes/$n/ips"; then met="$met $n"; else zonder="$zonder $n"; fi
   done
   volgorde="$zonder$met"
   GEDRAAID=""
@@ -1133,11 +1157,91 @@ for fout_soort in select_faalt_na select_faalt_na+psql_fout tag_faalt psql_term_
     "$W/data" "$LOG"
 done
 
+# --- de twee VIP's op verschillende nodes ---------------------------------------------------------
+
+# Het VIP van het platform op n1, dat van de database op n3: ClusterForge draait n2, n1, n3. De
+# node met het VIP van het platform herstart pas als elke andere node de Versie heeft; anders doet
+# hij niets, bouwt n3 daarna, en vraagt n3 om nog een run.
+nieuw_cluster
+zet_vips n1 n3
+zet_versie v082
+touch "$W/nodes/n3/build_faalt"
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken, VIP's gesplitst: ClusterForge draait n2, n1, n3; de build op n3 faalt" is "$rc$GEDRAAID" "1 n2:0 n1:0 n3:1"
+check "bijwerken, VIP's gesplitst, n3 bouwt niet: n1 heeft nog niets gedaan, de database staat op 0012" \
+  is "$(draait n1) $(tag n1 local) $(tag n1 vorige)|$(db_rev)|$(ls "$W/nodes/n1/root/backups")" "$A $A |0012|"
+check "bijwerken, VIP's gesplitst: n1 zegt waarop hij wacht" bevat "${LOG_VAN[n1]}" "NOG NIET: de Versie is nog niet gebouwd op n3"
+check "bijwerken, VIP's gesplitst: n1 zegt wat n3 meldde" bevat "${LOG_VAN[n1]}" "n3 meldde: niets"
+rm "$W/nodes/n3/build_faalt"
+
+nieuw_cluster
+zet_vips n1 n3
+zet_versie v082
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken, VIP's gesplitst: de eerste run stopt op n3 met NOG NIET KLAAR" \
+  bash -c '[ "$1" = 1 ] && [ "$2" = " n2:0 n1:0 n3:1" ] && grep -qF "NOG NIET KLAAR" "$3" && grep -qF "draai Platform bijwerken nog een keer" "$3"' _ \
+  "$rc" "$GEDRAAID" "$LOG"
+check "bijwerken, VIP's gesplitst, eerste run: n2 en n3 gebouwd, n1 niet geraakt, database 0012" \
+  is "$(tag n2 local) $(tag n3 local)|$(draait n1) $(tag n1 local)|$(db_rev)" "$B $B|$A $A|0012"
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken, VIP's gesplitst: de tweede run herstart op n1" is "$rc$GEDRAAID|$(draait n1) $(db_rev)" "0 n2:0 n1:0 n3:0|$B 0014"
+check "bijwerken, VIP's gesplitst: voor-update.dump staat op n1 en is van vóór de migratie" grep -qx "rev=0012" "$(eigen n1)/voor-update.dump"
+check "bijwerken, VIP's gesplitst: geen wachtlijst meer" bash -c '[ ! -e "$1/.cf-platform-bijwerken/wacht-bijwerken" ]' _ "$W/data"
+
+# Platform terug met de database, zelfde VIP's: n1 zet de database pas terug als n2 en n3 het
+# vorige image al hebben.
+echo "voor+na" >"$W/db/rijen"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+check "terug, VIP's gesplitst: de eerste run stopt op n3 met NOG NIET KLAAR" \
+  bash -c '[ "$1" = 1 ] && [ "$2" = " n2:0 n1:0 n3:1" ] && grep -qF "NOG NIET KLAAR" "$3" && grep -qF "draai Platform terug nog een keer" "$3"' _ \
+  "$rc" "$GEDRAAID" "$LOG"
+check "terug, VIP's gesplitst, eerste run: n2 en n3 terug, n1 en de database niet geraakt" \
+  is "$(tag n2 local) $(tag n3 local)|$(draait n1) $(tag n1 local)|$(db_rev) $(db_rijen)" "$A $A|$B $B|0014 voor+na"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+check "terug, VIP's gesplitst: de tweede run zet de database terug op n1" \
+  is "$rc$GEDRAAID|$(draait n1) $(db_rev) $(db_rijen)" "0 n2:0 n1:0 n3:0|$A 0012 voor"
+
+# Zelfde VIP's na een update, maar op n3 is cf-platform:vorige weg: n3 weigert, en de database is
+# dan nog niet geraakt.
+nieuw_cluster
+zet_vips n1 n3
+zet_versie v082
+draai_cluster platform-bijwerken.sh || true
+moet platform-bijwerken.sh
+echo "voor+na" >"$W/db/rijen"
+rm "$W/nodes/n3/images/vorige"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+check "terug, VIP's gesplitst, geen cf-platform:vorige op n3: geweigerd op n3 met de hint" \
+  bash -c '[ "$1" = 1 ] && [ "$2" = " n2:0 n1:0 n3:1" ] && grep -qF "cf-platform:vorige ontbreekt" "$3" &&
+    grep -qF "Draai Platform bijwerken om ze weer gelijk te zetten" "$3"' _ "$rc" "$GEDRAAID" "$LOG"
+check "terug, VIP's gesplitst, geen cf-platform:vorige op n3: database en platform op n1 niet geraakt" \
+  is "$(draait n1) $(db_rev) $(db_rijen)" "$B 0014 voor+na"
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "terug, VIP's gesplitst: Platform bijwerken zet n2 daarna weer gelijk" is "$rc $(tag n2 local) $(draait n1)" "0 $B $B"
+
+# Een node met een andere Versie (Toepassen nog niet overal): de node met het VIP doet niets en
+# zegt wat die node meldde.
+nieuw_cluster
+zet_versie v082
+sed -i "s#^REF='.*'\$#REF='v081'#" "$W/nodes/n2/root/lib/platform-src.sh" "$W/nodes/n2/root/lib/platform-ctl.sh"
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken, n2 op een andere Versie: n3 raakt niets aan" \
+  is "$rc$GEDRAAID|$(draait n3) $(tag n3 local)|$(db_rev)|$(ls "$W/nodes/n3/root/backups")" "0 n1:0 n2:0 n3:0|$A $A|0012|"
+check "bijwerken, n2 op een andere Versie: n3 zegt wat n2 meldde" bevat "${LOG_VAN[n3]}" "n2 meldde: bijgewerkt v081 "
+
+# Andersom (database op n1, platform op n3): n3 komt als laatste, één run is genoeg.
+nieuw_cluster
+zet_vips n3 n1
+zet_versie v082
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken, database-VIP op n1 en platform-VIP op n3: één run" is "$rc$GEDRAAID|$(draait n3) $(db_rev)" "0 n2:0 n1:0 n3:0|$B 0014"
+
 # --- geen geheimen ------------------------------------------------------------------------------
 
 check "geen wachtwoord in de uitvoer van de commando's" bevat_niet "$ALLES" "$WACHTWOORD"
-check "geen wachtwoord in de bestanden van de commando's (terug.log, .info, .rev)" \
-  bash -c 'ls "$1"/n1/root/eigen/* >/dev/null && ! grep -rqF "$2" "$1"/n*/root/eigen' _ "$W/nodes" "$WACHTWOORD"
+check "geen wachtwoord in de bestanden van de commando's (terug.log, .info, .rev, de meldingen)" \
+  bash -c 'ls "$1"/n1/root/eigen/* "$3"/node-n1 >/dev/null && ! grep -rqF "$2" "$1"/n*/root/eigen "$3"' _ \
+  "$W/nodes" "$WACHTWOORD" "$W/data/.cf-platform-bijwerken"
 check "geen wachtwoord op een opdrachtregel (docker, systemctl, curl, pg_dump, pg_restore, psql)" \
   bash -c 'grep -q "^pg_dump .* -f " "$1" && grep -q "^psql " "$1" && ! grep -qF "$2" "$1"' _ "$work/aanroepen.log" "$WACHTWOORD"
 

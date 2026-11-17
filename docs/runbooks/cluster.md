@@ -50,6 +50,12 @@ ClusterForge draait het commando node voor node: eerst de nodes zonder VIP, de n
 (ook dat van de database) als laatste. Weigert of faalt het op een node, dan stopt de run daar.
 De volgende nodes worden dan niet geraakt.
 
+Hebben het VIP van het platform en het VIP van de database elk een andere node, dan komt de
+node met het VIP van de database soms ná die van het platform. Daarom meldt elke node in
+`/srv/platform-data/.cf-platform-bijwerken` welke versie hij heeft. De node met het VIP van het
+platform raakt de database pas als elke andere node zover is. Zie
+[Twee runs](#twee-runs-nog-niet-en-nog-niet-klaar).
+
 De scripts lezen het VIP en de versie op de node zelf, en de database uit
 `/etc/clusterforge/platform.env`. Er staat geen wachtwoord in het commando en ze drukken er
 geen af. Zet er ook zelf geen in.
@@ -103,6 +109,8 @@ Wat Platform bijwerken op elke node doet:
 - het bouwt alleen als code of image niet bij de Versie horen. Het image van daarvoor blijft
   bewaard als `cf-platform:vorige`;
 - een node zonder VIP is dan klaar;
+- de node met het VIP van het platform kijkt eerst of elke andere node de Versie al heeft.
+  Zo niet, dan doet hij niets (zie [Twee runs](#twee-runs-nog-niet-en-nog-niet-klaar));
 - de node met het VIP maakt eerst een dump van de database, en pas daarna bouwt hij. Dat geldt
   ook als `cf-platform` daar op dat moment niet draait: keepalived start het daarna met het
   nieuwe image, en de app migreert de database bij de start;
@@ -144,7 +152,9 @@ het VIP herstart het platform.
 
 Wat `MET_DATABASE=ja` doet op de node met het VIP:
 
-1. Het controleert dat `voor-update.dump` precies op de revisie van het vorige image staat.
+1. Het controleert dat `voor-update.dump` precies op de revisie van het vorige image staat, en
+   dat elke andere node het vorige image al heeft. Zo niet, dan doet het niets (zie
+   [Twee runs](#twee-runs-nog-niet-en-nog-niet-klaar)).
 2. Het zet de markering `/srv/platform-data/.cf-platform-active` opzij, zodat geen enkele node
    het platform start, en stopt `cf-platform`.
 3. Het maakt eerst een dump van de database zoals hij nu is:
@@ -176,7 +186,32 @@ bestand kan gegevens uit de database bevatten: deel het niet zomaar.
 
 Faalt Platform terug op de node met het VIP nadat de andere nodes al terug zijn, dan zegt de
 uitvoer dat. Het platform draait dan nog de nieuwe versie. Draai Platform bijwerken om de nodes
-weer gelijk te zetten: het herkent een teruggezet image en bouwt de Versie opnieuw.
+weer gelijk te zetten: het herkent een teruggezet image en bouwt de Versie opnieuw. Hetzelfde
+als een node weigert waarop de node met het VIP wachtte (zie hieronder).
+
+## Twee runs: NOG NIET en NOG NIET KLAAR
+
+Dit gebeurt alleen als een andere node dan die met het VIP van het platform een VIP heeft (meestal
+dat van de database). ClusterForge draait die node dan ná de node met het VIP van het platform.
+Platform bijwerken, of Platform terug met `MET_DATABASE=ja`, gaat dan zo:
+
+1. De node met het VIP van het platform zegt `NOG NIET: ...` met de nodes waarop hij wacht. Hij
+   verandert niets: niet bouwen, geen dump, geen herstart, de database niet terug. Voor
+   ClusterForge is hij geslaagd, dus de run gaat door.
+2. De laatste node waarop hij wachtte, bouwt (of zet het image terug) en stopt dan met
+   `NOG NIET KLAAR: ... draai Platform bijwerken nog een keer` (of `Platform terug`). Voor
+   ClusterForge is de run dan mislukt.
+3. Draai hetzelfde commando nog een keer op het hele cluster. Nu heeft elke andere node de
+   Versie (of het vorige image), en de node met het VIP van het platform maakt het af.
+
+Zegt de node met het VIP van het platform `NOG NIET` en komt er in dezelfde run geen
+`NOG NIET KLAAR`, dan meldde een node iets anders dan verwacht. De regels `<node> meldde: ...`
+in de uitvoer zeggen wat. Meestal staat de nieuwe Versie nog niet op elke node (zie de melding
+bij Toepassen onder [Bijwerken](#bijwerken)). Er is dan niets veranderd.
+
+Weigert een node in de eerste run, dan is de database nog niet geraakt. Los de oorzaak op en
+draai opnieuw. Bij Platform terug kunnen andere nodes dan al het vorige image hebben; de melding
+zegt dat je Platform bijwerken draait om ze weer gelijk te zetten.
 
 ### Laatste vangnet: de dump van ClusterForge
 
@@ -206,6 +241,10 @@ de melding zegt dan hoe je ze weer gelijk zet.
 | `database terugzetten mislukt`, `afgebroken`, met `markering teruggezet` | Platform terug met `MET_DATABASE=ja` stopte voordat de database terug was; de database is ongewijzigd en het nieuwe image draait weer | oorzaak in de uitvoer en `terug.log`, dan Platform bijwerken of opnieuw Platform terug |
 | `De database is al teruggezet` of `is niet te lezen` | Platform terug stopte toen de database (misschien) al terug was; het platform is uit | Platform terug nog een keer (zie [Terugzetten](#terugzetten)) |
 | `de app antwoordt niet` | de nieuwe versie start niet | Platform terug |
+| `... schrijven mislukt` (`.cf-platform-bijwerken`) | de node kan zijn melding niet in `/srv/platform-data` zetten | de mount nakijken, dan opnieuw |
+
+`NOG NIET` en `NOG NIET KLAAR` zijn geen fouten: zie
+[Twee runs](#twee-runs-nog-niet-en-nog-niet-klaar).
 
 ## Wat je nooit doet
 
@@ -253,3 +292,4 @@ de melding zegt dan hoe je ze weer gelijk zet.
 | de dump van vóór de update (alleen de VIP-node) | `/var/lib/cf-platform/bijwerken/voor-update.dump` en `voor-update.info` | Platform bijwerken |
 | de dump van vóór het terugzetten | `/var/lib/cf-platform/bijwerken/voor-terug.dump` | Platform terug |
 | de 5 nieuwste dumps | `/var/backups/cf-platform` | `platform-ctl.sh` van de template |
+| welke versie elke node heeft, en op welke nodes de VIP-node wacht (gedeeld, geen geheimen) | `/srv/platform-data/.cf-platform-bijwerken/node-<naam>`, `wacht-bijwerken`, `wacht-terug` | Platform bijwerken en Platform terug |
