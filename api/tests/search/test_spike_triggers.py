@@ -56,7 +56,12 @@ from tests.test_media_import import run_import, world  # noqa: F401
 from tests.test_shares import person
 from tests.test_user_delete import block_and_delete
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    # De triggers van 0010 en de FTS5-index in het SQLite-bestand zelf; de triggers van
+    # PostgreSQL (0013) toetst tests/test_pg_triggers.py
+    pytest.mark.sqlite_only("de spike van de triggers van 0010 en FTS5 in SQLite"),
+]
 
 
 def pad(settings) -> Path:
