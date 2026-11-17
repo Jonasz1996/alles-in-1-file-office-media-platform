@@ -254,6 +254,8 @@ SEARCH_REVISION = "0010"
 # De revisies van gezichten en van zoeken op beeld (fase 6, §3.1a)
 FACES_REVISION = "0011"
 BEELD_REVISION = "0012"
+# De revisie van PostgreSQL (0.8.2): op SQLite doet hij niets
+PG_REVISION = "0013"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -338,9 +340,21 @@ FACES_LOST = (
 )
 
 
-def lost_lines(removed: list[str]) -> list[str]:
-    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst."""
+# Wat een downgrade die 0013 weghaalt op PostgreSQL kwijtmaakt (review PG13-2): place_id past
+# daarna niet meer (48 bits in int32) en wordt NULL; met 0.8.2 komt hij terug (0013 zet de job
+# geo.places dan opnieuw klaar)
+PG_LOST = (
+    "De plaatsen van foto's gaan weg. Het land en de plek op de kaart blijven. Met een nieuwe "
+    "update naar 0.8.2 zoekt de app de plaatsen weer op."
+)
+
+
+def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
+    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
+    de database is PostgreSQL (0013 doet alleen daar iets)."""
     lines = []
+    if postgres and PG_REVISION in removed:
+        lines.append(PG_LOST)
     if BEELD_REVISION in removed:
         lines.append(BEELD_LOST)
     if FACES_REVISION in removed:
@@ -417,7 +431,9 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
     removed_revs = removed_revisions(now, revision)
     search = SEARCH_REVISION in removed_revs
     found, drop = _rule_items_answer(settings, yes, search)
-    if not yes and not _confirm(now, revision, lost=lost_lines(removed_revs)):
+    postgres = make_url(settings.db_url).get_backend_name() == "postgresql"
+    lost = lost_lines(removed_revs, postgres=postgres)
+    if not yes and not _confirm(now, revision, lost=lost):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 

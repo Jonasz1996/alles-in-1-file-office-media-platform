@@ -9,12 +9,18 @@ Op SQLite doet 0013 niets, heen en terug.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from alembic import command
 
 from app import db as app_db
+from app import jobs, photo_rows
 from app.config import Settings
 from app.db import get_engine
+from app.geo import load, places
+from tests.geo import bronnen
+from tests.geo.hulp import AMSTERDAM
 from tests.pgboom import ZERO, boom, fill, nalopen, rows, run
 from tests.search.migratie import MADE, fill_0009, migrate, settings_at
 
@@ -178,6 +184,53 @@ async def test_terug_naar_0012_en_weer_heen(at_0012):
     assert await rows(settings, "SELECT count(*) FROM search_state") == [(0,)]
     [(found,)] = await rows(settings, "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal")
     assert found == 10
+
+
+@pytest.mark.pg
+async def test_plaatsen_komen_terug_na_0012_en_weer_heen(at_0012, monkeypatch):
+    """Review PG13-2. Terug naar 0012 maakt place_id boven int32 NULL, en dat is elke plaats
+    (48 bits). Het land blijft, en de job geo.places vult alleen rijen zonder plaats én land, één
+    keer per bouw (Setting "geo.places"). Na weer heen naar 0013 kwam de plaats zo nooit terug.
+    Nu maakt 0013 land en provincie van zulke rijen leeg en haalt hij de Setting weg: de start
+    van 0.8.2 zet de keten opnieuw klaar, en die vult de plaats weer in."""
+    settings = at_0012
+    ids = await boom(settings)
+    await migrate(settings, command.upgrade, "0013")
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
+    places.forget()
+    try:
+        assert load.ensure(settings) == "gebouwd"
+        built = load.bouw_id(Path(settings.places_db))
+        await run(
+            settings,
+            "INSERT INTO photo_geo (node_id, owner_id, lat, lon, x16, y16, source) "
+            "VALUES (:n, :o, 52.37403, 4.88969, 1, 2, 'exif')",
+            n=ids["notities"],
+            o=ids["eva"],
+        )
+        sql = "SELECT place_id, country, admin1 FROM photo_geo"
+        amsterdam = [(AMSTERDAM, "NL", "North Holland")]
+        assert AMSTERDAM > INT32
+        assert await photo_rows.enqueue_places(settings, built)
+        await jobs.run_pending(settings)
+        assert await rows(settings, sql) == amsterdam
+
+        # Na elke migratie nieuwe verbindingen: een oude houdt een plan met het oude type
+        await migrate(settings, command.downgrade, "0012")
+        await app_db.get_engine(settings).dispose()
+        assert await rows(settings, sql) == [(None, "NL", "North Holland")]
+
+        await migrate(settings, command.upgrade, "0013")
+        await app_db.get_engine(settings).dispose()
+        assert await rows(settings, sql) == [(None, None, None)]
+        # Zoals de start van 0.8.2: places.sqlite is er al ("klaar"), dezelfde bouw
+        assert await photo_rows.enqueue_places(settings, built)
+        await jobs.run_pending(settings)
+        assert await rows(settings, sql) == amsterdam
+        # En één keer per bouw, zoals altijd
+        assert not await photo_rows.enqueue_places(settings, built)
+    finally:
+        places.forget()
 
 
 async def _sqlite_state(settings: Settings) -> dict[str, list]:
