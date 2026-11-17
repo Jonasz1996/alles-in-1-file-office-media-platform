@@ -156,6 +156,13 @@ async def _pg_database(name: str, drop: bool = False, migrated: bool = False) ->
     return _pg_url(name)
 
 
+def database_env(settings: Settings) -> dict[str, str]:
+    """De database van settings voor een kindproces van de app (python -m app.cli, een server):
+    op PostgreSQL PLATFORM_DATABASE_URL, op SQLite niets (dan platform.db in PLATFORM_DATA_DIR,
+    zoals altijd)."""
+    return {"PLATFORM_DATABASE_URL": settings.database_url} if settings.database_url else {}
+
+
 def pytest_collection_modifyitems(config, items):
     """Marker pg: de test vraagt PostgreSQL (PLATFORM_TEST_DATABASE_URL), zonder slaat hij over.
     Marker sqlite_only: de test gaat alleen over SQLite, met PostgreSQL slaat hij over, met de

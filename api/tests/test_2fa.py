@@ -17,7 +17,7 @@ from app.main import app
 from app.models import User
 from app.routers import auth
 from app.security import SecurityPolicy, login_limiter
-from tests.conftest import ADMIN
+from tests.conftest import ADMIN, database_env
 from tests.factories import message_of
 
 LOGIN = {"email": ADMIN["email"], "password": ADMIN["password"]}
@@ -498,6 +498,7 @@ async def cli(settings, *args, python=()):
         **os.environ,
         "PLATFORM_DATA_DIR": str(settings.data_dir),
         "PYTHONDONTWRITEBYTECODE": "1",
+        **database_env(settings),
     }
     return await anyio.run_process(
         [sys.executable, *python, "-m", "app.cli", *args], cwd=API_DIR, env=env, check=False
