@@ -486,10 +486,14 @@ TRIGGER_SQL = {
     ),
 }
 
-# De volgorde van people/faces/read.py (op SQLite rowid; op PostgreSQL seq, P1)
+# De volgorde van people/faces/read.py (op SQLite rowid; op PostgreSQL seq, P1). De voorstellen
+# lopen op suggest_score DESC NULLS LAST, seq (een score zonder waarde achteraan, zoals op SQLite);
+# zonder NULLS LAST is DESC op PostgreSQL NULLS FIRST en sorteert de planner alles
+# (test_pg_dialect.py::test_de_volgorde_van_de_gezichten_loopt_een_index_af).
 FACE_INDEXES = {
     "ix_face_open_seq": (
-        "CREATE INDEX ix_face_open_seq ON face (owner_id, suggest_id, suggest_score DESC, seq) "
+        "CREATE INDEX ix_face_open_seq ON face "
+        "(owner_id, suggest_id, suggest_score DESC NULLS LAST, seq) "
         "WHERE suggest_id IS NOT NULL AND hidden = 0"
     ),
     "ix_face_cluster_seq": (
