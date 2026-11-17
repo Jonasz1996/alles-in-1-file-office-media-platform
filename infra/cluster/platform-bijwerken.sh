@@ -10,8 +10,10 @@
 #   2. bouwt de versie die in ClusterForge staat (Wijzigen, Versie), als
 #      code of image niet bij die versie horen (platform-src.sh)
 #   3. bewaart het image dat er was als cf-platform:vorige (voor Platform terug)
-#   4. alleen op de node met het VIP van het platform: back-up van de
-#      database en herstart (platform-ctl.sh restart-if-changed), en wachten
+#   4. alleen op de node met het VIP van het platform (na de overstap): een
+#      back-up van de database vóór het bouwen, want keepalived of systemd kan
+#      het nieuwe image daarna starten en de app migreert dan; daarna herstart
+#      (platform-ctl.sh restart-if-changed, met nog een back-up) en wachten
 #      tot de app antwoordt
 # Het kiest nooit zelf een andere versie dan die in ClusterForge, en drukt
 # nooit wachtwoorden of sleutels af.
@@ -60,6 +62,15 @@ onthoud() { # onthoud <image-id> <rev>
     mv -f "$EIGEN/gebouwd.nieuw" "$EIGEN/gebouwd"
 }
 schrijf() { printf '%s\n' "$2" >"$1.nieuw" && mv -f "$1.nieuw" "$1"; }
+# shellcheck disable=SC2012
+nieuwste_dump() { ls -1t "$BACKUPS"/platform-*.dump 2>/dev/null | head -n 1; }
+# De back-up van vóór deze versie, voor Platform terug. Een harde link: de
+# vijf-nieuwste-regel van platform-ctl.sh wist hem dan niet.
+bewaar_dump() {
+  ln -f "$1" "$EIGEN/voor-update.dump" 2>/dev/null || cp -f "$1" "$EIGEN/voor-update.dump"
+  schrijf "$EIGEN/voor-update.info" "dump=$(basename "$1") van=${basis_rev:-onbekend} naar=$nieuw_rev"
+  note "back-up van vóór deze versie: $EIGEN/voor-update.dump"
+}
 
 # --- controles ------------------------------------------------------------
 [ "$(id -u)" = 0 ] || fail "draai dit als root"
@@ -128,32 +139,55 @@ note "cf-platform:local: $(kort "$local_rev"), image $(kort "${oud_id#sha256:}")
 v=$(img_id cf-platform:vorige); [ -n "$v" ] && note "cf-platform:vorige: $(kort "$(rev_van "$v")"), image $(kort "${v#sha256:}")"
 
 # --- bouwen ---------------------------------------------------------------
-if [ -n "$basis" ]; then docker tag "$basis" cf-platform:basis || fail "docker tag"; fi
+bouw=ja
 if [ -n "$local_rev" ] && [ "$local_rev" != "$oud_rev" ]; then
-  say "cf-platform:local is een teruggezet image ($(kort "$local_rev")); opnieuw bouwen: $REF"
-  if ! "$SRCSH"; then
-    docker image rm cf-platform:basis >/dev/null 2>&1
-    fail "bouwen mislukt; het platform is niet geraakt"
-  fi
+  bouw=opnieuw
 elif "$SRCSH" --check >/dev/null 2>&1; then
-  say "Code en image horen al bij $REF; niets te bouwen"
-else
-  say "Bouwen: $REF (platform-src.sh)"
-  if ! "$SRCSH"; then
-    docker image rm cf-platform:basis >/dev/null 2>&1
-    fail "bouwen mislukt; cf-platform:local is nog het vorige image en het platform is niet geraakt"
-  fi
+  bouw=nee
 fi
+# Op de node met het VIP, na de overstap: eerst een back-up. Is cf-platform:local
+# eenmaal het nieuwe image, dan kan keepalived of systemd het starten (ook als het
+# hier nu niet draait), en de app migreert dan bij de start.
+dump_voor=""
+if [ "$bouw" != nee ] && [ "$VIPHIER" = ja ] && [ -f "$ACTIVE" ]; then
+  say "Back-up van de database vóór het bouwen (platform-ctl.sh db-backup)"
+  voor=$(nieuwste_dump)
+  "$CTL" db-backup || fail "back-up van de database mislukt; er is niets gebouwd en het platform is niet geraakt"
+  dump_voor=$(nieuwste_dump)
+  [ -n "$dump_voor" ] && [ "$dump_voor" != "$voor" ] ||
+    fail "de back-up staat niet in $BACKUPS; er is niets gebouwd en het platform is niet geraakt"
+fi
+if [ -n "$basis" ]; then docker tag "$basis" cf-platform:basis || fail "docker tag"; fi
+case "$bouw" in
+  opnieuw)
+    say "cf-platform:local is een teruggezet image ($(kort "$local_rev")); opnieuw bouwen: $REF"
+    if ! "$SRCSH"; then
+      docker image rm cf-platform:basis >/dev/null 2>&1
+      fail "bouwen mislukt; het platform is niet geraakt"
+    fi ;;
+  nee) say "Code en image horen al bij $REF; niets te bouwen" ;;
+  *)
+    say "Bouwen: $REF (platform-src.sh)"
+    if ! "$SRCSH"; then
+      docker image rm cf-platform:basis >/dev/null 2>&1
+      fail "bouwen mislukt; cf-platform:local is nog het vorige image en het platform is niet geraakt"
+    fi ;;
+esac
 nieuw_rev=$(cat "$STATE" 2>/dev/null)
 nieuw_id=$(img_id cf-platform:local)
 onthoud "$nieuw_id" "$nieuw_rev"
+# Alleen een nieuw image maakt een nieuwe voor-update.dump. Een herstart om
+# andere instellingen (platform.env) laat die van de vorige update staan.
+nieuw_vorige=nee
 if [ -n "$basis" ] && [ -n "$nieuw_id" ] && [ "$nieuw_id" != "$basis" ]; then
   docker tag cf-platform:basis cf-platform:vorige || fail "cf-platform:vorige zetten mislukt"
   schrijf "$EIGEN/vorige.rev" "${basis_rev:-onbekend}"
+  nieuw_vorige=ja
   say "Vorige image bewaard als cf-platform:vorige ($(kort "$basis_rev"))"
 fi
 docker image rm cf-platform:basis >/dev/null 2>&1
 rm -f "$EIGEN/teruggezet"
+if [ "$nieuw_vorige" = ja ] && [ -n "$dump_voor" ]; then bewaar_dump "$dump_voor"; fi
 
 # --- herstarten, alleen op de node met het VIP --------------------------------
 if [ "$VIPHIER" = nee ]; then
@@ -167,18 +201,13 @@ fi
 if "$CTL" unchanged; then
   say "Het platform draait al met dit image en deze instellingen; niets te herstarten"
 else
-  # shellcheck disable=SC2012
-  voor=$(ls -1t "$BACKUPS"/platform-*.dump 2>/dev/null | head -n 1)
+  voor=$(nieuwste_dump)
   say "Back-up van de database en herstart (platform-ctl.sh restart-if-changed)"
   "$CTL" restart-if-changed || fail "back-up of herstart mislukt; zonder back-up herstart het niet (het oude image draait dan nog)"
-  # shellcheck disable=SC2012
-  dump=$(ls -1t "$BACKUPS"/platform-*.dump 2>/dev/null | head -n 1)
-  if [ -n "$dump" ] && [ "$dump" != "$voor" ]; then
-    # Een harde link: de vijf-nieuwste-regel van platform-ctl.sh wist hem dan niet.
-    ln -f "$dump" "$EIGEN/voor-update.dump" 2>/dev/null || cp -f "$dump" "$EIGEN/voor-update.dump"
-    schrijf "$EIGEN/voor-update.info" "dump=$(basename "$dump") van=${basis_rev:-onbekend} naar=$nieuw_rev"
-    note "back-up van vóór deze versie: $EIGEN/voor-update.dump"
-  fi
+  # Deze back-up is van vlak voor de herstart: ook wat er tijdens het bouwen
+  # nog in de database kwam, staat erin.
+  dump=$(nieuwste_dump)
+  if [ "$nieuw_vorige" = ja ] && [ -n "$dump" ] && [ "$dump" != "$voor" ]; then bewaar_dump "$dump"; fi
 fi
 say "Wachten tot de app antwoordt (hoogstens $WACHT s; migraties lopen bij de start)"
 t=0; versie=""

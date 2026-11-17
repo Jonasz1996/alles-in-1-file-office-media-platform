@@ -103,13 +103,18 @@ Wat Platform bijwerken op elke node doet:
 - het bouwt alleen als code of image niet bij de Versie horen. Het image van daarvoor blijft
   bewaard als `cf-platform:vorige`;
 - een node zonder VIP is dan klaar;
-- de node met het VIP maakt, als er iets veranderd is, een dump van de database, herstart het
-  platform en wacht tot de app antwoordt (hoogstens 15 minuten). De app migreert de database
-  bij de start. Het platform is tijdens de herstart even weg.
+- de node met het VIP maakt eerst een dump van de database, en pas daarna bouwt hij. Dat geldt
+  ook als `cf-platform` daar op dat moment niet draait: keepalived start het daarna met het
+  nieuwe image, en de app migreert de database bij de start;
+- daarna herstart de node met het VIP het platform, als er iets veranderd is (met nog een dump,
+  vlak voor de herstart), en wacht tot de app antwoordt (hoogstens 15 minuten). Het platform is
+  tijdens de herstart even weg.
 
-De dump komt in `/var/backups/cf-platform` (daar blijven de 5 nieuwste) en blijft daarnaast
-bewaard als `/var/lib/cf-platform/bijwerken/voor-update.dump`, met in `voor-update.info` van
-welke naar welke versie. Platform terug gebruikt die.
+De dumps komen in `/var/backups/cf-platform` (daar blijven de 5 nieuwste). Bij een nieuw image
+blijft de laatste van die dumps daarnaast bewaard als
+`/var/lib/cf-platform/bijwerken/voor-update.dump`, met in `voor-update.info` van welke naar
+welke versie. Platform terug gebruikt die. Een herstart zonder nieuw image (bijvoorbeeld na een
+andere instelling in ClusterForge) laat `voor-update.dump` staan.
 
 Nog een keer draaien is veilig: staat alles al op de Versie, dan doet het niets.
 

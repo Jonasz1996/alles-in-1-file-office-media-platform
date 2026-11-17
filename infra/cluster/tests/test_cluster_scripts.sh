@@ -115,8 +115,8 @@ fakes=$work/nep
 common=$work/gewoon
 mkdir -p "$fakes" "$common"
 
-for t in awk basename cat chmod cp cut date dirname flock grep head ln ls mkdir mv rm sed sort \
-  tail tr touch wc; do
+for t in awk basename cat chmod cksum cp cut date dirname flock grep head ln ls mkdir mv rm sed \
+  sort tail tr touch wc; do
   p=$(command -v "$t") || { echo "nodig voor de test: $t" >&2; exit 2; }
   ln -s "$p" "$common/$t"
 done
@@ -164,7 +164,8 @@ cat >"$fakes/systemctl" <<'EOF'
 #!/bin/sh
 # Nep-systemctl voor cf-platform en cf-platform-mount. Starten: alleen met de markering
 # (ConditionPathExists), dan migreert de app de database naar de head van zijn image; kent het
-# image de revisie van de database niet, dan faalt de unit.
+# image de revisie van de database niet, dan faalt de unit. Bij de start komt de vingerafdruk
+# (platform.env en het image) in <node>/hash, zoals platform-ctl.sh up dat in /run doet.
 N=$CFT_NODE W=$CFT_WORLD
 echo "systemctl $*" >>"$N/log"
 echo "systemctl $*" >>"$W/../aanroepen.log"
@@ -176,7 +177,7 @@ stop() {
   if [ -e "$N/stopt_niet" ]; then echo "stop genegeerd" >>"$N/log"; return 0; fi
   if [ -e "$W/data/.cf-platform-active" ]; then m=aan; else m=opzij; fi
   echo "gestopt; markering $m" >>"$N/log"
-  rm -f "$N/active" "$N/running"
+  rm -f "$N/active" "$N/running" "$N/hash"
 }
 start() {
   [ -e "$W/data/.cf-platform-active" ] || return 0
@@ -189,6 +190,7 @@ start() {
   if [ "$db" -lt "$head" ]; then echo "$head" >"$W/db/rev"; fi
   if [ -e "$W/crash/$k" ]; then touch "$N/failed"; return 0; fi
   echo "$id" >"$N/running"; touch "$N/active"
+  { cat "$N/root/etc/platform.env"; echo "$id"; } | cksum >"$N/hash"
 }
 case "$cmd $unit" in
   "is-active cf-platform-mount") [ ! -e "$N/mount_down" ] ;;
@@ -276,6 +278,7 @@ cat >"$fakes/pg_dump" <<'EOF'
 W=$CFT_WORLD
 echo "pg_dump $*" >>"$W/pg-args.log"
 echo "pg_dump $*" >>"$W/../aanroepen.log"
+echo "pg_dump $*" >>"$CFT_NODE/log"
 . "$W/../nep/pg-gemeen.sh"
 verbinding "$@"
 [ ! -e "$W/pg_dump_faalt" ] || { echo "pg_dump: error: query failed" >&2; exit 1; }
@@ -408,7 +411,8 @@ echo "$rev" >"$STATE"
 echo "platform $REF op $rev gebouwd"
 SRC
   # De nep-platform-ctl.sh: dezelfde VIP- en REF-regels als de template, en unchanged,
-  # restart-if-changed, db-backup en status zoals daar (db_backup bijna letterlijk).
+  # restart-if-changed, db-backup en status zoals daar (db_backup bijna letterlijk). Zoals
+  # fingerprint() in de template telt platform.env mee, niet alleen het image.
   cat >"$r/lib/platform-ctl.sh" <<CTL
 #!/bin/sh
 # Beheerd door ClusterForge (cluster test). Nep van platform-ctl.sh.
@@ -427,7 +431,9 @@ N=$CFT_NODE
 env_get() { sed -n "s/^$1=//p" "$ENV" | tail -n 1; }
 say() { echo "== $*"; }
 fail() { echo "FOUT: $*" >&2; exit 1; }
-zelfde() { [ "$(cat "$N/running" 2>/dev/null)" = "$(docker image inspect -f '{{.Id}}' cf-platform:local 2>/dev/null)" ]; }
+zelfde() {
+  [ "$(cat "$N/hash" 2>/dev/null)" = "$({ cat "$ENV"; docker image inspect -f '{{.Id}}' cf-platform:local 2>/dev/null; } | cksum)" ]
+}
 db_backup() {
   url=$(env_get PLATFORM_DATABASE_URL)
   rest=${url#*://}; cred=${rest%%@*}; hostdb=${rest#*@}
@@ -493,7 +499,10 @@ nieuw_cluster() {
   date -Iseconds >"$W/data/.cf-platform-active"
   id_van_ref v081 >"$W/nodes/n3/running"
   touch "$W/nodes/n3/active"
+  gestart n3
 }
+# De vingerafdruk van wat er op node $1 draait, zoals de nep-systemctl die bij de start schrijft.
+gestart() { { cat "$W/nodes/$1/root/etc/platform.env"; cat "$W/nodes/$1/running"; } | cksum >"$W/nodes/$1/hash"; }
 
 # Wijzigen, Versie, Toepassen: verandert alleen de REF-regel van de twee scripts (cf-update §1.1).
 zet_versie() {
@@ -686,10 +695,12 @@ nieuw_cluster
 zet_versie v082
 touch "$W/pg_dump_faalt"
 rc=0; draai_cluster platform-bijwerken.sh || rc=$?
-check "bijwerken: mislukte back-up op de VIP-houder, geen herstart" \
-  bash -c '[ "$1" != 0 ] && [ "$2" = " n1:0 n2:0 n3:1" ] && grep -qF "back-up of herstart mislukt" "$3"' _ "$rc" "$GEDRAAID" "$LOG"
+check "bijwerken: mislukte back-up op de VIP-houder, niets gebouwd en geen herstart" \
+  bash -c '[ "$1" != 0 ] && [ "$2" = " n1:0 n2:0 n3:1" ] && grep -qF "back-up van de database mislukt; er is niets gebouwd" "$3"' _ "$rc" "$GEDRAAID" "$LOG"
 check "bijwerken: mislukte back-up, 0.8.1 draait door op een ongewijzigde database" \
   bash -c '[ "$1" = "$2" ] && [ "$3" = 0012 ] && [ -z "$(ls "$4")" ]' _ "$(draait n3)" "$A" "$(db_rev)" "$W/nodes/n3/root/backups"
+check "bijwerken: mislukte back-up, de VIP-houder heeft het nieuwe image niet" \
+  is "$(tag n3 local) $(tag n3 vorige) $(tag n3 basis)" "$A  "
 rm "$W/pg_dump_faalt"
 
 # --- Platform bijwerken: gelukt ---------------------------------------------------------------
@@ -720,9 +731,14 @@ check "bijwerken: voor-update.dump is de stand van vóór de migratie" \
   "$(eigen n3)" "$REV_A" "$REV_B"
 check "bijwerken: voor-update.dump is een harde link naar de back-up van platform-ctl.sh" \
   bash -c '[ "$(stat -c %h "$1/voor-update.dump")" = 2 ]' _ "$(eigen n3)"
-check "bijwerken: één back-up, alleen op n3" \
-  bash -c '[ "$(ls "$1" | wc -l)" = 1 ] && [ -z "$(ls "$2")" ] && [ -z "$(ls "$3")" ]' _ \
+check "bijwerken: twee back-ups, alleen op n3 (vóór het bouwen en vlak voor de herstart)" \
+  bash -c '[ "$(ls "$1" | wc -l)" = 2 ] && [ -z "$(ls "$2")" ] && [ -z "$(ls "$3")" ]' _ \
   "$W/nodes/n3/root/backups" "$W/nodes/n1/root/backups" "$W/nodes/n2/root/backups"
+check "bijwerken: de back-up op n3 komt vóór het bouwen (het nieuwe image kan daarna starten)" \
+  awk '/^pg_dump /{ if (!d) d = NR } /^build /{ if (!b) b = NR } END { exit !(d && b && d < b) }' "$W/nodes/n3/log"
+# shellcheck disable=SC2012  # zoals platform-bijwerken.sh: de nieuwste back-up
+check "bijwerken: voor-update.dump is de laatste back-up, vlak voor de herstart" \
+  grep -qx "dump=$(basename "$(ls -1t "$W/nodes/n3/root/backups"/platform-*.dump | head -n 1)") van=.*" "$(eigen n3)/voor-update.info"
 
 # Tweede keer: niets te bouwen, niets te herstarten, geen nieuwe back-up.
 for n in $NODES; do : >"$W/nodes/$n/log"; done
@@ -731,7 +747,7 @@ check "bijwerken: tweede keer gelukt" is "$rc $GEDRAAID" "0  n1:0 n2:0 n3:0"
 check "bijwerken: tweede keer niets gebouwd" \
   bash -c '! grep -q "^build " "$1" "$2" "$3"' _ "$W/nodes/n1/log" "$W/nodes/n2/log" "$W/nodes/n3/log"
 check "bijwerken: tweede keer geen herstart en geen back-up" \
-  bash -c '! grep -q "^systemctl \(re\)\?start" "$1" && [ "$(ls "$2" | wc -l)" = 1 ] && grep -qF "niets te herstarten" "$3"' _ \
+  bash -c '! grep -q "^systemctl \(re\)\?start" "$1" && [ "$(ls "$2" | wc -l)" = 2 ] && grep -qF "niets te herstarten" "$3"' _ \
   "$W/nodes/n3/log" "$W/nodes/n3/root/backups" "${LOG_VAN[n3]}"
 check "bijwerken: tweede keer blijft 0.8.1 cf-platform:vorige" is "$(tag n1 vorige) $(tag n3 vorige)" "$A $A"
 
@@ -751,6 +767,24 @@ check "bijwerken: vóór de overstap alleen bouwen" \
   bash -c '[ "$1" = 0 ] && grep -qF "de overstap is nog niet gedaan" "$2" && grep -qF "niets te herstarten" "$2"' _ "$rc" "$LOG"
 check "bijwerken: vóór de overstap geen back-up en niets gestart" \
   bash -c '[ "$1" = "$2" ] && [ -z "$(ls "$3")" ] && [ ! -e "$4" ]' _ "$(tag n3 local)" "$B" "$W/nodes/n3/root/backups" "$W/nodes/n3/active"
+
+# Na de overstap, maar cf-platform draait niet op de VIP-houder (gestopt of gecrasht): toch eerst
+# een back-up, want keepalived (platform-ctl.sh check) start daarna het nieuwe image en de app
+# migreert dan bij de start.
+nieuw_cluster
+zet_versie v082
+rm "$W/nodes/n3/active" "$W/nodes/n3/running" "$W/nodes/n3/hash"
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken: cf-platform gestopt op de VIP-houder, gebouwd en niet gestart" \
+  bash -c '[ "$1" = 0 ] && grep -qF "niets te herstarten" "$2" && [ "$3" = "$4" ] && [ ! -e "$5" ]' _ \
+  "$rc" "$LOG" "$(tag n3 local)" "$B" "$W/nodes/n3/active"
+check "bijwerken: cf-platform gestopt, toch een back-up van vóór het bouwen als voor-update.dump" \
+  bash -c '[ "$(ls "$1" | wc -l)" = 1 ] && grep -qx "rev=0012" "$2/voor-update.dump" &&
+    grep -qx "dump=platform-.*\.dump van=$3 naar=$4" "$2/voor-update.info"' _ "$W/nodes/n3/root/backups" "$(eigen n3)" "$REV_A" "$REV_B"
+env -i CFT_NODE="$W/nodes/n3" CFT_WORLD="$W" PATH="$W/nodes/n3/bin" "$W/nodes/n3/bin/systemctl" start cf-platform
+check "bijwerken: cf-platform gestopt, keepalived start daarna 0.8.2 en de database migreert" is "$(draait n3) $(db_rev)" "$B 0014"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+check "bijwerken: cf-platform gestopt, Platform terug kan daarna terug naar 0.8.1" is "$rc $(draait n3) $(db_rev)" "0 $A 0012"
 
 # Een nieuwe versie die migreert en daarna niet start: Platform bijwerken zegt het.
 nieuw_cluster
@@ -963,6 +997,22 @@ check "bijwerken na terug, mislukte build: geweigerd op n1" \
   bash -c '[ "$1" != 0 ] && [ "$2" = " n1:1" ] && grep -qF "bouwen mislukt; het platform is niet geraakt" "$3"' _ "$rc" "$GEDRAAID" "$LOG"
 check "bijwerken na terug, mislukte build: 0.8.1 blijft, geen cf-platform:basis" \
   is "$(tag n1 local) $(tag n1 basis) $(draait n3) $(db_rev)" "$A  $A 0012"
+
+# Na een update alleen andere instellingen (platform.env), geen nieuwe versie: platform-ctl.sh
+# herstart met een nieuwe back-up, maar voor-update.dump blijft die van vóór de update.
+na_update
+cp "$(eigen n3)/voor-update.info" "$work/info-voor"
+voor_n=$(find "$W/nodes/n3/root/backups" -name 'platform-*.dump' | wc -l)
+for n in $NODES; do sed -i 's/^ANALYSE=uit$/ANALYSE=aan/' "$W/nodes/$n/root/etc/platform.env"; done
+rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+check "bijwerken: andere instellingen, n3 herstart met een nieuwe back-up" \
+  bash -c '[ "$1" = 0 ] && grep -qx "systemctl restart cf-platform" "$2" &&
+    [ "$(find "$3" -name "platform-*.dump" | wc -l)" = "$(($4 + 1))" ]' _ "$rc" "$W/nodes/n3/log" "$W/nodes/n3/root/backups" "$voor_n"
+check "bijwerken: andere instellingen, voor-update.dump en .info blijven die van vóór de update" \
+  bash -c 'grep -qx "rev=0012" "$1/voor-update.dump" && cmp -s "$1/voor-update.info" "$2"' _ "$(eigen n3)" "$work/info-voor"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+check "bijwerken: andere instellingen, Platform terug kan daarna nog naar 0.8.1" \
+  is "$rc $(draait n3) $(db_rev) $(db_rijen)" "0 $A 0012 voor"
 
 # Zonder database: een fix zonder migratie (v082b) en terug naar 0.8.2.
 na_update
