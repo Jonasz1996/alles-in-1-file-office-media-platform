@@ -1,0 +1,56 @@
+{
+ "beeld_select": [
+  "SELECT n.id, n.owner_id, n.num, n.blob_id \nFROM json_each(?) AS r CROSS JOIN node AS n ON n.num = r.value \nWHERE n.owner_id = ? AND n.dead = ? AND n.kind = ? AND n.ftype = ? AND (NOT EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = n.id) OR EXISTS (SELECT 1 FROM node_origin AS o WHERE o.node_id = n.id AND o.via_link = 0 AND o.created_by IS NOT NULL AND (o.created_by = n.owner_id OR o.created_by IN (SELECT pp.user_id FROM photo_pref AS pp WHERE pp.beeld = 'aan')))) ORDER BY r.\"key\""
+ ],
+ "group_only": [
+  "SELECT face.id, face.vec \nFROM face JOIN node ON node.id = face.node_id \nWHERE node.owner_id = ? AND node.dead = ? AND node.kind = ? AND (+ face.owner_id) = ? AND face.hidden = ? AND face.vec IS NOT NULL AND (face.id NOT IN (SELECT face_person.face_id \nFROM face_person \nWHERE face_person.verdict = ?)) AND face.id IN (__[POSTCOMPILE_id_1]) ORDER BY face.created_at DESC, face.id"
+ ],
+ "links_boxes": [
+  "SELECT face.id, face.x, face.y, face.w, face.h \nFROM face \nWHERE face.node_id = ? AND (+ face.owner_id) = ? AND face.hidden = ?"
+ ],
+ "photo_counts": [
+  "SELECT blob.preview, count(*) AS count_1 \nFROM blob \nWHERE blob.mime LIKE ? OR blob.mime LIKE ? GROUP BY blob.preview",
+  "SELECT count(*) AS count_1 \nFROM blob \nWHERE blob.mime LIKE ? AND blob.preview = ? AND CAST(JSON_EXTRACT(blob.preview_meta, ?) AS BOOLEAN) IS 1",
+  "SELECT CAST(JSON_EXTRACT(blob.preview_meta, ?) AS BOOLEAN) AS anon_1, count(*) AS count_1 \nFROM blob \nWHERE (blob.mime LIKE ? OR blob.mime LIKE ?) AND blob.preview = ? AND CAST(JSON_EXTRACT(blob.preview_meta, ?) AS BOOLEAN) IS 1 GROUP BY CAST(JSON_EXTRACT(blob.preview_meta, ?) AS BOOLEAN)"
+ ],
+ "photo_hash_scan": [
+  "SELECT blob_hash.blob_sha, blob_hash.phash \nFROM blob_hash \nWHERE blob_hash.state = ? AND (blob_hash.h0 = ? OR blob_hash.h1 = ? OR blob_hash.h2 = ? OR blob_hash.h3 = ?) ORDER BY +blob_hash.blob_sha\n LIMIT ? OFFSET ?",
+  "SELECT blob_hash.blob_sha, blob_hash.phash \nFROM blob_hash \nWHERE blob_hash.state = ? AND (blob_hash.h0 = ? OR blob_hash.h1 = ? OR blob_hash.h2 = ? OR blob_hash.h3 = ?) AND (EXISTS (SELECT * \nFROM node \nWHERE node.blob_id = blob_hash.blob_sha AND node.owner_id = ? AND node.kind = ?)) ORDER BY +blob_hash.blob_sha\n LIMIT ? OFFSET ?"
+ ],
+ "photo_rows_meta": [
+  "INSERT INTO blob_meta (blob_sha, camera, lens, gps) VALUES (?, ?, ?, ?) ON CONFLICT (blob_sha) DO UPDATE SET camera = excluded.camera, lens = excluded.lens, gps = excluded.gps"
+ ],
+ "photo_rows_write": [
+  "INSERT INTO photo_geo (node_id, owner_id, lat, lon, alt, x16, y16, place_id, country, admin1, source, dead) SELECT node.id, node.owner_id, ? AS anon_1, ? AS anon_2, ? AS anon_3, ? AS anon_4, ? AS anon_5, ? AS anon_6, ? AS anon_7, ? AS anon_8, ? AS anon_9, ? AS anon_10 \nFROM node \nWHERE node.blob_id = ? AND node.kind = ? AND node.owner_id IS NOT NULL AND NOT (EXISTS (SELECT * \nFROM photo_pref \nWHERE photo_pref.user_id = node.owner_id AND photo_pref.location = ?)) ON CONFLICT (node_id) DO UPDATE SET lat = excluded.lat, lon = excluded.lon, alt = excluded.alt, x16 = excluded.x16, y16 = excluded.y16, place_id = excluded.place_id, country = excluded.country, admin1 = excluded.admin1, source = excluded.source",
+  "INSERT INTO photo_geo (node_id, owner_id, lat, lon, alt, x16, y16, place_id, country, admin1, source, dead) SELECT node.id, node.owner_id, ? AS anon_1, ? AS anon_2, ? AS anon_3, ? AS anon_4, ? AS anon_5, ? AS anon_6, ? AS anon_7, ? AS anon_8, ? AS anon_9, ? AS anon_10 \nFROM node \nWHERE node.blob_id = ? AND node.kind = ? AND node.owner_id IS NOT NULL AND NOT (EXISTS (SELECT * \nFROM photo_pref \nWHERE photo_pref.user_id = node.owner_id AND photo_pref.location = ?)) AND NOT (EXISTS (SELECT * \nFROM photo_geo \nWHERE photo_geo.node_id = node.id)) ON CONFLICT (node_id) DO NOTHING"
+ ],
+ "photos_map_cells": [
+  "SELECT photo_geo.x16 >> ? AS cx, photo_geo.y16 >> ? AS cy, count(*) AS n, max(photo_geo.taken_at) AS newest, photo_geo.node_id AS cover, avg(photo_geo.x16) AS ax, avg(photo_geo.y16) AS ay \nFROM photo_geo \nWHERE photo_geo.owner_id = ? AND photo_geo.dead = ? AND photo_geo.x16 BETWEEN ? AND ? AND photo_geo.y16 BETWEEN ? AND ? GROUP BY photo_geo.x16 >> ?, photo_geo.y16 >> ?\n LIMIT ? OFFSET ?"
+ ],
+ "read_counts": [
+  "WITH gone(id) AS MATERIALIZED (SELECT d.id FROM node t CROSS JOIN node d ON d.mpath >= t.mpath AND d.mpath < substr(t.mpath, 1, length(t.mpath) - 1) || '0' WHERE t.deleted_at IS NOT NULL AND +t.owner_id = ? AND +d.owner_id = ? AND NOT (d.owner_id = ? AND d.dead = 0 AND d.kind = 'file')) SELECT 1 AS k, state AS a, count(*) AS n, 0 AS ja FROM face_scan WHERE state IN ('wait', 'busy', 'done', 'failed', 'skip') AND owner_id = ? GROUP BY state UNION ALL SELECT 2, state, count(*), 0 FROM face_scan WHERE node_id IN gone AND +owner_id = ? GROUP BY state UNION ALL SELECT 3, cluster, count(*), 0 FROM face WHERE owner_id = ? AND hidden = 0 AND cluster IS NOT NULL GROUP BY cluster UNION ALL SELECT 4, g.cluster, count(*), sum(EXISTS (SELECT 1 FROM face_person p WHERE p.face_id = g.id AND p.verdict = 'ja')) FROM face g WHERE g.node_id IN gone AND +g.owner_id = ? AND +g.hidden = 0 GROUP BY g.cluster UNION ALL SELECT 5, NULL, count(*), 0 FROM face WHERE owner_id = ? AND hidden = 0 UNION ALL SELECT 6, NULL, count(*), 0 FROM face_person WHERE owner_id = ? AND verdict = 'ja' UNION ALL SELECT 7, wiping, 0, 0 FROM face_owner WHERE owner_id = ?"
+ ],
+ "read_face_cols": [
+  "SELECT face.id, face.node_id, face.x, face.y, face.w, face.h, face.suggest_id, face.suggest_score, face.suggest_why, face.cluster, face.rowid AS r, (SELECT face_person.person_id \nFROM face_person \nWHERE face_person.face_id = face.id AND face_person.verdict = ?) AS person \nFROM face JOIN node ON node.id = face.node_id \nWHERE face.owner_id = ? AND node.owner_id = ? AND node.dead = ? AND node.kind = ? AND face.hidden = ?"
+ ],
+ "read_file_faces": [
+  "SELECT face.id, face.node_id, face.x, face.y, face.w, face.h, face.suggest_id, face.suggest_score, face.suggest_why, face.cluster, face.rowid AS r, (SELECT face_person.person_id \nFROM face_person \nWHERE face_person.face_id = face.id AND face_person.verdict = ?) AS person \nFROM face JOIN node ON node.id = face.node_id \nWHERE (+ face.owner_id) = ? AND node.owner_id = ? AND node.dead = ? AND node.kind = ? AND face.hidden = ? AND face.node_id = ? ORDER BY face.x, face.id\n LIMIT ? OFFSET ?"
+ ],
+ "read_firsts": [
+  "SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id, f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person FROM face f JOIN node n ON n.id = f.node_id WHERE f.owner_id = ? AND n.owner_id = ? AND n.dead = 0 AND n.kind = 'file' AND f.hidden = 0 AND f.suggest_id = ? ORDER BY f.suggest_score DESC, f.rowid LIMIT 6) UNION ALL SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id, f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person FROM face f JOIN node n ON n.id = f.node_id WHERE f.owner_id = ? AND n.owner_id = ? AND n.dead = 0 AND n.kind = 'file' AND f.hidden = 0 AND f.suggest_id = ? ORDER BY f.suggest_score DESC, f.rowid LIMIT 6)",
+  "SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id, f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person FROM face f JOIN node n ON n.id = f.node_id WHERE f.owner_id = ? AND n.owner_id = ? AND n.dead = 0 AND n.kind = 'file' AND f.hidden = 0 AND f.cluster = ? ORDER BY f.rowid DESC LIMIT 12) UNION ALL SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id, f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person FROM face f JOIN node n ON n.id = f.node_id WHERE f.owner_id = ? AND n.owner_id = ? AND n.dead = 0 AND n.kind = 'file' AND f.hidden = 0 AND f.cluster = ? ORDER BY f.rowid DESC LIMIT 12) UNION ALL SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id, f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person FROM face f JOIN node n ON n.id = f.node_id WHERE f.owner_id = ? AND n.owner_id = ? AND n.dead = 0 AND n.kind = 'file' AND f.hidden = 0 AND f.cluster = ? ORDER BY f.rowid DESC LIMIT 12)"
+ ],
+ "read_gone_by": [
+  "SELECT g.cluster AS k, count(*) AS n FROM face g WHERE g.node_id IN (SELECT d.id FROM node t CROSS JOIN node d ON d.mpath >= t.mpath AND d.mpath < substr(t.mpath, 1, length(t.mpath) - 1) || '0' WHERE t.deleted_at IS NOT NULL AND +t.owner_id = ? AND +d.owner_id = ? AND NOT (d.owner_id = ? AND d.dead = 0 AND d.kind = 'file')) AND +g.owner_id = ? AND +g.hidden = 0 AND g.cluster IS NOT NULL GROUP BY g.cluster",
+  "SELECT g.suggest_id AS k, count(*) AS n FROM face g WHERE g.node_id IN (SELECT d.id FROM node t CROSS JOIN node d ON d.mpath >= t.mpath AND d.mpath < substr(t.mpath, 1, length(t.mpath) - 1) || '0' WHERE t.deleted_at IS NOT NULL AND +t.owner_id = ? AND +d.owner_id = ? AND NOT (d.owner_id = ? AND d.dead = 0 AND d.kind = 'file')) AND +g.owner_id = ? AND +g.hidden = 0 AND g.suggest_id IS NOT NULL GROUP BY g.suggest_id"
+ ],
+ "scan_take": [
+  "UPDATE face_scan SET state=?, updated_at=? WHERE face_scan.node_id IN (__[POSTCOMPILE_node_id_1]) AND (+ face_scan.state) = ?"
+ ],
+ "snippets_sources": [
+  "SELECT n.id, n.search_name, (SELECT group_concat(media_item.title, ?) AS group_concat_1 \nFROM media_item \nWHERE media_item.node_id = n.id) AS anon_1, substr(CAST(blob_text.body AS BLOB), ?, ?) AS substr_1, substr(CAST(blob_text.ocr AS BLOB), ?, ?) AS substr_4, CASE WHEN (n.owner_id = ?) THEN substr(CAST(photo_ocr.text AS BLOB), ?, ?) END AS anon_2, substr(CAST(blob_text.meta AS BLOB), ?, ?) AS substr_9 \nFROM node AS n LEFT OUTER JOIN blob_text ON blob_text.blob_sha = n.blob_id LEFT OUTER JOIN photo_ocr ON photo_ocr.node_id = n.id \nWHERE n.id IN (__[POSTCOMPILE_ids])"
+ ],
+ "verdicts_faces": [
+  "SELECT face.id, face.node_id \nFROM face JOIN node ON node.id = face.node_id \nWHERE face.id IN (__[POSTCOMPILE_id_1]) AND (+ face.owner_id) = ? AND node.owner_id = ? AND node.dead = ? AND node.kind = ? AND face.hidden = ?"
+ ]
+}
