@@ -750,8 +750,11 @@ en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stap
   WebGL-shader (scherper opschalen en randen verfijnen, zoals FSR 1 of Anime4K doen) die op
   de grafische kaart van het kijktoestel draait; de server heeft er dus geen GPU voor nodig,
   en een knop in de speler zet hem aan of uit. (b) Op de server, bij een transcode, een
-  betere schaler van ffmpeg (lanczos) naar de resolutie van het scherm; met AI-modellen pas
-  als er een GPU is (open beslissing over de GPU). Op een TV-app (fase 9) geldt alleen (b)
+  betere schaler van ffmpeg (lanczos) naar de resolutie van het scherm; AI-upscaling vooraf
+  ('s nachts, voor films die je aanduidt) op de RTX 3060 Ti; die kaart draait ook elk uur
+  een AI-verslag van Jonas, dus de upscaling wijkt: lage voorrang, pauze rond het verslag en
+  een grens op het videogeheugen. De UHD 630 (VM's) en de RTX 3080 Ti (gamestream) gebruikt
+  het platform nooit; omzetten tijdens het kijken blijft op de processor (Jonas, 17-11-2026). Op een TV-app (fase 9) geldt alleen (b)
   tot de TV zelf shaders kan
 
 Deel A: de Plex- of Jellyfin-ervaring (bovenop fase 5)
