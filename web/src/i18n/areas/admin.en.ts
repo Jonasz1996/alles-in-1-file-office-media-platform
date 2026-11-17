@@ -769,6 +769,10 @@ const en: Translation<typeof nl> = {
         beeld: "Search by image",
       },
     },
+    faceKeys: {
+      title: "Keys",
+      missing: "key missing for {n} owner(s) (app.cli sleutels-check)",
+    },
     failed: {
       title: "Failed contents",
       none: "Nothing failed.",

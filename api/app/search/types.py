@@ -334,6 +334,9 @@ class AdminFaces(BaseModel):
     eta_s: int | None
     wipe_waiting: bool
     quality: AnalyseQuality | None
+    # Eigenaren met versleutelde gezichten zonder sleutel (0.8.2): "sleutel ontbreekt"; alleen het
+    # aantal (app.cli sleutels-check zegt meer)
+    keys_missing: int = 0
 
 
 class BeeldHour(BaseModel):

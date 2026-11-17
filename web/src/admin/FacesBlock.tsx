@@ -160,6 +160,9 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
     ["speed", t("photos_faces.admin.speed"), speedText(faces)],
   ];
   if (faces.wipe_waiting) rows.push(["wipe", t("photos_faces.admin.wipe"), t("photos_faces.admin.wipeWaiting")]);
+  // 0.8.2: een eigenaar met versleutelde gezichten zonder sleutel (alleen het aantal)
+  if (faces.keys_missing > 0)
+    rows.push(["keys", t("admin.search.faceKeys.title"), t("admin.search.faceKeys.missing", { n: fmt.number(faces.keys_missing) })]);
   rows.push(["quality", t("photos_faces.admin.quality"), qualityText(faces.quality)]);
 
   return (

@@ -357,6 +357,10 @@ async def _pick(settings: Settings) -> list[Item]:
         for owner in owners:
             if not await state.owner_on(db, owner) or await state.wiping(db, owner):
                 continue
+            if await crypto.key_lost(settings, db, owner):
+                # De sleutel is weg met versleutelde gezichten erbij: niets nieuws versleutelen
+                # (crypto.KeyLost); /beheer en sleutels-check zeggen het
+                continue
             rows = await db.execute(
                 select(FaceScan.node_id, Node.blob_id, FaceScan.tries)
                 .join(Node, Node.id == FaceScan.node_id)
@@ -524,7 +528,10 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
             )
             allowed = await state.allowed(db)
             ok_owner = {
-                o: allowed and await state.owner_on(db, o) and not await state.wiping(db, o)
+                o: allowed
+                and await state.owner_on(db, o)
+                and not await state.wiping(db, o)
+                and not await crypto.key_lost(settings, db, o)
                 for o in owners
             }
             for item in items:
@@ -538,8 +545,9 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
                 if current is None or current.state != "busy" or current.version != FACES_VERSION:
                     continue
                 if not ok_owner[item.owner] or current.blob_id != item.sha:
-                    # Uit, verboden, een wisronde, of een andere inhoud: niets schrijven; de foto
-                    # weer op wait (een wisronde ruimt hem op, een nieuwe inhoud komt opnieuw)
+                    # Uit, verboden, een wisronde, een sleutel die weg is, of een andere inhoud:
+                    # niets schrijven; de foto weer op wait (een wisronde ruimt hem op, een nieuwe
+                    # inhoud komt opnieuw)
                     await face_rows.set_scan(
                         db, item.node, {"state": "wait", "updated_at": at}, only_busy=True
                     )
@@ -578,7 +586,7 @@ async def _store_faces(
         )
     )
     await db.execute(delete(Face).where(Face.node_id == item.node, Face.hidden == 0))
-    key = crypto.ensure_key(settings, item.owner) if item.photo.n else None
+    key = await crypto.ensure_key(settings, db, item.owner) if item.photo.n else None
     made: list[uuid.UUID] = []
     for box, vec in zip(item.photo.faces, item.vectors, strict=True):
         here = (box.x, box.y, box.w, box.h)
