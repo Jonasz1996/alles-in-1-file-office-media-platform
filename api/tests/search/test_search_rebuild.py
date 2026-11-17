@@ -18,6 +18,7 @@ nu ook deze herbouw gebruikt.
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import random
 import sqlite3
@@ -53,7 +54,23 @@ async def _triggers(settings) -> dict[str, str]:
     return dict(await sql(settings, "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"))
 
 
-async def test_een_upload_wacht_hooguit_1_s_en_de_index_klopt(client, admin, settings):
+@pytest.fixture
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de test loopt, zoals python -m
+    app.serve dat na de start doet (serve.freeze_heap) en zoals frozen_heap in
+    test_media_loadtest en tests/beeld/test_beeld_gen. In de volle suite heeft het proces op deze
+    plek ±1,3 miljoen objecten van eerdere tests (na de samenvoeging van golf 6); een volle ronde
+    van de gc daarover kost 1,0 tot 1,5 s (gemeten met een spion op gc.callbacks), en viel die in
+    een upload, dan wachtte die 1145 ms. Dat is de test, niet de herbouw: de echte app heeft die
+    objecten niet. Wat de herbouw en de uploads zelf aan afval maken, ruimt de gc nog steeds op,
+    en de grens van 1 s blijft."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
+async def test_een_upload_wacht_hooguit_1_s_en_de_index_klopt(client, admin, settings, frozen_heap):
     jonas, top, _ = await _vul(client, admin, settings, 6_000)
     await klopt(settings)
     engine = get_engine(settings)
@@ -152,7 +169,9 @@ def _vul_groot(settings, owner: str, root_id: str, n: int) -> None:
         con.close()
 
 
-async def test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort(client, admin, settings):
+async def test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort(
+    client, admin, settings, frozen_heap
+):
     """H3: een stuk telde alleen nodes (CHUNK = 2000). 80 nodes met elk 1 MB tekst waren één
     stuk van 80 MB, en een upload wachtte zo lang als dat stuk. Nu is een stuk ook hooguit
     CHUNK_TEXT bytes tekst, en na elk stuk komt eerst een andere schrijver aan de beurt."""

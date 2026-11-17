@@ -1,4 +1,7 @@
 import logging
+import os
+import uuid
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,6 +12,26 @@ from app.config import Settings, get_settings
 from app.main import app
 from app.migrate import upgrade
 from app.security import SecurityConfig, SecurityPolicy, login_limiter
+
+# De eerste map-node per map (zie pytest_make_collect_report hieronder)
+_MAPNODES: dict[Path, pytest.Directory] = {}
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """pytest 9.1 hangt de fixtures van een conftest.py aan de eerste map-node van die map. Staat
+    op de commandoregel een bestand uit tests/ tussen twee bestanden uit één submap (zoals
+    "tests/search/a.py tests/test_b.py tests/search/c.py"), dan verzamelt pytest tests/ opnieuw en
+    krijgt de submap een tweede node, zonder de fixtures van zijn conftest: autouse-fixtures als
+    _databases_dicht en _aangemeld vielen dan stil weg, en plaatsen of stappen bestonden niet.
+    Zo'n tweede node krijgt ze hier alsnog (I1, C2 en review R1; test_conftest_volgorde.py)."""
+    rapport = yield
+    if isinstance(collector, pytest.Directory):
+        eerste = _MAPNODES.setdefault(collector.path, collector)
+        conftest = collector.config.pluginmanager.get_plugin(str(collector.path / "conftest.py"))
+        if eerste is not collector and conftest is not None:
+            collector.session._fixturemanager.parsefactories(holder=conftest, node=collector)
+    return rapport
 
 
 @pytest.fixture
@@ -40,14 +63,53 @@ def _geen_mismatch(request):
     check(handler.lines, "mismatch_verwacht" in request.fixturenames)
 
 
+@pytest.fixture(autouse=True)
+def _schrijfpoort():
+    """Geen schrijfactie buiten de schrijfpoort van SQLite (app/dbgate.py), geen tweede
+    verbinding die schrijft terwijl dezelfde taak de poort heeft, en niet wachten op
+    BlobStore.lock of een gebruikersslot met de poort in handen: dat kan vastlopen tot de
+    poort na 5 s opgeeft. Een test die dat expres doet, haalt het zelf op (take_violations)."""
+    from app import dbgate
+
+    dbgate.take_violations()
+    yield
+    found = [v for v in dbgate.take_violations() if v[0] in ("ungated", "same_task", "lock_in_txn")]
+    assert not found, f"schrijfpoort: {found}"
+
+
 @pytest.fixture
 def mismatch_verwacht():
     """Deze test lokt search_access_mismatch expres uit en controleert de regel zelf."""
 
 
+# Met PLATFORM_TEST_DATABASE_URL (postgresql+asyncpg://…/postgres) draait elke test op een eigen,
+# nieuwe PostgreSQL-database in plaats van SQLite: zo houdt CI het cluster (B12, B15) eerlijk.
+PG_URL = os.environ.get("PLATFORM_TEST_DATABASE_URL", "")
+
+
+async def _pg_database(name: str, drop: bool = False) -> str:
+    import asyncpg
+
+    base = PG_URL.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(base)
+    try:
+        if drop:
+            await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        else:
+            await conn.execute(f'CREATE DATABASE "{name}"')
+    finally:
+        await conn.close()
+    return PG_URL.rsplit("/", 1)[0] + "/" + name
+
+
 @pytest.fixture
 async def settings(tmp_path):
-    s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8)
+    extra = {}
+    name = ""
+    if PG_URL:
+        name = "t_" + uuid.uuid4().hex
+        extra["database_url"] = await _pg_database(name)
+    s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
     # De engine van deze datamap dicht en uit de cache: anders blijven zijn verbindingen (elk met
@@ -55,6 +117,8 @@ async def settings(tmp_path):
     # snelheidstests) trager naarmate de run langer is
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
+    if name:
+        await _pg_database(name, drop=True)
 
 
 @pytest.fixture

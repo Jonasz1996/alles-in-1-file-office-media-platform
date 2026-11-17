@@ -10,7 +10,6 @@ import { errorText, fmt, t } from "./i18n";
 import { Link, nodeHref } from "./links";
 import { NodeActions } from "./NodeActions";
 import type { RouteProps } from "./router";
-import { SearchBox } from "./Search";
 import { SharedTabs } from "./shares/SharedTabs";
 import { PERMISSION_LABELS } from "./sharing";
 import { TagChips } from "./Tags";
@@ -66,9 +65,6 @@ export default function SharedWithMe(_: RouteProps): JSX.Element {
     <main className="wide">
       <PageTitle>{t("sharing.sharedWithMe")}</PageTitle>
       {!guest && <SharedTabs current="withMe" />}
-      <div className="toolbar">
-        <SearchBox />
-      </div>
       {guest && <p className="muted">{t("sharing.withMe.guestNote")}</p>}
       {error && <p role="alert">{error}</p>}
       {rows?.length === 0 && <EmptyState icon="share" title={t("sharing.withMe.none")} />}

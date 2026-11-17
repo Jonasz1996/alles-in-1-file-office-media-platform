@@ -1,9 +1,10 @@
 """PDF (bouwontwerp fase 6, Keuze 17): de tekstlaag via pypdfium2, hooguit 2.000 pagina's.
 
 Alleen in het kind (app.render text): het app-proces roept pypdfium2 op het pad van de tekst
-nooit zelf aan (test_extract_no_pdfium_in_app.py). Een pagina zonder tekst komt in scan_pages
-(voor OCR, X1). Na 2.000 pagina's: truncated, code pages_limit. Titel, auteur en onderwerp uit
-de metadata van de PDF.
+nooit zelf aan (test_extract_no_pdfium_in_app.py). Een pagina met minder dan SCAN_CHARS tekens
+tekst (zonder witruimte) komt in scan_pages: die krijgt OCR (X1, Keuze 23). Wat er wel op staat
+(een paginanummer), telt gewoon mee. Na 2.000 pagina's: truncated, code pages_limit. Titel,
+auteur en onderwerp uit de metadata van de PDF.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from app.extract.collect import Collector
 from app.extract.normalize import fold_meta
 
 MAX_PAGES = 2000
+SCAN_CHARS = 20  # minder tekens: een scan (Keuze 23)
 
 
 class Unreadable(Exception):
@@ -48,11 +50,11 @@ def read(f: BinaryIO, out: Collector) -> None:
                     textpage.close()
             finally:
                 page.close()
+            if len("".join(text.split())) < SCAN_CHARS:
+                out.scan_pages.append(i + 1)
             if text.strip():
                 out.add(text)
                 out.add("\n")
-            else:
-                out.scan_pages.append(i + 1)
         if count > MAX_PAGES:
             out.truncate()
     finally:

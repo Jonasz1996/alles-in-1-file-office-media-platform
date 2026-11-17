@@ -56,6 +56,7 @@ TIMEOUT: dict[Op, float | None] = {
     Op.REMUX_AUDIO: None,
     Op.SYNTH: 900,
     Op.TEXT: 900,  # fase 6, Z2: RLIMIT_CPU 60 s, maar met nice 19 kan de wandklok lang duren
+    Op.OCR: 600,  # fase 6, X1: kind 1 hooguit 300 s, dan twee keer de herkenning van 60 s en OSD
 }
 KEYFRAMES_FALLBACK_TIMEOUT = 3600.0
 # accept zonder fd's of geheugen: zo lang wachten (verdubbelend) en opnieuw
@@ -211,8 +212,8 @@ class Worker:
         except ValueError:
             raise OpError(Code.UNKNOWN_OP, "onbekende opdracht") from None
         if op not in A.ARGS:
-            # Een opdracht van een pakket dat nog komt (text in Z2, ocr in X1): nog geen
-            # argumenten, dus ook geen fd's om te controleren
+            # Een opdracht die wire.Op kent maar deze worker niet (nog) heeft: geen argumenten,
+            # dus ook geen fd's om te controleren
             raise OpError(Code.NOT_BUILT, f"{op.value} is nog niet gebouwd")
         try:
             parsed = A.parse(op, message.get("args", {}))

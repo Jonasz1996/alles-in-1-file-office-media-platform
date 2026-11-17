@@ -52,8 +52,12 @@
 #   429) en krijgen hun eigen naam; uv komt van ghcr.io zelf.
 # - Kan een container geen Debian-spiegel bereiken (zoals in de sandbox), dan krijgen de runner
 #   (unattended-upgrades) en python:3.12-slim (ffmpeg) een leeg pakket met die naam: apt-get
-#   vindt het dan al geïnstalleerd. Video's krijgen in deze test geen preview. De runner is dan
-#   buildpack-deps:bookworm-scm (Debian 12 met curl en git, die install.sh anders installeert).
+#   vindt het dan al geïnstalleerd. Het pakket ffmpeg brengt lege /usr/bin/ffmpeg en
+#   /usr/bin/ffprobe mee (het Dockerfile zet die sinds fase 5 op 0711). Net zo lege pakketten
+#   tesseract-ocr (met een lege /usr/bin/tesseract), -nld, -eng en -osd (X1, fase 6), zoals
+#   test_install_media.sh en test_install_search.sh. Video's krijgen in deze test geen preview en
+#   de worker meldt geen OCR. De runner is dan buildpack-deps:bookworm-scm (Debian 12 met curl en
+#   git, die install.sh anders installeert).
 # - Met INSTALL_TEST_CA krijgen python:3.12-slim en node:22-alpine die CA erbij (pip, uv, npm).
 #   De runner krijgt hem bewust niet. BuildKit (Docker 29) neemt bij FROM het image uit het
 #   register zodra de docker-cli daar een token kan halen, en een lokaal image pas als dat faalt
@@ -266,14 +270,24 @@ name_as() {
 }
 cat >"$WORK/build/leeg-pakket.sh" <<'SH'
 #!/bin/sh
-# Een leeg pakket met deze naam, voor een container zonder Debian-spiegel
+# Een leeg pakket met deze naam, voor een container zonder Debian-spiegel. Verdere argumenten:
+# lege bestanden die het pakket meebrengt (ffmpeg: /usr/bin/ffmpeg en /usr/bin/ffprobe, die het
+# Dockerfile op 0711 zet; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt"), zoals in
+# test_install_media.sh
 set -e
+name=$1
+shift
 d=$(mktemp -d)
 mkdir -p "$d/DEBIAN"
-printf 'Package: %s\nVersion: 99:0-installatietest\nArchitecture: all\nMaintainer: installatietest <test@invalid>\nDescription: leeg pakket voor de installatietest\n' "$1" >"$d/DEBIAN/control"
-dpkg-deb --build "$d" "/tmp/$1.deb" >/dev/null
-dpkg -i "/tmp/$1.deb" >/dev/null
-rm -rf "$d" "/tmp/$1.deb"
+for f in "$@"; do
+  mkdir -p "$d$(dirname "$f")"
+  : >"$d$f"
+  chmod 755 "$d$f"
+done
+printf 'Package: %s\nVersion: 99:0-installatietest\nArchitecture: all\nMaintainer: installatietest <test@invalid>\nDescription: leeg pakket voor de installatietest\n' "$name" >"$d/DEBIAN/control"
+dpkg-deb --build "$d" "/tmp/$name.deb" >/dev/null
+dpkg -i "/tmp/$name.deb" >/dev/null
+rm -rf "$d" "/tmp/$name.deb"
 SH
 
 echo "== Basisimages (van mirror.gcr.io; uv van ghcr.io)"
@@ -291,8 +305,8 @@ if [ -n "$EXTRA_CA" ]; then
   ca=1
   echo "  de builds vertrouwen ook $EXTRA_CA (de proxy van deze omgeving)"
 fi
-[ "$apt_ok" = 1 ] || echo "  geen Debian-spiegel bereikbaar: lege pakketten voor ffmpeg en unattended-upgrades"
-# python:3.12-slim: echt, of met de CA en/of een leeg pakket ffmpeg erbij
+[ "$apt_ok" = 1 ] || echo "  geen Debian-spiegel bereikbaar: lege pakketten voor ffmpeg, tesseract en unattended-upgrades"
+# python:3.12-slim: echt, of met de CA en/of lege pakketten ffmpeg en tesseract erbij
 if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
   name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
 else
@@ -305,7 +319,12 @@ else
     fi
     if [ "$apt_ok" = 0 ]; then
       echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
-      echo "RUN sh /tmp/leeg-pakket.sh ffmpeg && rm /tmp/leeg-pakket.sh"
+      # ffmpeg en ffprobe (fase 5) en tesseract met nld, eng en osd (X1, fase 6): de Dockerfile
+      # zet /usr/bin/ffmpeg, /usr/bin/ffprobe en /usr/bin/tesseract op 0711
+      echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe \\"
+      echo "    && sh /tmp/leeg-pakket.sh tesseract-ocr /usr/bin/tesseract \\"
+      echo "    && for p in tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd; do sh /tmp/leeg-pakket.sh \$p; done \\"
+      echo "    && rm /tmp/leeg-pakket.sh"
     fi
   } >"$WORK/build/python.Dockerfile"
   docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null

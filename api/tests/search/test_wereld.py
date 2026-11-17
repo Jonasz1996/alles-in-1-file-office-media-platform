@@ -83,23 +83,34 @@ async def test_de_wereld_staat_er(settings):
 
 
 async def test_de_backfill_van_z2_heeft_niets_te_doen(settings):
-    """De rijen van de stap text staan er (done bij de documenten met tekst, none bij de scan):
-    een server met de wereld leest bij het starten niets opnieuw, zodat de index niet onder een
-    test van Z1 door verandert (z2.md, Open 2)."""
+    """De rijen van de stap text staan er (done bij de documenten met tekst, none bij de scan),
+    en die van de stap ocr (X1: none bij een PDF, skip bij de rest): een server met de wereld
+    leest bij het starten niets opnieuw, zodat de index niet onder een test van Z1 door
+    verandert (z2.md, Open 2)."""
     w = await W.bouw_async(settings)
 
-    async def stand() -> dict[str, str]:
+    async def stand() -> dict[tuple[str, str], str]:
         async with get_engine(settings).connect() as conn:
-            rijen = await conn.exec_driver_sql("SELECT blob_sha, state FROM analysis")
-            return dict(rijen.all())
+            rijen = await conn.exec_driver_sql("SELECT blob_sha, step, state FROM analysis")
+            return {(sha, stap): staat for sha, stap, staat in rijen.all()}
 
     voor = await stand()
     async with get_engine(settings).connect() as conn:
         shas = set((await conn.exec_driver_sql("SELECT sha256 FROM blob")).scalars())
         tekst = set((await conn.exec_driver_sql("SELECT blob_sha FROM blob_text")).scalars())
-    assert set(voor) == shas
-    assert {sha for sha, staat in voor.items() if staat == "done"} == tekst
-    assert voor[w.shas["scan"]] == "none" and voor[w.shas["foto"]] == "skip"
+        pdfs = set(
+            (
+                await conn.exec_driver_sql("SELECT sha256 FROM blob WHERE mime = 'application/pdf'")
+            ).scalars()
+        )
+    assert set(voor) == {(sha, stap) for sha in shas for stap in ("text", "ocr")}
+    gelezen = {sha for (sha, stap), staat in voor.items() if (stap, staat) == ("text", "done")}
+    assert gelezen == tekst
+    assert voor[w.shas["scan"], "text"] == "none" and voor[w.shas["foto"], "text"] == "skip"
+    assert {sha: staat for (sha, stap), staat in voor.items() if stap == "ocr"} == {
+        sha: "none" if sha in pdfs else "skip" for sha in shas
+    }
+    assert {w.shas["scan"], w.shas["factuur_scan"]} <= pdfs
     await analysis.backfill_job(settings, {"after": ""})
     assert await stand() == voor
 

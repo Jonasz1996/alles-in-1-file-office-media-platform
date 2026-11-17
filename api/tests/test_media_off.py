@@ -77,9 +77,9 @@ async def test_media_aan_start_en_stopt_met_de_app(tmp_path, monkeypatch):
         worker = app.state.media_local
         assert worker is not None and worker.process.returncode is None
         assert app.state.media_health is not None
-        # Alles behalve ocr en analyse: die draaien pas met PLATFORM_OCR_ENABLED (fase 6, X1)
-        # en PLATFORM_ANALYSE_ENABLED (X2, X3)
-        assert lanes_running() == set(jobs.LANES) - {"ocr", "analyse"}
+        # Alles behalve analyse: die draait pas met PLATFORM_ANALYSE_ENABLED (X2, X3). De rij ocr
+        # draait mee, want PLATFORM_OCR_ENABLED staat sinds X1 standaard aan
+        assert lanes_running() == set(jobs.LANES) - {"analyse"}
         assert media_runtime.SWEEP in jobs._housekeeping
         assert media_runtime.PHOTOMETA in jobs._housekeeping
         assert media_runtime.PREVIEWS in jobs._housekeeping

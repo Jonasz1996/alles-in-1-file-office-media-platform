@@ -193,6 +193,11 @@ ENV
   install() { printf 'install %s\n' "$*" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   chown() { :; }
+  # Als 10001 in een map (setpriv, alleen root; de mappen van media maakt 10001 zelf sinds de
+  # review van golf 4 van fase 6, veilig F2): hier alleen opschrijven
+  echte_as_app_in=$(declare -f as_app_in)
+  # shellcheck disable=SC2329
+  as_app_in() { printf 'als 10001 in %s: %s\n' "$1" "${*:2}" >>"$work/install.log"; }
   # shellcheck disable=SC2329
   mountpoint() { return 1; }
   fase4_env
@@ -213,10 +218,12 @@ ENV
   instellingen "" "" >/dev/null
   check "met media: de sleutel erbij" is_hex64 "$(value MEDIA_WORKER_KEY)"
   check "met media: MEDIA_SANDBOX=aan" has_line "MEDIA_SANDBOX=aan"
-  check "met media: de mappen media en import, van 10001, 750" grep -qxF \
-    "install -d -m 750 -o 10001 -g 10001 /tank/platform/media /tank/platform/import" "$work/install.log"
+  check "met media: de mappen media en import, door 10001 zelf gemaakt, 750" test "$(grep '^als 10001 ' "$work/install.log")" = \
+    "als 10001 in /tank/platform: mkdir -m 750 -- media
+als 10001 in /tank/platform: mkdir -m 750 -- import"
   check "met media: chmod 600" test "$(mode "$ENV_FILE")" = 600
   unset -f install chown mountpoint
+  eval "$echte_as_app_in"
   unset MEDIA_SANDBOX DATA_ROOT
 
   echo "== decide_media stopt nooit (set -e), en kiest de veilige kant"
@@ -440,6 +447,58 @@ print("; ".join(problems) or "ok")
 PY
   ) || out="(geen uitvoer)"
   check "de commando's van Keuze 47 met de volledige hash, in het runbook en de README ($out)" test "$out" = ok
+
+  # Het adres van install.sh in de runbooks van fase 6 (I2, review A6): main heeft het script niet
+  # (de versies staan op de branch), dus `curl …/main/… | bash` haalt niets en eindigt toch met 0.
+  # Elk adres is de branch, en met `| bash` staat PLATFORM_BRANCH=<branch> ervoor (zoals
+  # zoeken.md); een vaste commit (40 hex, het script van een oude versie met -o) mag ook.
+  echo
+  echo "== het adres van install.sh in analyse.md, gezichten.md en zoeken.md: de branch"
+  cat >"$work/adres.py" <<'PY'
+import re
+import sys
+
+BRANCH = "claude/stappenplan-uitwerken-lu4uv3"
+RAW = "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/"
+URL = re.compile(re.escape(RAW) + r"(?P<ref>\S+?)/infra/single/install\.sh(?P<rest>.*)$")
+problems = []
+for path in sys.argv[1:]:
+    name = path.rsplit("/", 1)[-1]
+    seen = 0
+    for i, line in enumerate(open(path, encoding="utf-8").read().splitlines()):
+        m = URL.search(line)
+        if not m:
+            continue
+        seen += 1
+        ref, rest = m.group("ref"), m.group("rest")
+        where = "%s r. %d" % (name, i + 1)
+        if re.fullmatch(r"[0-9a-f]{40}", ref):
+            continue
+        if ref != BRANCH:
+            problems.append("%s: install.sh van %s, niet van de branch" % (where, ref))
+            continue
+        pipe = re.search(r"\|\s*(?P<env>(?:\S+=\S*\s+)*)bash\b", rest)
+        if pipe and "PLATFORM_BRANCH=" + BRANCH not in pipe.group("env").split():
+            problems.append("%s: de branch met | bash zonder PLATFORM_BRANCH=%s" % (where, BRANCH))
+    if not seen:
+        problems.append("%s: geen adres van install.sh" % name)
+print("; ".join(problems) or "ok")
+PY
+  out=$(python3 -I "$work/adres.py" "$top/docs/runbooks/analyse.md" "$top/docs/runbooks/gezichten.md" "$top/docs/runbooks/zoeken.md") || out="(geen uitvoer)"
+  check "elk adres van install.sh is de branch, met PLATFORM_BRANCH bij | bash ($out)" test "$out" = ok
+  # De controle zelf: de regels van vóór I2 (main) en een branch zonder PLATFORM_BRANCH vallen op
+  mkdir -p "$work/adres"
+  {
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | bash"
+    echo "   curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/main/infra/single/install.sh | ANALYSE=uit bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | ANALYSE=uit bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/v0.8.0/infra/single/install.sh | bash"
+    echo "curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/59e0250ba63d31c41b92f7ec8430446810db8a74/infra/single/install.sh -o /root/platform-install-0.8.0.sh"
+  } >"$work/adres/oud.md"
+  : >"$work/adres/leeg.md"
+  out=$(python3 -I "$work/adres.py" "$work/adres/oud.md" "$work/adres/leeg.md") || out="(geen uitvoer)"
+  check "de controle ziet main (r. 1 en 2), een branch zonder PLATFORM_BRANCH (r. 3), een andere ref (r. 4) en een bestand zonder adres; een vaste commit mag" test "$out" = \
+    "oud.md r. 1: install.sh van main, niet van de branch; oud.md r. 2: install.sh van main, niet van de branch; oud.md r. 3: de branch met | bash zonder PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3; oud.md r. 4: install.sh van v0.8.0, niet van de branch; leeg.md: geen adres van install.sh"
 
   # De nooduitgang zonder afscherming (review van de integratie, S1): `MEDIA_SANDBOX=uit bash`
   # staat in de docs alleen waar binnen 8 regels "tijdelijk" staat, dus nooit als los voorbeeld
@@ -681,8 +740,8 @@ PY
 
   echo "== geen geheim in de uitvoer, en elke exec krijgt </dev/null"
   check "de sleutel staat niet in de uitvoer van main" not grep -qE '[0-9a-f]{64}' "$work/main.out"
-  out=$(grep -nE '(docker run|compose\[@\]\}" exec) ' "$install_sh" | grep -v '</dev/null' || true)
-  check "elke docker run en compose exec krijgt </dev/null" test -z "$out"
+  out=$(grep -nE '(docker run|compose\[@\]\}" (exec|run)) ' "$install_sh" | grep -v '</dev/null' || true)
+  check "elke docker run, compose run en compose exec krijgt </dev/null" test -z "$out"
 
   # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
   # WORK weg, als root. Een map die de test weigert, mag daarbij nooit verdwijnen (review van
@@ -756,7 +815,10 @@ NEP
 # De installatietest (bouwontwerp fase 5, §2 M10, "De installatietest"), zoals
 # test_install_update.sh van fase 4: de echte install.sh in een container met Debian 12 (de
 # "LXC"), met de docker-socket en de docker-cli van de host, en de werkmap op hetzelfde absolute
-# pad. Office blijft uit (OFFICE=uit): dat bewijst test_install_update.sh. Per omgeving:
+# pad. Office blijft uit (OFFICE=uit): dat bewijst test_install_update.sh. De analyse ook
+# (ANALYSE=uit bij elke stap): sinds 0.8.1 staat die standaard aan, en deze job haalt geen
+# modellen (bouwontwerp fase 6, §4.6, media-image); de analyse bewijzen test_install_analyse.sh
+# en test_install_beeld.sh. Per omgeving:
 #
 #   | Stap | Sandbox | CI (media-image) |
 #   |---|---|---|
@@ -769,7 +831,9 @@ NEP
 # - Kan een container geen Debian-spiegel bereiken (de sandbox), dan krijgt python:3.12-slim een
 #   leeg pakket ffmpeg, met lege /usr/bin/ffmpeg en /usr/bin/ffprobe (het Dockerfile zet die op
 #   0711; uitvoeren geeft ENOEXEC, dus "ffmpeg ontbreekt"), zoals test_install_update.sh:53–55.
-#   Wat ffmpeg nodig heeft (de transcode, docker top, de belastingtest), bewijst CI.
+#   Net zo lege pakketten tesseract-ocr (met een lege /usr/bin/tesseract), -nld, -eng en -osd
+#   (X1): de worker meldt dan geen OCR. Wat ffmpeg en tesseract nodig hebben (de transcode, OCR,
+#   docker top, de belastingtest), bewijst CI.
 # - Staat er al een python:3.12-slim van een ander, dan leent de test die naam: het image krijgt
 #   even een tweede naam, en aan het eind (ook bij een fout) weer zijn eigen naam. Het image zelf
 #   blijft altijd.
@@ -986,7 +1050,7 @@ SH
     FFMPEG=echt
   else
     FFMPEG=leeg
-    echo "  geen Debian-spiegel bereikbaar: een leeg pakket ffmpeg (en unattended-upgrades)"
+    echo "  geen Debian-spiegel bereikbaar: lege pakketten ffmpeg en tesseract (en unattended-upgrades)"
   fi
   if [ "$apt_ok" = 1 ] && [ -z "$ca" ]; then
     name_as mirror.gcr.io/library/python:3.12-slim python:3.12-slim
@@ -1006,7 +1070,11 @@ SH
       fi
       if [ "$apt_ok" = 0 ]; then
         echo "COPY leeg-pakket.sh /tmp/leeg-pakket.sh"
-        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe && rm /tmp/leeg-pakket.sh"
+        # tesseract met nld, eng en osd (X1, fase 6): de Dockerfile zet /usr/bin/tesseract op 0711
+        echo "RUN sh /tmp/leeg-pakket.sh ffmpeg /usr/bin/ffmpeg /usr/bin/ffprobe \\"
+        echo "    && sh /tmp/leeg-pakket.sh tesseract-ocr /usr/bin/tesseract \\"
+        echo "    && for p in tesseract-ocr-nld tesseract-ocr-eng tesseract-ocr-osd; do sh /tmp/leeg-pakket.sh \$p; done \\"
+        echo "    && rm /tmp/leeg-pakket.sh"
       fi
     } >"$WORK/build/python.Dockerfile"
     docker build -q -t python:3.12-slim -f "$WORK/build/python.Dockerfile" "$WORK/build" >/dev/null
@@ -1150,7 +1218,7 @@ print(c.execute("select version_num from alembic_version").fetchone()[0])' </dev
       -v "$(command -v docker)":/usr/bin/docker:ro \
       -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
       -v "$WORK:$WORK" \
-      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit \
+      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit -e ANALYSE=uit \
       -e GIT_CONFIG_GLOBAL="$WORK/gitconfig" \
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \

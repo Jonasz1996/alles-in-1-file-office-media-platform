@@ -101,6 +101,10 @@ while not os.path.exists(stop):
         except OSError as e:
             fds = []
             fout = errno.errorcode.get(e.errno, str(e.errno))
+            if fout == "ENOENT" and not os.path.exists(f"/proc/{naam}"):
+                # Het kind was al klaar en weg tussen stat en fd: geen uitkomst (zoals ENOENT bij
+                # mem en bij de fd's). Bestaat het nog, dan telt ENOENT wel als fout
+                continue
             fouten[fout] = fouten.get(fout, 0) + 1
             if fout == "EACCES" and naam in mem and naam not in mem_na:
                 fd, begin = mem[naam]

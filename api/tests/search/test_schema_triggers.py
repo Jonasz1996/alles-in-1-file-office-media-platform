@@ -1,6 +1,7 @@
-"""Wachter (§4.1): de triggers, de view en de FTS-tabellen in de database zijn precies wat
-app/search/schema.py zegt, en de bevroren kopie in migratie 0010 is daaraan gelijk. Wie een
-trigger verandert, verandert dus beide en schrijft een nieuwe migratie."""
+"""Wachter (§4.1, §3.1a): de triggers, de view, de FTS-tabellen en de indexen van 0011 en 0012
+in de database zijn precies wat app/search/schema.py zegt, en de bevroren kopie in migratie 0010,
+0011 en 0012 is elk gelijk aan zijn eigen deel. Wie een trigger verandert, verandert dus beide en
+schrijft een nieuwe migratie."""
 
 import importlib.util
 import uuid
@@ -11,14 +12,27 @@ import pytest
 from app.search import schema
 from tests.search.migratie import check_fts
 
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0010_zoeken.py"
+VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "versions"
+MIGRATION = VERSIONS / "0010_zoeken.py"
 
 
-def migration_0010():
-    spec = importlib.util.spec_from_file_location("migratie_0010", MIGRATION)
+def migration(path: Path):
+    spec = importlib.util.spec_from_file_location(f"migratie_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def migration_0010():
+    return migration(MIGRATION)
+
+
+def migration_0011():
+    return migration(VERSIONS / "0011_gezichten.py")
+
+
+def migration_0012():
+    return migration(VERSIONS / "0012_beeld.py")
 
 
 async def master(settings, kind: str) -> dict[str, str]:
@@ -70,20 +84,56 @@ def test_de_migratie_is_een_kopie_van_schema():
         assert getattr(m, name) == getattr(schema, name), name
 
 
-def test_de_plek_voor_de_triggers_van_0011_en_0012(monkeypatch):
-    """Review Z0b, contract F5: de triggers van 0011 en 0012 (A0) komen in dezelfde TRIGGERS, en
-    de kopie in 0010 blijft gelijk aan alleen het deel van 0010. Nu (Z0b) is er alleen 0010."""
-    assert schema.TRIGGERS == schema.TRIGGERS_0010
-    assert schema.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
-    # Zoals A0 er een bij zet: het deel van 0010 en de kopie in de migratie veranderen niet
-    nieuw = "CREATE TRIGGER person_bd_face BEFORE DELETE ON person BEGIN SELECT 1; END"
-    monkeypatch.setitem(schema.TRIGGERS, "person_bd_face", nieuw)
-    monkeypatch.setitem(schema.TRIGGERS_NO_FTS, "person_bd_face", nieuw)
-    assert "person_bd_face" not in schema.TRIGGERS_0010
-    assert "person_bd_face" not in schema.TRIGGERS_NO_FTS_0010
+def test_de_kopie_in_0011_en_0012_is_gelijk_aan_schema():
+    """§3.1a: 0011 en 0012 hebben elk een bevroren kopie van hun triggers, indexen en tabellen.
+    Geen van hun triggers raakt FTS: met en zonder FTS5 zijn ze gelijk."""
+    for m, triggers, no_fts, indexes, tables in (
+        (migration_0011(), schema.TRIGGERS_0011, schema.TRIGGERS_NO_FTS_0011,
+         schema.INDEXES_0011, schema.TABLES_0011),
+        (migration_0012(), schema.TRIGGERS_0012, schema.TRIGGERS_NO_FTS_0012,
+         schema.INDEXES_0012, schema.TABLES_0012),
+    ):  # fmt: skip
+        assert m.TRIGGERS == triggers == no_fts
+        assert m.INDEXES == indexes
+        assert m.TABLES == tables
+        for sql in triggers.values():
+            assert "fts_" not in sql and "search_src" not in sql
+    assert list(schema.TRIGGERS_0011) == ["node_au_owner_face", "node_au_blob_face",
+                                          "person_bd_face"]  # fmt: skip
+    assert list(schema.TRIGGERS_0012) == ["node_ai_beeld", "node_au_beeld", "node_ad_beeld"]
+
+
+def test_de_plek_voor_de_triggers_van_0011_en_0012():
+    """Review Z0b, contract F5: de triggers van 0011 en 0012 (A0) staan in dezelfde TRIGGERS als
+    die van 0010, en de kopie in 0010 blijft gelijk aan alleen het deel van 0010."""
+    assert schema.TRIGGERS == {
+        **schema.TRIGGERS_0010,
+        **schema.TRIGGERS_0011,
+        **schema.TRIGGERS_0012,
+    }
+    assert schema.TRIGGERS_NO_FTS == {
+        **schema.TRIGGERS_NO_FTS_0010,
+        **schema.TRIGGERS_NO_FTS_0011,
+        **schema.TRIGGERS_NO_FTS_0012,
+    }
+    # Geen naam dubbel: geen trigger van 0011 of 0012 vervangt er een van 0010
+    assert len(schema.TRIGGERS) == len(schema.TRIGGERS_0010) + 3 + 3
+    assert len(schema.TRIGGERS_NO_FTS) == len(schema.TRIGGERS_NO_FTS_0010) + 3 + 3
+    for name in (*schema.TRIGGERS_0011, *schema.TRIGGERS_0012):
+        assert name not in schema.TRIGGERS_0010
+        assert name not in schema.TRIGGERS_NO_FTS_0010
     m = migration_0010()
     assert m.TRIGGERS == schema.TRIGGERS_0010
     assert m.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
+
+
+@pytest.mark.anyio
+async def test_indexen_van_0011_en_0012_in_de_database(settings):
+    """De SQL zoals sqlite_master hem bewaart: gedeeltelijk en met DESC (dat ziet
+    compare_metadata niet)."""
+    indexes = await master(settings, "index")
+    for name, sql in {**schema.INDEXES_0011, **schema.INDEXES_0012}.items():
+        assert indexes[name] == sql, name
 
 
 def test_zonder_fts_alleen_nummer_pad_dead_en_foto_rijen():
@@ -100,29 +150,39 @@ def test_zonder_fts_alleen_nummer_pad_dead_en_foto_rijen():
         "geo_bi",
         "geo_ai",
         "geo_bu",
+        # gezichten (0011) en zoeken op beeld (0012): met en zonder FTS5 gelijk
+        "node_au_owner_face",
+        "node_au_blob_face",
+        "person_bd_face",
+        "node_ai_beeld",
+        "node_au_beeld",
+        "node_ad_beeld",
     }
     for sql in schema.TRIGGERS_NO_FTS.values():
         assert "fts_" not in sql and "search_src" not in sql
     assert set(schema.TRIGGERS_NO_FTS) < set(schema.TRIGGERS)
     for name in ("node_au_owner", "node_au_move", "node_au_trash", "node_au_taken", "geo_bi",
-                 "geo_ai", "geo_bu"):  # fmt: skip
+                 "geo_ai", "geo_bu", "node_au_owner_face", "node_au_blob_face", "person_bd_face",
+                 "node_ai_beeld", "node_au_beeld", "node_ad_beeld"):  # fmt: skip
         assert schema.TRIGGERS_NO_FTS[name] == schema.TRIGGERS[name]
 
 
 def test_elke_trigger_op_een_bekende_tabel():
     """bt_* op blob_text, po_* op photo_ocr, mi_* op media_item, geo_* op photo_geo, node_* op
-    node; en geen trigger schrijft met INSERT OR REPLACE (dan klopt de 'delete' in FTS niet
-    meer)."""
+    node, person_* op person (person_bd_face, 0011); en geen trigger schrijft met INSERT OR
+    REPLACE (dan klopt de 'delete' in FTS niet meer) of met een upsert (Keuze 76)."""
     tables = {
         "node": "node",
         "bt": "blob_text",
         "po": "photo_ocr",
         "mi": "media_item",
         "geo": "photo_geo",
+        "person": "person",
     }
     for name, sql in schema.TRIGGERS.items():
         assert f" ON {tables[name.split('_')[0]]}" in sql.split("BEGIN")[0], name
         assert "OR REPLACE" not in sql and "OR IGNORE" not in sql, name
+        assert "ON CONFLICT" not in sql, name
 
 
 @pytest.mark.anyio

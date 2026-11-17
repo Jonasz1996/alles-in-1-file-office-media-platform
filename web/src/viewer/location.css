@@ -1,0 +1,51 @@
+/* De rij Plek in het infopaneel (Z5): de tekst, de kleine kaart en "Op de kaart". Kleuren zoals
+   op /fotos/kaart (photos/map/map.css), alleen uit de tokens. */
+
+.location-row {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.location-row p {
+  margin: 0;
+}
+
+.location-map {
+  display: block;
+  width: 100%;
+  max-width: 20rem;
+  height: auto;
+  aspect-ratio: 2 / 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.location-map path {
+  fill: var(--surface);
+  fill-rule: evenodd;
+  stroke: var(--line-strong);
+  stroke-width: 0.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.location-pin {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+/* "Op de kaart" is een link (naar /fotos/kaart), maar ziet eruit als een knop */
+.location-row a.btn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.location-row a.btn:hover {
+  border-color: var(--accent);
+}

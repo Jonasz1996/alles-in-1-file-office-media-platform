@@ -6,7 +6,6 @@ dan wordt het tijdelijke bestand weggegooid (dedupe). Later komt hier een
 S3-variant naast voor het cluster.
 """
 
-import asyncio
 import hashlib
 import os
 import tempfile
@@ -15,6 +14,8 @@ from pathlib import Path
 from typing import ClassVar
 
 import anyio
+
+from app.dbgate import BoostLock
 
 CHUNK = 1024 * 1024
 # Zo lang (seconden) mag een request-body stilvallen. Een client die verdwijnt zonder de
@@ -39,18 +40,19 @@ async def with_timeout(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
 
 
 class BlobStore:
-    _locks: ClassVar[dict[Path, asyncio.Lock]] = {}
+    _locks: ClassVar[dict[Path, BoostLock]] = {}
 
     def __init__(self, root: Path):
         self.root = root
         self.tmp = root / ".tmp"
 
     @property
-    def lock(self) -> asyncio.Lock:
+    def lock(self) -> BoostLock:
         """Eén slot per opslag. Ontdubbelen en ref_count ophogen, ref_count verlagen en
         opruimen gebeuren nooit door elkaar: anders kan het opruimen de enige kopie weggooien
-        van inhoud die net opnieuw binnenkwam (de nieuwe kopie is dan al weggegooid)."""
-        return self._locks.setdefault(self.root, asyncio.Lock())
+        van inhoud die net opnieuw binnenkwam (de nieuwe kopie is dan al weggegooid). Wie het
+        heeft, schrijft als voorgrond (app/dbgate.py): een upload kan erop wachten."""
+        return self._locks.setdefault(self.root, BoostLock())
 
     def path(self, sha256: str) -> Path:
         return self.root / sha256[:2] / sha256[2:4] / sha256

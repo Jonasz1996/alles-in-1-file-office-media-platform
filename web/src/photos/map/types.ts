@@ -1,7 +1,7 @@
 // De contracten van de plek van een foto, de kaart, de plaatsen, de waarschuwing bij delen en de
 // bronvermelding (fase 6, bouwontwerp §3.4), frozen na Z0: wat de routers van Z3 geven en nemen.
 // Alleen eigen, levende bestanden (own_live); een plek ziet alleen de eigenaar, nooit via een
-// publieke link (Keuze 27). Tot Z3 zijn routes vult, geven ze 501 (de stub van Z0).
+// publieke link (Keuze 27). De vormen staan in app/geo/types.py; test_web_contracts.py vergelijkt.
 
 import type { PhotoItem } from "../api";
 

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from PIL import Image
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import previews
@@ -270,29 +271,34 @@ async def test_een_fout_na_preview_ready_gaat_door(settings, caplog):
     assert gezien == ["c" * 64]
 
 
-def test_niemand_meldt_zich_aan_na_de_grote_preview():
-    """Z0b meldt niemand aan, ook niet als de hele app geladen is (een eigen proces: de fixture
-    hierboven haalt de aanmeldingen in dit proces weg)."""
+def test_alleen_gezichten_meldt_zich_aan_na_de_grote_preview():
+    """Z0b meldde niemand aan; sinds X2b doet gezichten dat (faces.plan met scope sha, en alleen
+    als gezichten draaien, zie tests/people/faces/test_faces_off.py). Precies één aanmelding als
+    de hele app geladen is (een eigen proces: de fixture hierboven haalt de aanmeldingen in dit
+    proces weg)."""
     code = "import app.main; from app import previews; print(len(previews._large))"
     done = subprocess.run(
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
-    assert done.stdout.strip() == "0"
+    assert done.stdout.strip() == "1"
 
 
-def test_niemand_meldt_een_schakelaar_of_een_deel_van_beheer_aan():
-    """Ook de haken van de review van Z0b (contract F4) hebben nog niemand: geen schakelaar in
-    app.prefs en geen deel van /admin/search in search.hooks, als de hele app geladen is. Dan
-    weigert check_switch "aan" en geven admin_switch en admin_rebuild 501, tot X2 en X3 er zijn
-    (nacontrole van Z0b)."""
+def test_alleen_gezichten_als_schakelaar_en_ocr_als_deel_van_beheer():
+    """De haken van de review van Z0b (contract F4), als de hele app geladen is: in app.prefs
+    alleen de schakelaar faces (X2b), en van de delen van /admin/search in search.hooks alleen
+    ocr (X1, sinds de samenvoeging van golf 4: /beheer zegt "OCR: niet geïnstalleerd" uit dat
+    deel, Keuze 24). Gezichten meldt zijn deel pas bij de start aan, en alleen als gezichten
+    draaien (register.register_admin; tests/people/faces/test_faces_off.py): met ANALYSE uit is
+    /beheer zo precies dat van 0.8.0. Beeld nog niet: daar weigert check_switch "aan" en geven
+    admin_switch en admin_rebuild 501, tot X3 er is."""
     code = (
         "import app.main; from app import prefs; from app.search import hooks; "
-        "print(len(prefs._switches), len(hooks._admin))"
+        "print(len(prefs._switches), sorted(hooks._admin))"
     )
     done = subprocess.run(
         [sys.executable, "-c", code], cwd=API_DIR, capture_output=True, check=True, text=True
     )
-    assert done.stdout.strip() == "0 0"
+    assert done.stdout.strip() == "1 ['ocr']"
 
 
 def _render(request: dict) -> dict:
@@ -307,9 +313,10 @@ def _render(request: dict) -> dict:
     return json.loads(done.stdout)
 
 
-def test_render_leest_text_en_ocr_page_nog_niet(tmp_path):
+def test_render_leest_text_en_maakt_de_pgm_van_ocr_page(tmp_path):
     """De ingangen van §3.5: text leest sinds Z2 (hier mode text met paden, de terugval zonder
-    media; tests/extract heeft de rest), ocr_page geeft "none" tot X1."""
+    media; tests/extract heeft de rest), ocr_page maakt sinds X1 een grijze PGM (hier mode
+    ocr_page met paden; tests/ocr heeft de rest: de handdruk, de rechtzetting, de worker)."""
     source = tmp_path / "doc.txt"
     source.write_text("Er staat tekst in dit bestand.")
     uit = tmp_path / "uit"
@@ -330,5 +337,18 @@ def test_render_leest_text_en_ocr_page_nog_niet(tmp_path):
     assert first == frame.Found(0, "done", False, [], "", None, "Er staat tekst in dit bestand.")
     assert second == frame.Found(1, "failed", False, [], "", None, "")
     assert end is None
-    page = _render({"mode": "ocr_page", "source": str(source), "page": 1})
-    assert page == {"state": "none", "chars": 0, "truncated": False, "code": "ocr_missing"}
+    pgm = tmp_path / "pagina.pgm"
+    page = _render({"mode": "ocr_page", "source": str(source), "out": str(pgm), "kind": "image"})
+    assert page == {"state": "failed", "error": "UnidentifiedImageError"}
+    beeld = tmp_path / "wit.png"
+    Image.new("RGB", (300, 200), "white").save(beeld)
+    page = _render({"mode": "ocr_page", "source": str(beeld), "out": str(pgm), "kind": "image"})
+    assert set(page.pop("ms")) == {"render", "deskew"}
+    assert page == {
+        "state": "ready",
+        "skew": 0.0,
+        "width": 300,
+        "height": 200,
+        "source": [300, 200],
+    }
+    assert pgm.read_bytes() == b"P5\n300 200\n255\n" + b"\xff" * 300 * 200

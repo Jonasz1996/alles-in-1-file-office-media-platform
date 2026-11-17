@@ -122,7 +122,8 @@ export function deleteAlbumRule(albumId: string): Promise<void> {
   return api.request<void>("DELETE", `${API}/albums/${seg(albumId)}/rule`);
 }
 
-/** POST /albums/{id}/refresh → 202 */
-export function refreshAlbum(albumId: string): Promise<void> {
-  return api.request<void>("POST", `${API}/albums/${seg(albumId)}/refresh`);
+/** POST /albums/{id}/refresh → 202 zonder inhoud. Niet via request(): dat leest bij alles behalve
+ * 204 een JSON-antwoord, en een leeg antwoord geeft dan "Unexpected end of JSON input". */
+export async function refreshAlbum(albumId: string): Promise<void> {
+  await api.rawRequest(`${API}/albums/${seg(albumId)}/refresh`, { method: "POST" });
 }

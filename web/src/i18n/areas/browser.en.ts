@@ -3,7 +3,6 @@ import type nl from "./browser.nl";
 
 const en: Translation<typeof nl> = {
   title: "Files",
-  searchTitle: "Search",
   selected: { one: "{n} selected", other: "{n} selected" },
   myFiles: "My files",
   sharedWithMe: "Shared with me",
@@ -54,7 +53,6 @@ const en: Translation<typeof nl> = {
     path: "Folder",
   },
   list: "Contents of {name}",
-  results: "Search results",
   row: {
     select: "Select {name}",
     actions: "Actions for {name}",
@@ -125,32 +123,6 @@ const en: Translation<typeof nl> = {
     count: "{n} of {total}",
     partial: "Only what has loaded so far",
     none: "Nothing in this folder matches the filter.",
-  },
-  search: {
-    box: "Search your files",
-    boxGuest: "Search what is shared with you",
-    submit: "Search",
-    words: "Search words",
-    wordsPlaceholder: "Name or part of it",
-    type: "Type",
-    allTypes: "All types",
-    tag: "Tag",
-    allTags: "All tags",
-    tagCount: "{name} ({n})",
-    hint: "Type (part of) a name, or choose a type or tag.",
-    none: "Nothing found.",
-    more: "Show more",
-    tooMany: "There are more results; make your search more specific.",
-  },
-  categories: {
-    folder: "Folders",
-    image: "Images",
-    video: "Video",
-    audio: "Audio",
-    pdf: "PDF",
-    document: "Documents",
-    archive: "Archives",
-    rest: "Other",
   },
   picker: {
     mine: "My files",

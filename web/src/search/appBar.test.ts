@@ -36,10 +36,10 @@ describe("het zoekveld in de balk bovenaan (Keuze 45)", () => {
     expect(searchTarget("   ")).toBeNull();
   });
 
-  it("de route /zoeken van 0.7.0 leest q terug zoals het veld hem schrijft", async () => {
-    const { readSearch } = await import("../searchQuery");
+  it("de pagina /zoeken (Z4) leest q terug zoals het veld hem schrijft", async () => {
+    const { readQuery } = await import("./query");
     const href = searchTarget(" één & twee ") ?? "";
-    expect(readSearch(href.slice(href.indexOf("?")))).toEqual({ q: "één & twee" });
+    expect(readQuery(href.slice(href.indexOf("?")))).toEqual({ q: "één & twee" });
   });
 
   it("hooguit 200 tekens, zoals de API (search_query_too_long)", () => {

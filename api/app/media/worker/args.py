@@ -268,6 +268,19 @@ class TextArgs(_Args):
     child_cpu_s: int = Field(default=60, ge=1, le=120)  # RLIMIT_CPU van het kind
 
 
+class OcrArgs(_Args):
+    """Eén pagina of foto door OCR (fase 6, X1; Keuze 22). Geen naam, geen sha: alleen de soort
+    bron, de pagina (PDF, vanaf 1) en de grens op de pixels (preview_max_pixels van de app). De
+    tijden staan hier zodat een test ze klein kan maken; de app stuurt de standaard."""
+
+    kind: Literal["pdf", "image"]
+    page: int = Field(default=1, ge=1, le=10_000)
+    max_pixels: int = Field(default=100_000_000, ge=1, le=1_000_000_000)
+    child_cpu_s: int = Field(default=60, ge=1, le=120)  # RLIMIT_CPU van kind 1
+    ocr_s: float = Field(default=60.0, gt=0, le=60)  # de tijdsgrens van elke herkenning
+    osd: bool = True  # de draaiing zoeken als de zekerheid laag is
+
+
 ARGS: dict[Op, type[_Args]] = {
     Op.CAPS: CapsArgs,
     Op.BENCH: BenchArgs,
@@ -283,6 +296,7 @@ ARGS: dict[Op, type[_Args]] = {
     Op.REMUX_AUDIO: RemuxAudioArgs,
     Op.SYNTH: SynthArgs,
     Op.TEXT: TextArgs,
+    Op.OCR: OcrArgs,
 }
 
 
@@ -310,7 +324,7 @@ def work_class(op: Op, args: _Args) -> WorkClass:
         return WorkClass.TRANSCODE if args.mode == "transcode" else WorkClass.REMUX
     if op == Op.REMUX_AUDIO:
         return WorkClass.REMUX
-    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT):
+    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT, Op.OCR):
         return WorkClass.BACKGROUND
     if op == Op.KEYFRAMES and isinstance(args, KeyframesArgs) and args.fallback:
         return WorkClass.BACKGROUND

@@ -20,7 +20,8 @@ krijgt de bron op 3 en spoor k op 4+k. De worker
 3. zet elk spoor met subconv om, en geeft zijn lus de beurt zodra er SLICE_S om is (de worker
    heeft één lus voor alle opdrachten; 3,2 MB ASS kost ± 0,5 s). subconv.steps geeft daarvoor
    ook een tik in een lang stuk zonder cues, en één cue kost hooguit een vaste tijd (review
-   golf 2, S1: eerst kon één grote cue de lus minuten bezet houden);
+   golf 2, S1: eerst kon één grote cue de lus minuten bezet houden). De cues die hij bewaart tot
+   het schrijven, hebben hun tekst al klaar: niets daarvan kost de gc een ronde (CI golf 2);
 4. schrijft de VTT naar vtt_w en sluit die. Een spoor dat niet lukt, krijgt een lege vtt_w en
    een error in het antwoord.
 

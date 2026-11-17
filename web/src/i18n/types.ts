@@ -1,6 +1,7 @@
 // Typen voor de vertalingen. MessageKey komt uit de Nederlandse woordenboeken (de bron), en
 // uitsluitend via `import type`: dit bestand laadt geen enkel woordenboek in de bundel.
 
+import type about from "./areas/about.nl";
 import type account from "./areas/account.nl";
 import type admin from "./areas/admin.nl";
 import type auth from "./areas/auth.nl";
@@ -10,6 +11,7 @@ import type common from "./areas/common.nl";
 import type dupes from "./areas/dupes.nl";
 import type media from "./areas/media.nl";
 import type music from "./areas/music.nl";
+import type ocr from "./areas/ocr.nl";
 import type office from "./areas/office.nl";
 import type photos from "./areas/photos.nl";
 import type photosFaces from "./areas/photos_faces.nl";
@@ -55,7 +57,11 @@ export type Area =
   | "photos_people"
   // Fase 6 (Z0b): de gebieden van X2 en X3 (Keuze 55)
   | "photos_faces"
-  | "beeld";
+  | "beeld"
+  // Fase 6 (X1): tekst in beeld (OCR)
+  | "ocr"
+  // Fase 6 (I2): de pagina /over (bronnen en licenties)
+  | "about";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -117,6 +123,8 @@ export interface Dictionaries {
   photos_people: typeof photosPeople;
   photos_faces: typeof photosFaces;
   beeld: typeof beeld;
+  ocr: typeof ocr;
+  about: typeof about;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */

@@ -1,6 +1,8 @@
-"""python -m app.cli db-downgrade, db-backup en de stub van geo-load (§3.5, §3.8): db-downgrade
-0007 vraagt om bevestiging en doet daarna precies dat; een onbekende of latere revisie doet
-niets. db-backup maakt een kopie van de database terwijl de app draait (fase 6, Keuze 52)."""
+"""python -m app.cli db-downgrade, db-backup, geo-load zonder bronnen en office-checkpoint (§3.5,
+§3.8): db-downgrade 0007 vraagt om bevestiging en doet daarna precies dat; een onbekende of
+latere revisie doet niets. db-backup maakt een kopie van de database terwijl de app draait (fase
+6, Keuze 52). geo-load is geen stub meer (Z3): hier alleen zonder bronnen, de rest staat in
+tests/geo/test_geo_load.py."""
 
 import os
 import sqlite3
@@ -18,7 +20,7 @@ from app.db import get_engine
 from app.migrate import upgrade
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0010"
+HEAD = "0012"
 
 
 async def run_cli(settings, *args: str, stdin: bytes | None = None):
@@ -71,7 +73,10 @@ async def test_downgrade_vraagt_om_bevestiging(settings):
     result = await run_cli(settings, "db-downgrade", "0007", stdin=b"nee\n")
     assert result.returncode == 1
     out = result.stdout.decode()
-    assert "van revisie 0010 terug naar 0007" in out
+    assert "van revisie 0012 terug naar 0007" in out
+    # Wat er weggaat, de nieuwste revisie eerst (§3.1a)
+    assert cli.BEELD_LOST in out and cli.FACES_LOST in out and cli.SEARCH_LOST in out
+    assert out.index(cli.BEELD_LOST) < out.index(cli.FACES_LOST) < out.index(cli.SEARCH_LOST)
     assert 'Typ "ja" om door te gaan' in out
     assert "Niets gedaan." in result.stderr.decode()
     assert await revision(settings) == HEAD
@@ -112,11 +117,29 @@ async def test_downgrade_met_ja_vraagt_niets(settings):
 
 
 def test_welke_revisies_een_downgrade_weghaalt():
-    """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1)."""
-    assert cli.removed_revisions(HEAD, "0009") == ["0010"]
-    assert cli.removed_revisions(HEAD, "0007") == ["0010", "0009", "0008"]
+    """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
+    gezichten en 0012 de beeldindex (§3.1a)."""
+    assert cli.removed_revisions(HEAD, "0011") == ["0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0012", "0011", "0010"]
+    assert cli.removed_revisions(HEAD, "0007") == ["0012", "0011", "0010", "0009", "0008"]
     assert cli.removed_revisions("0009", "0008") == ["0009"]
     assert cli.SEARCH_REVISION == "0010"
+    assert cli.FACES_REVISION == "0011"
+    assert cli.BEELD_REVISION == "0012"
+
+
+def test_wat_een_downgrade_kwijtmaakt():
+    """Per weggehaalde revisie één regel, de nieuwste eerst; een downgrade vóór 0010 zegt niets
+    extra."""
+    assert cli.lost_lines(["0012"]) == [cli.BEELD_LOST]
+    assert cli.lost_lines(["0012", "0011"]) == [cli.BEELD_LOST, cli.FACES_LOST]
+    assert cli.lost_lines(["0012", "0011", "0010"]) == [
+        cli.BEELD_LOST,
+        cli.FACES_LOST,
+        cli.SEARCH_LOST,
+    ]
+    assert cli.lost_lines(["0009", "0008"]) == []
 
 
 async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
@@ -236,7 +259,7 @@ async def test_downgrade_met_ja_haalt_ze_eruit_zonder_vragen(settings):
 async def test_downgrade_die_niet_doorgaat_haalt_ook_geen_items_weg(settings, stdin):
     """Review Z0, veilig F1: het antwoord op de vraag naar de regel-items doet pas iets na het
     laatste "ja". Wie daarna "nee" zegt, of geen invoer meer heeft, houdt alles: de items en
-    revisie 0010."""
+    de head."""
     await _album_met_regel_items(settings)
     result = await run_cli(settings, "db-downgrade", "0009", stdin=stdin)
     assert result.returncode == 1
@@ -354,12 +377,43 @@ async def test_db_backup_zonder_database(settings, tmp_path):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("command", sorted(cli.SEARCH_STUBS))
-async def test_de_commandos_van_zoeken_zijn_nog_niet_gebouwd(settings, command):
-    result = await run_cli(settings, command)
-    assert result.returncode == 1
-    package = cli.SEARCH_STUBS[command][0]
-    assert f"is nog niet gebouwd ({package})" in result.stderr.decode()
+async def test_de_commandos_van_zoeken_zijn_gebouwd(settings):
+    """Geen stub meer: geo-load (Z3) bouwt places.sqlite. Zonder bronnen in geo_src (data_dir/geo)
+    zegt hij dat, exitcode 1, en maakt hij niets; de rest van het gedrag staat in
+    tests/geo/test_geo_load.py."""
+    assert cli.SEARCH_STUBS == {}
+    result = await run_cli(settings, "geo-load")
+    assert result.returncode == 1, result.stderr.decode()
+    assert "De bronnen staan niet in" in result.stderr.decode()
+    assert not (settings.data_dir / "geo" / "places.sqlite").exists()
+
+
+@pytest.mark.anyio
+async def test_de_stubs_van_gezichten_en_beeld(settings):
+    """Er is geen stub van gezichten en beeld meer (A0 zette ze, §3.5): analyse-bench en
+    analyse-kwaliteit bouwde X2b, beeld-status, beeld-bench en beeld-kwaliteit X3b. Met de
+    analyse uit (zoals 0.8.0) doen ze niets: exitcode 1, één regel op stderr, niets op stdout, en
+    niets in de datamap. Met de analyse aan: tests/people/faces/test_faces_meten.py en
+    tests/beeld/test_beeld_cli.py."""
+    assert cli.ANALYSE_STUBS == {}
+    before = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    for name in ("beeld-status", "beeld-bench", "beeld-kwaliteit"):
+        result = await run_cli(settings, name)
+        assert result.returncode == 1, result.stderr.decode()
+        assert result.stderr.decode() == (
+            "Zoeken op beeld staat uit: de analyse staat uit (ANALYSE).\n"
+        )
+        assert result.stdout == b""
+    for name in ("analyse-bench", "analyse-kwaliteit"):
+        result = await run_cli(settings, name)
+        assert result.returncode == 1, result.stderr.decode()
+        assert result.stderr.decode() == (
+            f"{name}: niets gemeten: gezichten staan uit (ANALYSE=uit of geen"
+            " PLATFORM_FACES_KEYS)\n"
+        )
+        assert result.stdout == b""
+    after = sorted(str(p.relative_to(settings.data_dir)) for p in settings.data_dir.rglob("*"))
+    assert after == before
 
 
 @pytest.mark.anyio

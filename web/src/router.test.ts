@@ -141,9 +141,15 @@ describe("de routetabel", () => {
       const page = await r.def.load();
       expect(typeof page.default).toBe("function");
     }
-    // /fotos en /zoeken blijven wat ze waren (de pagina van 0.7.0 tot Z4)
+    // /fotos blijft wat hij was; /zoeken is sinds Z4 de nieuwe pagina, met het gebied search
     expect(resolve("/fotos").def).toMatchObject({ pattern: "/fotos", title: "photos.title" });
-    expect(resolve("/zoeken").def).toMatchObject({ pattern: "/zoeken", areas: ["browser", "sharing"], title: "browser.searchTitle" });
+    expect(resolve("/zoeken").def).toMatchObject({
+      pattern: "/zoeken",
+      areas: ["browser", "sharing", "search"],
+      title: "search.title",
+      section: null,
+    });
+    expect(typeof (await resolve("/zoeken").def.load()).default).toBe("function");
     expect(resolve("/fotos/kaart/x").def.pattern).toBe("*");
     expect(resolve("/dubbel/x").def.pattern).toBe("*");
   });

@@ -7,11 +7,19 @@ Workers (settings.job_workers stuks) draaien als asyncio-taken in het proces van
 taak wordt door precies één worker opgepakt: een voorwaardelijke UPDATE (status queued ->
 running) die maar één keer slaagt. Mislukt hij, dan gaat hij later opnieuw (na 30 s, daarna
 steeds dubbel zo lang), tot max_attempts keer; daarna staat hij op failed en is hij op
-/beheer te zien en opnieuw te starten.
+/beheer te zien en opnieuw te starten. De uitkomst landt alleen op de claim die de taak
+draaide (zijn started_at): een taak die zichzelf al terug in de rij zette en opnieuw is
+opgepakt, blijft van die nieuwe claim.
 
 attempts telt hoe vaak een taak is begonnen. Stopt het proces midden in een taak (een crash),
 dan gaat hij bij het starten terug in de rij, en telt die poging mee: een bestand dat het
 proces laat crashen, blijft zo niet eindeloos terugkomen.
+
+Stoppen (Runner.stop) wint altijd. Een lopende taak gaat terug in de rij zonder dat de poging
+telt. Lukt dat terugzetten niet (database is locked), dan blijft hij op running en zet recover()
+hem bij de volgende start terug, zoals na een crash. Een fout bij het opruimen vervangt het
+stopsein niet, en een worker die het sein kreeg, pakt niets meer op; het opruimwerk evenmin
+(fase-5/m0.md, punt 12).
 
 Een taak doet zijn zware rekenwerk in een thread of eigen proces, nooit op de event loop.
 
@@ -47,8 +55,9 @@ from sqlalchemy import and_, bindparam, case, delete, event, false, func, or_, s
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
+from app import dbgate
 from app.config import Settings
-from app.db import get_engine
+from app.db import get_engine, sqlite_path, wal_truncate
 from app.models import Job
 
 log = logging.getLogger("platform.jobs")
@@ -127,6 +136,8 @@ class Claimed:
     payload: dict[str, Any]
     attempts: int
     max_attempts: int
+    # De started_at van deze claim: wat execute na de taak schrijft, raakt alleen deze claim
+    started_at: datetime
 
 
 _kinds: dict[str, Kind] = {}
@@ -476,25 +487,35 @@ async def claim(
             if candidates:
                 break
         for job_id in candidates:
+            started = now()
             row = (
                 await session.execute(
                     update(Job)
                     .where(Job.id == job_id, Job.status == "queued")
-                    .values(status="running", started_at=now(), attempts=Job.attempts + 1)
+                    .values(status="running", started_at=started, attempts=Job.attempts + 1)
                     .returning(Job.type, Job.payload, Job.attempts, Job.max_attempts)
                     .execution_options(synchronize_session=False)
                 )
             ).first()
             if row is not None:
                 await session.commit()
-                return Claimed(job_id, row.type, row.payload or {}, row.attempts, row.max_attempts)
+                return Claimed(
+                    job_id, row.type, row.payload or {}, row.attempts, row.max_attempts, started
+                )
         await session.commit()
     return None
 
 
 async def execute(settings: Settings, job: Claimed) -> None:
     """Draait een opgepakte taak en legt de uitkomst vast. Bij stoppen (cancel) gaat de
-    taak terug in de rij, zonder dat die poging meetelt."""
+    taak terug in de rij, zonder dat die poging meetelt.
+
+    De uitkomst (done, failed, terug in de rij) landt alleen op deze claim: de taak loopt nog,
+    met de started_at van deze claim (_set). Een taak die zichzelf terug in de rij zet
+    (office.convert: wachten zonder poging), kan voor dat schrijven al opnieuw zijn opgepakt,
+    bijvoorbeeld na een verzoek dat hem naar voren haalde. Die nieuwe claim blijft dan van de
+    worker die hem heeft. Eerst zette de done van de oude claim ook de nieuwe op done, en bleef
+    de inhoud pending zonder taak (o3.md afwijking 22). on_dead alleen als failed landde."""
     kind = _kinds.get(job.type)
     scope: anyio.CancelScope | None = None
     limit = settings.job_timeout
@@ -506,16 +527,20 @@ async def execute(settings: Settings, job: Claimed) -> None:
         with anyio.fail_after(limit) as scope:
             await kind.run(settings, job.payload)
     except asyncio.CancelledError:
-        with anyio.CancelScope(shield=True), anyio.move_on_after(10):
-            await _requeue(settings, job.id)
+        await _stopped(settings, job)
         raise
     except Defer as e:
         # Nu niet, straks wel: terug in de rij, en deze poging telt niet
         log.info("Achtergrondtaak %s (%s) wacht %g s: %s", job.id, job.type, e.seconds, e)
         with anyio.CancelScope(shield=True):
-            await _requeue(settings, job.id, after=e.seconds)
+            await _requeue(settings, job, after=e.seconds)
         return
     except Exception as e:  # noqa: BLE001 - elke fout telt als mislukte poging
+        if stopping():
+            # Het stopsein, vervangen door een fout bij het opruimen van de taak zelf (zoals
+            # database is locked in analysis._back_to_wait): stoppen, geen mislukte poging
+            await _stopped(settings, job)
+            raise asyncio.CancelledError from e
         if isinstance(e, TimeoutError) and scope is not None and scope.cancel_called:
             error = f"Duurde langer dan {limit:g} seconden"
         else:
@@ -531,30 +556,58 @@ async def execute(settings: Settings, job: Claimed) -> None:
             exc_info=not isinstance(e, JobError | TimeoutError),
         )
         with anyio.CancelScope(shield=True):
-            await _failed(settings, job, error, final)
-            if final and kind is not None and kind.on_dead is not None:
+            landed = await _failed(settings, job, error, final)
+            if landed and final and kind is not None and kind.on_dead is not None:
                 await _dead(settings, kind, job.payload, error)
         return
     with anyio.CancelScope(shield=True):
-        await _set(settings, job.id, status="done", finished_at=now(), error=None)
+        await _set(settings, job, status="done", finished_at=now(), error=None)
 
 
-async def _set(settings: Settings, job_id: uuid.UUID, **values: Any) -> None:
+def stopping() -> bool:
+    """Kreeg deze taak het stopsein (task.cancel() van Runner.stop)? Ook als een fout bij het
+    opruimen de CancelledError verving: cancelling() telt elke cancel() die niemand terugnam
+    (de eigen tijdgrenzen van anyio en asyncio nemen de hunne terug)."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+async def _stopped(settings: Settings, job: Claimed) -> None:
+    """Bij stoppen terug in de rij, zonder dat de poging telt, hooguit 10 s. Nooit een fout
+    hieruit: die verving het stopsein, de worker draaide door en Runner.stop wachtte voor altijd
+    (het harnas van de e2e doodde de app na 30 s). Lukt het niet, dan blijft de taak op running
+    met de started_at van deze claim, en zet recover() hem bij de volgende start terug."""
+    with anyio.CancelScope(shield=True), anyio.move_on_after(10):
+        try:
+            await _requeue(settings, job)
+        except Exception:  # noqa: BLE001 - zie hierboven
+            log.warning(
+                "Achtergrondtaak %s (%s) bij het stoppen niet terug in de rij; hij blijft op "
+                "running tot de volgende start",
+                job.id,
+                job.type,
+                exc_info=True,
+            )
+
+
+async def _set(settings: Settings, job: Claimed, **values: Any) -> bool:
+    """De uitkomst van deze claim (zie execute). True als hij landde."""
     async with _maker(settings)() as session:
-        await session.execute(
+        result = await session.execute(
             update(Job)
-            .where(Job.id == job_id, Job.status == "running")
+            .where(Job.id == job.id, Job.status == "running", Job.started_at == job.started_at)
             .values(**values)
             .execution_options(synchronize_session=False)
         )
         await session.commit()
+    return result.rowcount == 1
 
 
-async def _requeue(settings: Settings, job_id: uuid.UUID, after: float = 0) -> None:
+async def _requeue(settings: Settings, job: Claimed, after: float = 0) -> bool:
     """Terug in de rij zonder dat deze poging telt (stoppen, of Defer na `after` s)."""
-    await _set(
+    return await _set(
         settings,
-        job_id,
+        job,
         status="queued",
         started_at=None,
         attempts=Job.attempts - 1,
@@ -562,18 +615,17 @@ async def _requeue(settings: Settings, job_id: uuid.UUID, after: float = 0) -> N
     )
 
 
-async def _failed(settings: Settings, job: Claimed, error: str, final: bool) -> None:
+async def _failed(settings: Settings, job: Claimed, error: str, final: bool) -> bool:
     if final:
-        await _set(settings, job.id, status="failed", finished_at=now(), error=error)
-    else:
-        await _set(
-            settings,
-            job.id,
-            status="queued",
-            started_at=None,
-            run_after=now() + backoff(job.attempts),
-            error=error,
-        )
+        return await _set(settings, job, status="failed", finished_at=now(), error=error)
+    return await _set(
+        settings,
+        job,
+        status="queued",
+        started_at=None,
+        run_after=now() + backoff(job.attempts),
+        error=error,
+    )
 
 
 async def _dead(settings: Settings, kind: Kind, payload: dict[str, Any], error: str) -> None:
@@ -680,7 +732,13 @@ class Runner:
         return bool(self._tasks) and not any(task.done() for task in self._tasks)
 
     async def _work(self) -> None:
+        # Achtergrondwerk: schrijft na de verzoeken (app/dbgate.py), ook de taken die dit start
+        dbgate.mark_background()
         while True:
+            if stopping():
+                # stop() gaf het sein, maar een taak slikte de CancelledError: niets meer
+                # oppakken, anders wachtte stop() voor altijd op deze worker
+                raise asyncio.CancelledError
             self._wake.clear()
             try:
                 job = await claim(self.settings, lane=self.lane)
@@ -694,6 +752,7 @@ class Runner:
                 await self._wake.wait()
 
     async def _housekeeping(self) -> None:
+        dbgate.mark_background()
         last: dict[str, float] = {}
         while True:
             await run_housekeeping(self.settings, last)
@@ -711,7 +770,7 @@ def active_lanes(settings: Settings) -> tuple[str, ...]:
         BASE_LANES
         + (MEDIA_LANES if settings.media_enabled else ())
         + (("ocr",) if settings.media_enabled and settings.ocr_enabled else ())
-        + (("analyse",) if settings.analyse_enabled else ())
+        + (("analyse",) if settings.analyse_on else ())
     )
 
 
@@ -736,6 +795,29 @@ async def _remove_old(settings: Settings) -> None:
 housekeeping("jobs.remove_old", _remove_old, HOUSEKEEPING)
 
 
+async def _checkpoint(settings: Settings) -> None:
+    """Eens per uur de WAL leeg (bouwontwerp fase 6, "Het wissen"; K2-08): zo staat na een gewone
+    verwijdering hooguit ±1 uur iets in -wal. Eén poging (db.wal_truncate), in een thread, op een
+    eigen verbinding met busy_timeout 0 en buiten elke transactie van een rij: hij wacht op
+    niemand, en niemand wacht op hem. Zit een lezer of schrijver in de weg, dan het volgende uur
+    opnieuw. In de log alleen de getallen."""
+    path = sqlite_path(settings.db_url)
+    if path is None:
+        return
+    found = await asyncio.to_thread(wal_truncate, path)
+    if found.busy:
+        log.info(
+            "WAL-checkpoint van het uur bezet: busy=%d log=%d done=%d",
+            found.busy,
+            found.log,
+            found.done,
+        )
+
+
+CHECKPOINT = "db.checkpoint"
+housekeeping(CHECKPOINT, _checkpoint, HOUSEKEEPING)
+
+
 async def run_housekeeping(settings: Settings, last: dict[str, float] | None = None) -> list[str]:
     """Draait het opruimwerk dat aan de beurt is (alles als last None is: voor tests). last:
     per naam wanneer (time.monotonic) het voor het laatst liep; wordt bijgewerkt. Geeft de
@@ -752,6 +834,10 @@ async def run_housekeeping(settings: Settings, last: dict[str, float] | None = N
         except Exception:  # noqa: BLE001 - opruimen mag de app nooit stoppen
             log.exception("Opruimwerk %s mislukt", item.name)
         ran.append(item.name)
+        if stopping():
+            # Het stopsein, geslikt door dit opruimwerk (of vervangen door een fout bij zijn
+            # opruimen): verder niets, anders wachtte Runner.stop tot na HOUSEKEEPING_TICK
+            raise asyncio.CancelledError
     return ran
 
 

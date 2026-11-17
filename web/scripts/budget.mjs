@@ -18,7 +18,8 @@
 // - music: alles met een module uit src/music/ samen (pagina's, gapless en de balk).
 //
 // Fase 6 (Z0): regels voor de nieuwe chunks (Keuze 45 en 48), op dezelfde manier geteld:
-// - search: de pagina /zoeken (tot Z4 haar vervangt: Search.tsx van 0.7.0);
+// - search: de pagina /zoeken (src/search/SearchPage.tsx, van Z4; de suggesties zijn een eigen
+//   lazy chunk, geteld als elk ander lazy chunk);
 // - mapRoute: /fotos/kaart (≤ 30 kB); mapData: de wereld van de kaart (dist/kaart/*.json, van Z5;
 //   ≤ 60 kB; zolang Z5 hem niet maakt, staat er "nog niet gebouwd");
 // - dupes: /dubbel; people: /fotos/personen en /fotos/personen/:id, elk apart;
@@ -35,6 +36,10 @@
 // - zolang een pakket zijn chunk niet bouwt, staat er "nog niet gebouwd";
 // - src/photos/faces/ hoort bij de modules van fase 6 (nooit in de eerste lading of in
 //   Bestanden), en LikeRow is een lazy plek zoals Plek en Personen.
+//
+// Fase 6 (I2): de pagina /over (src/about/AboutPage.tsx met het gebied about, ≤ 8 kB), een rij
+// in ZOEK_PAGES; src/about/ hoort bij de modules die nooit in de eerste lading of in Bestanden
+// zitten. De regel in de routetabel zelf zit wel in de eerste lading (een paar tientallen bytes).
 //
 // Gebruik: node scripts/budget.mjs [--json]
 
@@ -71,6 +76,8 @@ export const LIMITS = {
   faces: 12 * KB,
   beeld: 15 * KB,
   likeRow: 3 * KB,
+  // Fase 6 (I2): /over, vaste tekst zonder aanroepen
+  about: 8 * KB,
 };
 
 /** Woordenboeken die in de eerste lading mogen (statisch in i18n/index.ts). */
@@ -91,15 +98,18 @@ const MEDIA_MODULE = /^src\/(media|player|music)\//;
 const MEDIA_ENTRY = "src/media/index.ts";
 /** De lazy pagina's van fase 6 (routes.tsx) met hun woordenboeken en hun grens (Keuze 48). */
 export const ZOEK_PAGES = {
-  "src/Search.tsx": [["browser", "sharing", "search"], "search"],
+  "src/search/SearchPage.tsx": [["browser", "sharing", "search"], "search"],
   "src/photos/map/MapPage.tsx": [["photos_map"], "mapRoute"],
   "src/dupes/DupesPage.tsx": [["dupes"], "dupes"],
   "src/photos/people/PeoplePage.tsx": [["photos_people"], "people"],
   "src/photos/people/PersonPage.tsx": [["photos_people"], "people"],
+  "src/about/AboutPage.tsx": [["about"], "about"],
 };
 /** Modules van fase 6; in de eerste lading alleen ZOEK_INITIAL (het zoekveld, Keuze 45). Met
- * gezichten (src/photos/faces/, X2) erbij; het raster van beeld valt onder src/search/. */
-export const ZOEK_MODULE = /^src\/(search|dupes|photos\/(map|people|faces))\//;
+ * gezichten (src/photos/faces/, X2) erbij; het raster van beeld valt onder src/search/. X1 zette
+ * src/ocr/ erbij (de rij Tekst in beeld en de woorden in een foto): ook nooit in de eerste lading
+ * of in de route Bestanden. I2 zette src/about/ erbij (de pagina /over). */
+export const ZOEK_MODULE = /^src\/(search|dupes|ocr|about|photos\/(map|people|faces))\//;
 export const ZOEK_INITIAL = new Set(["src/search/AppBarSearch.tsx", "src/search/appBar.ts", "src/search/types.ts"]);
 /** De lazy plekken van fase 6: nooit in de eerste lading en nooit in de route Bestanden. LikeRow
  * kwam erbij in Z0b (X3). */
@@ -113,6 +123,20 @@ export const ZOEK_GROUPS = [
 ];
 /** De wereld van de kaart (Z5, Keuze 31): public/kaart/world-110m.<hash>.json. */
 export const MAP_DATA = /^kaart\/[^/]+\.json$/;
+
+/** De rijen van de wereld van de kaart: elk bestand onder kaart/ (gzip, via size) tegen mapData.
+ * Geen wereld in de dist is een fout: dan blijft de kaart leeg (review golf 3, contract F4). */
+export function mapDataRows(distFiles, size) {
+  const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
+  if (worlds.length === 0) {
+    const detail = "geen dist/kaart/world-110m.<hash>.json; tools/kaart/maak_wereld.py";
+    return [{ name: "mapData ontbreekt (Z5)", size: 0, limit: LIMITS.mapData, ok: false, detail }];
+  }
+  return worlds.map((f) => {
+    const n = size(f);
+    return { name: `mapData ${f}`, size: n, limit: LIMITS.mapData, ok: n <= LIMITS.mapData, detail: "" };
+  });
+}
 
 /** Een highlighter of worker mag groter zijn. */
 const HEAVY = /(\.worker\.ts|highlight)/i;
@@ -300,11 +324,10 @@ function main() {
     const group = extra(roots, [area]);
     check(`${limit} (${pkg})`, sum(group), LIMITS[limit], [...group].sort().join(", "));
   }
-  const worlds = [...distFiles].filter((f) => MAP_DATA.test(f)).sort();
-  if (worlds.length === 0) {
-    rows.push({ name: "mapData (nog niet gebouwd, Z5)", size: 0, limit: LIMITS.mapData, ok: true, detail: "" });
+  for (const r of mapDataRows(distFiles, gz)) {
+    rows.push(r);
+    if (!r.ok) problems.push(r.size ? `${r.name}: ${kb(r.size)} > ${kb(r.limit)}` : `${r.name} (${r.detail})`);
   }
-  for (const f of worlds) check(`mapData ${f}`, gz(f), LIMITS.mapData);
 
   // 5. Elk ander lazy chunk apart
   let lazyCount = 0;

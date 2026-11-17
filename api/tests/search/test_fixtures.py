@@ -17,6 +17,7 @@ import pypdfium2 as pdfium
 import pytest
 from PIL import Image
 
+from app import render_meta
 from app.office import reader
 from tests.search import fixtures as F
 
@@ -166,6 +167,24 @@ def test_foto_met_gps():
     zuid = _gps(F.foto_gps(-33.86, -70.65))
     assert (zuid[1], zuid[3]) == ("S", "W")
     assert _graden(zuid[2], zuid[1]) == pytest.approx(-33.86, abs=1e-4)
+
+
+def test_elke_plek_leest_render_meta_terug():
+    """Minuten en seconden altijd onder 60 (render_meta._degrees wijst 60 af): 54,8 en 6,1 gaven
+    (…, 60.0), zodat de foto bij Doggersbank en Herzogenrath geen GPS had (gevonden in I1, M9).
+    Elke vaste plek van dit bestand, ook de grensparen en de Noordzee, leest terug tot op ±1 m."""
+    plekken = [F.UTRECHT, (54.8, 6.1), (66.6, -22.4), (-8.45, 179.95), (0.0, -0.05)]
+    plekken += [(lat, lon) for paar in F.GRENSPAREN for (_n, lat, lon, _cc) in paar]
+    plekken += [(lat, lon) for (_n, lat, lon) in F.ZEE]
+    for lat, lon in plekken:
+        for waarde in (lat, lon):
+            graden, minuten, seconden = F._dms(waarde)
+            assert minuten < 60 and seconden < 60, (waarde, minuten, seconden)
+            assert graden + minuten / 60 + seconden / 3600 == pytest.approx(abs(waarde), abs=1e-7)
+        with Image.open(io.BytesIO(F.foto_gps(lat, lon))) as img:
+            plek = render_meta.image_location(img)
+        assert plek is not None, (lat, lon)
+        assert F.haversine_km((plek["lat"], plek["lon"]), (lat, lon)) < 0.001, (lat, lon, plek)
 
 
 def test_foto_zonder_gps_en_de_verkleinde_kopie():

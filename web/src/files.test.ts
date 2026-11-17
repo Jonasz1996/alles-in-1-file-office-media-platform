@@ -1,7 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { Api, type SearchHit, searchParams } from "./api";
-import { folderHref, hasFilter, parentHref, pathLabel, readSearch, searchHref } from "./searchQuery";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Api, api as appApi, type SearchHit } from "./api";
+import { search } from "./search/api";
+import { folderHref, parentHref, pathLabel } from "./search/hits";
+import { firstParams, hasFilter, queryHref, readQuery } from "./search/query";
+import { wireQuery } from "./search/wire";
 import { tagStyle } from "./tagColors";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const T1 = "7a7a7a7a-1111-4111-8111-111111111111";
+const M1 = "0b0b0b0b-3333-4333-8333-333333333333";
 
 interface Seen {
   url: string;
@@ -26,30 +36,32 @@ function recording(reply: unknown = {}, status = 200) {
   return { api, seen };
 }
 
+// Sinds fase 6 (Z4) via search/query.ts, search/wire.ts en search/hits.ts (de vraag van §3.4);
+// de vorm van 0.7.0 (limit tot 200, één type en één tag) bestaat niet meer
 describe("zoeken", () => {
   it("laat lege velden weg en codeert de rest", () => {
-    expect(searchParams({ q: " foto & co ", type: "", tag: undefined, limit: 50 })).toBe("q=foto+%26+co&limit=50");
-    expect(searchParams({})).toBe("");
+    expect(wireQuery({ q: " foto & co ", type: [], tag: undefined, limit: 50 })).toBe("?q=foto+%26+co&limit=50");
+    expect(wireQuery({})).toBe("");
   });
 
   it("leest de adresbalk en negeert onzin", () => {
-    expect(readSearch("?q=vakantie&type=image&tag=t1&in=m1&limit=500")).toEqual({
+    // limit staat niet meer in de adresbalk: de pagina vraagt er altijd 30
+    expect(readQuery(`?q=vakantie&type=image&tag=${T1}&in=${M1}&limit=500`)).toEqual({
       q: "vakantie",
-      type: "image",
-      tag: "t1",
-      in: "m1",
-      limit: 200,
+      type: ["image"],
+      tag: [T1],
+      in: M1,
     });
-    expect(readSearch("?q=%20%20&type=foto&limit=-3")).toEqual({});
-    expect(hasFilter(readSearch("?limit=10"))).toBe(false);
-    expect(hasFilter(readSearch("?tag=x"))).toBe(true);
+    expect(readQuery("?q=%20%20&type=foto&limit=-3")).toEqual({});
+    expect(hasFilter(readQuery("?limit=10"))).toBe(false);
+    expect(hasFilter(readQuery(`?tag=${T1}`))).toBe(true);
   });
 
   it("heen en terug via de adresbalk", () => {
-    const query = { q: "café menu", type: "pdf" as const };
-    expect(searchHref(query)).toBe("/zoeken?q=caf%C3%A9+menu&type=pdf");
-    expect(readSearch(searchHref(query).slice("/zoeken".length))).toEqual(query);
-    expect(searchHref({})).toBe("/zoeken");
+    const query = { q: "café menu", type: ["pdf" as const] };
+    expect(queryHref(query)).toBe("/zoeken?q=caf%C3%A9+menu&type=pdf");
+    expect(readQuery(queryHref(query).slice("/zoeken".length))).toEqual(query);
+    expect(queryHref({})).toBe("/zoeken");
   });
 
   it("pad en waar een klik heen gaat", () => {
@@ -72,8 +84,10 @@ describe("zoeken", () => {
 
   it("vraagt de server met de juiste parameters", async () => {
     const { api, seen } = recording({ results: [], more: false });
-    await api.search({ q: "100%", tag: "t1" });
-    expect(seen[0].url).toBe("/api/v1/search?q=100%25&tag=t1");
+    // search() gaat via api.request van de app; hier via de opnemende Api
+    vi.spyOn(appApi, "request").mockImplementation((method, path) => api.request(method, path));
+    await search(firstParams(readQuery(`?q=100%25&tag=${T1}`)));
+    expect(seen.map((r) => [r.method, r.url])).toEqual([["GET", `/api/v1/search?q=100%25&tag=${T1}&limit=30`]]);
   });
 });
 

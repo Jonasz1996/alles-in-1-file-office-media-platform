@@ -14,7 +14,8 @@
 // mode en like in de vraag (niet in de filters, dus niet in de regel van een slim album), match
 // "image", mode en fallback in het antwoord, twee codes van de analyse, "faces" en "beeld" in
 // search.progress, en de stand van GET /photos/beeld en van de container analyse. Een vraag
-// zonder mode is een vraag als nu; tot X3 er is, geeft de API op mode image 501 not_built.
+// zonder mode is een vraag als nu; met de analyse uit geeft de API op mode image 501 not_built
+// ("X3"), zoals in 0.8.0.
 
 import type { FileNode, SearchHit, TagRef } from "../api";
 

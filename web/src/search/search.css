@@ -1,0 +1,158 @@
+/* De pagina /zoeken (fase 6, Z4). In het chunk van de pagina, niet in de eerste lading. */
+
+.search-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-3);
+}
+
+.search-mode label,
+.search-check {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: 0 0 var(--space-3);
+}
+
+.search-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search-chip {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  padding: 0 0 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--text-s);
+}
+
+.search-chip .icon-button {
+  padding: var(--space-1);
+  border: 0;
+  border-radius: 999px;
+  background: none;
+}
+
+.search-filter-panel > summary {
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+}
+
+.search-filter-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+}
+
+.search-filter-body fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+
+.search-days {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.search-days label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.search-notices p {
+  margin: 0 0 var(--space-2);
+}
+
+.search-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin: 0 0 var(--space-3);
+}
+
+.search-groups h2 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-m);
+}
+
+.search-groups ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Het pad en de snippet onder elkaar in de kolom van het pad, die hier breder is dan in
+   Bestanden: twee regels passen in een rij van 44 px */
+.search-page .file-row > .cell-path {
+  flex: 2 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.search-page .cell-path > a,
+.search-page .cell-path > .snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-page .cell-path > a {
+  color: var(--muted);
+}
+
+.snippet mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: var(--selected);
+  color: var(--selected-fg);
+  font-weight: 600;
+}
+
+.search-beeld-tip {
+  margin: var(--space-3) 0;
+}
+
+/* Smal scherm: de naam en de snippet (zonder pad); grootte en datum zijn al weg (browser.css) */
+@media (max-width: 40rem) {
+  .search-page .file-row > .cell-path {
+    display: flex;
+    flex: 1 1 0;
+  }
+
+  .search-page .file-head .cell-path,
+  .search-page .cell-path > a {
+    display: none;
+  }
+}

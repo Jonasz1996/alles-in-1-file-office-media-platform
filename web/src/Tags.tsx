@@ -2,7 +2,6 @@ import { type FormEvent, memo, useCallback, useEffect, useState } from "react";
 import { api, type FileNode, type Tag, type TagRef } from "./api";
 import { collator, errorText, t } from "./i18n";
 import { navigate } from "./router";
-import { searchHref } from "./searchQuery";
 import { TAG_COLORS, tagChip } from "./tagColors";
 import { Button } from "./ui/Button";
 import { Dialog } from "./ui/Dialog";
@@ -15,7 +14,8 @@ export const TagChips = memo(function TagChips({ tags }: { tags: TagRef[] | unde
   return (
     <span className="tags">
       {tags.map((tag) => {
-        const href = searchHref({ tag: tag.id });
+        // /zoeken met deze tag als filter (search/query.ts schrijft hem net zo)
+        const href = `/zoeken?${new URLSearchParams({ tag: tag.id })}`;
         return (
           <a
             key={tag.id}

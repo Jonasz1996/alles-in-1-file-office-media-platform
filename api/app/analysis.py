@@ -80,6 +80,9 @@ class Step(StrEnum):
 VERSIONS: dict[Step, int] = {Step.TEXT: 1, Step.HASH: 1, Step.OCR: 1, Step.EMBED: 1}
 
 STATES = ("wait", "busy", "done", "none", "skip", "failed")
+# Gepauzeerd op /beheer (Z7, Keuze 51; app/search/admin.py zet en wist dit): de pomp van deze
+# rijen wijkt, zoals voor busy_elsewhere
+PAUSED: set[str] = set()
 OPEN = ("wait", "busy")
 MAX_TRIES = 3
 RETRY_AFTER = timedelta(minutes=1)  # na de eerste mislukte poging; daarna steeds dubbel
@@ -505,8 +508,12 @@ def busy_elsewhere(settings: Settings) -> bool:
     if settings.media_enabled:
         try:
             from app.media import admin as media_admin
+            from app.media import analysis as media_analysis
 
-            if media_admin.transcodes_running() >= settings.index_defer_transcodes:
+            # Ook de belastingtest van media: die telt niet als kijker, maar zet busy_live zolang
+            # hij loopt op minstens 2, zodat de analyse wacht (Z7, §4.5 stap 2 tegen stap 3)
+            live = max(media_admin.transcodes_running(), media_analysis.busy_live())
+            if live >= settings.index_defer_transcodes:
                 return True
         except Exception:  # noqa: BLE001 - de teller hoort de analyse nooit te breken
             log.debug("transcodes_running", exc_info=True)
@@ -529,7 +536,7 @@ async def pump(settings: Settings, lane: str) -> int:
     """Eén batch van een stap in deze rij met werk (om de beurt per stap); geeft het aantal
     inhouden. Zet daarna de volgende job klaar: nu als er werk klaarstaat, anders bij de eerste
     nieuwe poging. jobs.Defer als de app moet wijken; een batch gaat dan terug op wait."""
-    if busy_elsewhere(settings):
+    if lane in PAUSED or busy_elsewhere(settings):
         raise jobs.Defer(DEFER_S)
     maker = _maker(settings)
     count = 0

@@ -48,7 +48,6 @@ pytestmark = pytest.mark.anyio
 CAPS = {"protocol": 1, "ffmpeg": "test", "ffprobe": "test", "mode": "local", "sandbox": "off"}
 KEY = "de-sleutel-van-de-tekst-test-" * 2
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-RTF_TRAAG = b"{\\rtf1 " + b"{\\*\\x a}" * 1_000_000 + b"}"  # 8 MB, ~2,6 s CPU, geen tekst
 
 CRASH = (
     "import os,signal\n"
@@ -67,6 +66,23 @@ ONZIN = (
     "    if text.startswith('ONZIN'):fields=dict(fields,state='gekraakt')\n"
     "    return _write(fd,i,fields,text)\n"
     "frame.write=_onzin\n"
+)
+# Een blob die met TRAAG begint, leest het kind niet: het rekent tot er 5 s CPU van het kind op
+# zijn en kijkt tussendoor naar de klok van de blob, zoals een lezer. Elke grens hieronder
+# (RLIMIT_CPU 1 s, de klok van 0,3 s) is dan eerder op, op elke machine. Eerst was dit een RTF
+# van 8 MB: vast werk (±2,5 s CPU op de sandbox), dat een runner die 2,5× zo snel is binnen
+# RLIMIT_CPU klaar heeft (CI run 89, docs/fase-6/z2.md).
+TRAAG = (
+    "import time\n"
+    "from app.extract import plain\n"
+    "_read=plain.read\n"
+    "def _traag(f,out):\n"
+    "    if f.read(5)!=b'TRAAG':\n"
+    "        f.seek(0)\n"
+    "        return _read(f,out)\n"
+    "    end=time.process_time()+5\n"
+    "    while time.process_time()<end:out.check()\n"
+    "plain.read=_traag\n"
 )
 
 
@@ -249,7 +265,8 @@ def _limits_of(pid: int) -> tuple[dict[str, list[str]], int]:
 
 async def test_rlimit_cpu_maakt_too_slow_zonder_nieuwe_poging(aan, monkeypatch):
     monkeypatch.setattr(extract_step, "LIMITS", {"child_cpu_s": 1, "blob_cpu_s": 60.0})
-    slow = await put(aan, RTF_TRAAG, "text/rtf")
+    monkeypatch.setattr(ops_text, "BOOT", boot(TRAAG))
+    slow = await put(aan, b"TRAAG en verder niets", "text/plain")
     pump = asyncio.ensure_future(analysis.pump(aan, "index"))
     pid = None
     deadline = time.monotonic() + 10
@@ -272,13 +289,14 @@ async def test_rlimit_cpu_maakt_too_slow_zonder_nieuwe_poging(aan, monkeypatch):
     assert (await client.caps()).procs == 0
 
 
-async def test_rlimit_cpu_rechtstreeks(aan, tmp_path):
+async def test_rlimit_cpu_rechtstreeks(aan, tmp_path, monkeypatch):
     """batch.via_worker zegt rc −24 (SIGXCPU) en too_slow; geen uitkomst voor de blob."""
-    path = tmp_path / "traag.rtf"
-    path.write_bytes(RTF_TRAAG)
+    monkeypatch.setattr(ops_text, "BOOT", boot(TRAAG))
+    path = tmp_path / "traag.txt"
+    path.write_bytes(b"TRAAG en verder niets")
     fd = batch.open_blob(path)
     try:
-        ran = await batch.via_worker([fd], ["rtf"], max_chars=1000, child_cpu_s=1, blob_cpu_s=60)
+        ran = await batch.via_worker([fd], ["plain"], max_chars=1000, child_cpu_s=1, blob_cpu_s=60)
     finally:
         os.close(fd)
     assert (ran.found, ran.clean, ran.too_slow) == ([], False, True)
@@ -287,7 +305,8 @@ async def test_rlimit_cpu_rechtstreeks(aan, tmp_path):
 
 async def test_de_klok_per_blob_maakt_too_slow(aan, monkeypatch):
     monkeypatch.setattr(extract_step, "LIMITS", {"blob_cpu_s": 0.3})
-    slow = await put(aan, RTF_TRAAG, "text/rtf")
+    monkeypatch.setattr(ops_text, "BOOT", boot(TRAAG))
+    slow = await put(aan, b"TRAAG en verder niets", "text/plain")
     ok = await put(aan, b"na de trage", "text/plain")
     await analysis.pump(aan, "index")
     found = await rows(aan)

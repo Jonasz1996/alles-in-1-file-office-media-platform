@@ -136,6 +136,15 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
     };
   }, []);
 
+  // Een ander bestand: wat de focus had (een rij van het infopaneel, een knop die bij dit bestand
+  // niet bestaat) kan weg zijn. Dan niet de body maar het beeld, waar de pijlen verder werken
+  // (review golf 2, web C).
+  useLayoutEffect(() => {
+    const el = dialog.current;
+    const now = document.activeElement;
+    if (el?.open && (!now || now === document.body || !el.contains(now))) stage.current?.focus();
+  }, [key]);
+
   // Het detail van dit bestand; wat nog gemaakt wordt of alleen een thumbnail heeft (de grote
   // versie van een RAW of HEIC komt in een tweede ronde), een tijdje opnieuw, en ingelogd
   // meteen bij preview.ready van dit bestand. Een nieuw detail geeft ZoomView de 2048 erbij.

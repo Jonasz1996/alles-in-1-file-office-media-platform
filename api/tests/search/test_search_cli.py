@@ -4,7 +4,8 @@ fase 6, §3.5 en Keuze 12; de glue in app/search/bench.py, het werk in app/searc
 Wat hier vastligt: elk commando draait als eigen proces naast de database van de app; check
 zegt bij een verschil alleen nums (nooit een naam of tekst) en exitcode 1, met de weg terug;
 triggers zet terug en herbouwt; rebuild meldt per stuk zijn voortgang; bench schrijft nooit in
-een map die al een database heeft. Van de stubs van zoeken blijft alleen geo-load (Z3).
+een map die al een database heeft. Van de stubs van zoeken blijft niets: geo-load is gebouwd
+(Z3).
 """
 
 from __future__ import annotations
@@ -25,8 +26,9 @@ from tests.test_cli_db import run_cli
 pytestmark = pytest.mark.anyio
 
 
-def test_van_de_stubs_blijft_alleen_geo_load():
-    assert sorted(cli.SEARCH_STUBS) == ["geo-load"]
+def test_van_de_stubs_blijft_niets():
+    assert sorted(cli.SEARCH_STUBS) == []
+    assert cli.geo_load.COMMANDS == ("geo-load",)
     assert sorted(bench.COMMANDS) == [
         "search-bench",
         "search-check",

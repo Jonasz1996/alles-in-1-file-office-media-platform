@@ -2,18 +2,26 @@
 // muis), knijpen en dubbelklikken, verschuiven door te slepen of (ingezoomd) met de pijltjes,
 // en draaien. Eerst de grote preview (1024 px); is er meer nodig, dan het origineel (of 2048 px
 // als de browser het origineel niet kan tonen), pas na img.decode(), zodat er niets knippert.
+//
+// Fase 6 (X1): kom je van /zoeken (?q=), dan legt ocr/PhotoWords.tsx (een eigen chunk) de tekst
+// die OCR in de foto vond over het beeld, met de woorden van de vraag gemarkeerd; zelfde maat en
+// transform als de img. Alleen ingelogd en bij de huidige versie (de woorden zijn van de eigenaar).
 
 import {
   type JSX,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { t } from "../i18n";
+import { lazyWithAreas, t } from "../i18n";
+import type { PhotoWordsProps } from "../ocr/PhotoWords";
+import { useLocation } from "../router";
 import { IconButton } from "../ui/Button";
 import { useShortcuts } from "../ui/keys";
+import { LazySlot } from "../ui/LazySlot";
 import { Spinner } from "../ui/Spinner";
 import type { ViewerDetail } from "./api";
 import { browserShows, wantsOriginal } from "./media";
 import type { Source } from "./source";
+import { markQuery } from "./textLayer";
 import type { ViewerItem } from "./types";
 import {
   type Arrow,
@@ -32,6 +40,8 @@ import {
 } from "./zoom";
 
 const LARGE = 1024;
+
+const PhotoWords = lazyWithAreas<PhotoWordsProps>(() => import("../ocr/PhotoWords"), ["ocr"]);
 
 interface Props {
   item: ViewerItem;
@@ -233,6 +243,18 @@ export default function ZoomView({ item, detail, source, onZoomedChange }: Props
     setZoom(zoomAt(state, target / state.scale, centerPoint(e.clientX, e.clientY), natural, viewport));
   }
 
+  // De woorden van de zoekvraag in de tekst van de foto (X1): ingelogd, de huidige versie, met ?q=
+  const { query } = useLocation();
+  const marking = source.kind === "user" && !item.version && markQuery(query) !== null;
+  const placed =
+    state && natural
+      ? {
+          width: `${natural.w}px`,
+          height: `${natural.h}px`,
+          transform: `translate(-50%, -50%) translate(${state.x}px, ${state.y}px) rotate(${state.rotation}deg) scale(${state.scale})`,
+        }
+      : undefined;
+
   const percent = state ? Math.round(state.scale * 100) : 100;
   return (
     <div className="zoom">
@@ -266,16 +288,13 @@ export default function ZoomView({ item, detail, source, onZoomedChange }: Props
               if (shown.width === Infinity && detail.large && !animated) setShown({ url: detail.large, width: LARGE });
               else setBroken(true);
             }}
-            style={
-              state && natural
-                ? {
-                    width: `${natural.w}px`,
-                    height: `${natural.h}px`,
-                    transform: `translate(-50%, -50%) translate(${state.x}px, ${state.y}px) rotate(${state.rotation}deg) scale(${state.scale})`,
-                  }
-                : undefined
-            }
+            style={placed}
           />
+        )}
+        {shown && !broken && placed && natural && marking && (
+          <LazySlot key={`tekst-${item.id}`}>
+            <PhotoWords item={item} width={natural.w} height={natural.h} style={placed} />
+          </LazySlot>
         )}
       </div>
       <div className="zoom-tools" role="toolbar" aria-label={t("viewer.image.tools")}>

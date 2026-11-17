@@ -39,6 +39,17 @@ ORDER = [
     "verslag.docx",
 ]
 
+# De tekst van de pagina buiten de rij Plek (het element dat evaluate krijgt), zoals
+# to_contain_text hem leest (textContent)
+OUTSIDE_ROW = """(row) => {
+  const parts = [];
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (!row.contains(node)) parts.push(node.textContent);
+  }
+  return parts.join("");
+}"""
+
 
 @dataclass
 class Library:
@@ -296,7 +307,9 @@ def test_tiff_die_nog_wacht_verschijnt_zodra_de_preview_er_is(
 
 def test_gegevens_zonder_locatie(context_as, library: Library):
     """I opent het paneel met gegevens: de camera-EXIF (P5's render_meta) staat in de groep
-    Foto, met Camera en Belichting; een locatie staat nergens, ook niet buiten het paneel."""
+    Foto, met Camera en Belichting, en nooit een locatie. Sinds fase 6 (Keuze 27 en 28) ziet de
+    eigenaar zijn plek in een eigen rij Plek: daar precies de coördinaten en "Alleen jij ziet de
+    plek.", en buiten die rij nergens een locatie, ook niet buiten het paneel."""
     page = open_folder(context_as, library)
     viewer = open_file(page, "foto.jpg")
     page.keyboard.press("i")
@@ -313,11 +326,15 @@ def test_gegevens_zonder_locatie(context_as, library: Library):
     expect(value("Objectief")).to_have_text("Testlens 35mm")
     expect(value("Belichting")).to_have_text("f/2,8 · 1/250 s · ISO 200 · 35 mm")
     expect(value("Datum")).to_contain_text("2024")
-    # Geen locatie: niet in het paneel en nergens op de pagina (geen label, geen coördinaten)
-    whole = page.locator("body")
+    # De plek alleen in de rij Plek (de eigenaar, Keuze 27): 52°22'30" N, 4°53'0" O
+    plek = info.get_by_role("region", name="Plek", exact=True)
+    expect(plek).to_contain_text("52,3750° N, 4,8833° O")
+    expect(plek).to_contain_text("Alleen jij ziet de plek.")
+    # Geen locatie in de groep Foto, en nergens buiten de rij Plek (geen label, geen coördinaten)
+    outside = plek.evaluate(OUTSIDE_ROW)
     for text in ("Locatie", "Location", "GPS", "52°", "52,375", "52.375", "4°", "4,883", "4.883"):
-        expect(info).not_to_contain_text(text)
-        expect(whole).not_to_contain_text(text)
+        expect(photo).not_to_contain_text(text)
+        assert text not in outside, text
     page.keyboard.press("i")
     expect(info).to_be_hidden()
 
@@ -681,17 +698,26 @@ def test_pdf_pagina_s_na_het_verlopen_van_het_token(browser, tmp_path_factory):
             timeout=20_000,
         )
         assert not viewer.locator(".page-failed").count()
-        assert [p for p in pages if p[1] != 200] == [], pages
+        # De afbeeldingen van de pagina's: alle 200. Over /pages/ gaan sinds fase 6 (Z4) ook de
+        # woorden van de tekstlaag (/pages/{n}/words); deze PDF heeft geen tekst, dus elk 404
+        # not_found (het contract van Z2), nooit 401 of 403 van een oud token
+        words = [p for p in pages if "/words?" in p[0]]
+        assert [p for p in pages if p not in words and p[1] != 200] == [], pages
+        assert words and [p for p in words if p[1] != 404] == [], words
         box = viewer.get_by_role("spinbutton")
-        box.fill("9")
-        box.press("Enter")
-        page.wait_for_function(
-            """() => [...document.querySelectorAll(".page img")].some(
-              (i) => i.alt === "Pagina 7" && i.complete && i.naturalWidth > 0)""",
-            timeout=20_000,
-        )
+        with page.expect_response(lambda r: f"/files/{node}/pages/9/words?" in r.url) as late_words:
+            box.fill("9")
+            box.press("Enter")
+            page.wait_for_function(
+                """() => [...document.querySelectorAll(".page img")].some(
+                  (i) => i.alt === "Pagina 7" && i.complete && i.naturalWidth > 0)""",
+                timeout=20_000,
+            )
         late = viewer.get_by_role("img", name="Pagina 7", exact=True).get_attribute("src")
         assert late and first_token and late.split("token=")[1] != first_token.split("token=")[1]
+        # De woorden van een pagina die pas na het vernieuwen laadt: met een nieuw token
+        assert late_words.value.status == 404, late_words.value.url
+        assert late_words.value.url.split("token=")[1] != first_token.split("token=")[1]
         assert not viewer.locator(".page-failed").count()
     finally:
         problems = browsers.close_all()

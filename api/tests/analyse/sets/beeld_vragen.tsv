@@ -1,0 +1,41 @@
+# De vragen van de kwaliteitspoort van zoeken op beeld (fase 6, Keuze 83; X3a).
+# soort: nl (één begrip, twee per categorie), combinatie (de bedoelde foto, sleutel in beeld.tsv)
+# of en (controle in het Engels, alleen een rapport). categorieen: de categorieën die een goede
+# foto heeft (beeld.tsv); bij een combinatie allebei. doel: de sleutel van de vaste foto, of -.
+soort	vraag	categorieen	doel
+nl	strand	strand	-
+nl	zandstrand	strand	-
+nl	hond	hond	-
+nl	een hond	hond	-
+nl	kat	kat	-
+nl	poes	kat	-
+nl	sneeuw	sneeuw	-
+nl	een sneeuwlandschap	sneeuw	-
+nl	auto	auto	-
+nl	personenauto	auto	-
+nl	fiets	fiets	-
+nl	een fiets	fiets	-
+nl	berg	berg	-
+nl	bergen	berg	-
+nl	bos	bos	-
+nl	een bos	bos	-
+nl	stad	stad	-
+nl	een stad	stad	-
+nl	eten	eten	-
+nl	een maaltijd	eten	-
+nl	boot	boot	-
+nl	bootje	boot	-
+nl	zonsondergang	zonsondergang	-
+nl	ondergaande zon	zonsondergang	-
+combinatie	auto in de sneeuw	auto,sneeuw	auto+sneeuw
+combinatie	hond op het strand	hond,strand	hond+strand
+combinatie	boot bij zonsondergang	boot,zonsondergang	boot+zonsondergang
+combinatie	berg met sneeuw	berg,sneeuw	berg+sneeuw
+combinatie	kat in de sneeuw	kat,sneeuw	kat+sneeuw
+combinatie	bos op een berg	bos,berg	bos+berg
+en	beach	strand	-
+en	dog	hond	-
+en	cat	kat	-
+en	snow	sneeuw	-
+en	bicycle	fiets	-
+en	sunset	zonsondergang	-

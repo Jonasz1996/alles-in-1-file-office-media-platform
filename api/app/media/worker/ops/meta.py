@@ -13,7 +13,10 @@ gebruikt (de duur, de codecs, de maat en de draaiing, de opnamedatum), opgeschoo
                   "height", "channels", "sample_rate", "disposition": {"attached_pic"},
                   "tags": {…}, "side_data_list": [{"rotation"}]}, …]}
 
-Van de tags alleen de opnamedatum en de draaiing; locatie en GPS nooit (fase 6).
+Van de tags alleen de opnamedatum, de draaiing en (fase 6, Z3, Keuze 25) de plek in ISO 6709:
+com.apple.quicktime.location.ISO6709 en ©xyz (dat ffprobe als location of location-eng toont),
+elk hooguit TAG_TEXT tekens. Alleen render_meta.video_location leest die, in mode meta (de batch
+van photometa); de preview (video_meta) nooit.
 """
 
 from __future__ import annotations
@@ -29,7 +32,14 @@ from app.media.worker.server import Context, OpError
 MAX_STREAMS = 64
 TEXT = 200
 TAG_TEXT = 64
-TAGS = ("creation_time", "com.apple.quicktime.creationdate", "rotate")
+TAGS = (
+    "creation_time",
+    "com.apple.quicktime.creationdate",
+    "rotate",
+    "com.apple.quicktime.location.iso6709",
+    "location",
+    "location-eng",
+)
 FORMAT_TEXT = ("format_name",)
 FORMAT_NUMBERS = ("duration", "start_time", "bit_rate")
 STREAM_TEXT = ("codec_type", "codec_name", "profile", "pix_fmt")

@@ -202,7 +202,8 @@ cd api && taskset -c 0-2 uv run pytest -q -s tests/search/test_spike_plannen.py
 ## S5: tesseract in Debian 13
 
 **Klaar als:** een getal in dit bestand. **Gemeten in CI**: **69 MiB**, meer dan de poort van
-+ ≤ 30 MB (stap "S5 tesseract in Debian 13 (alleen meten)" van `media-image`, run 82).
++ ≤ 30 MB (stap "S5 tesseract in Debian 13 (alleen meten)" van `media-image`, run 82; die stap
+is sinds integratie I1 weg, zie "In CI").
 
 In een wegwerpcontainer van het gebouwde image, als root en met netwerk: Debian-versie, of
 `libavfilter` aan `libtesseract` hangt (`ldd`), of ffmpeg met `--enable-libtesseract` is gebouwd,
@@ -493,7 +494,9 @@ dan de marker `zoek_perf` (S1 met de echte grenzen, S2 herbouw van 100.000, S3 m
 `maak_wereld.py --download` (S6). Lokaal in slim kostte de marker `zoek_perf` ±3,5 minuten.
 
 `media-image`: de stap S5, en `test_media_container.sh` met S11 (`handdruk.json`) en S9
-(`zoekbench.log`). Het blok `=== kort ===` aan het eind toont S5, S9 en S11.
+(`zoekbench.log`). Het blok `=== kort ===` aan het eind toont S5, S9 en S11. Sinds integratie I1
+is de stap S5 weg: tesseract zit sinds X1 in het image, en S5 mat daar 0 MiB (x1.md, Open 8); de
+grootte bewaakt de job `images`. Het blok toont nu S9 en S11.
 
 ## Afwijkingen van §3.7
 

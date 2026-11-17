@@ -18,6 +18,7 @@ Wat hier vastligt:
 
 from __future__ import annotations
 
+import gc
 import itertools
 import random
 import threading
@@ -45,6 +46,27 @@ def _lege_klok():
     snippets.APP.clear()
     yield
     snippets.APP.clear()
+
+
+@pytest.fixture(autouse=True)
+def _zonder_volle_gc(request):
+    """Een test via de API draait zonder volle ronde van de garbage collector, zoals measuring() in
+    tests/test_search.py. In een volledige run heeft dit proces honderdduizenden objecten van
+    eerdere tests; een volle ronde kost dan 0,4 tot 1 s (gemeten bij de samenvoeging van golf 3).
+    Viel die in de stap snippets van een verzoek, dan was het budget van 40 ms op en kwam de
+    treffer zonder snippet, zoals het hoort (Keuze 8); de test wil de snippet zien. Dat is de
+    test, niet het zoeken."""
+    if "client" not in request.fixturenames:
+        yield
+        return
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 @pytest.fixture(autouse=True)

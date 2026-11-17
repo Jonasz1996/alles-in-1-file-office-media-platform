@@ -134,7 +134,9 @@ async def test_eerst_groeiend_dan_uit_de_cache(world, client):
     assert handler.calls[0] == RemuxAudioArgs(demuxer="flac", audio=0, codec="copy")
     final = cache_dir(settings) / f"{node['sha']}.mp4"
     assert final.read_bytes() == DATA and not part.exists()
-    assert stream_audio._remuxes == {}
+    # De volgers zijn klaar zodra het bestand er is; de remux ruimt daarna nog de cache op
+    # (_trim, in een thread) en gaat pas dan uit _remuxes.
+    await until(lambda: not stream_audio._remuxes, "het einde van de remux (en trim)")
     # uit de cache: als een bestand
     etag = f'"{node["sha"]}.a0"'
     r = await client.get(url)

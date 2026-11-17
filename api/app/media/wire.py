@@ -83,8 +83,8 @@ class Op(StrEnum):
     STREAM = "stream"
     REMUX_AUDIO = "remux_audio"
     SYNTH = "synth"
-    # Fase 6 (bouwontwerp §3.3): tekst uit documenten (Z2) en OCR (X1). Tot hun pakket kent de
-    # worker ze niet (geen ARGS) en antwoordt hij not_built.
+    # Fase 6 (bouwontwerp §3.3): tekst uit documenten (Z2) en OCR (X1, ops/ocr.py). Een worker
+    # zonder ARGS voor een opdracht antwoordt not_built.
     TEXT = "text"
     OCR = "ocr"
 

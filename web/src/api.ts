@@ -3,6 +3,7 @@
 
 import { fmt } from "./i18n/fmt";
 import type { Locale } from "./i18n/types";
+import type { RuleItemsPrivate } from "./photos/people/types";
 
 export interface User {
   id: string;
@@ -82,35 +83,12 @@ export interface FileVersion {
   replaced_by: { id: string; display_name: string } | null;
 }
 
-export type Category = "folder" | "image" | "video" | "audio" | "pdf" | "document" | "archive" | "other";
-
-export interface SearchQuery {
-  q?: string;
-  type?: Category | "";
-  tag?: string;
-  /** Alleen in deze map (en alles eronder) */
-  in?: string;
-  limit?: number;
-}
-
+/** Een treffer van GET /search: de vorm van 0.7.0, met de velden van fase 6 in search/types.ts
+ * (Hit). De vraag en de aanroep staan sinds Z4 alleen daar (search/query.ts en search/api.ts). */
 export interface SearchHit {
   node: FileNode;
   /** Van de hoofdmap (naam "") tot en met de map waar het in staat */
   path: { id: string; name: string }[];
-}
-
-export interface SearchResult {
-  results: SearchHit[];
-  more: boolean;
-}
-
-/** Querystring voor /api/v1/search; lege velden laat hij weg. */
-export function searchParams(query: SearchQuery): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value).trim());
-  }
-  return params.toString();
 }
 
 // --- einde F ---
@@ -282,7 +260,8 @@ export interface Directory {
   groups: GroupRef[];
 }
 
-export interface Share {
+/** rule_items_private (fase 6, Z6, Keuze 42) komt van RuleItemsPrivate, zoals ShareOut in de API. */
+export interface Share extends RuleItemsPrivate {
   id: string;
   node_id: string;
   type: "user" | "group" | "link";
@@ -579,7 +558,6 @@ export class Api {
         `/api/v1/files/${id}/download-link?${new URLSearchParams({ version: versionId })}`,
       )
     ).url;
-  search = (query: SearchQuery) => this.json<SearchResult>(`/api/v1/search?${searchParams(query)}`);
   tags = () => this.json<Tag[]>("/api/v1/tags");
   createTag = (name: string, color = "") => this.send<Tag>("POST", "/api/v1/tags", { name, color });
   changeTag = (id: string, change: { name?: string; color?: string }) =>

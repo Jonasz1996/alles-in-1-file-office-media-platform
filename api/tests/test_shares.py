@@ -729,8 +729,8 @@ async def test_lijst_van_een_gedeelde_map_zonder_query_per_bestand(client, setup
         f"/api/v1/files/{many}/children"
     )
     with count_queries(settings) as seen:
-        r = await client.get("/api/v1/search", params={"q": "bestand", "limit": 200}, headers=anna)
-    assert len(r.json()["results"]) == 27
+        r = await client.get("/api/v1/search", params={"q": "bestand", "limit": 50}, headers=anna)
+    assert (len(r.json()["results"]), r.json()["more"]) == (27, False)
     assert len(seen) < 15, seen
 
 

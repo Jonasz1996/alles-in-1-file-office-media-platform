@@ -130,11 +130,17 @@ def _with(style: Style, field: str, value: bool | str | None) -> Style:
     return style._replace(**{field: value})
 
 
-@dataclass
+@dataclass(slots=True)
 class Cue:
+    """Een ingelezen cue, met zijn tekst al zoals in de VTT (payload). Niet de stukken (Run): een
+    tuple (Style, tekst) blijft voor de garbage collector altijd gevolgd (Style is een NamedTuple,
+    en CPython haalt alleen een gewone tuple uit de gc), en een cue vol tags heeft er duizenden.
+    Bij 1 MB SRT met "<b> </b> " liep elke volle ronde van de gc over ± 200.000 stukken (11-19 ms)
+    midden in een beurt van de worker (CI golf 2, docs/fase-5/m5.md)."""
+
     start_ms: int
     end_ms: int
-    runs: list[Run]
+    text: str
     settings: str = ""
 
 
@@ -418,18 +424,26 @@ def parse_srt(text: str) -> Iterator[Cue | None]:
         start, end = _ms(*g[0:4]), _ms(*g[4:8])
         i += 1
         body: list[str] = []
+        size = -1  # len("\n".join(body))
         while i < len(lines) and lines[i].strip():
+            # ook binnen een cue een tik: een cue van veel regels zonder lege regel ertussen
+            # kostte anders één stap van 0,14 s per MB (CI golf 2)
+            if scanned >= TICK_CHARS:
+                scanned = 0
+                yield None
             if _SRT_TIMING.match(lines[i]):
                 break
             # zonder lege regel ervoor: een nummer met een tijd eronder is de volgende cue
             nxt = lines[i + 1] if i + 1 < len(lines) else ""
             if lines[i].strip().isdigit() and _SRT_TIMING.match(nxt):
                 break
-            body.append(lines[i])
+            if size <= MAX_RAW_CUE:  # meer dan MAX_RAW_CUE tekens leest clip toch niet
+                body.append(lines[i])
+                size += len(lines[i]) + 1
             scanned += len(lines[i]) + 1
             i += 1
         runs, align = _srt_text(clip("\n".join(body)))
-        yield Cue(start, end, runs, position(align))
+        yield Cue(start, end, payload(runs), position(align))
 
 
 # --- ASS en SSA ----------------------------------------------------------------------------------
@@ -519,7 +533,7 @@ def parse_ass(text: str) -> Iterator[Cue | None]:
                 name = (fields.get("style") or "").strip().lstrip("*").lower()
                 base, style_align = styles.get(name) or styles.get("default") or (Style(), None)
                 runs, align = _ass_text(clip(fields["text"]), base, styles)
-                yield Cue(start, end, runs, position(align or style_align))
+                yield Cue(start, end, payload(runs), position(align or style_align))
 
 
 # --- WebVTT --------------------------------------------------------------------------------------
@@ -607,7 +621,7 @@ def parse_vtt(text: str) -> Iterator[Cue | None]:
         g = match.groups()
         start, end = _ms(*g[0:4]), _ms(*g[4:8])
         runs = _vtt_text(clip("\n".join(lines[at + 1 :])))
-        yield Cue(start, end, runs, _vtt_settings(g[8]))
+        yield Cue(start, end, payload(runs), _vtt_settings(g[8]))
 
 
 # --- schrijven -----------------------------------------------------------------------------------
@@ -704,7 +718,7 @@ def blocks(cues: Iterable[Cue]) -> Iterator[str]:
         start, end = max(0, cue.start_ms), min(cue.end_ms, MAX_MS)
         if end <= start:
             continue
-        text = payload(cue.runs)
+        text = cue.text
         if not text:
             continue
         key = (start, end, cue.settings, text)
@@ -730,7 +744,8 @@ def steps(data: bytes, kind: str) -> Iterator[Cue | None]:
     """De cues van een ondertitel van deze soort (srt, vtt of webvtt, ass of ssa), een voor een,
     met na elke TICK_CHARS tekens invoer een tik (None): de worker geeft dan zijn lus de beurt
     (ops/subs.py), ook in een lang stuk zonder cues. Elke stap kost hooguit een vaste tijd: één
-    cue leest hooguit MAX_RAW_CUE tekens, en alles is lineair (review golf 2, S1)."""
+    cue leest hooguit MAX_RAW_CUE tekens, en alles is lineair (review golf 2, S1). Een cue komt
+    met zijn tekst al klaar (Cue.text), zodat wat de worker bewaart de gc niets kost (CI golf 2)."""
     if kind not in KINDS:
         raise ValueError(f"onbekende soort {kind!r}")
     if len(data) > MAX_INPUT:

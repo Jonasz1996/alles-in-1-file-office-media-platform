@@ -35,10 +35,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app import access, errors, events, photodate, previews
+from app import access, errors, events, origin, photodate, previews
 from app.access import Grant, Step
 from app.config import Settings, get_settings
 from app.db import Session
+from app.dbgate import BoostLock
 from app.media import hooks as media_hooks
 from app.mime import read_head, sniff
 from app.models import Blob, GroupMember, Node, NodeTag, Share, Tag, Upload, User, Version
@@ -87,11 +88,12 @@ MOVED = {
 # Per eigenaar: quotum controleren en ruimte innemen in één keer (hervatbare uploads
 # reserveren, kopiëren maakt de kopie), zodat twee verzoeken samen niet over het quotum gaan.
 # Ook als anderen in een gedeelde map van die eigenaar uploaden: het is zijn quotum.
-user_locks: dict[uuid.UUID, asyncio.Lock] = {}
+# Wie het heeft, schrijft als voorgrond (BoostLock, app/dbgate.py).
+user_locks: dict[uuid.UUID, BoostLock] = {}
 
 
-def user_lock(user_id: uuid.UUID) -> asyncio.Lock:
-    return user_locks.setdefault(user_id, asyncio.Lock())
+def user_lock(user_id: uuid.UUID) -> BoostLock:
+    return user_locks.setdefault(user_id, BoostLock())
 
 
 def _utc(value: datetime) -> datetime:
@@ -1118,6 +1120,7 @@ async def place_file(
                 if room is not None and need > room:
                     raise no_room(owner, actor.id if actor else None)
             now = datetime.now(UTC)
+            new_content = not replacing or existing.blob_id != sha
             if replacing:
                 if existing.blob_id != sha:
                     await add_ref(session, sha, size, mime, pdf_state, owner.id)
@@ -1151,6 +1154,9 @@ async def place_file(
                 upload.node_id = node.id
             await session.flush()
             node_id = node.id  # na een rollback is het object verlopen
+            if new_content:
+                # Wie deze inhoud neerzette (fase 6, Keuze 69); zonder actor via een link
+                await origin.placed(session, node_id, actor.id if actor else None)
             # Pas nu de schijf; wat hierna nog misgaat, draait give_back() terug
             moved = await blobs.adopt(source, sha)
             await session.commit()
@@ -1427,9 +1433,9 @@ async def copy(
         await add_refs(session, Counter(n.blob_id for n in originals if n.blob_id))
         # Fase 6, §3.5: wat aan een bestand hangt, gaat mee naar de kopie (Z6: personen als de
         # eigenaar gelijk is). Nog in deze transactie, zodat de kopie nooit half klaar is.
-        await search_hooks.photo_copy(
-            session, [(n.id, new_ids[n.id]) for n in originals if n.kind == "file"]
-        )
+        pairs = [(n.id, new_ids[n.id]) for n in originals if n.kind == "file"]
+        await search_hooks.photo_copy(session, pairs)
+        await origin.copied(session, pairs, user.id)  # fase 6, Keuze 69
         await session.commit()
     top = await session.get(Node, new_ids[node.id])
     await notify(session, top, "node.created")
@@ -1471,7 +1477,15 @@ async def drop_versions(session: AsyncSession, node_ids: list[uuid.UUID]) -> Cou
 async def collect_garbage(session: AsyncSession, blobs: BlobStore) -> None:
     """Verwijdert blobs waar niemand meer naar verwijst. De database beslist: alleen een rij
     met ref_count 0 waar ook echt geen bestand of versie naar wijst, gaat weg, en pas als dat
-    vastligt ook de inhoud op schijf."""
+    vastligt ook de inhoud op schijf.
+
+    Is er geen enkele rij met ref_count 0, dan niet eens het slot (elke upload komt hier; het
+    slot wachtte op wie het had, met zijn commit erbij: de nacontrole van golf 4). Zo'n rij
+    ontstaat alleen door een verlaging die gecommit is, en wie verlaagt, roept dit na zijn
+    eigen commit aan: een rij van een ander die hier net gemist wordt, ruimt die ander op."""
+    if (await session.scalar(select(Blob.sha256).where(Blob.ref_count <= 0).limit(1))) is None:
+        await session.commit()  # de leestransactie dicht (PostgreSQL); in SQLite niets
+        return
     async with blobs.lock:
         orphans = (await session.scalars(select(Blob.sha256).where(Blob.ref_count <= 0))).all()
         gone = []
@@ -1586,6 +1600,9 @@ async def restore_version(
                 node, blob_taken_at=taken, fallback=version.created_at, tz=settings.timezone
             )
             await session.delete(version)
+            # Teruggezette inhoud telt als nieuwe inhoud van wie terugzet (fase 6, Keuze 69):
+            # wie de versie destijds maakte, staat nergens
+            await origin.placed(session, node.id, user.id)
         await session.commit()
     if changed:
         await notify(session, node, "node.changed", media_type="node.version")
