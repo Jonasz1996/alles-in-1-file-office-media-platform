@@ -25,6 +25,7 @@ ENV=/etc/clusterforge/platform.env
 STATE=/var/lib/clusterforge/platform-image.rev
 BACKUPS=/var/backups/cf-platform
 EIGEN=/var/lib/cf-platform/bijwerken
+LOCK=/run/cf-platform-bijwerken.lock
 WACHT=900
 
 say() { echo "== $*"; }
@@ -69,7 +70,7 @@ for t in docker git curl ip flock mountpoint; do
   command -v "$t" >/dev/null || fail "$t ontbreekt"
 done
 mkdir -p "$EIGEN" && chmod 0700 "$EIGEN"
-exec 9>/run/cf-platform-bijwerken.lock
+exec 9>"$LOCK"
 flock -n 9 || fail "Platform bijwerken of Platform terug loopt al op deze node"
 
 VIP=$(ctl_get VIP)
@@ -130,7 +131,10 @@ v=$(img_id cf-platform:vorige); [ -n "$v" ] && note "cf-platform:vorige: $(kort 
 if [ -n "$basis" ]; then docker tag "$basis" cf-platform:basis || fail "docker tag"; fi
 if [ -n "$local_rev" ] && [ "$local_rev" != "$oud_rev" ]; then
   say "cf-platform:local is een teruggezet image ($(kort "$local_rev")); opnieuw bouwen: $REF"
-  "$SRCSH" || fail "bouwen mislukt; het platform is niet geraakt"
+  if ! "$SRCSH"; then
+    docker image rm cf-platform:basis >/dev/null 2>&1
+    fail "bouwen mislukt; het platform is niet geraakt"
+  fi
 elif "$SRCSH" --check >/dev/null 2>&1; then
   say "Code en image horen al bij $REF; niets te bouwen"
 else

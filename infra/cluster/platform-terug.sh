@@ -26,7 +26,9 @@ DATA=/srv/platform-data
 ACTIVE=$DATA/.cf-platform-active
 OPZIJ=$DATA/.cf-platform-active.terug
 ENV=/etc/clusterforge/platform.env
+BACKUPS=/var/backups/cf-platform
 EIGEN=/var/lib/cf-platform/bijwerken
+LOCK=/run/cf-platform-bijwerken.lock
 WACHT=900
 
 say() { echo "== $*"; }
@@ -103,13 +105,18 @@ herstel_markering() {
 for f in "$CTL" "$ENV"; do [ -e "$f" ] || fail "$f ontbreekt"; done
 for t in docker curl ip flock mountpoint; do command -v "$t" >/dev/null || fail "$t ontbreekt"; done
 mkdir -p "$EIGEN" && chmod 0700 "$EIGEN"
-exec 9>/run/cf-platform-bijwerken.lock
+exec 9>"$LOCK"
 flock -n 9 || fail "Platform bijwerken of Platform terug loopt al op deze node"
 VIP=$(ctl_get VIP)
 [ -n "$VIP" ] || fail "VIP niet te lezen uit $CTL"
 POORT=$(env_get PORT); POORT=${POORT:-80}
 VIPHIER=nee; has_ip "$VIP" && VIPHIER=ja
 say "$(hostname): $([ "$VIPHIER" = ja ] && echo "heeft het VIP van het platform ($VIP)" || echo "zonder het VIP van het platform")"
+# De node met het VIP komt als laatste: faalt het hier vóór het image terug
+# is, dan kunnen de andere nodes al het vorige image hebben.
+if [ "$VIPHIER" = ja ]; then
+  HINT="De nodes zonder VIP hebben mogelijk al het vorige image; het platform hier draait nog de nieuwe versie. Draai Platform bijwerken om ze weer gelijk te zetten."
+fi
 if ! systemctl is-active --quiet cf-platform-mount || ! mountpoint -q "$DATA"; then
   fail "$DATA is niet gemount (journalctl -u cf-platform-mount); eerst dat oplossen"
 fi
@@ -141,9 +148,6 @@ lopend=$(lopend_id); [ -n "$lopend" ] && note "draait hier: image $(kort "${lope
 
 # Moet de database terug? Elke node kijkt, zodat een weigering de run stopt
 # vóór er iets verandert.
-if [ "$VIPHIER" = ja ] && [ "$MET_DATABASE" = ja ]; then
-  HINT="De nodes zonder VIP hebben mogelijk al het vorige image; het platform hier draait nog de nieuwe versie. Draai Platform bijwerken om ze weer gelijk te zetten."
-fi
 db_rev=""
 if command -v psql >/dev/null && db_delen; then db_rev=$(db_revisie); fi
 if [ -z "$db_rev" ]; then
@@ -201,7 +205,7 @@ if [ "$DB_TERUG" = ja ]; then
   say "Eerst een back-up van de database zoals hij nu is"
   "$CTL" db-backup || fail "back-up mislukt; niets veranderd aan de database"
   # shellcheck disable=SC2012
-  nu=$(ls -1t /var/backups/cf-platform/platform-*.dump 2>/dev/null | head -n 1)
+  nu=$(ls -1t "$BACKUPS"/platform-*.dump 2>/dev/null | head -n 1)
   [ -n "$nu" ] && { ln -f "$nu" "$EIGEN/voor-terug.dump" 2>/dev/null || cp -f "$nu" "$EIGEN/voor-terug.dump"; }
   say "Database terugzetten (één transactie: alles of niets)"
   rm -f "$EIGEN/pg_restore.rc"
