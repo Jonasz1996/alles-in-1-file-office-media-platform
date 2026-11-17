@@ -40,10 +40,9 @@ from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import delete, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import analysis, face_rows, jobs, previews
+from app import analysis, dbdialect, face_rows, jobs, previews
 from app.analyse import client, monitor, wire
 from app.config import Settings
 from app.db import get_engine
@@ -203,8 +202,9 @@ async def plan_nodes(
             "queued_at": at,
             "updated_at": at,
         }
+        dialect = dbdialect.of(db)
         await db.execute(
-            sqlite_insert(FaceScan)
+            dialect.insert(FaceScan)
             .values(node_id=r.id, **values)
             .on_conflict_do_update(index_elements=["node_id"], set_=values)
         )
@@ -740,8 +740,9 @@ async def rescan(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> bool:
         "queued_at": at,
         "updated_at": at,
     }
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(FaceScan)
+        dialect.insert(FaceScan)
         .values(node_id=node, **values)
         .on_conflict_do_update(index_elements=["node_id"], set_=values)
     )

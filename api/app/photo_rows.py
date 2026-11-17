@@ -49,11 +49,21 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import anyio.to_thread
-from sqlalchemy import Float, Integer, String, Text, bindparam, delete, exists, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import (
+    BigInteger,
+    Float,
+    Integer,
+    String,
+    Text,
+    bindparam,
+    delete,
+    exists,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import jobs
+from app import dbdialect, jobs
 from app.db import get_engine
 from app.geo import tiles
 from app.models import BlobMeta, Job, Node, PhotoGeo, PhotoPref, Setting
@@ -79,11 +89,12 @@ _GEO = PhotoGeo.__table__
 _META = BlobMeta.__table__
 
 
-def _excluded(table: Any, cols: Iterable[str]) -> dict[str, Any]:
+def _excluded(dialect: Any, table: Any, cols: Iterable[str]) -> dict[str, Any]:
     """De waarden van de nieuwe rij bij een conflict (excluded.kolom). Een upsert, nooit REPLACE:
     die wist zonder DELETE-trigger (Keuze 3). De insert staat in dezelfde keten als de upsert,
-    zodat de wachter van tests/search/test_search_no_replace.py de tabel ziet."""
-    excluded = sqlite_insert(table).excluded
+    zodat de wachter van tests/search/test_search_no_replace.py de tabel ziet. dialect:
+    dbdialect.of(db), de insert van SQLite of van PostgreSQL."""
+    excluded = dialect.insert(table).excluded
     return {c: excluded[c] for c in cols}
 
 
@@ -108,9 +119,11 @@ async def set_meta(db: AsyncSession, rows: Iterable[dict[str, Any]]) -> None:
     values = list(rows)
     if not values:
         return
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(BlobMeta.__table__).on_conflict_do_update(
-            index_elements=[_META.c.blob_sha], set_=_excluded(_META, ("camera", "lens", "gps"))
+        dialect.insert(BlobMeta.__table__).on_conflict_do_update(
+            index_elements=[_META.c.blob_sha],
+            set_=_excluded(dialect, _META, ("camera", "lens", "gps")),
         ),
         values,
     )
@@ -150,9 +163,10 @@ _COLS = ("node_id", "owner_id", "lat", "lon", "alt", "x16", "y16", "place_id", "
          "admin1", "source")  # fmt: skip
 
 
-def _insert(replace: bool) -> Any:
+def _insert(dialect: Any, replace: bool) -> Any:
     """INSERT … SELECT voor elk bestand met de inhoud :g_sha, met de controle van Keuze 25a en
-    28 in dezelfde statement; per inhoud één stel parameters (executemany)."""
+    28 in dezelfde statement; per inhoud één stel parameters (executemany). g_place is een
+    BigInteger: een plaats-id is 48 bits, en PostgreSQL (asyncpg) zet er anders ::INTEGER bij."""
     sel = select(
         _NODE.c.id,
         _NODE.c.owner_id,
@@ -161,7 +175,7 @@ def _insert(replace: bool) -> Any:
         bindparam("g_alt", type_=Float),
         bindparam("g_x16", type_=Integer),
         bindparam("g_y16", type_=Integer),
-        bindparam("g_place", type_=Integer),
+        bindparam("g_place", type_=BigInteger),
         bindparam("g_cc", type_=String),
         bindparam("g_admin1", type_=Text),
         bindparam("g_source", type_=String),
@@ -175,12 +189,14 @@ def _insert(replace: bool) -> Any:
         sel = sel.where(~exists().where(_GEO.c.node_id == _NODE.c.id))
     if replace:
         return (
-            sqlite_insert(PhotoGeo.__table__)
+            dialect.insert(PhotoGeo.__table__)
             .from_select(list(_COLS), sel)
-            .on_conflict_do_update(index_elements=[_GEO.c.node_id], set_=_excluded(_GEO, _COLS[2:]))
+            .on_conflict_do_update(
+                index_elements=[_GEO.c.node_id], set_=_excluded(dialect, _GEO, _COLS[2:])
+            )
         )
     return (
-        sqlite_insert(PhotoGeo.__table__)
+        dialect.insert(PhotoGeo.__table__)
         .from_select(list(_COLS), sel)
         .on_conflict_do_nothing(index_elements=[_GEO.c.node_id])
     )
@@ -211,7 +227,7 @@ async def write(
             }
         )
     if params:
-        await db.execute(_insert(replace), params)
+        await db.execute(_insert(dbdialect.of(db), replace), params)
 
 
 async def clear(db: AsyncSession, shas: Sequence[str]) -> None:
