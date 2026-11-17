@@ -52,6 +52,7 @@ async def uploads(client, h, parent, prefix: str) -> list[float]:
     return took
 
 
+@pytest.mark.sqlite_only("wal_checkpoint(TRUNCATE) met een open lezer bestaat alleen op SQLite")
 async def test_een_upload_tijdens_het_wissen_met_een_open_lezer(
     client, settings, nep, monkeypatch, capsys
 ):
