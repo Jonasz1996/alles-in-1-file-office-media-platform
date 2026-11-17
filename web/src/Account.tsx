@@ -9,7 +9,7 @@
 // /account). De twee zinnen staan in het gebied about (routes.tsx laadt het mee).
 
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from "react";
-import { type Api, api, type TotpSetup, type User } from "./api";
+import { type Api, type AppPassword, api, type TotpSetup, type User } from "./api";
 import { useCurrentUser, useShellActions } from "./currentUser";
 import { errorText, fmt, lazyWithAreas, t } from "./i18n";
 import { Link } from "./links";
@@ -96,6 +96,7 @@ export function Account({
         <>
           <PasswordChange totpEnabled={user.totp_enabled} onChanged={() => setPasswordChanged((n) => n + 1)} />
           <Sessions reload={`${passwordChanged}-${user.totp_enabled}`} />
+          {user.role !== "guest" && <AppPasswords email={user.email} />}
           <section aria-labelledby="account-about">
             <h2 id="account-about">{t("about.account.title")}</h2>
             <p>
@@ -109,6 +110,119 @@ export function Account({
 }
 
 const MIN_PASSWORD = 10;
+
+function AppPasswords({ email }: { email: string }) {
+  const [rows, setRows] = useState<AppPassword[] | null>(null);
+  const [name, setName] = useState("");
+  const [made, setMade] = useState<{ password: string; login: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const origin = window.location.origin;
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await api.appPasswords());
+      setError(null);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function make(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const row = await api.makeAppPassword(name.trim());
+      setMade({ password: row.password, login: row.login });
+      setName("");
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function revoke(row: AppPassword) {
+    const yes = await confirm({
+      title: t("account.devices.revokeTitle", { name: row.name }),
+      message: t("account.devices.revokeText"),
+      confirm: t("account.devices.revoke"),
+      danger: true,
+    });
+    if (!yes) return;
+    try {
+      await api.revokeAppPassword(row.id);
+      toast(t("account.devices.revoked", { name: row.name }), { kind: "ok" });
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  return (
+    <section aria-labelledby="account-devices">
+      <h2 id="account-devices">{t("account.devices.title")}</h2>
+      <p className="muted">{t("account.devices.help")}</p>
+      <p>
+        {t("account.devices.server")}: <code>{origin}</code>
+        <br />
+        {t("account.devices.webdav")}: <code>{`${origin}/remote.php/dav/files/${email}/`}</code>
+      </p>
+      {error && <p role="alert">{error}</p>}
+      {made && (
+        <div role="status">
+          <h3>{t("account.devices.madeTitle")}</h3>
+          <p>{t("account.devices.madeText", { login: made.login })}</p>
+          <p>
+            <code>{made.password}</code>
+          </p>
+          <Button onClick={() => setMade(null)}>{t("account.devices.done")}</Button>
+        </div>
+      )}
+      {rows && rows.length === 0 && <p className="muted">{t("account.devices.none")}</p>}
+      {rows && rows.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("account.sessions.device")}</th>
+                <th>{t("account.devices.lastUsed")}</th>
+                <th>
+                  <span className="sr-only">{t("account.devices.revoke")}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.name}</td>
+                  <td>{row.last_used_at ? fmt.dateTime(row.last_used_at) : t("account.devices.never")}</td>
+                  <td className="actions">
+                    <Button
+                      aria-label={t("account.devices.revokeLabel", { name: row.name })}
+                      onClick={() => void revoke(row)}
+                    >
+                      {t("account.devices.revoke")}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <form className="toolbar" onSubmit={(e) => void make(e)}>
+        <Field label={t("account.devices.name")}>
+          {(c) => <input {...c} value={name} maxLength={200} required onChange={(e) => setName(e.target.value)} />}
+        </Field>
+        <Button type="submit" disabled={!name.trim()}>
+          {t("account.devices.make")}
+        </Button>
+      </form>
+    </section>
+  );
+}
 
 function PasswordChange({ totpEnabled, onChanged }: { totpEnabled: boolean; onChanged: () => void }) {
   const empty = { current: "", next: "", repeat: "", code: "" };

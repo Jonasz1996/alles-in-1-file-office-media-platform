@@ -77,6 +77,25 @@ const en: Translation<typeof nl> = {
     download: "Download as a text file",
     done: "I have saved them",
   },
+  devices: {
+    title: "Apps and sync",
+    help: "Connect the Nextcloud app (Windows, Mac, Linux, Android, iOS) with your server address; the app opens a sign-in page itself. For rclone, TrueNAS or another WebDAV client, create an app password here.",
+    server: "Server address for the Nextcloud app",
+    webdav: "WebDAV address",
+    name: "Name (e.g. TrueNAS or rclone)",
+    make: "Create app password",
+    madeTitle: "Your new app password",
+    madeText: "You will only see it once. Username: {login}",
+    done: "Done",
+    none: "No connected apps yet.",
+    lastUsed: "Last used",
+    never: "never",
+    revoke: "Revoke",
+    revokeLabel: "Revoke {name}",
+    revokeTitle: "Revoke {name}?",
+    revokeText: "That app or device can no longer sync.",
+    revoked: "{name} revoked",
+  },
 };
 
 export default en;

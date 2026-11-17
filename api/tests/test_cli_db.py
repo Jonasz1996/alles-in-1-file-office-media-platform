@@ -20,7 +20,7 @@ from app.db import get_engine
 from app.migrate import upgrade
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0012"
+HEAD = "0015"
 
 
 async def run_cli(settings, *args: str, stdin: bytes | None = None):
@@ -73,7 +73,7 @@ async def test_downgrade_vraagt_om_bevestiging(settings):
     result = await run_cli(settings, "db-downgrade", "0007", stdin=b"nee\n")
     assert result.returncode == 1
     out = result.stdout.decode()
-    assert "van revisie 0012 terug naar 0007" in out
+    assert f"van revisie {HEAD} terug naar 0007" in out
     # Wat er weggaat, de nieuwste revisie eerst (§3.1a)
     assert cli.BEELD_LOST in out and cli.FACES_LOST in out and cli.SEARCH_LOST in out
     assert out.index(cli.BEELD_LOST) < out.index(cli.FACES_LOST) < out.index(cli.SEARCH_LOST)
@@ -119,10 +119,10 @@ async def test_downgrade_met_ja_vraagt_niets(settings):
 def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a)."""
-    assert cli.removed_revisions(HEAD, "0011") == ["0012"]
-    assert cli.removed_revisions(HEAD, "0010") == ["0012", "0011"]
-    assert cli.removed_revisions(HEAD, "0009") == ["0012", "0011", "0010"]
-    assert cli.removed_revisions(HEAD, "0007") == ["0012", "0011", "0010", "0009", "0008"]
+    assert cli.removed_revisions(HEAD, "0011") == ["0015", "0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0015", "0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0015", "0012", "0011", "0010"]
+    assert cli.removed_revisions(HEAD, "0007") == ["0015", "0012", "0011", "0010", "0009", "0008"]
     assert cli.removed_revisions("0009", "0008") == ["0009"]
     assert cli.SEARCH_REVISION == "0010"
     assert cli.FACES_REVISION == "0011"

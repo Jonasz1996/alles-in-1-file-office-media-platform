@@ -615,7 +615,7 @@ B49–B70.
 
 Doel: bestanden overal in sync en bereikbaar voor andere software.
 
-- [ ] WebDAV-endpoint, compatibel met rclone en bestaande sync-clients
+- [x] WebDAV-endpoint, compatibel met rclone en de Nextcloud-clients (inlogflow v2, app-wachtwoorden, chunking v2); zie [fase-7/nextcloud-en-truenas.md](fase-7/nextcloud-en-truenas.md)
 
 - [ ] Delta-sync-API voor eigen apps (change-feed met cursor),
   conflictafhandeling

@@ -97,7 +97,7 @@ async def test_de_kopie_van_0012_zonder_gezichten_en_beeld(tmp_path, hoe):
             leeg.mkdir()
             target = _install(source, folder, leeg)
 
-    assert target.parent == folder and target.name.startswith("platform-0012-")
+    assert target.parent == folder and target.name.startswith("platform-0015-")
     assert sorted(p.name for p in folder.iterdir()) == [target.name]  # geen .part of journaal
     data = target.read_bytes()
     assert b"MERKTEKEN" not in data  # geen vector, geen tekst, ook niet in vrije pagina's
@@ -108,7 +108,7 @@ async def test_de_kopie_van_0012_zonder_gezichten_en_beeld(tmp_path, hoe):
     with sqlite3.connect(f"file:{target}?mode=ro", uri=True) as kopie:
         assert kopie.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert kopie.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert kopie.execute("SELECT version_num FROM alembic_version").fetchall() == [("0012",)]
+        assert kopie.execute("SELECT version_num FROM alembic_version").fetchall() == [("0015",)]
 
     # De database zelf: precies wat er was, met de merktekens
     assert _all(source) == before
