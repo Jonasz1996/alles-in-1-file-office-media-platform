@@ -16,6 +16,12 @@ Volgorde: voorstellen de beste eerst (suggest_score, dan rowid); groepen de groo
 daarin de nieuwste eerst (rowid aflopend: de volgorde van invoegen; created_at staat niet in de
 index). Een cursor is de plek in de lijst (een getal als tekst); een verkeerde cursor begint
 vooraan.
+
+PostgreSQL (0.8.2, P1 pg-sql): dezelfde vragen in de vorm van PostgreSQL, met dezelfde uitkomst.
+De volgorde van invoegen is daar face.seq (dbdialect.FaceSeq; migratie 0013), een score zonder
+waarde staat achteraan zoals in SQLite (NULLS LAST), en de hints voor SQLite (+kolom, CROSS JOIN)
+vallen weg. Op SQLite blijft de tekst van elke vraag precies wat hij was
+(tests/test_pg_dialect.py).
 """
 
 from __future__ import annotations
@@ -25,10 +31,10 @@ import uuid
 from collections import Counter
 from typing import Any
 
-from sqlalchemy import Integer, TextClause, Uuid, func, literal_column, select, text
+from sqlalchemy import Integer, TextClause, Uuid, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import face_rows
+from app import dbdialect, face_rows
 from app.models import Face, FaceOwner, FacePerson, Node, Person
 from app.people.faces import drempels
 from app.people.faces_types import (
@@ -51,7 +57,7 @@ GROUPS_PAGE = 30
 SAMPLE = 6
 GROUP_FACES = 12
 SCAN_STATES = ("wait", "busy", "done", "failed", "skip")
-ROWID = literal_column("face.rowid")
+ROWID = dbdialect.FaceSeq()  # face.rowid op SQLite, face.seq op PostgreSQL
 
 
 def offset(cursor: str | None) -> int:
@@ -66,7 +72,15 @@ def _next(start: int, got: int, page: int) -> str | None:
     return str(start + page) if got > page else None
 
 
-def _gone_nodes(rule: str = OWN_LIVE_SQL) -> str:
+def _me(db: Any, value: Any) -> Any:
+    """Een uuid als parameter van een vraag als tekst: SQLite bewaart hem als 32 hex, PostgreSQL
+    als uuid (asyncpg wil dan het uuid zelf)."""
+    if isinstance(value, uuid.UUID) and not dbdialect.is_pg(db):
+        return value.hex
+    return value
+
+
+def _gone_nodes(rule: str = OWN_LIVE_SQL, dialect: str = dbdialect.SQLITE) -> str:
     """SQL: de nodes van :me die de regel (OWN_LIVE_SQL) laat vallen. Gezichten en face_scan
     staan alleen op bestanden (de triggers van 0011), dus voor hen is dat dead = 1: de
     prullenbak, ook via een map erboven. Gezocht vanaf de wortels in de prullenbak
@@ -74,8 +88,16 @@ def _gone_nodes(rule: str = OWN_LIVE_SQL) -> str:
     houdt SQLite van ix_node_owner_taken af), zoals DEAD_SUBTREE de boom afbakent. Alleen de
     eigen wortels: een boom heeft één eigenaar (een nieuwe node krijgt die van zijn map,
     routers/uploads.py en routers/files.py; verplaatsen naar een andere eigenaar geeft
-    cross_owner), dus de prullenbak van een ander kost hier niets."""
+    cross_owner), dus de prullenbak van een ander kost hier niets. PostgreSQL kent geen CROSS
+    JOIN met ON en geen unaire + op uuid: daar een gewone JOIN zonder hints."""
     end = "substr(t.mpath, 1, length(t.mpath) - 1) || '0'"
+    if dialect != dbdialect.SQLITE:
+        return (
+            "SELECT d.id FROM node t JOIN node d"
+            f" ON d.mpath >= t.mpath AND d.mpath < {end}"
+            " WHERE t.deleted_at IS NOT NULL AND t.owner_id = :me AND d.owner_id = :me"
+            f" AND NOT ({rule.format(n='d')})"
+        )
     return (
         "SELECT d.id FROM node t CROSS JOIN node d"
         f" ON d.mpath >= t.mpath AND d.mpath < {end}"
@@ -91,13 +113,16 @@ async def _gone_by(
     (key cluster) de gezichten (hidden 0) op eigen foto's die de regel (OWN_LIVE_SQL, die elke
     aanroeper zelf noemt) laat vallen."""
     kind = Uuid if key == "suggest_id" else Integer
+    dialect = dbdialect.name_of(db)
+    plus = "+" if dialect == dbdialect.SQLITE else ""
     rows = await db.execute(
         text(
             f"SELECT g.{key} AS k, count(*) AS n FROM face g"
-            f" WHERE g.node_id IN ({_gone_nodes(rule)})"
-            f" AND +g.owner_id = :me AND +g.hidden = 0 AND g.{key} IS NOT NULL GROUP BY g.{key}"
+            f" WHERE g.node_id IN ({_gone_nodes(rule, dialect)})"
+            f" AND {plus}g.owner_id = :me AND {plus}g.hidden = 0 AND g.{key} IS NOT NULL"
+            f" GROUP BY g.{key}"
         ).columns(k=kind),
-        {"me": owner.hex},
+        {"me": _me(db, owner)},
     )
     return Counter({k: n for k, n in rows})
 
@@ -174,23 +199,29 @@ def _face_cols(owner: uuid.UUID, live: Any = own_live, *, by_node: bool = False)
 
 
 @functools.cache
-def _firsts_sql(key: str, n: int, rule: str = OWN_LIVE_SQL) -> TextClause:
+def _firsts_sql(
+    key: str, n: int, rule: str = OWN_LIVE_SQL, dialect: str = dbdialect.SQLITE
+) -> TextClause:
     """De eerste paar gezichten van n personen (key suggest_id: de beste eerst) of n groepen (key
     cluster: de nieuwste eerst) in één vraag: UNION ALL, en elk deel loopt zijn index af
     (ix_face_open of ix_face_cluster) met de join op node en de regel (OWN_LIVE_SQL) per gezicht,
     tot zijn LIMIT. Als tekst en per n één keer gemaakt: 60 keer _face_cols kost meer dan de
-    vraag zelf."""
+    vraag zelf. PostgreSQL: face.seq voor rowid, een score zonder waarde achteraan (zoals in
+    SQLite) en een naam voor elk deel (AS p0, p1, ...)."""
+    seq = dbdialect.face_seq_sql(dialect, "f")
+    last = "" if dialect == dbdialect.SQLITE else " NULLS LAST"
+    alias = "" if dialect == dbdialect.SQLITE else " AS p{i}"
     order, limit = {
-        "suggest_id": ("f.suggest_score DESC, f.rowid", SAMPLE),
-        "cluster": ("f.rowid DESC", GROUP_FACES),
+        "suggest_id": (f"f.suggest_score DESC{last}, {seq}", SAMPLE),
+        "cluster": (f"{seq} DESC", GROUP_FACES),
     }[key]
     part = (
         "SELECT * FROM (SELECT f.id, f.node_id, f.x, f.y, f.w, f.h, f.suggest_id,"
-        " f.suggest_score, f.suggest_why, f.cluster, f.rowid AS r, (SELECT p.person_id"
+        f" f.suggest_score, f.suggest_why, f.cluster, {seq} AS r, (SELECT p.person_id"
         " FROM face_person p WHERE p.face_id = f.id AND p.verdict = 'ja') AS person"
         " FROM face f JOIN node n ON n.id = f.node_id"
         f" WHERE f.owner_id = :me AND {rule.format(n='n')} AND f.hidden = 0"
-        f" AND f.{key} = :k{{i}} ORDER BY {order} LIMIT {limit})"
+        f" AND f.{key} = :k{{i}} ORDER BY {order} LIMIT {limit}){alias}"
     )
     return text(" UNION ALL ".join(part.format(i=i) for i in range(n))).columns(
         id=Uuid, node_id=Uuid, suggest_id=Uuid, person=Uuid
@@ -200,9 +231,9 @@ def _firsts_sql(key: str, n: int, rule: str = OWN_LIVE_SQL) -> TextClause:
 async def _firsts(db: AsyncSession, owner: uuid.UUID, key: str, values: list[Any]) -> list[Any]:
     if not values:
         return []
-    params = {f"k{i}": v.hex if isinstance(v, uuid.UUID) else v for i, v in enumerate(values)}
-    sql = _firsts_sql(key, len(values), OWN_LIVE_SQL)
-    return list(await db.execute(sql, {"me": owner.hex, **params}))
+    params = {f"k{i}": _me(db, v) for i, v in enumerate(values)}
+    sql = _firsts_sql(key, len(values), OWN_LIVE_SQL, dbdialect.name_of(db))
+    return list(await db.execute(sql, {"me": _me(db, owner), **params}))
 
 
 async def file_faces(db: AsyncSession, owner: uuid.UUID, node: uuid.UUID) -> list[FaceOut]:
@@ -237,14 +268,34 @@ async def _cluster_sizes(
 
 
 @functools.cache
-def _counts_sql(rule: str = OWN_LIVE_SQL) -> TextClause:
+def _counts_sql(rule: str = OWN_LIVE_SQL, dialect: str = dbdialect.SQLITE) -> TextClause:
     """De stand in één vraag (een rondgang, alleen getallen): per soort (k) de tellingen uit de
     indexen, en wat de regel (OWN_LIVE_SQL) daarvan laat vallen. De nodes die wegvallen (gone)
     één keer, als MATERIALIZED. k: 1 face_scan per state, 2 daarvan weg; 3 open gezichten per
     groep; 4 de gezichten die weg zijn, per groep (ook zonder groep: a NULL), met hoeveel daarvan
-    een ja hebben; 5 alle gezichten, 6 alle ja's; 7 wiping."""
+    een ja hebben; 5 alle gezichten, 6 alle ja's; 7 wiping.
+
+    PostgreSQL: IN (SELECT id FROM gone) voor IN gone, geen +, sum() over een getal in plaats van
+    een waar/onwaar, en a overal als tekst (UNION ALL wil één soort per kolom)."""
     states = ", ".join(f"'{s}'" for s in SCAN_STATES)
     ja = "EXISTS (SELECT 1 FROM face_person p WHERE p.face_id = g.id AND p.verdict = 'ja')"
+    if dialect != dbdialect.SQLITE:
+        return text(
+            f"WITH gone(id) AS MATERIALIZED ({_gone_nodes(rule, dialect)})"
+            " SELECT 1 AS k, state AS a, count(*) AS n, 0 AS ja FROM face_scan"
+            f" WHERE state IN ({states}) AND owner_id = :me GROUP BY state"
+            " UNION ALL SELECT 2, state, count(*), 0 FROM face_scan"
+            " WHERE node_id IN (SELECT id FROM gone) AND owner_id = :me GROUP BY state"
+            " UNION ALL SELECT 3, CAST(cluster AS TEXT), count(*), 0 FROM face"
+            " WHERE owner_id = :me AND hidden = 0 AND cluster IS NOT NULL GROUP BY cluster"
+            f" UNION ALL SELECT 4, CAST(g.cluster AS TEXT), count(*), sum(CAST({ja} AS INTEGER))"
+            " FROM face g WHERE g.node_id IN (SELECT id FROM gone) AND g.owner_id = :me"
+            " AND g.hidden = 0 GROUP BY g.cluster"
+            " UNION ALL SELECT 5, NULL, count(*), 0 FROM face WHERE owner_id = :me AND hidden = 0"
+            " UNION ALL SELECT 6, NULL, count(*), 0 FROM face_person"
+            " WHERE owner_id = :me AND verdict = 'ja'"
+            " UNION ALL SELECT 7, CAST(wiping AS TEXT), 0, 0 FROM face_owner WHERE owner_id = :me"
+        )
     return text(
         f"WITH gone(id) AS MATERIALIZED ({_gone_nodes(rule)})"
         " SELECT 1 AS k, state AS a, count(*) AS n, 0 AS ja FROM face_scan"
@@ -269,7 +320,8 @@ async def counts(db: AsyncSession, owner: uuid.UUID) -> tuple[FacesPhotos, Faces
     sizes: Counter[int] = Counter()
     found = named = 0
     wiping = False
-    for k, a, n, ja in await db.execute(_counts_sql(OWN_LIVE_SQL), {"me": owner.hex}):
+    sql = _counts_sql(OWN_LIVE_SQL, dbdialect.name_of(db))
+    for k, a, n, ja in await db.execute(sql, {"me": _me(db, owner)}):
         if k == 1:
             states[a] += n
         elif k == 2:
@@ -285,7 +337,7 @@ async def counts(db: AsyncSession, owner: uuid.UUID) -> tuple[FacesPhotos, Faces
         elif k == 6:
             named += n
         else:
-            wiping = bool(a)
+            wiping = bool(int(a))  # PostgreSQL: als tekst (zie _counts_sql)
     photos = FacesPhotos(
         total=sum(states.values()),
         done=states["done"],
@@ -339,6 +391,14 @@ async def suggestions(
     return SuggestionsByPerson(people=people, cursor=_next(start, len(page), PEOPLE_PAGE))
 
 
+def _best_first(db: Any) -> Any:
+    """De hoogste score eerst; zonder score achteraan, zoals SQLite NULL sorteert (PostgreSQL
+    zet NULL bij DESC vooraan)."""
+    if dbdialect.is_pg(db):
+        return Face.suggest_score.desc().nulls_last()
+    return Face.suggest_score.desc()
+
+
 async def person_suggestions(
     db: AsyncSession, owner: uuid.UUID, person: uuid.UUID, cursor: str | None, limit: int
 ) -> FacePage:
@@ -347,7 +407,7 @@ async def person_suggestions(
         await db.execute(
             _face_cols(owner, own_live)
             .where(Face.suggest_id == person)
-            .order_by(Face.suggest_score.desc(), ROWID)
+            .order_by(_best_first(db), ROWID)
             .offset(start)
             .limit(limit + 1)
         )
