@@ -32,8 +32,9 @@ export function FacesBlock({ faces = null }: { faces?: AdminFaces | null }): JSX
   return <FacesState faces={faces} />;
 }
 
-/** De redenen van down die de app kent (app.analyse.client.REASONS, bad_answer en no_sqlite van
- * app.analyse.monitor); een andere reden staat er letterlijk. */
+/** De redenen van down die de app kent (app.analyse.client.REASONS, en bad_answer,
+ * pg_not_enabled en no_pg_triggers van app.analyse.monitor); een andere reden staat er
+ * letterlijk. */
 const REASONS = [
   "key_missing",
   "key_reused",
@@ -43,7 +44,8 @@ const REASONS = [
   "no_answer",
   "sandbox",
   "bad_answer",
-  "no_sqlite",
+  "pg_not_enabled",
+  "no_pg_triggers",
 ] as const;
 
 /** De regel Analyse: de stand, met bij down de reden en bij models_missing de namen. */

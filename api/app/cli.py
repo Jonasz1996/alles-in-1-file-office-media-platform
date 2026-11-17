@@ -133,6 +133,7 @@ from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
+from app.analyse import pgcheck
 from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
@@ -571,6 +572,8 @@ def _stub(name: str) -> int:
 
 
 FACES_COMMANDS = ("analyse-bench", "analyse-kwaliteit")
+# De commando's die Settings.analyse_on lezen (de beeld-commando's: beeld_cli.COMMANDS)
+ANALYSE_COMMANDS = ("analyse-status", *FACES_COMMANDS)
 
 
 def _faces_measure(settings: Settings, args: argparse.Namespace) -> int:
@@ -772,6 +775,9 @@ def main(argv: list[str] | None = None) -> int:
     _media_parsers(commands)
     args = parser.parse_args(argv)
     settings = get_settings()
+    if args.command in ANALYSE_COMMANDS or args.command in beeld_cli.COMMANDS:
+        # Op PostgreSQL de triggers van 0013 (Settings.analyse_on); op SQLite niets
+        pgcheck.check_cli(settings)
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:

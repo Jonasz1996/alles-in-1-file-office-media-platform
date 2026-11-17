@@ -61,8 +61,11 @@ describe("de regel Analyse: de stand van de monitor", () => {
     expect(analyseText({ analyse: "down", reason: "bad_answer" })).toBe(
       "niet bereikbaar: de analyse geeft een antwoord dat niet klopt",
     );
-    expect(analyseText({ analyse: "down", reason: "no_sqlite" })).toBe(
-      "niet bereikbaar: de analyse werkt alleen met SQLite",
+    expect(analyseText({ analyse: "down", reason: "pg_not_enabled" })).toBe(
+      "niet bereikbaar: ANALYSE_POSTGRES staat uit",
+    );
+    expect(analyseText({ analyse: "down", reason: "no_pg_triggers" })).toBe(
+      "niet bereikbaar: een trigger van 0013 ontbreekt",
     );
     expect(analyseText({ analyse: "models_missing", reason: "yunet, sface" })).toBe(
       "een model ontbreekt of klopt niet: yunet, sface",

@@ -6,13 +6,13 @@ Deze router komt in main.py vóór routers/people.py, zodat /people/faces/... no
 krijgt bij GET /files/{id}/faces [], anders 404. Aan- en uitzetten gaat via PATCH
 /me/photo-settings (routers/photo_prefs.py, de schakelaar van app/people/faces/register.py).
 
-**Uit is onzichtbaar.** Met de analyse uit (PLATFORM_ANALYSE_ENABLED niet aan, of geen SQLite:
-analyse_on) antwoordt elke route hier na de inlog zoals de stub van Z0b in 0.8.0: 501
-not_built("X2"), ook voor een gast (FEITEN van golf 6; de samenvoeging van golf 6,
-tests/uit080/). Staat de analyse aan maar is er geen map PLATFORM_FACES_KEYS (state.running),
-dan 409 faces_unavailable. In beide gevallen komt er geen job en geen bestand. Draaien gezichten,
-dan krijgt een gast 403 guest, en met gezichten uit voor de eigenaar 409 faces_off (behalve de
-status, en wipe-unnamed).
+**Uit is onzichtbaar.** Met de analyse uit (PLATFORM_ANALYSE_ENABLED niet aan, of op PostgreSQL
+zonder PLATFORM_ANALYSE_POSTGRES of de triggers van 0013: analyse_on) antwoordt elke route hier na
+de inlog zoals de stub van Z0b in 0.8.0: 501 not_built("X2"), ook voor een gast (FEITEN van golf 6;
+de samenvoeging van golf 6, tests/uit080/). Staat de analyse aan maar is er geen map
+PLATFORM_FACES_KEYS (state.running), dan 409 faces_unavailable. In beide gevallen komt er geen job
+en geen bestand. Draaien gezichten, dan krijgt een gast 403 guest, en met gezichten uit voor de
+eigenaar 409 faces_off (behalve de status, en wipe-unnamed).
 
 GET /people/faces/suggestions heeft twee vormen: zonder person per persoon
 (SuggestionsByPerson), met person de gezichten van die persoon (FacePage).
