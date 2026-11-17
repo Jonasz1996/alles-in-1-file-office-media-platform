@@ -112,11 +112,8 @@ async def test_bench_nooit_in_een_map_met_een_database(client, settings, tmp_pat
         assert not rijen.all()
 
 
-# Met PLATFORM_DATABASE_URL migreert bench.maak de database van de app in plaats van zijn eigen
-# platform.db; dat staat open in docs/fase-6/i3/pg-tests-ci.md
-@pytest.mark.sqlite_only(
-    "search-bench bouwt met sqlite3 een eigen platform.db voor de zoek-perf-poort (FTS5)"
-)
+# Op PostgreSQL rood: met PLATFORM_DATABASE_URL migreert bench.maak de database van de app in
+# plaats van zijn eigen platform.db (een fout in de app; docs/fase-6/i3/pg-tests-ci.md, Open)
 async def test_bench_maakt_de_boom(settings, tmp_path):
     data = tmp_path / "boom"
     uitkomst = tmp_path / "uitkomst.json"
