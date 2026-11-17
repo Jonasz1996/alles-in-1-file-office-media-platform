@@ -30,7 +30,8 @@ from app.security import CurrentUser, check_password, client_ip, hash_token, log
 from app.useragent import device_label
 
 router = APIRouter(include_in_schema=False)
-api = APIRouter(prefix="/api/v1", tags=["account"])
+# Niet in de OpenAPI: die blijft gelijk aan 0.8.0 (tests/uit080); de web-app kent deze routes zelf
+api = APIRouter(prefix="/api/v1", tags=["account"], include_in_schema=False)
 
 NC_VERSION = (30, 0, 0)
 FLOW_TTL = timedelta(minutes=20)

@@ -48,6 +48,16 @@ WIE = ("niemand", "eva", "gijs", "jonas")
 WACHTWOORD = "lang-genoeg-123"
 GEEN = "00000000-0000-4000-8000-00000000abcd"  # een id die nergens bestaat
 NIET = {("GET", "/api/v1/events")}  # blijft open (zie boven)
+# Wat na 0.8.0 bij kwam en geen route van 0.8.0 is: de Nextcloud-apps en WebDAV (fase 7,
+# docs/fase-7/nextcloud-en-truenas.md). Die hebben hun eigen tests (tests/test_nextcloud.py).
+NA_080 = (
+    "/remote.php",
+    "/status.php",
+    "/index.php/",
+    "/login/v2",
+    "/ocs/",
+    "/api/v1/account/app-passwords",
+)
 VOLGORDE = ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE")
 GROOT = 4096  # een grotere vorm (de openapi.json) bewaren we als zijn sha256
 
@@ -194,7 +204,7 @@ def _routes() -> list[tuple[str, str]]:
     found = set()
     for ctx in iter_route_contexts(app.routes):
         for method in ctx.methods or ():
-            if (method, ctx.path) not in NIET:
+            if (method, ctx.path) not in NIET and not ctx.path.startswith(NA_080):
                 found.add((method, ctx.path))
     return sorted(found, key=lambda mp: (VOLGORDE.index(mp[0]), mp[1]))
 
