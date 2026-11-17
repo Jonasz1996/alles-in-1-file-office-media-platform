@@ -763,7 +763,10 @@ Deel B: mediabeheer (wat de *arr-apps doen)
 - [ ] Bronnen (Prowlarr, Jackett): eenmaal toevoegen op `/beheer`, daarna per bibliotheek
   kiezen waar ze gebruikt worden. Alleen torrents (keuze van Jonas, zie onder): een zelf
   gebouwde client voor de open standaard Torznab; RSS elke 15 minuten nalopen plus gericht
-  zoeken; testknop en foutteller per bron. Geen usenet en dus geen Newznab. Geen FlareSolverr: een bron die dat nodig heeft valt af
+  zoeken; testknop en foutteller per bron. Geen usenet en dus geen Newznab. De sites zelf
+  bereikt de app via Prowlarr als bronnenbrug in een eigen container ernaast (keuze van
+  Jonas, 17-11-2026): sites voeg je één keer toe in Prowlarr, en de app zoekt via de
+  Torznab-adressen die Prowlarr per site geeft. Geen FlareSolverr: een bron die dat nodig heeft valt af
 
 - [ ] Kwaliteit en voorkeuren (de profielen van Sonarr en Radarr, plus wat Recyclarr en
   Profilarr synchroniseren): de bestandsnaam-parser uit fase 5 uitgebreid voor
