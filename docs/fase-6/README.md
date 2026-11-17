@@ -12,7 +12,7 @@ Het ontwerp stelt grenzen aan de snelheid en het geheugen (§4.4 en §4.5 van he
 CI (de automatische tests op GitHub) alle 27 gehaald die bij 0.8.0 horen, en ook de grens voor de
 grootte van het image. In CI waren met de code van 0.8.0 alle 16 jobs groen (run 105), en ook op
 de commit van 0.8.0 zelf (`3fca440`, run 106). Voor 0.8.1 waren op `e535332`, de code van golf 6,
-alle 19 jobs groen (run 43892193604). Op de commit van 0.8.1 zelf: ⟦I2: hoeveel jobs groen waren, en de run, op de commit van 0.8.1⟧. Wat de integratie van 0.8.1 naliep en mat, staat in
+alle 19 jobs groen (run 43892193604). Op de commit van 0.8.1 zelf: alle 19 jobs groen (run 43981579405 op `ae163ac`). Wat de integratie van 0.8.1 naliep en mat, staat in
 [integratie-2.md](integratie-2.md). Het laatste bewijs is je eigen server:
 [Op de LXC](#op-de-lxc).
 
@@ -514,7 +514,7 @@ anders wilt:
   0.8.0, en je werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md). Anders gaat
   het naar `main`, en dan is het weer het gewone commando.
 - **Een tag voor 0.8.1?** Standaard: **geen tag**, zoals bij 0.7.x en 0.8.0. De docs noemen de
-  volledige commit van 0.8.1 als de weg terug voor de volgende versie: ⟦I2: de volledige hash van de commit van 0.8.1⟧. Zeg je ja, dan komt `v0.8.1` op die commit.
+  volledige commit van 0.8.1 als de weg terug voor de volgende versie: `ae163ac69470343de7bc8d876db1a48e7da9331e`. Zeg je ja, dan komt `v0.8.1` op die commit.
 - **Twee eisen voor gezichten zonder gereedschap.** "Op ≥ 95% van de portretten precies het goede
   gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere" kunnen we alleen
   meten met een set echte gezichten, en die is er niet zolang Vraag 8 op nee staat. Standaard:
@@ -673,5 +673,5 @@ en keek of die test dan rood werd. De details staan per pakket in zijn eigen bes
 - **De integratie van 0.8.1** (I2, [integratie-2.md](integratie-2.md)): de analyse standaard aan
   in `install.sh` (uit blijft bewaard), `/over`, de zinnen met de analyse uit, de metingen met
   modellen van de echte vorm en §4.5 met de analyse (M10–M13), een stap in CI die SigLIP 2 voor
-  het eerst echt omzet in `analyse-omzetten` (⟦I2: of die stap groen was, en in welke run⟧), en
-  deze teksten. 0.8.1 is de commit ⟦I2: de korte hash van de commit van 0.8.1⟧ van 16 november 2026, met CI groen in ⟦I2: de run en het aantal groene jobs op die commit⟧.
+  het eerst echt omzet in `analyse-omzetten` (groen in run 43981579405: omgezet in 9,6 s, en de bestanden precies die van `models.lock`), en
+  deze teksten. 0.8.1 is de commit `ae163ac` van 16 november 2026, met CI groen in run 43981579405 (alle 19 jobs).

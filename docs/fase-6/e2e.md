@@ -206,7 +206,7 @@ in het log (het blok `=== kort ===`) en in het artefact.
 | `images` | de grootte van het image met tesseract (Vraag 15) | hard |
 | `infra` | `test_install_search.sh`, de functies en `--stappen` (de update en terug naar 0.7.1); sinds X2a en X3b ook `test_install_analyse.sh` en `test_install_beeld.sh`; `shellcheck` over onder meer `e2e/slim.sh` | hard |
 | `api-analyse` | `api/tests_analyse` zonder `beeld_echt`, met een vaste telling (`ANALYSE_TESTS` en `ANALYSE_DESELECTED` in `ci.yml`); de licenties gelijk aan die van opencv_zoo | hard |
-| `analyse-image` | `test_analyse_container.sh` (de container met de echte modellen), daarna `test_zoek_gezichten_echt.py`; sinds P7 de stap "De echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh, X3)", alleen als de poort `omzet-poort` ja zegt (een wijziging in het image, `install.sh`, compose, de omzetter of `models.lock`, of "beeld-model: ja" in de PR); uitslag: ⟦I2: uitslag van de stap X3 in analyse-image op de commit van 0.8.1⟧ | hard |
+| `analyse-image` | `test_analyse_container.sh` (de container met de echte modellen), daarna `test_zoek_gezichten_echt.py`; sinds P7 de stap "De echte bron in de dienst analyse-omzetten (test_omzetter_echt.sh, X3)", alleen als de poort `omzet-poort` ja zegt (een wijziging in het image, `install.sh`, compose, de omzetter of `models.lock`, of "beeld-model: ja" in de PR); uitslag: groen in run 43981579405 op `ae163ac`: de echte bron van SigLIP 2 in de dienst `analyse-omzetten` (alleen lezen, geen netwerk, `mem_limit 3072MiB`, `cpus 1`) omgezet in 9,6 s met maxrss 351 MiB; de vijf bestanden precies die van `models.lock` (grootte en sha256), en geen bron of tijdelijke map achtergebleven | hard |
 | `beeld-model` | het echte SigLIP 2: omzetten, de pins (BZ2), de tokenizer (BZ3, BZ7), de kwaliteit (BZ4, Keuze 85), de tijd (BZ6) en de stap "Uitslag"; alleen als iets verandert dat het model raakt, of met "beeld-model: ja" in de PR | hard |
 | `web` | typecheck, vitest, de build, i18n streng en de begrotingen | hard |
 | `perf` | `e2e/perf/zoek_ui.py`, na `run_all.py` | rapport (`continue-on-error`) |
@@ -244,7 +244,7 @@ controles"; de metingen M10–M13 in [metingen.md](metingen.md#gezichten-en-beel
   job `analyse-image`), allemaal op `e41b724`;
 - `tests_analyse` zoals `api-analyse`: precies `331 passed, 16 deselected`, zoals `ci.yml` nu eist
   (`ANALYSE_TESTS` 331 sinds `4aa42e1`);
-- CI op de kop van I2: ⟦I2: run-id, aantal jobs en wat groen was op de kop van I2⟧.
+- CI op de kop van I2: run 43981579405 op `ae163ac`: alle 19 jobs groen, met `api-analyse` precies `331 passed, 16 deselected` (165 s, Xeon 6975P-C met VNNI en AMX), `beeld-model` met BZ2, BZ4, BZ6 en BZ7 goed, `infra` met `--stappen` 79 goed en 0 fout, en `analyse-image` met de echte omzetting (X3) en `test_zoek_gezichten_echt.py` groen.
 
 Zie ook: [z7.md](z7.md) en [x1.md](x1.md) voor de laatste golf, en het runbook
 [zoeken.md](../runbooks/zoeken.md) voor de metingen op de LXC.

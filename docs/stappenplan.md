@@ -541,7 +541,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   [2026-11-16: het blijft in 0.8.1, standaard uit per gebruiker (Keuze 85 in
   docs/fase-6/bouwontwerp.md; Vraag 11 staat nog open).]
   [Gebouwd in 0.8.1 (16 november 2026,
-  ⟦I2: de volledige commit van 0.8.1⟧): gezichten vanzelf herkennen met YuNet en SFace, en zoeken
+  `ae163ac69470343de7bc8d876db1a48e7da9331e`): gezichten vanzelf herkennen met YuNet en SFace, en zoeken
   op wat er op een foto staat met SigLIP 2. Beide rekenen op de eigen server, in de container
   analyse, en staan per gebruiker standaard uit. Personen met de hand benoemen blijft zoals in
   0.8.0.]

@@ -4925,7 +4925,7 @@ of die komt, kiest Jonas. 0.8.1 is er nog niet: deze weg terug, het runbook `ana
 terug naar 0.8.0 staat in `infra/single/README.md` en in de runbooks (`zoeken.md`, "Terug naar
 0.8.0 van `59e0250`"; `analyse.md` en `gezichten.md`, "Terug naar 0.8.0"), ook met de analyse
 aan; `test_install_analyse.sh` doet die stappen. De commit van 0.8.1 is
-⟦I2: de volledige commit van 0.8.1, uit de laatste push van I2⟧. Een tag `v0.8.1` is er niet; of
+`ae163ac69470343de7bc8d876db1a48e7da9331e` (de laatste push van I2; CI groen in run 43981579405). Een tag `v0.8.1` is er niet; of
 die komt, kiest Jonas.
 
 ### 3.11 De container `analyse` (A0, X2a en X3a; Keuze 56–59, 68, 73, 75, 84)

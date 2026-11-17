@@ -82,7 +82,7 @@ bijwerken van de index) staan bij M1, M2 en M8.
   en de analyse op 3), met DS op `--memory 2g --memory-swap 2g --cpus 2`. M10 is niet opnieuw
   gedraaid: de getallen en de map met modellen komen uit P3 en P7. De getallen uit
   CI komen uit run 43888472609 op `dc5dfe5` (golf 6) en run 43892193604 op `e535332`, beide op een
-  Xeon 6975P-C met VNNI, en ⟦I2: de run-id en de commit van CI op de kop van I2, met de CPU⟧.
+  Xeon 6975P-C met VNNI, en run 43981579405 op `ae163ac` (de commit van 0.8.1), op een Xeon 6975P-C met VNNI en AMX: `api-analyse` 331 goed en 16 niet gekozen in 165 s; `beeld-model` BZ6 32,6 ms per foto en een vraag p95 21,5 ms, BZ7 0,107 s en 32,4 MB erbij.
 
 ## M1: zoeken en foto's (§4.4)
 
@@ -468,8 +468,7 @@ niet gemeten.~~ [I2: hieronder gemeten.]
 
 De metingen van de integratie I2: M10–M13 in de sandbox, en wat CI al mat. De nummers gaan door na
 M9; het plan van I2 noemde ze M1–M4 ([integratie-2.md](integratie-2.md), "Waar het afwijkt van het
-plan"). Wat pas na de push bestaat (de run van CI op de commit van 0.8.1), staat nog als merkteken
-tussen ⟦ en ⟧.
+plan"). De run van CI op de commit van 0.8.1 (run 43981579405 op `ae163ac`) vulde de commit na de push in.
 
 **Wat de modellen hier zijn.** M10–M13 draaien met SigLIP 2 op ware grootte met willekeurige
 gewichten (`api/tests_analyse/siglip_vol.py`), omgezet zoals `analyse-omzetten` dat op de LXC doet,

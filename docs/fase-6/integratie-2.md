@@ -8,8 +8,8 @@ moet weten, in de [README](README.md).
 
 Getallen, runs en hashes die er bij het schrijven nog niet waren, stonden als merkteken in de tekst
 (tussen ⟦ en ⟧, met I2 ervoor). De integrator vulde ze in na de metingen, zoals bij I1 ("C2
-tokens"). Wat pas na de push bestaat, de volledige hash van 0.8.1 en de run van CI, staat er nog
-zo; dat vult de commit na de push in.
+tokens"). Wat pas na de push bestond, de volledige hash van 0.8.1 en de run van CI, vulde de commit na de
+push in: 0.8.1 is `ae163ac69470343de7bc8d876db1a48e7da9331e`, met CI groen in run 43981579405.
 
 ## Waar het begon
 
@@ -96,7 +96,7 @@ golf 6 ([x3b.md](x3b.md), De nacontrole) ernaast:
 | `e2e/slim.sh` | groen in 1.107 s: stap 1 (zoek en triggers in python:3.12-slim) 1.309 goed, 5.787 niet gekozen, in 801 s; e2e met de marker `zoek` 146 goed, 275 niet gekozen, in 294 s (golf 6: 1.204 s, 111 e2e) |
 | de e2e van CI, office, en `test_zoek_gezichten.py`, `test_zoek_gezichten_echt.py`, `test_zoek_beeld.py`, `test_uit080.py` | de set van CI 285 goed, 136 niet gekozen, in 1.135 s (golf 6: 249); office 30 goed in 134 s; de vier van I2 met de metingen erbij 115 goed en 1 overgeslagen in 271 s (gezichten 3, beeld 8, uit080 2, metingen 102): `test_zoek_gezichten_echt.py` slaat zich over zonder image (`E2E_ANALYSE_IMAGE` zet de job `analyse-image`) |
 | yamllint, `docker compose config` en de links in de docs | yamllint 25 bestanden schoon, shellcheck 0.11.0 schoon, `docker compose config -q` schoon, de harding van DS `fail=0`; de relatieve links en ankers in de docs van I2 kloppen (na deze teksten opnieuw nagelopen) |
-| CI op de kop van I2 | ⟦I2: run-id, aantal jobs en wat groen was op de kop van I2⟧ |
+| CI op de kop van I2 | run 43981579405 op `ae163ac`: alle 19 jobs groen, met `api-analyse` precies `331 passed, 16 deselected` (165 s, Xeon 6975P-C met VNNI en AMX), `beeld-model` met BZ2, BZ4, BZ6 en BZ7 goed, `infra` met `--stappen` 79 goed en 0 fout, en `analyse-image` met de echte omzetting (X3) en `test_zoek_gezichten_echt.py` groen |
 
 Wat niet gedraaid is, met de reden: `test_install_update.sh` (±17 min, fase 4) weigert zolang
 `python:3.12-slim` er is en draait niet in CI; net als bij 0.8.0 "niet gedraaid". Verder alleen in
@@ -278,11 +278,11 @@ Wat de sandbox en CI niet kunnen laten zien; de lijst voor Jonas staat in de
 
 | Punt | Waar bewezen | Uitslag |
 |---|---|---|
-| De analyse staat standaard aan; uit blijft uit | de installatietests van P1, `--stappen` in CI | `test_install_analyse.sh` (158 controles) en `test_install_beeld.sh` (144) groen op `e41b724`; `--stappen` in CI: ⟦I2: uitslag van de stap --stappen in de job infra op de commit van 0.8.1⟧ |
+| De analyse staat standaard aan; uit blijft uit | de installatietests van P1, `--stappen` in CI | `test_install_analyse.sh` (158 controles) en `test_install_beeld.sh` (144) groen op `e41b724`; `--stappen` in CI: 79 goed en 0 fout (run 43981579405 op `ae163ac`) |
 | `/over` voor iedereen, met de bronnen van kaart en modellen | vitest, `test_zoek_gezichten.py`, `test_uit080.py` | vitest groen (125 bestanden, 1.360 tests, ook `about.test.ts`); `test_zoek_gezichten.py` 3 en `test_uit080.py` 2 groen. "Iedereen" is iedereen die is ingelogd, ook een gast; zonder login niet (Bekende grenzen) |
 | Met de analyse uit doet 0.8.1 wat 0.8.0 deed, op de vastgelegde zinnen en `/over` na | `test_uit080.py` | 2 groen op `e41b724`, met de zinnen van `d538cbb` |
 | BZ5, BZ6 en §4.5 stap 2 met modellen van de echte vorm | M11, M12, M13 | alle drie binnen hun poort: M11 1.835 van 2.384 MiB; M12 het geheel p95 ≤ 106,9 ms (250) en zonder tekstmodel ≤ 73,3 ms (100); M13 13 van 13 poorten, beeld p95 191,8 ms, de analyse samen 1,51 GB |
-| De eerste echte omzetting in `analyse-omzetten` | de stap van P7 in CI | ⟦I2: run en uitslag van de stap X3 in analyse-image⟧ |
+| De eerste echte omzetting in `analyse-omzetten` | de stap van P7 in CI | groen in run 43981579405 op `ae163ac`: de echte bron van SigLIP 2 in de dienst `analyse-omzetten` (alleen lezen, geen netwerk, `mem_limit 3072MiB`, `cpus 1`) omgezet in 9,6 s met maxrss 351 MiB; de vijf bestanden precies die van `models.lock` (grootte en sha256), en geen bron of tijdelijke map achtergebleven |
 | Versie 0.8.1 op de zes regels | de commit van de versie | `ba7cf9d` (`api/app/__init__.py`, `api/pyproject.toml`, `api/uv.lock`, `web/package.json` en twee regels in `web/package-lock.json`); `uv lock --check` en `uv sync --frozen` goed |
-| CI groen op de commit van 0.8.1 | GitHub Actions | ⟦I2: run-id en aantal groene jobs op de commit van 0.8.1⟧ |
-| De volledige hash van 0.8.1 in de docs, als weg terug voor de volgende versie | de commit erna | ⟦I2: de volledige hash van 0.8.1 en de commit die hem in de docs zet⟧ |
+| CI groen op de commit van 0.8.1 | GitHub Actions | run 43981579405 op `ae163ac`: alle 19 jobs groen |
+| De volledige hash van 0.8.1 in de docs, als weg terug voor de volgende versie | de commit erna | `ae163ac69470343de7bc8d876db1a48e7da9331e`; de commit direct na `ae163ac` zet hem in de docs en verandert alleen docs |

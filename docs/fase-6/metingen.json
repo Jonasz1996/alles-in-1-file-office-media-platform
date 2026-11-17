@@ -700,7 +700,7 @@
   "uitkomst": "gehaald"
  },
  "I2": {
-  "omschrijving": "De metingen van gezichten en zoeken op beeld bij de integratie I2 (0.8.1): M10–M13 in de sandbox en de getallen uit CI; zie metingen.md, Gezichten en beeld (0.8.1). M10–M13 met SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py, seed 85) en de echte YuNet en SFace: tijd en geheugen, geen kwaliteit; de kwaliteit komt alleen uit BZ4 in CI. null is nog niet ingevuld: alleen wat pas na de push bestaat (de run van CI op de commit van 0.8.1).",
+  "omschrijving": "De metingen van gezichten en zoeken op beeld bij de integratie I2 (0.8.1): M10–M13 in de sandbox en de getallen uit CI; zie metingen.md, Gezichten en beeld (0.8.1). M10–M13 met SigLIP 2 op ware grootte met willekeurige gewichten (siglip_vol.py, seed 85) en de echte YuNet en SFace: tijd en geheugen, geen kwaliteit; de kwaliteit komt alleen uit BZ4 in CI. kop_I2 is de run van CI op de commit van 0.8.1 (ae163ac), ingevuld na de push.",
   "datum": "2026-11-16",
   "omstandigheden": {
    "machine": "sandbox, 4 cores, 15 GB, root; docker info 'true true'",
@@ -718,7 +718,17 @@
      "api_analyse": "330 goed, 16 niet gekozen",
      "cpu": "Xeon 6975P-C met VNNI"
     },
-    "kop_I2": null
+    "kop_I2": {
+     "id": 43981579405,
+     "commit": "ae163ac",
+     "commit_volledig": "ae163ac69470343de7bc8d876db1a48e7da9331e",
+     "jobs_groen": 19,
+     "api_analyse": "331 goed, 16 niet gekozen (165 s)",
+     "cpu": "Xeon 6975P-C met VNNI en AMX",
+     "beeld_model": "BZ6 32,6 ms per foto, vraag p95 21,5 ms; BZ7 0,107 s, 32,4 MB erbij",
+     "x3_omzetten": "9,6 s, maxrss 351 MiB, sha256 als models.lock",
+     "stappen": "79 goed, 0 fout"
+    }
    }
   },
   "gezichten_per_minuut": {

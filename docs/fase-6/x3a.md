@@ -357,7 +357,7 @@ Verwachting voor het echte model (Keuze 73, 77): bron 1,55 GB; maxrss van één 
    samenvoeging); met de echte bron blijft het van X3b.]
    [I2: P7 maakt er een stap van in `analyse-image`: de echte bron in de dienst
    `analyse-omzetten`, zoals `install.sh` hem op de LXC omzet (`test_omzetter_echt.sh`, achter een
-   eigen poort). ⟦I2: run en uitslag van de stap X3 in analyse-image⟧.]
+   eigen poort). Groen in run 43981579405 op `ae163ac`: de echte bron van SigLIP 2 in de dienst `analyse-omzetten` (alleen lezen, geen netwerk, `mem_limit 3072MiB`, `cpus 1`) omgezet in 9,6 s met maxrss 351 MiB; de vijf bestanden precies die van `models.lock` (grootte en sha256), en geen bron of tijdelijke map achtergebleven.]
 
 ## Klaar als
 
