@@ -314,9 +314,15 @@ echo "psql $*" >>"$W/pg-args.log"
 echo "psql $*" >>"$W/../aanroepen.log"
 . "$W/../nep/pg-gemeen.sh"
 verbinding "$@"
-case "$*" in *"-c SELECT version_num FROM alembic_version"*) cat "$W/db/rev"; exit 0 ;; esac
+case "$*" in
+  *"-c SELECT version_num FROM alembic_version"*)
+    [ ! -e "$W/select_faalt" ] || { echo "psql: error: connection to server failed: timeout expired" >&2; exit 2; }
+    cat "$W/db/rev"; exit 0 ;;
+esac
 case " $* " in *" -v ON_ERROR_STOP=1 "*) ;; *) echo "psql: nep: zonder ON_ERROR_STOP" >&2; exit 2 ;; esac
 cat >"$W/db/laatste.sql"
+# select_faalt_na: na deze poging is de database niet meer te lezen (verbinding weg).
+[ ! -e "$W/select_faalt_na" ] || touch "$W/select_faalt"
 # Annuleren of de tijdslimiet van ClusterForge: SIGTERM naar de hele procesgroep van het commando.
 if [ -e "$W/psql_term" ]; then kill -TERM 0; exit 143; fi
 if [ -e "$W/psql_fout" ]; then echo "psql:<stdin>:9: ERROR:  must be owner of table nep" >&2; exit 3; fi
@@ -324,6 +330,8 @@ if [ -e "$W/psql_fout" ]; then echo "psql:<stdin>:9: ERROR:  must be owner of ta
 grep -qx 'COMMIT;' "$W/db/laatste.sql" || exit 0
 sed -n 's/^-- NEP-HERSTEL rev=\([^ ]*\) rijen=.*$/\1/p' "$W/db/laatste.sql" >"$W/db/rev"
 sed -n 's/^-- NEP-HERSTEL rev=[^ ]* rijen=\(.*\)$/\1/p' "$W/db/laatste.sql" >"$W/db/rijen"
+# psql_term_na: Annuleren vlak ná de COMMIT.
+if [ -e "$W/psql_term_na" ]; then kill -TERM 0; exit 143; fi
 EOF
 chmod 0755 "$fakes"/*
 
@@ -1076,6 +1084,53 @@ for fout_soort in herstel_breekt psql_fout pg_dump_faalt stopt_niet psql_term; d
   rc=0; draai_cluster platform-bijwerken.sh || rc=$?
   check "terug: mislukte terugzet ($fout_soort), Platform bijwerken zet alles weer op 0.8.2" \
     is "$rc $(tag n1 local) $(tag n2 local) $(draait n3) $(db_rev)" "0 $B $B $B 0014"
+done
+
+# Een fout of Annuleren na het terugzetten van de database, of een uitkomst die niet te lezen is.
+# Staat de database (misschien) al op 0012, dan mag het nieuwe image niet starten: dat migreert de
+# database weer vooruit. De markering blijft opzij en het platform uit; Platform bijwerken weigert
+# dan, en Platform terug nog een keer kijkt naar de database en maakt het af.
+#   select_faalt_na             COMMIT gelukt, daarna is de database niet te lezen
+#   select_faalt_na+psql_fout   psql faalt vóór de COMMIT, daarna niet te lezen
+#   tag_faalt                   COMMIT gelukt, docker tag faalt bij het wisselen van het image
+#   psql_term_na                Annuleren (SIGTERM) vlak na de COMMIT
+for fout_soort in select_faalt_na select_faalt_na+psql_fout tag_faalt psql_term_na; do
+  na_update
+  case "$fout_soort" in
+    tag_faalt) touch "$W/nodes/n3/tag_faalt" ;;
+    *) for f in ${fout_soort//+/ }; do touch "$W/$f"; done ;;
+  esac
+  case "$fout_soort" in
+    select_faalt_na*) melding="is niet te lezen" ;;
+    *) melding="De database is al teruggezet (revisie 0012)" ;;
+  esac
+  db_na="0012 voor"; [ "$fout_soort" != select_faalt_na+psql_fout ] || db_na="0014 voor+na"
+  [ "$fout_soort" != psql_term_na ] || EIGEN_GROEP=1
+  rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+  EIGEN_GROEP=
+  check "terug: $fout_soort faalt op n3 en zegt wat er met de database is" \
+    bash -c '[ "$1" != 0 ] && [ "$2" = " n1:0 n2:0 n3:1" ] && grep -qF "$4" "$3" && grep -qF "Draai Platform terug nog een keer" "$3"' _ \
+    "$rc" "$GEDRAAID" "$LOG" "$melding"
+  check "terug: $fout_soort, de database blijft zoals het terugzetten hem liet" is "$(db_rev) $(db_rijen)" "$db_na"
+  check "terug: $fout_soort, de markering blijft opzij en het nieuwe image start niet" \
+    bash -c '[ ! -e "$1/.cf-platform-active" ] && [ -e "$1/.cf-platform-active.terug" ] && [ ! -e "$2" ] &&
+      ! grep -qF "markering teruggezet" "$3" && ! grep -q "^systemctl start" "$4"' _ "$W/data" "$W/nodes/n3/active" "$LOG" "$W/nodes/n3/log"
+  rm -f "$W/select_faalt_na" "$W/select_faalt" "$W/psql_fout" "$W/psql_term_na" "$W/nodes/n3/tag_faalt"
+  rc=0; draai_cluster platform-bijwerken.sh || rc=$?
+  check "terug: $fout_soort, Platform bijwerken weigert zolang de markering opzij staat" \
+    bash -c '[ "$1" != 0 ] && [ "$2" = " n1:1" ] && grep -qF "een eerdere Platform terug is niet afgemaakt" "$3"' _ "$rc" "$GEDRAAID" "$LOG"
+  if [ "$fout_soort" = select_faalt_na+psql_fout ]; then
+    rc=0; draai_cluster platform-terug.sh || rc=$?
+    check "terug: $fout_soort, zonder MET_DATABASE niets gedaan en de markering blijft opzij" \
+      bash -c '[ "$1" != 0 ] && [ "$2" = " n1:1" ] && grep -qF "NIETS GEDAAN" "$3" && grep -qF "de markering staat nog opzij" "$3" &&
+        [ -e "$4/.cf-platform-active.terug" ]' _ "$rc" "$GEDRAAID" "$LOG" "$W/data"
+  fi
+  rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
+  check "terug: $fout_soort, Platform terug nog een keer maakt het af" \
+    is "$rc$GEDRAAID|$(draait n3) $(db_rev) $(db_rijen)" "0 n1:0 n2:0 n3:0|$A 0012 voor"
+  check "terug: $fout_soort, daarna de markering terug en de melding over de vorige run" \
+    bash -c '[ -e "$1/.cf-platform-active" ] && [ ! -e "$1/.cf-platform-active.terug" ] && grep -qF "deze run maakt hem af" "$2"' _ \
+    "$W/data" "$LOG"
 done
 
 # --- geen geheimen ------------------------------------------------------------------------------

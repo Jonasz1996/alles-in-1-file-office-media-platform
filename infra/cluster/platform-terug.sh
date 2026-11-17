@@ -15,6 +15,10 @@
 # Platform bijwerken). Wat daarna in de database kwam, is dan weg. Dat doet
 # dit commando alleen met MET_DATABASE=ja hieronder; anders zegt het wat er
 # zou gebeuren en verandert het niets, op geen enkele node.
+#
+# Stopt het halverwege terwijl de database al (misschien) terug is, dan
+# blijft de markering opzij en het platform uit. Nog een keer draaien kijkt
+# naar de database en maakt het af.
 MET_DATABASE=nee
 # Een andere back-up dan die van vóór de update (pg_dump -Fc), alleen als je
 # weet wat je doet; leeg is $EIGEN/voor-update.dump.
@@ -34,11 +38,16 @@ WACHT=900
 say() { echo "== $*"; }
 note() { echo "   $*"; }
 # Wordt gezet zodra de nodes zonder VIP al terug kunnen zijn; elke fout
-# daarna zegt dan hoe je ze weer gelijk zet.
+# daarna zegt dan hoe je ze weer gelijk zet. Staat de markering opzij, dan
+# zegt herstel_markering wat er moet gebeuren.
 HINT=
+# Waar de database is bij het terugzetten: geen (markering niet opzij), voor
+# (ongewijzigd), bezig (terugzetten loopt of uitkomst nog niet gelezen),
+# teruggezet (database terug, image nog niet), klaar (allebei terug).
+STAND=geen
 fail() {
   echo "GEWEIGERD/FOUT: $*" >&2
-  [ -n "$HINT" ] && echo "   $HINT" >&2
+  [ -n "$HINT" ] && [ "$STAND" = geen ] && echo "   $HINT" >&2
   exit 1
 }
 kort() { printf '%.12s' "${1:-onbekend}"; }
@@ -90,14 +99,43 @@ wacht_op_app() {
   done
   return 1
 }
-# Bij elke afloop terwijl de markering opzij staat: terugzetten en starten.
-# Faalde het terugzetten van de database, dan is die ongewijzigd (één
-# transactie) en start het image dat cf-platform:local nu is.
+# Waar staat de database na een poging: teruggezet (revisie van het vorige
+# image), voor (nog de revisie van het begin: één transactie, dus niets
+# veranderd) of onbekend. Een paar keer proberen als hij niet te lezen is.
+db_stand() {
+  i=0
+  while :; do
+    r=$(db_revisie)
+    [ "$r" = "$doel_head" ] && { echo teruggezet; return; }
+    [ -n "$r" ] && [ "$r" = "$db_rev" ] && { echo voor; return; }
+    i=$((i + 1))
+    [ -z "$r" ] && [ "$i" -lt 4 ] || break
+    sleep 5
+  done
+  echo onbekend
+}
+# Bij elke afloop terwijl de markering opzij staat. Alleen als de database
+# zeker niet veranderd is (voor) of als ook het image terug is (klaar), komt
+# de markering terug en start cf-platform. Anders zou het nieuwe image een
+# teruggezette database weer vooruit migreren: dan blijft het platform uit.
 herstel_markering() {
   [ -e "$OPZIJ" ] || return 0
-  mv -f "$OPZIJ" "$ACTIVE" && systemctl reset-failed cf-platform 2>/dev/null
-  systemctl start --no-block cf-platform 2>/dev/null
-  echo "   markering teruggezet; cf-platform start weer (journalctl -u cf-platform)" >&2
+  [ "$STAND" = bezig ] && STAND=$(db_stand)
+  case "$STAND" in
+    voor | klaar)
+      mv -f "$OPZIJ" "$ACTIVE" && systemctl reset-failed cf-platform 2>/dev/null
+      systemctl start --no-block cf-platform 2>/dev/null
+      echo "   markering teruggezet; cf-platform start weer (journalctl -u cf-platform)" >&2
+      [ "$STAND" = klaar ] || [ -z "$HINT" ] || echo "   $HINT" >&2 ;;
+    teruggezet)
+      echo "   De database is al teruggezet (revisie $doel_head), het image op deze node nog niet." >&2
+      echo "   De markering blijft opzij en het platform blijft uit: het nieuwe image zou de database" >&2
+      echo "   weer vooruit migreren. Draai Platform terug nog een keer; dat maakt het af." >&2 ;;
+    *)
+      echo "   Of de database al is teruggezet, is niet te lezen. De markering blijft opzij en het" >&2
+      echo "   platform blijft uit. Draai Platform terug nog een keer met MET_DATABASE=ja zodra" >&2
+      echo "   PostgreSQL bereikbaar is; dat kijkt naar de database en maakt het af." >&2 ;;
+  esac
 }
 
 # --- controles (zoals Platform bijwerken) ---------------------------------
@@ -120,7 +158,14 @@ fi
 if ! systemctl is-active --quiet cf-platform-mount || ! mountpoint -q "$DATA"; then
   fail "$DATA is niet gemount (journalctl -u cf-platform-mount); eerst dat oplossen"
 fi
-[ -e "$OPZIJ" ] && fail "$OPZIJ bestaat: een eerdere Platform terug is halverwege gestopt. Kijk in $EIGEN/terug.log en zet de markering met de hand terug (mv $OPZIJ $ACTIVE) als de database in orde is"
+# Staat de markering opzij, dan is een eerdere Platform terug halverwege
+# gestopt (het platform is uit); deze run maakt hem af.
+HERVAT=nee
+if [ -e "$OPZIJ" ]; then
+  [ -e "$ACTIVE" ] && fail "$OPZIJ en $ACTIVE bestaan allebei: een eerdere Platform terug is halverwege gestopt en de markering is daarna met de hand teruggezet? Haal $OPZIJ weg als het platform goed draait"
+  HERVAT=ja
+  note "een eerdere Platform terug is halverwege gestopt (de markering staat opzij, het platform is uit); deze run maakt hem af"
+fi
 if [ "$VIPHIER" = nee ] && platform_hier; then
   fail "cf-platform draait op deze node zonder het VIP; stop het hier eerst (systemctl stop cf-platform)"
 fi
@@ -165,6 +210,10 @@ if [ "$DB_TERUG" = ja ] && [ "$MET_DATABASE" != ja ]; then
   note "database is geschreven, is dan weg; bestanden die sindsdien zijn geüpload staan"
   note "nog in $DATA maar de app kent ze niet meer, en wat sindsdien is gewist, mist."
   note "Wil je dat: zet bovenaan dit commando MET_DATABASE=ja en draai het opnieuw."
+  if [ "$HERVAT" = ja ]; then
+    note "Let op: de markering staat nog opzij van een eerdere Platform terug, dus het platform is"
+    note "uit. Wil je toch door met de nieuwe versie: mv $OPZIJ $ACTIVE (op één node)."
+  fi
   exit 1
 fi
 
@@ -179,7 +228,7 @@ image_terug() {
   schrijf "$EIGEN/teruggezet" "van=$(rev_van "$lokaal") naar=$doel_rev $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   say "cf-platform:local is weer het vorige image ($(kort "$doel_rev")); het andere heet nu cf-platform:teruggezet"
 }
-if [ "$VIPHIER" = nee ] || ! [ -f "$ACTIVE" ]; then
+if [ "$VIPHIER" = nee ] || { ! [ -f "$ACTIVE" ] && [ "$HERVAT" = nee ]; }; then
   image_terug
   say "Klaar op deze node (geen VIP of geen overstap): alleen het image."
   exit 0
@@ -195,9 +244,10 @@ if [ "$DB_TERUG" = ja ]; then
     fail "de back-up $dump staat op revisie ${d_rev:-onbekend}, niet op $doel_head; niets veranderd aan de database"
   note "back-up: $dump van $(date -r "$dump" '+%Y-%m-%d %H:%M'), revisie $d_rev"
   say "Platform op alle nodes tegenhouden (markering opzij) en hier stoppen"
+  STAND=voor
   trap herstel_markering EXIT
   trap 'fail "afgebroken (Annuleren of de tijdslimiet van ClusterForge)"' INT TERM HUP
-  mv "$ACTIVE" "$OPZIJ" || fail "markering opzij zetten mislukt"
+  if [ "$HERVAT" = nee ]; then mv "$ACTIVE" "$OPZIJ" || fail "markering opzij zetten mislukt"; fi
   systemctl stop cf-platform
   systemctl reset-failed cf-platform 2>/dev/null
   t=0; while platform_hier && [ "$t" -lt 150 ]; do sleep 2; t=$((t + 2)); done
@@ -209,6 +259,8 @@ if [ "$DB_TERUG" = ja ]; then
   [ -n "$nu" ] && { ln -f "$nu" "$EIGEN/voor-terug.dump" 2>/dev/null || cp -f "$nu" "$EIGEN/voor-terug.dump"; }
   say "Database terugzetten (één transactie: alles of niets)"
   rm -f "$EIGEN/pg_restore.rc"
+  # Vanaf hier kan de database terug zijn: alleen wat we daarna lezen telt.
+  STAND=bezig
   {
     pg_restore --no-owner --no-privileges --single-transaction -f - "$dump"
     echo $? >"$EIGEN/pg_restore.rc"
@@ -218,14 +270,21 @@ if [ "$DB_TERUG" = ja ]; then
       $0 == "BEGIN;" { printf "%s", buf; print "DROP OWNED BY CURRENT_USER;"; z = 1; next }
       NR > 500 { exit 3 }' |
     psql_db -q -v ON_ERROR_STOP=1 >/dev/null 2>"$EIGEN/terug.log"
+  prc=$?
   rc=$(cat "$EIGEN/pg_restore.rc" 2>/dev/null)
-  na=$(db_revisie)
-  if [ "${rc:-1}" != 0 ] || [ "$na" != "$doel_head" ]; then
-    grep -m 1 'ERROR' "$EIGEN/terug.log" | cut -c1-200 >&2
-    fail "database terugzetten mislukt (pg_restore $rc, revisie nu ${na:-onbekend}); de database is ongewijzigd en het nieuwe image start weer. Details (kan gegevens bevatten): $EIGEN/terug.log"
-  fi
-  say "Database staat op revisie $na"
+  STAND=$(db_stand)
+  case "$STAND" in
+    teruggezet) ;;
+    voor)
+      grep -m 1 'ERROR' "$EIGEN/terug.log" | cut -c1-200 >&2
+      fail "database terugzetten mislukt (pg_restore ${rc:-?}, psql $prc); de database is ongewijzigd (revisie $db_rev). Details (kan gegevens bevatten): $EIGEN/terug.log" ;;
+    *)
+      grep -m 1 'ERROR' "$EIGEN/terug.log" | cut -c1-200 >&2
+      fail "database terugzetten: de uitkomst is niet te lezen (pg_restore ${rc:-?}, psql $prc). Details (kan gegevens bevatten): $EIGEN/terug.log" ;;
+  esac
+  say "Database staat op revisie $doel_head"
   image_terug
+  STAND=klaar
   herstel_markering
   trap - EXIT INT TERM HUP
   HINT=
@@ -233,6 +292,10 @@ else
   HINT=
   say "De database hoeft niet terug (revisie $db_rev)"
   image_terug
+  if [ "$HERVAT" = ja ]; then
+    mv -f "$OPZIJ" "$ACTIVE" || fail "markering terugzetten mislukt ($OPZIJ)"
+    note "markering teruggezet"
+  fi
   systemctl reset-failed cf-platform 2>/dev/null
   [ "$(lopend_id)" = "$doel" ] || systemctl restart cf-platform
 fi

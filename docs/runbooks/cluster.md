@@ -157,11 +157,22 @@ gekomen. Bestanden die sindsdien zijn geüpload staan nog in `/srv/platform-data
 kent ze niet meer. Wat sindsdien is gewist, mist. De stand van vlak voor het terugzetten
 blijft in `voor-terug.dump` op die node.
 
-Mislukt het terugzetten van de database, dan is de database niet veranderd, staat de markering
-terug en draait het nieuwe image weer. Hetzelfde bij **Annuleren** in ClusterForge of de
-tijdslimiet midden in het terugzetten. De oorzaak staat in de uitvoer, de details in
-`/var/lib/cf-platform/bijwerken/terug.log`. Dat bestand kan gegevens uit de database bevatten:
-deel het niet zomaar.
+Mislukt het terugzetten van de database, dan leest Platform terug daarna de revisie van de
+database:
+
+- **Nog de revisie van vóór het terugzetten**: de database is niet veranderd (één transactie).
+  De markering komt terug en het nieuwe image draait weer. Hetzelfde bij **Annuleren** in
+  ClusterForge of de tijdslimiet voordat de database terug was.
+- **Al de revisie van het vorige image**, of **niet te lezen**: de markering blijft opzij en het
+  platform blijft uit. Het nieuwe image zou de database anders weer vooruit migreren, en wat
+  sinds de update in de database kwam, is dan toch weg. Dat geldt ook als het daarna misgaat,
+  bijvoorbeeld bij het wisselen van het image of bij Annuleren. De uitvoer zegt welke van de
+  twee het is. Draai dan **Platform terug nog een keer** (met `MET_DATABASE=ja` als de uitvoer
+  dat zegt). Het ziet de markering opzij, kijkt naar de database en maakt het af. Platform
+  bijwerken weigert zolang de markering opzij staat.
+
+De oorzaak staat in de uitvoer, de details in `/var/lib/cf-platform/bijwerken/terug.log`. Dat
+bestand kan gegevens uit de database bevatten: deel het niet zomaar.
 
 Faalt Platform terug op de node met het VIP nadat de andere nodes al terug zijn, dan zegt de
 uitvoer dat. Het platform draait dan nog de nieuwe versie. Draai Platform bijwerken om de nodes
@@ -188,11 +199,12 @@ de melding zegt dan hoe je ze weer gelijk zet.
 | `het platform draait op 2 nodes tegelijk` | twee platformen op dezelfde data en database | stop het op de node zonder VIP, dan opnieuw |
 | `pg_dump ontbreekt` | geen back-up mogelijk, dus geen herstart | `postgresql-client` nodig (zie "Vooraf") |
 | `loopt al op deze node` | een ander commando is nog bezig | wachten tot dat klaar is |
-| `.cf-platform-active.terug bestaat` | een eerdere Platform terug is halverwege gestopt | kijk in `terug.log`; is de database in orde, zet de markering terug met `mv` (staat in de melding) |
+| `.cf-platform-active.terug bestaat` (Platform bijwerken) | een eerdere Platform terug is niet afgemaakt; het platform is uit | draai Platform terug nog een keer; dat maakt het af |
 | `cf-platform:vorige ontbreekt` | geen vorig image (weggehaald, of nooit bijgewerkt) | had de nieuwe versie geen migratie: de vorige commit als Versie en Platform bijwerken; anders het laatste vangnet |
 | `geen back-up van vóór de update` | `voor-update.dump` staat niet op deze node | zie [Bekende grenzen](#bekende-grenzen) |
 | `bouwen mislukt` | `docker build` faalde; het platform is niet geraakt | oorzaak in de uitvoer, oplossen, opnieuw |
-| `database terugzetten mislukt`, `afgebroken` | Platform terug met `MET_DATABASE=ja` stopte halverwege; de database is ongewijzigd en het nieuwe image draait weer | oorzaak in de uitvoer en `terug.log`, dan Platform bijwerken of opnieuw Platform terug |
+| `database terugzetten mislukt`, `afgebroken`, met `markering teruggezet` | Platform terug met `MET_DATABASE=ja` stopte voordat de database terug was; de database is ongewijzigd en het nieuwe image draait weer | oorzaak in de uitvoer en `terug.log`, dan Platform bijwerken of opnieuw Platform terug |
+| `De database is al teruggezet` of `is niet te lezen` | Platform terug stopte toen de database (misschien) al terug was; het platform is uit | Platform terug nog een keer (zie [Terugzetten](#terugzetten)) |
 | `de app antwoordt niet` | de nieuwe versie start niet | Platform terug |
 
 ## Wat je nooit doet

@@ -92,7 +92,7 @@ VIPHIER=nee; has_ip "$VIP" && VIPHIER=ja
 say "$(hostname): $([ "$VIPHIER" = ja ] && echo "heeft het VIP van het platform ($VIP)" || echo "zonder het VIP van het platform")"
 
 [ -e "$DATA/.cf-platform-active.terug" ] &&
-  fail "$DATA/.cf-platform-active.terug bestaat: een eerdere Platform terug is niet afgemaakt (zie de uitvoer daarvan)"
+  fail "$DATA/.cf-platform-active.terug bestaat: een eerdere Platform terug is niet afgemaakt (het platform is uit). Draai Platform terug nog een keer; dat maakt het af"
 if ! systemctl is-active --quiet cf-platform-mount || ! mountpoint -q "$DATA"; then
   fail "$DATA is niet gemount (journalctl -u cf-platform-mount); eerst dat oplossen"
 fi
