@@ -62,7 +62,7 @@ from app.models import (
     Person,
     PhotoGeo,
 )
-from app.people.faces import read
+from app.people.faces import read, wipe
 from app.people.faces import scan as face_scan
 from app.routers import photos_map
 from app.search import access, snippets
@@ -755,6 +755,57 @@ async def test_de_gezichten_lezen(settings):
 
         assert await read._gone_by(db, user.id, "cluster") == {7: 1}
         assert await read._gone_by(db, user.id, "suggest_id") == {person.id: 1}
+
+        # De pagina's zelf (review F2): dezelfde volgorde als _firsts, ook voor een score
+        # zonder waarde (person_suggestions; PostgreSQL zet NULL anders vooraan bij DESC)
+        page = await read.person_suggestions(db, user.id, person.id, None, 10)
+        assert [f.id for f in page.faces] == [faces[0].id, faces[2].id, faces[1].id]
+        page = await read.group(db, user.id, 0, 7, None)
+        assert [f.id for f in page.faces] == [faces[2].id, faces[1].id, faces[0].id]
+
+        # wiping 0 is onwaar: PostgreSQL geeft de kolom a als tekst, en bool("0") is waar
+        await db.execute(update(FaceOwner).where(FaceOwner.owner_id == user.id).values(wiping=0))
+        assert (await read.counts(db, user.id))[2] is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("scope", ["unnamed", "all"])
+async def test_gezichten_wissen(settings, scope):
+    """faces.wipe op beide databases (review F2): PRAGMA secure_delete alleen op SQLite.
+    unnamed verbergt het open gezicht en laat het benoemde staan; all haalt alles van de
+    eigenaar weg, ook face_owner."""
+    async with maker(settings)() as db:
+        user = await create_user(db, "eva@example.nl")
+        foto = await _image(db, user, "a.jpg")
+        person = Person(owner_id=user.id, name="Bram", search_name="bram")
+        db.add(person)
+        await db.flush()
+        named, open_ = (
+            Face(node_id=foto.id, owner_id=user.id, x=0.1, y=0.1, w=0.2, h=0.2, score=0.99,
+                 px=80, version=1, cluster=7, vec=b"\x01" * 8)
+            for _ in range(2)
+        )  # fmt: skip
+        db.add_all([named, open_])
+        await db.flush()
+        db.add(FacePerson(face_id=named.id, person_id=person.id, owner_id=user.id, verdict="ja"))
+        db.add(FaceScan(node_id=foto.id, owner_id=user.id, version=1, state="done", prio="p"))
+        db.add(FaceOwner(owner_id=user.id, wiping=1))
+        await db.commit()
+
+    await wipe.wipe_job(settings, {"owner": user.id.hex, "scope": scope})
+
+    async with maker(settings)() as db:
+        rows = (await db.execute(select(Face.id, Face.hidden, Face.vec, Face.cluster))).all()
+        owner_rows = (await db.execute(select(FaceOwner.wiping))).all()
+        if scope == "unnamed":
+            assert sorted((r.id, r.hidden, r.vec, r.cluster) for r in rows) == sorted(
+                [(named.id, 0, b"\x01" * 8, 7), (open_.id, 1, None, None)]
+            )
+            assert [tuple(r) for r in owner_rows] == [(0,)]
+        else:
+            assert rows == [] and owner_rows == []
+            for table in (FacePerson, FaceScan):
+                assert await db.scalar(select(func.count()).select_from(table)) == 0
 
 
 def test_db_backup_op_postgresql_verwijst_naar_pg_dump(tmp_path):
