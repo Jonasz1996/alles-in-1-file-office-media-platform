@@ -1,0 +1,405 @@
+"""De API van een geïnstalleerd platform, voor infra/single/tests/test_install_update.sh.
+
+Alleen de standaardbibliotheek: draait met python3 op de host, naast de echte installatie. De
+login staat in het bestand INSTALL_API_STATE (rechten 600, in de werkmap van de test):
+e-mailadres, wachtwoord, het TOTP-geheim, de laatst gebruikte stap en de tokens. Niets daarvan
+komt op stdout of in een log. INSTALL_API_URL is het adres van de app (http://127.0.0.1:<poort>).
+
+    python3 install_api.py setup                 eerste beheerder (/auth/setup), dan 2FA aan
+    python3 install_api.py login                 inloggen met wachtwoord en een TOTP-code
+    python3 install_api.py login-zonder-code     slaagt als de app 401 totp_required geeft
+    python3 install_api.py get <pad> [veld]      GET; één veld (a.0.b) of de hele JSON
+    python3 install_api.py wait-field <pad> <veld> <s>   GET tot het veld er is en niet null is
+    python3 install_api.py count <pad>           het aantal in een lijst (GET)
+    python3 install_api.py post <pad> <json> [veld]  POST; één veld of de hele JSON (als er is)
+    python3 install_api.py upload <map> <naam> <bestand> [conflict]   geeft het id
+    python3 install_api.py sha <bestand> [versie]    sha256 van de inhoud
+    python3 install_api.py text <bestand> [versie]   de tekst van een docx
+    python3 install_api.py wait <toestand> <s>   tot GET /office/status die toestand zegt
+    python3 install_api.py watch <s> <uitvoer>   elke seconde /office/status, tot ok
+    python3 install_api.py notice <code>         slaagt als /admin/status die melding heeft
+    python3 install_api.py font-end <log> <+hhmm>    het einde van de font-herstart (epoch)
+
+TOTP zoals app/totp.py (RFC 6238: HMAC-SHA1, 6 cijfers, 30 s). De server neemt een stap maar
+één keer aan; een nieuwe login wacht dus zo nodig op de volgende stap, zoals totp_code in
+e2e/conftest.py. Een access-token dat verlopen is, wordt met het refresh-token vernieuwd.
+
+Is een antwoord niet wat de test verwacht (een andere status, geen JSON, of een veld dat
+ontbreekt), dan exitcode 1 met op stderr één regel: de methode, het pad, de HTTP-status en het
+begin van de body. Zo legt een fout in CI zichzelf uit (de eerste run van media-image gaf alleen
+een traceback zonder status). wait, watch en wait-field proberen het alleen opnieuw na een andere
+status of zonder verbinding (de app start misschien net opnieuw), nooit na een antwoord met de
+goede status maar een body die niet klopt: dat is een fout, net als vroeger.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import io
+import json
+import os
+import re
+import secrets
+import struct
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from xml.etree import ElementTree
+
+STEP = 30
+DIGITS = 6
+EMAIL = "beheer@example.com"
+NAME = "Beheer"
+# Het platform draait op 127.0.0.1: nooit via een proxy uit de omgeving
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+class ApiError(Exception):
+    """Een antwoord dat niet is wat de test verwacht: de status en het begin van de body."""
+
+    def __init__(self, method: str, path: str, status: int, body: bytes, what: str = ""):
+        super().__init__(f"{method} {path} gaf {status}{what}: {body[:300]!r}")
+        self.status = status
+
+
+class StatusError(ApiError):
+    """Een HTTP-status die de aanroep niet verwacht. Alleen dit (en OSError) proberen wait, watch
+    en wait-field opnieuw: tijdens een herstart geeft de app even geen of een andere status."""
+
+
+class ShapeError(ApiError):
+    """De status klopt, de body niet: geen JSON, of een veld dat ontbreekt. Nooit opnieuw
+    proberen: dat is een fout van de app (of van de test), geen moment van de herstart."""
+
+
+def base() -> str:
+    return os.environ["INSTALL_API_URL"].rstrip("/")
+
+
+def load() -> dict[str, Any]:
+    with open(os.environ["INSTALL_API_STATE"]) as f:
+        return json.load(f)
+
+
+def save(state: dict[str, Any]) -> None:
+    path = os.environ["INSTALL_API_STATE"]
+    tmp = path + ".nieuw"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, path)
+
+
+def code_at(secret: str, step: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    digest = hmac.new(key, struct.pack(">Q", step), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    number = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return str(number % 10**DIGITS).zfill(DIGITS)
+
+
+def next_code(state: dict[str, Any]) -> str:
+    """Een code voor een stap die de server nog niet zag (wacht zo nodig op de volgende)."""
+    target = max(int(time.time() // STEP), state.get("step", -1) + 1)
+    while int(time.time() // STEP) < target:
+        time.sleep(0.5)
+    state["step"] = target
+    save(state)
+    return code_at(state["secret"], target)
+
+
+def request(
+    method: str,
+    path: str,
+    *,
+    token: str | None = None,
+    body: Any = None,
+    raw: bytes | None = None,
+) -> tuple[int, bytes]:
+    headers = {}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    elif raw is not None:
+        data = raw
+        headers["Content-Type"] = "application/octet-stream"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(base() + path, data=data, method=method, headers=headers)
+    try:
+        with OPENER.open(req, timeout=60) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def keep_tokens(state: dict[str, Any], answer: bytes) -> None:
+    tokens = json.loads(answer)
+    state["access"] = tokens["access_token"]
+    state["refresh"] = tokens["refresh_token"]
+    save(state)
+
+
+def exchange(
+    method: str,
+    path: str,
+    *,
+    body: Any = None,
+    raw: bytes | None = None,
+    expect: tuple[int, ...] = (200,),
+) -> tuple[int, bytes]:
+    """Met het access-token; is dat verlopen (401), dan eerst één keer vernieuwen. Geeft de
+    status en de body; een status buiten expect is een ApiError."""
+    state = load()
+    status, answer = request(method, path, token=state.get("access"), body=body, raw=raw)
+    if status == 401 and state.get("refresh"):
+        renewed, tokens = request(
+            "POST", "/api/v1/auth/refresh", body={"refresh_token": state["refresh"]}
+        )
+        if renewed == 200:
+            keep_tokens(state, tokens)
+            status, answer = request(method, path, token=state["access"], body=body, raw=raw)
+    if status not in expect:
+        raise StatusError(method, path, status, answer)
+    return status, answer
+
+
+def call(
+    method: str,
+    path: str,
+    *,
+    body: Any = None,
+    raw: bytes | None = None,
+    expect: tuple[int, ...] = (200,),
+) -> bytes:
+    """Zoals exchange, alleen de body."""
+    return exchange(method, path, body=body, raw=raw, expect=expect)[1]
+
+
+def parse(method: str, path: str, status: int, answer: bytes, field: str | None = None) -> Any:
+    """De JSON van een antwoord, of één veld eruit (a.0.b). Geen JSON, of een veld dat er niet
+    is: een ShapeError met de status en het begin van de body."""
+    try:
+        value = json.loads(answer)
+    except ValueError:  # ook een lege body (b"")
+        raise ShapeError(method, path, status, answer, ", maar geen JSON") from None
+    for part in field.split(".") if field else []:
+        try:
+            value = value[int(part)] if isinstance(value, list) else value[part]
+        except (KeyError, IndexError, TypeError, ValueError):
+            what = f", maar zonder het veld {field} (bij {part!r})"
+            raise ShapeError(method, path, status, answer, what) from None
+    return value
+
+
+def fetch(method: str, path: str, field: str | None = None, **kwargs: Any) -> Any:
+    """exchange en dan parse."""
+    return parse(method, path, *exchange(method, path, **kwargs), field)
+
+
+def show(value: Any) -> None:
+    print(value if isinstance(value, str) else json.dumps(value))
+
+
+def setup() -> None:
+    password = secrets.token_hex(16)
+    body = {"email": EMAIL, "display_name": NAME, "password": password}
+    status, answer = request("POST", "/api/v1/auth/setup", body=body)
+    if status != 201:
+        raise StatusError("POST", "/api/v1/auth/setup", status, answer)
+    user = json.loads(answer)["user"]
+    state = {"email": EMAIL, "password": password, "root": user["root_id"], "user": user["id"]}
+    keep_tokens(state, answer)
+    # 2FA is verplicht: zonder kan de beheerder verder niets
+    secret = json.loads(call("POST", "/api/v1/auth/2fa/setup"))["secret"]
+    state = load()
+    state["secret"] = secret
+    save(state)
+    code = next_code(state)
+    call("POST", "/api/v1/auth/2fa/enable", body={"code": code, "password": password})
+
+
+def login(with_code: bool = True) -> bool:
+    state = load()
+    body = {"email": state["email"], "password": state["password"]}
+    if with_code:
+        body["code"] = next_code(state)
+    status, answer = request("POST", "/api/v1/auth/login", body=body)
+    if not with_code:
+        # Een fout van de API: {"detail": {"message": …, "code": …}} (app/errors.py)
+        return status == 401 and json.loads(answer)["detail"].get("code") == "totp_required"
+    if status != 200:
+        raise StatusError("POST", "/api/v1/auth/login", status, answer)
+    keep_tokens(load(), answer)
+    return True
+
+
+def content(node: str, version: str | None) -> bytes:
+    query = f"?{urllib.parse.urlencode({'version': version})}" if version else ""
+    return call("GET", f"/api/v1/files/{node}/content{query}")
+
+
+def docx_text(data: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        root = ElementTree.fromstring(z.read("word/document.xml"))
+    return "\n".join("".join(t.text or "" for t in p.iter(f"{W}t")) for p in root.iter(f"{W}p"))
+
+
+def office_state() -> tuple[str, bool]:
+    """De toestand en of er iemand bewerkt. Een body zonder JSON of zonder state of editing is
+    een ShapeError: wait en watch proberen dat niet opnieuw."""
+    path = "/api/v1/office/status"
+    status, answer = exchange("GET", path)
+    state = parse("GET", path, status, answer, "state")
+    return state, bool(parse("GET", path, status, answer, "editing"))
+
+
+def wait(wanted: str, seconds: float) -> bool:
+    end = time.monotonic() + seconds
+    seen = None
+    while time.monotonic() < end:
+        try:
+            seen = office_state()[0]
+        except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
+            seen = f"fout ({exc})"
+        if seen == wanted:
+            return True
+        time.sleep(2)
+    print(f"  /api/v1/office/status zegt na {seconds:.0f} s nog {seen}", file=sys.stderr)
+    return False
+
+
+def watch(seconds: float, out: str) -> bool:
+    """Elke seconde de toestand, met de tijd (epoch), tot de eerste ok."""
+    end = time.monotonic() + seconds
+    with open(out, "w") as f:
+        while time.monotonic() < end:
+            try:
+                state, editing = office_state()
+            except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
+                state, editing = f"fout:{type(exc).__name__}", False
+            f.write(f"{time.time():.3f} {state} {str(editing).lower()}\n")
+            f.flush()
+            if state == "ok":
+                return True
+            time.sleep(1)
+    return False
+
+
+def wait_field(path: str, field: str, seconds: float) -> Any:
+    """GET tot het veld er is en niet null is (bijvoorbeeld de zelftest op /beheer, die er pas
+    is als de app de worker sprak). Na seconds: None, met op stderr wat er het laatst kwam. Een
+    body zonder JSON of zonder het pad naar het veld is een ShapeError, meteen."""
+    end = time.monotonic() + seconds
+    seen = "nog niets"
+    while True:
+        try:
+            value = fetch("GET", path, field)
+            if value is not None:
+                return value
+            seen = f"GET {path} gaf {field} null"
+        except (StatusError, OSError) as exc:  # de app start misschien net opnieuw
+            seen = str(exc)
+        if time.monotonic() >= end:
+            print(f"  na {seconds:.0f} s nog geen {field}: {seen}", file=sys.stderr)
+            return None
+        time.sleep(2)
+
+
+SUPERVISOR = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) \w+ (stopped|success): (?:ds:)?converter\b"
+)
+
+
+def font_end(log: str, offset: str) -> float | None:
+    """Het einde van de font-herstart volgens supervisord in DS (runbook "DS bijwerken"): de
+    eerste "success: converter" na "stopped: converter". offset is `date +%z` in DS."""
+    sign = -1 if offset.startswith("-") else 1
+    tz = timezone(sign * timedelta(hours=int(offset[1:3]), minutes=int(offset[3:5])))
+    stopped = False
+    with open(log, errors="replace") as f:
+        for line in f:
+            m = SUPERVISOR.match(line)
+            if not m:
+                continue
+            if m.group(3) == "stopped":
+                stopped = True
+            elif stopped:
+                at = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
+                return at.timestamp() + int(m.group(2)) / 1000
+    return None
+
+
+def main(argv: list[str]) -> int:
+    command, args = argv[0], argv[1:]
+    if command == "setup":
+        setup()
+    elif command == "login":
+        login()
+    elif command == "login-zonder-code":
+        return 0 if login(with_code=False) else 1
+    elif command == "get":
+        show(fetch("GET", args[0], args[1] if len(args) > 1 else None))
+    elif command == "wait-field":
+        value = wait_field(args[0], args[1], float(args[2]))
+        if value is None:
+            return 1
+        show(value)
+    elif command == "count":
+        print(len(fetch("GET", args[0])))
+    elif command == "post":
+        try:
+            body = json.loads(args[1])
+        except ValueError:
+            print(f"  post {args[0]}: de body is geen JSON: {args[1][:200]!r}", file=sys.stderr)
+            return 2
+        status, answer = exchange("POST", args[0], body=body, expect=(200, 201, 202, 204))
+        # Zonder veld de hele JSON, zoals get. Alleen een 204 heeft geen body: dan niets; een
+        # lege 200 is een ShapeError ("maar geen JSON: b''")
+        if status != 204 or len(args) > 2:
+            show(parse("POST", args[0], status, answer, args[2] if len(args) > 2 else None))
+    elif command == "upload":
+        query = urllib.parse.urlencode(
+            {"name": args[1], "conflict": args[3] if len(args) > 3 else "rename"}
+        )
+        with open(args[2], "rb") as f:
+            data = f.read()
+        path = f"/api/v1/files/{args[0]}/upload?{query}"
+        print(parse("PUT", path, *exchange("PUT", path, raw=data, expect=(201,)), "id"))
+    elif command == "sha":
+        print(hashlib.sha256(content(args[0], args[1] if len(args) > 1 else None)).hexdigest())
+    elif command == "text":
+        print(docx_text(content(args[0], args[1] if len(args) > 1 else None)))
+    elif command == "wait":
+        return 0 if wait(args[0], float(args[1])) else 1
+    elif command == "watch":
+        return 0 if watch(float(args[0]), args[1]) else 1
+    elif command == "notice":
+        notices = fetch("GET", "/api/v1/admin/status").get("notices") or []
+        return 0 if any(n.get("code") == args[0] for n in notices) else 1
+    elif command == "font-end":
+        end = font_end(args[0], args[1])
+        if end is None:
+            return 1
+        print(f"{end:.3f}")
+    else:
+        print(f"onbekend commando: {command}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ApiError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        sys.exit(1)

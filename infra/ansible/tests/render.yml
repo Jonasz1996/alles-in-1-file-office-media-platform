@@ -1,0 +1,40 @@
+# Rendert alle templates voor de voorbeeld-inventory naar een lokale map, zodat CI
+# de uitkomst kan controleren zonder echte nodes:
+#   ansible-playbook -i inventory/hosts.example.yml tests/render.yml -e render_dir=/tmp/render
+- name: Templates renderen
+  hosts: nodes
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/all.local.example.yml
+  vars:
+    out: "{{ render_dir }}/{{ inventory_hostname }}"
+  tasks:
+    - name: Mappen
+      ansible.builtin.file:
+        path: "{{ out }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [postgres, seaweedfs, traefik/dynamic, keepalived]
+
+    - name: Templates
+      ansible.builtin.template:
+        src: "../roles/{{ item.role }}/templates/{{ item.src }}"
+        dest: "{{ out }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { role: platform, src: compose.yaml.j2, dest: compose.yaml }
+        - { role: platform, src: patroni.yml.j2, dest: postgres/patroni.yml }
+        - { role: platform, src: seaweedfs/s3.json.j2, dest: seaweedfs/s3.json }
+        - { role: platform, src: traefik/traefik.yml.j2, dest: traefik/traefik.yml }
+        - { role: platform, src: traefik/routes.yml.j2, dest: traefik/dynamic/routes.yml }
+        - { role: keepalived, src: keepalived.conf.j2, dest: keepalived/keepalived.conf }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Dockerfile van PostgreSQL
+      ansible.builtin.copy:
+        src: ../roles/platform/files/postgres/Dockerfile
+        dest: "{{ out }}/postgres/Dockerfile"
+        mode: "0644"

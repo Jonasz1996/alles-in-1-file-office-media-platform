@@ -1,0 +1,91 @@
+/* /prullenbak: een gevirtualiseerde lijst met vaste rijhoogte. Alleen kleuren uit tokens.css. */
+
+.trash-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--space-2) 0;
+  background: var(--bg);
+}
+
+.trash-toolbar > .muted {
+  margin-right: auto;
+}
+
+.trash-row {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 2fr) minmax(0, 1.5fr) 6.5rem 10rem;
+  gap: var(--space-2);
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+
+.trash-head {
+  height: 2.25rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.trash-row:not(.trash-head):hover {
+  background: var(--hover);
+}
+
+.trash-row.selected,
+.trash-row.selected:hover {
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+.trash-row:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: calc(-1 * var(--focus-w));
+}
+
+.trash-row > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trash-name {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.trash-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trash-root {
+  font-size: var(--text-s);
+}
+
+.trash-row.selected .muted {
+  color: inherit;
+}
+
+.trash-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.trash-where,
+.trash-date {
+  color: var(--muted);
+}
+
+.trash-row.selected .trash-where,
+.trash-row.selected .trash-date {
+  color: inherit;
+}
+
+@media (max-width: 640px) {
+  .trash-row {
+    grid-template-columns: 2.25rem minmax(0, 1fr) 5.5rem;
+  }
+}

@@ -1,0 +1,79 @@
+import type { Translation } from "../types";
+import type nl from "./beeld.nl";
+
+const en: Translation<typeof nl> = {
+  title: "Search by image",
+  notReady:
+    "Search by image is not running on this server: the analysis is off, or not fully installed. The end text of the install script says why, at Gezichten (de container analyse). If it says ANALYSE=uit, run the script again with ANALYSE=aan; then everyone turns it on for themselves under Account → Photos. See docs/runbooks/analyse.md.",
+  later: "Search by image is off on this server. The administrator can turn it on.",
+  grid: {
+    label: "Photos that match '{q}'",
+    labelLike: "Photos that look like the chosen photo",
+    more: "Load more photos",
+    loadingMore: "Loading more photos…",
+  },
+  notice: {
+    indexing: "Your photos are still being looked at: {pct}% done. What has not been looked at yet, you will not find yet.",
+    none: "No photos found that match this.",
+    few: "There may be more. Make the question broader or remove a filter.",
+    slow: "Search by image took too long. These are the matches on name and text.",
+    down: "Search by image does not work right now. These are the matches on name and text.",
+    no_model: "Search by image is not ready yet: the model is missing. These are the matches on name and text.",
+    offYou: "Search by image is turned off. You turn it on under Account → Photos.",
+    offAdmin: "Search by image is turned off for this platform.",
+    noVector: "This photo has not been looked at yet. Try again later.",
+  },
+  like: "More like this",
+  switch: {
+    label: "Search by image",
+    hint: "Your photos are looked at in the background, so you can find them by what is on them ('beach', 'dog'). This happens on this server; nothing goes outside. Only you can search your own photos this way. Off erases what is kept only for you. Snapshots the administrator makes of the server keep it until they expire. What to expect: one word usually puts a few good photos at the top. Some words find little; then try a different word for the same thing. Of the first few photos 'More like this' shows, about half are about the same subject.",
+    saved: "Saved.",
+  },
+  admin: {
+    state: "Search by image",
+    on: "on",
+    off: "off",
+    turnOff: "Turn off for everyone",
+    turnOn: "Turn on for everyone",
+    turnedOff: "Search by image is off for everyone. The vectors stay until you erase the image index.",
+    turnedOn: "Search by image is on.",
+    rebuild: "Calculate again",
+    rebuildStarted: "Calculating again has started.",
+    wipe: "Erase image index",
+    wipeTitle: "Erase the image index?",
+    wipeText:
+      "All vectors, the cache and the memory of the container go away. Calculating again takes about two core hours per 100,000 photos.",
+    wipeConfirm: "Erase",
+    wiped: "The image index is being erased.",
+    model: "Model",
+    modelName: "SigLIP 2 B/32-256 (Google, Apache-2.0), int8.",
+    modelOk: "In order.",
+    modelMissing: "Missing; install.sh fetches it on the next run.",
+    modelUnverified: "Not recomputed in CI.",
+    analyse: "Container analyse",
+    running: "running",
+    notRunning: "not running",
+    seen: "Looked at",
+    seenValue: "{seen} of {photos} photos",
+    failed: "Failed",
+    failedCode: "{code}: {count}",
+    hour: "The last hour",
+    hourValue: {
+      one: "{count} query, p95 {p95}; back to plain search: {slow} times too slow, {down} times without container, {noModel} times without model",
+      other: "{count} queries, p95 {p95}; back to plain search: {slow} times too slow, {down} times without container, {noModel} times without model",
+    },
+    noP95: "not measured yet",
+    space: "Space",
+    spaceValue: "{db} in the database, {cache} in the cache, {models} for models",
+    bench: "beeld-bench",
+    benchValue: "{time}: p95 {p95}, {rate} photos per minute",
+    quality: "beeld-kwaliteit",
+    qualityOk: "{time}: in order",
+    qualityBad: "{time}: not in order",
+    notDone: "not done yet",
+    privacy:
+      "The vectors describe what is on a photo. Backups the platform makes do not contain them. If you make your own snapshots of /data (ZFS, restic), they are in there, until you throw that snapshot away.",
+  },
+};
+
+export default en;

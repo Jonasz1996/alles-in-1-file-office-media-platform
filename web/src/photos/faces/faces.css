@@ -1,0 +1,178 @@
+/* Gezichten (fase 6, X2b; Keuze 66): de regel met de voortgang, de kaarten "Is dit …?" en "Wie
+   is dit?", het raster, de rij Gezichten in het infopaneel en "Misschien ook Anna". Alleen
+   klassen; geen inline stijlen (CSP), behalve de plek van een kader (style van React, zoals de
+   rij Personen van Z6). */
+
+.faces-status {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+}
+
+.faces-status details {
+  margin-top: var(--space-1);
+}
+
+.people-faces,
+.person-faces {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+/* De kaarten: zes uitsneden en een knop */
+.faces-cards {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.faces-card {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+
+.faces-sample {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.face-crop {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  object-fit: cover;
+}
+
+/* Het raster: cellen van 96 px, de focus en de keuze goed te zien */
+.faces-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.faces-cells [role="row"] {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+}
+
+.face-cell {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: center;
+  padding: var(--space-2);
+  border: 2px solid transparent;
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+
+.face-cell .face-crop {
+  width: 96px;
+  height: 96px;
+}
+
+.face-cell:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
+}
+
+.face-cell[aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: var(--selected-fg);
+}
+
+.face-cell.done {
+  opacity: 0.6;
+}
+
+.face-cell.yes {
+  border-color: var(--ok);
+}
+
+.face-cell.no,
+.face-cell.hide {
+  border-color: var(--line-strong);
+}
+
+.face-verdict {
+  font-size: var(--text-s);
+}
+
+.face-acts {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.face-acts button {
+  padding: 0 var(--space-1);
+  font-size: var(--text-s);
+}
+
+.faces-name {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  max-width: 24rem;
+}
+
+/* De rij Gezichten in het infopaneel: de kaders op de kleine preview */
+.faces-row {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.faces-frames {
+  position: relative;
+  max-width: 100%;
+}
+
+.faces-frames img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.faces-frames span {
+  position: absolute;
+  overflow: hidden;
+  border: 2px solid var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--text-s);
+  white-space: nowrap;
+}
+
+.faces-frames span.named {
+  border-color: var(--ok);
+}
+
+.faces-on {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.faces-who {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+
+.faces-who p {
+  margin: 0;
+}

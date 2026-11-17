@@ -1,0 +1,42 @@
+# Beheerd door Ansible. De VIP {{ cluster_vip }} staat op de node met de hoogste
+# prioriteit waarvan Traefik gezond is. Valt die node of zijn Traefik uit, dan neemt
+# de volgende de VIP binnen een paar seconden over.
+global_defs {
+    router_id {{ inventory_hostname }}
+    script_user root
+    enable_script_security
+}
+
+vrrp_script chk_traefik {
+    script "/usr/bin/curl -fsS -o /dev/null http://{{ ansible_host }}:8082/ping"
+    interval 2
+    fall 2
+    rise 2
+}
+
+vrrp_instance PLATFORM {
+    state BACKUP
+    interface {{ vip_interface }}
+    virtual_router_id {{ vrrp_router_id }}
+    priority {{ vrrp_priority }}
+    advert_int 1
+    unicast_src_ip {{ ansible_host }}
+    unicast_peer {
+{% for h in groups['nodes'] if h != inventory_hostname %}
+        {{ hostvars[h].ansible_host }}
+{% endfor %}
+    }
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass[:8] }}
+    }
+    virtual_ipaddress {
+        {{ cluster_vip }}/{{ cluster_vip_prefix }}
+    }
+    track_script {
+        chk_traefik
+    }
+    # Traefik vraagt certificaten aan via HTTP-01; dat lukt alleen op de node met de VIP.
+    # Na een overname herstart hij, zodat ontbrekende certificaten meteen worden aangevraagd.
+    notify_master "/usr/bin/docker restart traefik"
+}

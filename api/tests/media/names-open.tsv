@@ -1,0 +1,21 @@
+# Vormen die de parser bewust niet aankan (Keuze 7): soort<TAB>pad<TAB>reden=…<TAB>wens=…
+# De test kijkt alleen of er een reden is en of de parser er niet op faalt.
+
+movies	Wonder Woman 1984.mkv	reden=een jaartal aan het eind van een titel zonder jaar erna is niet van een jaar te onderscheiden	wens=title=Wonder Woman 1984
+movies	Harry Potter and the Deathly Hallows Part 1.mkv	reden=zonder jaar is "Part 1" aan het eind een deel en geen titel	wens=title=Harry Potter and the Deathly Hallows Part 1
+movies	Film (2010).nl.sup	reden=losse beeldondertitels (sup) koppelen we in fase 5 niet: decide kan ze niet spelen	wens=een ondertitel bij Film (2010)
+movies	Film (2010).nl.sub	reden=losse VobSub (sub met idx) koppelen we in fase 5 niet	wens=een ondertitel bij Film (2010)
+movies	Film (2010)/VIDEO_TS/VTS_01_1.VOB	reden=een dvd-structuur (VIDEO_TS) is geen losse film; VOB is geen bekende extensie	wens=één film
+movies	Film (2010)/BDMV/STREAM/00001.m2ts	reden=een blu-ray-structuur (BDMV) is geen losse film	wens=één film
+shows	Show/Pilot.mkv	reden=een aflevering zonder nummer: geen afleveringstoken, dus een video	wens=een aflevering
+shows	Show/Season 1/Show - Pilot.mkv	reden=in een seizoensmap zonder nummer weet de parser niet welke aflevering	wens=een aflevering van seizoen 1
+shows	Naruto/Naruto 012.mkv	reden=absolute nummering zonder groep of streepje is niet van een titel met een getal te onderscheiden	wens=absolute=12
+shows	10x10 (2018).mkv	reden=NxNN met N kleiner dan 100 is een aflevering, ook als het de titel is	wens=title=10x10
+shows	Show/Season 1/Show.S01E01.part1.mkv	reden=delen van een aflevering kent de parser niet	wens=part=1
+shows	Show/Season 1/Show.S01E01.Episode.Two.mkv	reden=een afleveringstitel met een afleveringswoord erin	wens=episode_title=Episode Two
+movies	Star Wars Episode 4 (1977).mkv	reden=in een bibliotheek met series zou dit absolute nummering zijn; bij films goed	wens=title=Star Wars Episode 4
+movies	The.Proper.Way.2015.mkv	reden=een titelwoord dat ook ruis is (Proper) blijft alleen staan als het niet in hoofdletters staat	wens=title=The Proper Way
+movies	THE.PROPER.WAY.2015.mkv	reden=in hoofdletters is PROPER ruis; dan valt de rest van de titel weg	wens=title=THE PROPER WAY
+music	Queen-Bohemian Rhapsody.mp3	reden=artiest en titel zonder spaties rond het streepje splitsen we niet	wens=artist=Queen
+music	Artiest/Album/Bohemian Rhapsody (Live).flac	reden=tags gaan voor; het pad zegt niets over live of versies	wens=title=Bohemian Rhapsody (Live)
+videos	20240301_101010.mp4	reden=bij eigen video's is de naam de titel; zonder tekst blijft het een getal	wens=een nette titel

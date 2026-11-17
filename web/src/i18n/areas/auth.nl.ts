@@ -1,0 +1,23 @@
+// Inloggen, het eerste account en de tweede factor (P1). Altijd geladen (eerste lading).
+export default {
+  title: "Inloggen",
+  setupTitle: "Welkom",
+  codeTitle: "Code invoeren",
+  setupIntro: "Maak het eerste account aan; dat wordt de beheerder.",
+  codeIntro: "Tweestapsverificatie staat aan voor {email}.",
+  email: "E-mailadres",
+  name: "Naam",
+  password: "Wachtwoord",
+  showPassword: "Wachtwoord tonen",
+  passwordHint: "Minstens {min} tekens.",
+  code: "Code uit je authenticator-app",
+  codeHint: "Telefoon kwijt? Gebruik een van je herstelcodes.",
+  submit: "Inloggen",
+  createAccount: "Account aanmaken",
+  back: "Terug",
+  forgot: "Wachtwoord vergeten? Vraag je beheerder om een nieuw wachtwoord.",
+  locked: "Te veel foute codes. Probeer het {when} opnieuw.",
+  lockedOver: "Je kunt het nu opnieuw proberen.",
+  offlineTitle: "Geen verbinding met de server",
+  offlineText: "Controleer je verbinding. Zodra je weer online bent, proberen we het opnieuw.",
+} as const;

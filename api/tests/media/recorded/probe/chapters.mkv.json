@@ -1,0 +1,99 @@
+{
+ "data": {
+  "bit_rate": 361898,
+  "chapters": [
+   {
+    "end_ms": 5021,
+    "start_ms": 21,
+    "title": "Intro"
+   },
+   {
+    "end_ms": 24021,
+    "start_ms": 5021,
+    "title": "Deel 1"
+   },
+   {
+    "end_ms": 30021,
+    "start_ms": 24021,
+    "title": "End Credits"
+   }
+  ],
+  "container": "matroska",
+  "duration_ms": 30021,
+  "error": null,
+  "start_ms": -21,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": 8,
+    "bitrate": null,
+    "channels": null,
+    "codec": "h264",
+    "codec_string": "avc1.64000c",
+    "color": {
+     "matrix": null,
+     "primaries": null,
+     "transfer": null
+    },
+    "default": false,
+    "duration_ms": 30000,
+    "dv_profile": null,
+    "forced": false,
+    "fps": 24.0,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": 180,
+    "index": 0,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": 29979,
+    "layout": null,
+    "level": 12,
+    "pix_fmt": "yuv420p",
+    "profile": "High",
+    "sample_rate": null,
+    "start_ms": 21,
+    "title": null,
+    "type": "video",
+    "width": 320
+   },
+   {
+    "attached_pic": false,
+    "bit_depth": null,
+    "bitrate": null,
+    "channels": 1,
+    "codec": "aac",
+    "codec_string": "mp4a.40.2",
+    "color": null,
+    "default": false,
+    "duration_ms": 30021,
+    "dv_profile": null,
+    "forced": false,
+    "fps": null,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": null,
+    "index": 1,
+    "interlaced": false,
+    "lang": null,
+    "last_frame_ms": null,
+    "layout": "mono",
+    "level": null,
+    "pix_fmt": null,
+    "profile": "LC",
+    "sample_rate": 48000,
+    "start_ms": 0,
+    "title": null,
+    "type": "audio",
+    "width": null
+   }
+  ],
+  "tags": {
+   "encoder": "Lavf60.16.100"
+  },
+  "truncated": {}
+ }
+}

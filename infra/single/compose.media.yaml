@@ -1,0 +1,62 @@
+# Media (fase 5): ffmpeg in een eigen container zonder netwerk en zonder data. De app geeft elk
+# bestand als open file descriptor over de socket in media-run (Keuze 11 en 12).
+# install.sh neemt dit bestand mee tenzij MEDIA_SANDBOX=uit in /opt/platform/.env staat (M10).
+#
+# MEDIA_WORKER_KEY (64 hex in /opt/platform/.env; install.sh maakt hem, M10) gaat naar allebei:
+# de worker bewijst er bij hello mee dat hij de echte is (review M0, S1). Nooit in `command`:
+# de opdrachtregel is in /proc voor iedereen te lezen. Zonder sleutel stopt de worker met code 2
+# en zegt de app media_worker_down met de reden; de rest van de app werkt gewoon.
+#
+# De worker start zoals de lokale worker van de app (app/media/local.py, BOOT): `python -I -m
+# app.media.worker` vindt `app` niet (WORKDIR /srv, niets geïnstalleerd, -I zet de werkmap niet
+# in sys.path), dus zet BOOT /srv er zelf in. test_media_compose.py houdt BOOT hier gelijk aan
+# local.BOOT.
+x-media-boot: &boot "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('app.media.worker',run_name='__main__',alter_sys=True)"
+
+services:
+  platform:
+    environment:
+      PLATFORM_MEDIA_ENABLED: "true"
+      PLATFORM_MEDIA_WORKER: /run/media/worker.sock
+      PLATFORM_MEDIA_WORKER_KEY: ${MEDIA_WORKER_KEY:-}
+    volumes:
+      - media-run:/run/media
+    stop_grace_period: 30s  # F3: de lifespan sluit netjes, ook met lange streams
+
+  media:
+    image: platform:local  # hetzelfde image als de app, één keer gebouwd
+    pull_policy: never
+    restart: unless-stopped
+    user: media  # uid 10002: kan blobs van 10001 niet opnieuw openen (V1)
+    # Geen `init: true`: docker-init draait dan als media met de omgeving van de container (met
+    # de sleutel) en is dumpbaar, dus elk proces van media kan /proc/1/environ lezen [gemeten,
+    # m1.md]. De worker is zelf pid 1, niet dumpbaar, en stopt netjes op SIGTERM
+    command: [python, -I, -c, *boot, /srv, --socket, /run/media/worker.sock]
+    environment:
+      PLATFORM_MEDIA_WORKER_KEY: ${MEDIA_WORKER_KEY:-}
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /data:size=1m,mode=0700,uid=10002,gid=10002  # overschaduwt VOLUME /data: geen anoniem volume
+    volumes:
+      - media-run:/run/media
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    ulimits:
+      core: 0
+      nofile: {soft: 1024, hard: 1024}
+    # Leeft de worker? hello zonder sleutel (__main__ --check SOCKET). Via `env -i`: een exec in
+    # de container krijgt de omgeving van de container, met de sleutel; env (0711, niet
+    # dumpbaar) start python zonder
+    healthcheck:
+      test: [CMD, /usr/bin/env, -i, "PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin", python, -I, -c, *boot, /srv, --check, /run/media/worker.sock]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 5s
+
+volumes:
+  media-run:

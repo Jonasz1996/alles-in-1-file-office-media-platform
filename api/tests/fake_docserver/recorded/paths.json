@@ -1,0 +1,959 @@
+{
+ "bron": "Opgenomen met DS 10.0.0.1 (build 10.0.0.169) in de sandbox, spike O0 stap 1 en 2 (spike/recorded/paths.json): runs inv127, inv127x, inv127p (observe), enf127, enfx, enfp (enforce, 127.0.0.1) en enflan (enforce, 192.0.2.2). Pad na normaliseren: prefix /office eraf, versiesegment = <V>.. Voor het padbeleid van §3.10 (O1).",
+ "paden": [
+  {
+   "methode": "GET",
+   "pad": "/web-apps/apps/api/documents/api.js",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 13
+   },
+   "cookie": {
+    "ok": 13
+   },
+   "sec_fetch_dest_localhost": {
+    "script": 11
+   },
+   "sec_fetch_dest_lan": {
+    "None": 2
+   },
+   "content_type": [
+    "application/javascript"
+   ],
+   "acties": [
+    "img",
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 13
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/apps/documenteditor/main/index.html",
+   "klasse": [
+    "PAGE"
+   ],
+   "html": true,
+   "status": {
+    "200": 5
+   },
+   "cookie": {
+    "ok": 5
+   },
+   "sec_fetch_dest_localhost": {
+    "iframe": 2,
+    "empty": 2
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "text/html"
+   ],
+   "acties": [
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "docx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 5
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.js",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 1181
+   },
+   "cookie": {
+    "ok": 1181
+   },
+   "sec_fetch_dest_localhost": {
+    "script": 14,
+    "empty": 1000
+   },
+   "sec_fetch_dest_lan": {
+    "None": 167
+   },
+   "content_type": [
+    "application/javascript"
+   ],
+   "acties": [
+    "img",
+    "open-koud",
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 1181
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/document_editor_service_worker.js",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 7,
+    "304": 4
+   },
+   "cookie": {
+    "ok": 11
+   },
+   "sec_fetch_dest_localhost": {
+    "serviceworker": 11
+   },
+   "sec_fetch_dest_lan": {},
+   "content_type": [
+    "application/javascript"
+   ],
+   "acties": [
+    "img",
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 11
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.css",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 8
+   },
+   "cookie": {
+    "ok": 8
+   },
+   "sec_fetch_dest_localhost": {
+    "style": 7
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "text/css"
+   ],
+   "acties": [
+    "img",
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 8
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.js",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 45
+   },
+   "cookie": {
+    "ok": 45
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 39
+   },
+   "sec_fetch_dest_lan": {
+    "None": 6
+   },
+   "content_type": [
+    "application/javascript"
+   ],
+   "acties": [
+    "img",
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 45
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.json",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 32
+   },
+   "cookie": {
+    "ok": 32
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 27
+   },
+   "sec_fetch_dest_lan": {
+    "None": 5
+   },
+   "content_type": [
+    "application/json"
+   ],
+   "acties": [
+    "img",
+    "open-koud",
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 32
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.json",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 7
+   },
+   "cookie": {
+    "ok": 7
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 6
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/json"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 7
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.template",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 162
+   },
+   "cookie": {
+    "ok": 162
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 138
+   },
+   "sec_fetch_dest_lan": {
+    "None": 24
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 162
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.svg",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 124
+   },
+   "cookie": {
+    "ok": 124
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 104
+   },
+   "sec_fetch_dest_lan": {
+    "None": 20
+   },
+   "content_type": [
+    "image/svg+xml"
+   ],
+   "acties": [
+    "download-docx",
+    "download-pdf",
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 124
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/**.png",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 27
+   },
+   "cookie": {
+    "ok": 27
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 23
+   },
+   "sec_fetch_dest_lan": {
+    "None": 4
+   },
+   "content_type": [
+    "image/png"
+   ],
+   "acties": [
+    "afdrukken-kopbalk",
+    "hprint",
+    "open-koud",
+    "opmerking"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 27
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.wasm",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 14
+   },
+   "cookie": {
+    "ok": 14
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 12
+   },
+   "sec_fetch_dest_lan": {
+    "None": 2
+   },
+   "content_type": [
+    "application/wasm"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 14
+  },
+  {
+   "methode": "GET",
+   "pad": "/cache/files/data/<key>/Editor.bin/Editor.bin",
+   "klasse": [
+    "DATA"
+   ],
+   "html": false,
+   "status": {
+    "200": 12
+   },
+   "cookie": {
+    "ok": 12
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 10
+   },
+   "sec_fetch_dest_lan": {
+    "None": 2
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 12
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.png",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 94
+   },
+   "cookie": {
+    "ok": 94
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 78
+   },
+   "sec_fetch_dest_lan": {
+    "None": 16
+   },
+   "content_type": [
+    "image/png"
+   ],
+   "acties": [
+    "open-koud",
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 94
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.bin",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 7
+   },
+   "cookie": {
+    "ok": 7
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 6
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 7
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/fonts/<n>",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 97
+   },
+   "cookie": {
+    "ok": 97
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 84
+   },
+   "sec_fetch_dest_lan": {
+    "None": 13
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 97
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/themes.json",
+   "klasse": [
+    "SETTINGS"
+   ],
+   "html": false,
+   "status": {
+    "200": 7,
+    "304": 2
+   },
+   "cookie": {
+    "ok": 9
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 8
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/json"
+   ],
+   "acties": [
+    "open-koud",
+    "open-warm",
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 9
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/dictionaries/**.aff",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 5
+   },
+   "cookie": {
+    "ok": 5
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 4
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 5
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/dictionaries/**.dic",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 5
+   },
+   "cookie": {
+    "ok": 5
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 4
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/octet-stream"
+   ],
+   "acties": [
+    "typen"
+   ],
+   "editors": [
+    "docx",
+    "pptx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 5
+  },
+  {
+   "methode": "POST",
+   "pad": "/<V>/downloadas/<key>",
+   "klasse": [
+    "ACTION"
+   ],
+   "html": false,
+   "status": {
+    "200": 17
+   },
+   "cookie": {
+    "ok": 17
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 13
+   },
+   "sec_fetch_dest_lan": {
+    "None": 4
+   },
+   "content_type": [
+    "application/json"
+   ],
+   "acties": [
+    "afdrukken-kopbalk",
+    "afdrukken-menu",
+    "download-docx",
+    "download-pdf"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 244081,
+   "n": 17
+  },
+  {
+   "methode": "GET",
+   "pad": "/cache/files/data/<key>_<n>/output.<ext>/<naam>",
+   "klasse": [
+    "DATA"
+   ],
+   "html": false,
+   "status": {
+    "200": 17
+   },
+   "cookie": {
+    "ok": 17
+   },
+   "sec_fetch_dest_localhost": {
+    "iframe": 13
+   },
+   "sec_fetch_dest_lan": {
+    "None": 4
+   },
+   "content_type": [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+   ],
+   "acties": [
+    "afdrukken-kopbalk",
+    "afdrukken-menu",
+    "download-docx",
+    "download-pdf"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 17
+  },
+  {
+   "methode": "POST",
+   "pad": "/<V>/upload/<key>",
+   "klasse": [
+    "ACTION"
+   ],
+   "html": false,
+   "status": {
+    "200": 6
+   },
+   "cookie": {
+    "ok": 6
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 5
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "application/json"
+   ],
+   "acties": [
+    "afbeelding",
+    "img"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {
+    "doorgegeven": 6
+   },
+   "body_max": 225,
+   "n": 6
+  },
+  {
+   "methode": "GET",
+   "pad": "/cache/files/data/<key>/media/<hash>.<ext>/<hash>.<ext>",
+   "klasse": [
+    "DATA"
+   ],
+   "html": false,
+   "status": {
+    "200": 6
+   },
+   "cookie": {
+    "ok": 6
+   },
+   "sec_fetch_dest_localhost": {
+    "empty": 5
+   },
+   "sec_fetch_dest_lan": {
+    "None": 1
+   },
+   "content_type": [
+    "image/png"
+   ],
+   "acties": [
+    "afbeelding",
+    "img"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 6
+  },
+  {
+   "methode": "GET upgrade",
+   "pad": "/<V>/doc/<key>/c/",
+   "klasse": [
+    "SESSION"
+   ],
+   "html": false,
+   "status": {
+    "101": 12
+   },
+   "cookie": {
+    "ok": 12
+   },
+   "sec_fetch_dest_localhost": {
+    "None": 10
+   },
+   "sec_fetch_dest_lan": {
+    "None": 2
+   },
+   "content_type": [],
+   "acties": [
+    "img",
+    "open-warm",
+    "sluiten"
+   ],
+   "editors": [
+    "docx",
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 23359,
+   "n": 12
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/apps/spreadsheeteditor/main/index.html",
+   "klasse": [
+    "PAGE"
+   ],
+   "html": true,
+   "status": {
+    "200": 3
+   },
+   "cookie": {
+    "ok": 3
+   },
+   "sec_fetch_dest_localhost": {
+    "iframe": 2,
+    "empty": 1
+   },
+   "sec_fetch_dest_lan": {},
+   "content_type": [
+    "text/html"
+   ],
+   "acties": [
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 3
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/sdkjs/**.css",
+   "klasse": [
+    "STATIC"
+   ],
+   "html": false,
+   "status": {
+    "200": 2
+   },
+   "cookie": {
+    "ok": 2
+   },
+   "sec_fetch_dest_localhost": {
+    "style": 2
+   },
+   "sec_fetch_dest_lan": {},
+   "content_type": [
+    "text/css"
+   ],
+   "acties": [
+    "open-koud"
+   ],
+   "editors": [
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 2
+  },
+  {
+   "methode": "GET",
+   "pad": "/<V>/web-apps/apps/presentationeditor/main/index.html",
+   "klasse": [
+    "PAGE"
+   ],
+   "html": true,
+   "status": {
+    "200": 4
+   },
+   "cookie": {
+    "ok": 4
+   },
+   "sec_fetch_dest_localhost": {
+    "iframe": 3,
+    "empty": 1
+   },
+   "sec_fetch_dest_lan": {},
+   "content_type": [
+    "text/html"
+   ],
+   "acties": [
+    "img",
+    "open-koud",
+    "open-warm"
+   ],
+   "editors": [
+    "pptx",
+    "xlsx"
+   ],
+   "authorization": {},
+   "body_max": 0,
+   "n": 4
+  }
+ ],
+ "extra_gemeten": {
+  "print xlsx en pptx": "POST /<V>/downloadas/<key> + GET /cache/files/data/<key>_<n>/output.pdf/<naam> (explore4)",
+  "niet gezien": [
+   "/<V>/printfile/<key>/<naam>",
+   "/<V>/savefile/<key>",
+   "/<V>/downloadfile/<key>",
+   "/<V>/plugins.json (plugins: false)",
+   "GET/POST /<V>/doc/<key>/c/ zonder upgrade (polling)",
+   "/<V>/web-apps/apps/api/documents/preload.html"
+  ]
+ }
+}

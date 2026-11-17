@@ -1,0 +1,40 @@
+- name: Stoppen als de datadisk niet gekoppeld is
+  ansible.builtin.command: mountpoint -q {{ data_root }}
+  changed_when: false
+
+- name: Pakketten bijwerken
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: safe
+    cache_valid_time: 3600
+
+- name: Basispakketten installeren
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - jq
+      - rsync
+      - unattended-upgrades
+    state: present
+
+- name: Automatische beveiligingsupdates aanzetten
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "0644"
+
+- name: SSH alleen met sleutels
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+      MaxAuthTries 3
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Herstart ssh
