@@ -923,6 +923,8 @@ jobs:
           analyse=(-f infra/single/compose.analyse.yaml -f infra/single/compose.analyse-limits.yaml)
           "${single[@]}" "${analyse[@]}" config -q
           "${single[@]}" "${analyse[@]}" --profile omzetten config -q
+          # Mediabeheer (fase 11): qBittorrent en Prowlarr
+          "${single[@]}" -f infra/single/compose.arr.yaml config -q
           # De afscherming van DS zoals ontworpen: geen poort naar buiten, een intern netwerk,
           # cap_drop ALL met alleen deze capabilities, no-new-privileges en pids_limit
           "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml \

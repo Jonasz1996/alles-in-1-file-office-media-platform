@@ -53,6 +53,11 @@ previews-recheck is "Alles nalopen" van /beheer → Taken: elke foto, video en a
 zonder (complete) preview gaat opnieuw in de rij, ook een mislukte of een waarvan het bestand
 op schijf ontbreekt. De draaiende app pakt het binnen enkele seconden op (docs/fotos-indexeren.md).
 
+Mediabeheer (fase 11, app/arr/cli.py): qBittorrent en Prowlarr vooraf instellen en koppelen,
+vóór hun containers starten (install.sh met ARR=aan; nooit een geheim in de uitvoer):
+
+    python -m app.cli arr-koppel [--qbit-url …] [--prowlarr-url …] [--downloads /downloads]
+
 Media (fase 5), elk een dunne aanroep van een functie in app/media (de pakketten bouwen ze; tot
 dan zegt een stub dat media uit staat):
 
@@ -133,6 +138,7 @@ from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
+from app.arr import cli as arr_cli
 from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
@@ -764,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
         "analyse-kwaliteit", help="de kwaliteit van de voorstellen meten tegen de eigen ja en nee"
     )
     search_bench.parsers(commands)
+    arr_cli.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
     beeld_cli.parsers(commands)
@@ -774,6 +781,8 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
+    if args.command in arr_cli.COMMANDS:
+        return arr_cli.run(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
     if args.command == benchlos.COMMAND:

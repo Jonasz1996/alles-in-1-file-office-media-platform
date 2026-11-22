@@ -133,10 +133,18 @@ async def save_prowlarr(
             raise prowlarr.ProwlarrError("de API-sleutel ontbreekt")
         key = old.key
     found = await check_prowlarr(ProwlarrConf(url, key))
-    raw = await _raw(session)
-    raw["prowlarr"] = {"url": url, "key": seal(settings, "arr.prowlarr", key)}
-    await _write(session, raw)
+    await store_prowlarr(session, settings, ProwlarrConf(url, key))
     return found
+
+
+async def store_prowlarr(session: AsyncSession, settings: Settings, conf: ProwlarrConf) -> None:
+    """Bewaren zonder test (arr-koppel, vóór de container draait)."""
+    raw = await _raw(session)
+    raw["prowlarr"] = {
+        "url": prowlarr.check_base(conf.url),
+        "key": seal(settings, "arr.prowlarr", conf.key),
+    }
+    await _write(session, raw)
 
 
 async def save_qbit(
@@ -156,16 +164,21 @@ async def save_qbit(
         password = old.password
     conf = QBitConf(url.rstrip("/"), username, password, category, save_path)
     version = await check_qbit(conf)
+    await store_qbit(session, settings, conf)
+    return version
+
+
+async def store_qbit(session: AsyncSession, settings: Settings, conf: QBitConf) -> None:
+    """Bewaren zonder test (arr-koppel, vóór de container draait)."""
     raw = await _raw(session)
     raw["qbittorrent"] = {
-        "url": conf.url,
-        "username": username,
-        "password": seal(settings, "arr.qbittorrent", password),
-        "category": category,
-        "save_path": save_path,
+        "url": conf.url.rstrip("/"),
+        "username": conf.username,
+        "password": seal(settings, "arr.qbittorrent", conf.password),
+        "category": conf.category,
+        "save_path": conf.save_path,
     }
     await _write(session, raw)
-    return version
 
 
 async def forget(session: AsyncSession, which: str) -> None:

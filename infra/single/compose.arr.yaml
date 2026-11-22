@@ -1,0 +1,53 @@
+# Mediabeheer (fase 11): qBittorrent (downloader) en Prowlarr (bronnenbrug), elk in een eigen
+# container naast de app (keuzes van Jonas, 15-11 en 17-11-2026). install.sh neemt dit bestand
+# alleen mee met ARR=aan in /opt/platform/.env (standaard uit).
+#
+# - Beide draaien als uid/gid 10001, net als de app: de app leest de downloads en kan ze met een
+#   harde link importeren (alles staat onder DATA_ROOT, op één bestandssysteem).
+# - qBittorrent: de webinterface (8080) is alleen in het netwerk arr te bereiken; de app stuurt
+#   hem aan. Vóór de eerste start schrijft `python -m app.cli arr-koppel` de gebruiker en een
+#   gehasht wachtwoord in zijn config en bewaart het wachtwoord versleuteld in de app. Alleen de
+#   torrentpoort 6881 staat open (zet hem op de router door voor betere snelheid; hoeft niet).
+# - Prowlarr: de beheerder voegt er de torrentsites toe op http://<ip-van-de-lxc>:9696 (alleen
+#   in het eigen netwerk: de router stuurt alleen 80 en 443 door). arr-koppel zet zijn API-sleutel
+#   vooraf in zijn config.xml en in de app.
+# - De images: linuxserver.io. Een vaste versie kies je met QBIT_IMAGE en PROWLARR_IMAGE in .env.
+
+x-arr-env: &arr-env
+  PUID: "10001"
+  PGID: "10001"
+  TZ: ${TZ:-Europe/Brussels}
+  UMASK: "002"
+
+services:
+  platform:
+    networks: [default, arr]
+
+  qbittorrent:
+    image: ${QBIT_IMAGE:-lscr.io/linuxserver/qbittorrent:latest}
+    restart: unless-stopped
+    environment:
+      <<: *arr-env
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "6881"
+    volumes:
+      - ${DATA_ROOT:?}/arr/qbittorrent:/config
+      - ${DATA_ROOT:?}/downloads:/downloads
+    ports:
+      - "6881:6881"
+      - "6881:6881/udp"
+    networks: [default, arr]
+
+  prowlarr:
+    image: ${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}
+    restart: unless-stopped
+    environment:
+      <<: *arr-env
+    volumes:
+      - ${DATA_ROOT:?}/arr/prowlarr:/config
+    ports:
+      - "9696:9696"
+    networks: [default, arr]
+
+networks:
+  arr: {}
