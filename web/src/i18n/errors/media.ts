@@ -28,4 +28,6 @@ export default {
   media_provider_unavailable: { en: "The provider cannot be reached" },
   media_provider_rate: { en: "The provider is slowing down requests; try again soon" },
   media_playlist_full: { en: "A playlist has at most {max} tracks" },
+  arr_link_auth: { en: "Prowlarr or qBittorrent refuses the key or password" },
+  arr_link_unreachable: { en: "Prowlarr or qBittorrent cannot be reached" },
 } satisfies Record<string, { en: string }>;

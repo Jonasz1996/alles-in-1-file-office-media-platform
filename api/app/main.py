@@ -43,6 +43,7 @@ from app.office.proxy import OfficeProxy
 from app.office.state import OfficeState
 from app.routers import (
     admin,
+    admin_arr,
     admin_media,
     admin_office,
     admin_search,
@@ -611,6 +612,7 @@ app.include_router(media_progress.router)
 app.include_router(media_match.router)
 app.include_router(media_music.router)
 app.include_router(admin_media.router)
+app.include_router(admin_arr.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)
