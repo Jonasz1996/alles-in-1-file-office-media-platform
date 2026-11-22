@@ -4,10 +4,11 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Vier nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+Vijf nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
 app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
 arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde) en
-media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof).
+media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof) en
+arr_request (app.models.ArrRequest, de verzoeken van gezinsleden).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -83,6 +84,38 @@ def upgrade() -> None:
     )
     op.create_index("ix_arr_grab_wanted_id", "arr_grab", ["wanted_id"])
     op.create_table(
+        "arr_request",
+        sa.Column("id", sa.Uuid(), primary_key=True, nullable=False),
+        sa.Column(
+            "user_id", sa.Uuid(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+        ),
+        sa.Column("kind", sa.String(length=8), nullable=False),
+        sa.Column("tmdb_id", sa.Integer(), nullable=False),
+        sa.Column("title", sa.String(length=500), nullable=False),
+        sa.Column("year", sa.Integer(), nullable=True),
+        sa.Column("seasons", sa.JSON(), nullable=True),
+        sa.Column("note", sa.String(length=500), nullable=True),
+        sa.Column("state", sa.String(length=10), nullable=False),
+        sa.Column("reason", sa.String(length=500), nullable=True),
+        sa.Column(
+            "wanted_id",
+            sa.Uuid(),
+            sa.ForeignKey("arr_wanted.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "decided_by", sa.Uuid(), sa.ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "state IN ('pending', 'approved', 'declined', 'available')",
+            name="ck_arr_request_state",
+        ),
+        sa.CheckConstraint("kind IN ('movie', 'show')", name="ck_arr_request_kind"),
+    )
+    op.create_index("ix_arr_request_user_id", "arr_request", ["user_id"])
+    op.create_table(
         "arr_subtitle",
         sa.Column(
             "node_id",
@@ -130,6 +163,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("media_sub_offset")
+    op.drop_index("ix_arr_request_user_id", table_name="arr_request")
+    op.drop_table("arr_request")
     op.drop_table("arr_subtitle")
     op.drop_index("ix_arr_grab_wanted_id", table_name="arr_grab")
     op.drop_table("arr_grab")

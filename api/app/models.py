@@ -698,6 +698,43 @@ class ArrGrab(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ArrRequest(Base):
+    """Fase 11, stap 6: een verzoek van een gezinslid om een film of serie. state: pending (wacht
+    op een beheerder) | approved (de app volgt hem: wanted_id) | declined (reason) | available
+    (het eerste bestand staat in de bibliotheek). Een beheerder, of iemand die vanzelf goedkeuring
+    krijgt, slaat pending over."""
+
+    __tablename__ = "arr_request"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'approved', 'declined', 'available')",
+            name="ck_arr_request_state",
+        ),
+        CheckConstraint("kind IN ('movie', 'show')", name="ck_arr_request_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(8))
+    tmdb_id: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(500))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seasons: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    state: Mapped[str] = mapped_column(String(10), default="pending")
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    wanted_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("arr_wanted.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ArrSubtitle(Base):
     """Fase 11, stap 4: per video en taal wat OpenSubtitles opleverde. state: found (gezet als
     los bestand naast de video, sub_node_id) | none (niets gevonden; opnieuw na een tijd, die

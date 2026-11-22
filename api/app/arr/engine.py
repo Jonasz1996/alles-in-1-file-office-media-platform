@@ -626,6 +626,9 @@ async def _import(
     grab.updated_at = grab.done_at = _now()
     await session.commit()
     log.info("arr: %s geïmporteerd in %s", grab.release, library.name)
+    from app.routers.arr_requests import mark_available
+
+    await mark_available(session, grab.wanted_id)
 
 
 def due(wanted: ArrWanted, active: Iterable[uuid.UUID], now: datetime) -> bool:

@@ -276,6 +276,41 @@ async def store_opensubs(session: AsyncSession, settings: Settings, conf: OpenSu
     await _write(session, raw)
 
 
+@dataclass(frozen=True)
+class RequestConf:
+    """Verzoeken van gezinsleden (stap 6): wie vanzelf goedkeuring krijgt, en waar een
+    goedgekeurd verzoek heen gaat (None: de oudste bibliotheek van die soort)."""
+
+    auto: tuple[str, ...] = ()
+    profile: str = "hd-1080p"
+    movies: str | None = None
+    shows: str | None = None
+
+
+async def load_requests(session: AsyncSession) -> RequestConf:
+    entry = (await _raw(session)).get("requests")
+    if not isinstance(entry, dict):
+        return RequestConf()
+    auto = entry.get("auto")
+    return RequestConf(
+        auto=tuple(str(x) for x in auto) if isinstance(auto, list) else (),
+        profile=str(entry.get("profile") or "hd-1080p"),
+        movies=str(entry["movies"]) if entry.get("movies") else None,
+        shows=str(entry["shows"]) if entry.get("shows") else None,
+    )
+
+
+async def store_requests(session: AsyncSession, conf: RequestConf) -> None:
+    raw = await _raw(session)
+    raw["requests"] = {
+        "auto": list(conf.auto),
+        "profile": conf.profile,
+        "movies": conf.movies,
+        "shows": conf.shows,
+    }
+    await _write(session, raw)
+
+
 async def forget(session: AsyncSession, which: str) -> None:
     raw = await _raw(session)
     raw.pop(which, None)

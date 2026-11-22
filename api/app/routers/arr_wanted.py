@@ -172,11 +172,36 @@ async def wanted(admin: AdminUser, session: Session):
 
 @router.post("/wanted", status_code=201, response_model=WantedOut)
 async def add(body: WantedIn, admin: AdminUser, session: Session, settings: Config):
-    _check_profile(body.profile)
-    library = await session.get(MediaLibrary, body.library_id)
+    row = await create_wanted(
+        session,
+        settings,
+        kind=body.kind,
+        tmdb_id=body.tmdb_id,
+        library_id=body.library_id,
+        profile=body.profile,
+        seasons=body.seasons,
+        added_by=admin.id,
+    )
+    return _out(row)
+
+
+async def create_wanted(
+    session,
+    settings: Settings,
+    *,
+    kind: str,
+    tmdb_id: int,
+    library_id: uuid.UUID,
+    profile: str,
+    seasons: list[int] | None,
+    added_by: uuid.UUID | None,
+) -> ArrWanted:
+    """Een titel volgen (ook vanuit een goedgekeurd verzoek, arr_requests.py). Commit."""
+    _check_profile(profile)
+    library = await session.get(MediaLibrary, library_id)
     if library is None:
         raise fail(404, "not_found", "Die bibliotheek bestaat niet")
-    if library.kind != LIBRARY_KIND[body.kind]:
+    if library.kind != LIBRARY_KIND[kind]:
         raise fail(
             422,
             "arr_library_kind",
@@ -185,35 +210,35 @@ async def add(body: WantedIn, admin: AdminUser, session: Session, settings: Conf
     exists = await session.scalar(
         select(ArrWanted.id).where(
             ArrWanted.library_id == library.id,
-            ArrWanted.kind == body.kind,
-            ArrWanted.tmdb_id == body.tmdb_id,
+            ArrWanted.kind == kind,
+            ArrWanted.tmdb_id == tmdb_id,
         )
     )
     if exists is not None:
         raise fail(409, "arr_wanted_exists", "Deze titel volg je al in die bibliotheek")
     tmdb_provider = await provider(session, settings)
-    tmdb_kind = "movie" if body.kind == "movie" else "tv"
+    tmdb_kind = "movie" if kind == "movie" else "tv"
     try:
-        details = await tmdb_provider.details(body.kind, f"{tmdb_kind}:{body.tmdb_id}", "nl-NL")
+        details = await tmdb_provider.details(kind, f"{tmdb_kind}:{tmdb_id}", "nl-NL")
     except (ProviderAuth, ProviderRate, ProviderUnavailable) as exc:
         raise _provider_error(exc) from None
     row = ArrWanted(
-        kind=body.kind,
-        tmdb_id=body.tmdb_id,
+        kind=kind,
+        tmdb_id=tmdb_id,
         imdb_id=details.ids.get("imdb"),
         title=details.title,
         original_title=details.original_title,
         year=details.year,
         runtime_min=details.runtime_min,
         library_id=library.id,
-        profile=body.profile,
-        seasons=_seasons(body.seasons) if body.kind == "show" else None,
+        profile=profile,
+        seasons=_seasons(seasons) if kind == "show" else None,
         monitored=True,
-        added_by=admin.id,
+        added_by=added_by,
     )
     session.add(row)
     await session.commit()
-    return _out(row)
+    return row
 
 
 async def _get(session, wanted_id: uuid.UUID) -> ArrWanted:
