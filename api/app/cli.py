@@ -350,7 +350,10 @@ FACES_LOST = (
 
 
 # Wat een downgrade die 0016 weghaalt, kwijtmaakt (fase 11)
-ARR_LOST = "De lijst van gevolgde films en series gaat weg. Je bibliotheken en bestanden blijven."
+ARR_LOST = (
+    "De lijst van gevolgde films en series en de geschiedenis van de downloads gaan weg. Je "
+    "bibliotheken en bestanden blijven."
+)
 
 
 # Wat een downgrade die 0013 weghaalt op PostgreSQL kwijtmaakt (review PG13-2): place_id past

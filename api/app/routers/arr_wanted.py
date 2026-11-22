@@ -7,6 +7,8 @@ POST   /api/v1/arr/wanted                   WantedIn → 201 Wanted | 409 arr_tm
                                             | 409 arr_wanted_exists | 422 arr_library_kind
 PATCH  /api/v1/arr/wanted/{id}              WantedPatch → Wanted | 404
 DELETE /api/v1/arr/wanted/{id}              → 204 | 404
+POST   /api/v1/arr/wanted/{id}/search       → 202 (zoekt in de volgende ronde, binnen een minuut)
+GET    /api/v1/arr/grabs?limit=50           → [Grab] (wat de app koos, de nieuwste eerst)
 GET    /api/v1/arr/calendar?days=30         → [CalendarEntry] | 409 arr_tmdb_needed
 
 Voorlopig alleen beheerders; verzoeken van gezinsleden komen in stap 6. Titels komen van TMDB
@@ -31,7 +33,7 @@ from app.errors import fail
 from app.media.providers import tmdb
 from app.media.providers.base import ProviderAuth, ProviderRate, ProviderUnavailable
 from app.media.providers.secrets import load as load_tmdb
-from app.models import ArrWanted, MediaLibrary
+from app.models import ArrGrab, ArrWanted, MediaLibrary
 from app.security import AdminUser
 
 router = APIRouter(prefix="/api/v1/arr", tags=["mediabeheer"])
@@ -200,6 +202,7 @@ async def add(body: WantedIn, admin: AdminUser, session: Session, settings: Conf
         tmdb_id=body.tmdb_id,
         imdb_id=details.ids.get("imdb"),
         title=details.title,
+        original_title=details.original_title,
         year=details.year,
         runtime_min=details.runtime_min,
         library_id=library.id,
@@ -300,3 +303,62 @@ async def calendar(
         except ProviderUnavailable:
             continue  # één serie die niet lukt, houdt de rest niet tegen
     return sorted(out, key=lambda e: (e.aired, e.title, e.season, e.episode))
+
+
+@router.post("/wanted/{wanted_id}/search", status_code=202)
+async def search_now(wanted_id: uuid.UUID, admin: AdminUser, session: Session):
+    row = await _get(session, wanted_id)
+    row.searched_at = None
+    await session.commit()
+    return {"queued": True}
+
+
+class GrabOut(BaseModel):
+    id: uuid.UUID
+    wanted_id: uuid.UUID
+    title: str
+    season: int | None
+    episode: int | None
+    release: str
+    indexer: str
+    size: int
+    quality: str
+    state: str
+    reason: str | None
+    progress: float
+    created_at: dt.datetime
+    done_at: dt.datetime | None
+
+
+@router.get("/grabs", response_model=list[GrabOut])
+async def grabs(
+    admin: AdminUser, session: Session, limit: Annotated[int, Query(ge=1, le=500)] = 50
+):
+    rows = await session.execute(
+        select(ArrGrab, ArrWanted.title)
+        .join(ArrWanted, ArrWanted.id == ArrGrab.wanted_id)
+        .order_by(ArrGrab.created_at.desc())
+        .limit(limit)
+    )
+    out = []
+    for grab, title in rows:
+        reason = None if grab.state == "importing" else grab.reason  # dan een pad, geen reden
+        out.append(
+            GrabOut(
+                id=grab.id,
+                wanted_id=grab.wanted_id,
+                title=title,
+                season=grab.season,
+                episode=grab.episode,
+                release=grab.release,
+                indexer=grab.indexer,
+                size=grab.size,
+                quality=grab.quality,
+                state=grab.state,
+                reason=reason,
+                progress=grab.progress,
+                created_at=grab.created_at,
+                done_at=grab.done_at,
+            )
+        )
+    return out

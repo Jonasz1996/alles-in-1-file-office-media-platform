@@ -3,7 +3,8 @@
     python -m app.cli arr-koppel [--qbit-url http://qbittorrent:8080] [--prowlarr-url http://prowlarr:9696]
 
 Voor de start van de containers qbittorrent en prowlarr (install.sh met ARR=aan). Maakt de mappen
-`<data>/arr/qbittorrent`, `<data>/arr/prowlarr` en `<data>/downloads`, en:
+`<data>/arr/qbittorrent`, `<data>/arr/prowlarr`, `<data>/import/torrents` (de downloads) en
+`<data>/import/arr` (klaar voor de import), en:
 
 - qBittorrent: is er in de app nog geen wachtwoord, dan een nieuw (willekeurig) wachtwoord, als
   hash in `qBittorrent.conf` en versleuteld in de app. Is er al een, dan blijft het zoals het is.
@@ -51,7 +52,7 @@ async def koppel(settings: Settings, qbit_url: str, prowlarr_url: str, downloads
     data = Path(settings.data_dir)
     qbit_dir = data / "arr" / "qbittorrent"
     prowlarr_dir = data / "arr" / "prowlarr"
-    for folder in (qbit_dir, prowlarr_dir, data / "downloads"):
+    for folder in (qbit_dir, prowlarr_dir, data / "import" / "torrents", data / "import" / "arr"):
         folder.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)

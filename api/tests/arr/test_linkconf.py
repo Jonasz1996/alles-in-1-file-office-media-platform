@@ -76,7 +76,7 @@ async def test_koppel_is_idempotent_and_never_prints_secrets(client, settings, c
     data = settings.data_dir
     conf = (data / "arr/qbittorrent/qBittorrent/qBittorrent.conf").read_text()
     xml = (data / "arr/prowlarr/config.xml").read_text()
-    assert (data / "downloads").is_dir()
+    assert (data / "import" / "torrents").is_dir()
 
     async with async_sessionmaker(get_engine(settings))() as session:
         q = await arr_settings.load_qbit(session, settings)

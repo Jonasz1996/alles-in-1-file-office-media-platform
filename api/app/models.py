@@ -647,6 +647,8 @@ class ArrWanted(Base):
     tmdb_id: Mapped[int] = mapped_column(Integer)
     imdb_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
     title: Mapped[str] = mapped_column(String(500))
+    # De oorspronkelijke titel (de releases heten meestal zo, niet naar de Nederlandse titel)
+    original_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     runtime_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     library_id: Mapped[uuid.UUID] = mapped_column(
@@ -659,6 +661,41 @@ class ArrWanted(Base):
         ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Wanneer de app hem laatst zocht (stap 3); NULL: nog nooit
+    searched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArrGrab(Base):
+    """Fase 11, stap 3: een release die de app koos en aan qBittorrent gaf, met zijn staat.
+    state: downloading | importing | imported | failed. Een mislukte (failed) staat op de zwarte
+    lijst: dezelfde guid kiest de app voor deze titel nooit meer. qBittorrent kent hem aan de tag
+    platform-<id>. season/episode: NULL voor een film; episode NULL bij een seizoenspakket."""
+
+    __tablename__ = "arr_grab"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('downloading', 'importing', 'imported', 'failed')",
+            name="ck_arr_grab_state",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    wanted_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("arr_wanted.id", ondelete="CASCADE"), index=True
+    )
+    season: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episode: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    release: Mapped[str] = mapped_column(String(500))
+    indexer: Mapped[str] = mapped_column(String(200))
+    guid: Mapped[str] = mapped_column(String(1000))
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    quality: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(16), default="downloading")
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MediaItem(Base):
