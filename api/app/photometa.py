@@ -60,10 +60,9 @@ from typing import Any
 import anyio
 import anyio.to_thread
 from sqlalchemy import and_, exists, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import jobs, photo_hash, photodate, previews, render_meta
+from app import dbdialect, jobs, photo_hash, photodate, previews, render_meta
 from app.config import Settings
 from app.db import get_engine
 from app.models import Blob, BlobMeta, Node, PhotoGeo, PhotoPref
@@ -449,7 +448,8 @@ async def mark_dead(settings: Settings, payload: dict[str, Any], _error: str) ->
                 .execution_options(synchronize_session=False)
             )
             # Wat al een blob_meta had, houdt die
-            await session.execute(sqlite_insert(BlobMeta).on_conflict_do_nothing(), unknown)
+            dialect = dbdialect.of(session)
+            await session.execute(dialect.insert(BlobMeta).on_conflict_do_nothing(), unknown)
             await photo_hash.mark_none(session, shas)
         else:
             await session.execute(

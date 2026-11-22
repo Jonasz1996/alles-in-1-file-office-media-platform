@@ -13,9 +13,8 @@ gast heeft geen eigen bestanden (403 guest, zoals /photos).
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app import errors
+from app import dbdialect, errors
 from app.db import Session
 from app.dupes import groups
 from app.geo.types import DupeGroup, DupeIgnoreIn, DupeItem, DupePage
@@ -92,8 +91,9 @@ async def ignore(body: DupeIgnoreIn, user: CurrentUser, session: Session) -> Non
     )
     if not known:
         raise errors.fail(400, "dupes_bad_key", "Deze groep bestaat niet (meer)")
+    dialect = dbdialect.of(session)
     await session.execute(
-        sqlite_insert(DupIgnore.__table__).on_conflict_do_nothing(),
+        dialect.insert(DupIgnore.__table__).on_conflict_do_nothing(),
         [{"user_id": user.id, "key": key}],
     )
     await session.commit()

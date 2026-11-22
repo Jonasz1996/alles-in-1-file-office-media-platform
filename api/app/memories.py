@@ -22,10 +22,9 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import delete, exists, func, literal, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import errors
+from app import dbdialect, errors
 from app.config import Settings
 from app.models import Blob, MemoryHide, Node, Person, PhotoPerson, User
 from app.people.types import MemoryHide as HideOut
@@ -222,8 +221,9 @@ async def hide(db: AsyncSession, user: User, kind: str, ref: str) -> None:
         raise errors.fail(
             400, "memories_bad_hide", "Dit kan niet uit je herinneringen", max=MAX_HIDES
         )
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(MemoryHide)
+        dialect.insert(MemoryHide)
         .values(user_id=user.id, kind=kind, ref=ref)
         .on_conflict_do_nothing()
     )

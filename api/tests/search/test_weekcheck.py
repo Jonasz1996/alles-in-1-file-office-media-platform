@@ -8,7 +8,7 @@ Wat hier vastligt:
 - een verschil komt op /beheer, met in het log alleen aantallen (geen num, naam of tekst); na
   een verschil kijkt hij het volgende uur opnieuw, zodat de regel na de herbouw weer groen wordt;
 - niet tijdens de pauze van /beheer, niet tijdens een herbouw, niet zonder FTS5 of op
-  PostgreSQL, en zonder nodes geen uitkomst;
+  PostgreSQL (daar fase6_fill, 0013), en zonder nodes geen uitkomst;
 - de controle loopt in een eigen draad, met 200 nodes, en kan niet schrijven (query_only): hij
   houdt de schrijver nooit vast;
 - hij leest alles in één momentopname: wat de app intussen schrijft, is geen verschil.
@@ -197,10 +197,18 @@ async def test_niet_tijdens_een_herbouw_zonder_fts5_of_zonder_nodes(client, sett
     await sql(settings, "UPDATE search_state SET cursor = 0 WHERE id = 1")
     assert await weekcheck.run(settings) is None
     await sql(settings, "UPDATE search_state SET cursor = NULL WHERE id = 1")
-    # Zonder FTS5 (PLATFORM_SEARCH_INDEX=uit) en op PostgreSQL: de motor is like
+    # Zonder FTS5 (PLATFORM_SEARCH_INDEX=uit) en op PostgreSQL: de motor is like. Op PostgreSQL
+    # loopt sinds 0013 fase6_fill in plaats van de vergelijking met FTS (test_pg_triggers.py)
     assert await weekcheck.run(settings.model_copy(update={"search_index": "uit"})) is None
+    op_pg: list[str] = []
+
+    async def fill_op_pg(s):
+        op_pg.append(s.db_url)
+
+    monkeypatch.setattr(weekcheck, "_run_postgres", fill_op_pg)
     pg = settings.model_copy(update={"database_url": "postgresql+asyncpg://niemand@127.0.0.1:1/x"})
     assert await weekcheck.run(pg) is None
+    assert op_pg == [pg.db_url]
     assert len(gelopen) == 1 and await opgeslagen(settings) is None
 
     # Begint er een herbouw tussen de keuze en de controle, dan ook geen uitkomst; ook niet als

@@ -6,6 +6,7 @@ De nep-DS praat via ASGI met de interne app (de bron ophalen) en de app via ASGI
 
 import asyncio
 import contextlib
+import gc
 import io
 import itertools
 import logging
@@ -325,8 +326,23 @@ async def test_een_key_per_inhoud(client, admin, office):
     )
 
 
+@pytest.fixture
+def frozen_heap():
+    """De heap van dit testproces gaat in gc.freeze zolang de test loopt (zoals frozen_heap in
+    test_media_loadtest). In de hele api-set heeft het proces ruim een miljoen objecten van
+    eerdere tests, en een volle ronde van de garbage collector daarover houdt de lus tot ongeveer
+    een seconde stil. Viel die binnen onze tijdslimiet van 0,3 s vóór de nep-DS het verzoek had,
+    dan kende DS de key niet en gaf until hieronder KeyError (golf 1 van 0.8.2, op PostgreSQL;
+    met de lus 0,35 s stil in dat venster komt precies die fout). Dat is de test, niet de app: de
+    echte app heeft die objecten niet. De grens van 0,3 s blijft."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
 @pytest.mark.anyio
-async def test_na_onze_tijdslimiet_dezelfde_key(client, admin, office, monkeypatch):
+async def test_na_onze_tijdslimiet_dezelfde_key(client, admin, office, monkeypatch, frozen_heap):
     """DS werkt na onze tijdslimiet door: de volgende poging vraagt dezelfde key en krijgt dan
     het resultaat, zonder tweede conversie."""
     jonas, _ = admin

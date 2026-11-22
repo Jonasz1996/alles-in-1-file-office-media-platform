@@ -35,7 +35,8 @@ draait (Keuze 52 van fase 6). Het bestand komt in /data/backup en heet naar de a
 de tijd: platform-0012-<tijd>.db. Per head blijft de nieuwste; zo staat de kopie van vóór een
 migratie er na nieuwe kopieën nog. Het migreert niets. De kopie heeft geen gezichten en geen
 beeld. install.sh draait dezelfde tekst (app/backup.py, alleen de standaardbibliotheek) met het
-image dat er nog draait, want dit commando bestaat in oudere images niet.
+image dat er nog draait, want dit commando bestaat in oudere images niet. Op PostgreSQL weigert
+het met exitcode 2: daar maakt pg_dump de kopie (cluster: platform-ctl.sh db-backup).
 
     docker exec <container> python -m app.cli db-copy <postgresql+asyncpg://…> [--leegmaken]
 
@@ -254,6 +255,8 @@ SEARCH_REVISION = "0010"
 # De revisies van gezichten en van zoeken op beeld (fase 6, §3.1a)
 FACES_REVISION = "0011"
 BEELD_REVISION = "0012"
+# De revisie van PostgreSQL (0.8.2): op SQLite doet hij niets
+PG_REVISION = "0013"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -338,9 +341,21 @@ FACES_LOST = (
 )
 
 
-def lost_lines(removed: list[str]) -> list[str]:
-    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst."""
+# Wat een downgrade die 0013 weghaalt op PostgreSQL kwijtmaakt (review PG13-2): place_id past
+# daarna niet meer (48 bits in int32) en wordt NULL; met 0.8.2 komt hij terug (0013 zet de job
+# geo.places dan opnieuw klaar)
+PG_LOST = (
+    "De plaatsen van foto's gaan weg. Het land en de plek op de kaart blijven. Met een nieuwe "
+    "update naar 0.8.2 zoekt de app de plaatsen weer op."
+)
+
+
+def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
+    """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
+    de database is PostgreSQL (0013 doet alleen daar iets)."""
     lines = []
+    if postgres and PG_REVISION in removed:
+        lines.append(PG_LOST)
     if BEELD_REVISION in removed:
         lines.append(BEELD_LOST)
     if FACES_REVISION in removed:
@@ -417,7 +432,9 @@ def _downgrade(settings: Settings, revision: str, yes: bool) -> int:
     removed_revs = removed_revisions(now, revision)
     search = SEARCH_REVISION in removed_revs
     found, drop = _rule_items_answer(settings, yes, search)
-    if not yes and not _confirm(now, revision, lost=lost_lines(removed_revs)):
+    postgres = make_url(settings.db_url).get_backend_name() == "postgresql"
+    lost = lost_lines(removed_revs, postgres=postgres)
+    if not yes and not _confirm(now, revision, lost=lost):
         print("Niets gedaan.", file=sys.stderr)
         return 1
 
@@ -493,10 +510,20 @@ def _recheck(settings: Settings) -> int:
     return 0
 
 
+# Op PostgreSQL (het cluster) maakt pg_dump de reservekopie, niet dit commando (0.8.2, P1)
+PG_BACKUP = (
+    "Een reservekopie van PostgreSQL maakt dit commando niet: "
+    "gebruik pg_dump (cluster: platform-ctl.sh db-backup)."
+)
+
+
 def _backup(settings: Settings) -> int:
     try:
         target = db_backup(settings)
     except NotSqlite:
+        if make_url(settings.db_url).get_backend_name() == "postgresql":
+            print(PG_BACKUP, file=sys.stderr)
+            return 2
         print("Een reservekopie maakt dit commando alleen van SQLite.", file=sys.stderr)
         return 1
     except NoDatabase as exc:

@@ -27,10 +27,10 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import and_, func, literal, or_, select
+from sqlalchemy import Text, and_, cast, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import access, errors, previews
+from app import access, dbdialect, errors, previews
 from app.config import Settings
 from app.media import analysis, names, subtitles
 from app.media import chapters as media_chapters
@@ -289,6 +289,16 @@ class Shows:
 # --- lezen: kaarten, items en series ----------------------------------------------------------
 
 
+def _first_node(dialect_name: str) -> Any:
+    """De kleinste node_id per groep. SQLite bewaart een uuid als tekst (32 hex) en neemt daar
+    min() over; PostgreSQL kent geen min(uuid) en krijgt min() over de tekst (COLLATE "C": op
+    bytes, dezelfde volgorde als de hex van SQLite), terug als uuid."""
+    if dialect_name == dbdialect.SQLITE:
+        return func.min(MediaItem.node_id)
+    as_text = cast(MediaItem.node_id, Text).collate("C")
+    return cast(func.min(as_text), MediaItem.node_id.type)
+
+
 def invalid_cursor():
     return errors.fail(422, "invalid_cursor", "Ongeldige cursor voor de lijst")
 
@@ -509,7 +519,7 @@ class Reader:
         first: dict[uuid.UUID, uuid.UUID] = {}
         if missing:
             rows = await self.session.execute(
-                select(MediaItem.show_id, func.min(MediaItem.node_id))
+                select(MediaItem.show_id, _first_node(dbdialect.name_of(self.session)))
                 .where(MediaItem.show_id.in_(missing), MediaItem.present.is_(True))
                 .group_by(MediaItem.show_id)
             )

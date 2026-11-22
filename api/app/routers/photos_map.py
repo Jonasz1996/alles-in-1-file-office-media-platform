@@ -42,9 +42,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import Select, and_, case, exists, false, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import errors, photo_rows
+from app import dbdialect, errors, photo_rows
 from app.config import Settings, get_settings
 from app.db import Session
 from app.geo import places as geo_places
@@ -128,6 +129,17 @@ def _grid(s: int, xs: list[tuple[int, int]], y0: int, y1: int) -> int:
     return sum((x1 >> s) - (x0 >> s) + 1 for x0, x1 in xs) * ((y1 >> s) - (y0 >> s) + 1)
 
 
+def _cover(dialect_name: str, node_id: Any, taken_at: Any) -> Any:
+    """De omslag van een cel: de nieuwste foto erin. SQLite geeft bij max(taken_at) de kolom van
+    de rij met dat maximum; PostgreSQL kent geen losse kolom naast een aggregaat en neemt de
+    eerste van de node_id's op volgorde van taken_at (nieuwste eerst, zonder datum achteraan,
+    zoals in SQLite) en dan node_id. De kolommen komen van _cells, die own_live_geo toepast."""
+    if dialect_name == dbdialect.SQLITE:
+        return node_id.label("cover")  # SQLite: de rij van max(taken_at)
+    newest_first = aggregate_order_by(node_id, taken_at.desc().nulls_last(), node_id)
+    return array_agg(newest_first)[1].label("cover")
+
+
 def _in_window(x16: Any, y16: Any, xs: list[tuple[int, int]], y0: int, y1: int) -> Any:
     """x16 en y16 in het venster (de stukken in x, en y0..y1)."""
     across = [x16.between(x0, x1) for x0, x1 in xs]
@@ -143,6 +155,7 @@ async def _cells(
     shift = literal(s)
     cx = PhotoGeo.x16.op(">>")(shift).label("cx")
     cy = PhotoGeo.y16.op(">>")(shift).label("cy")
+    cover = _cover(dbdialect.name_of(session), PhotoGeo.node_id, PhotoGeo.taken_at)
     found: dict[tuple[int, int], list[Any]] = {}
     for x0, x1 in xs:
         sel = (
@@ -151,7 +164,7 @@ async def _cells(
                 cy,
                 func.count().label("n"),
                 func.max(PhotoGeo.taken_at).label("newest"),
-                PhotoGeo.node_id.label("cover"),  # SQLite: de rij van max(taken_at)
+                cover,
                 func.avg(PhotoGeo.x16).label("ax"),
                 func.avg(PhotoGeo.y16).label("ay"),
             )
@@ -163,16 +176,18 @@ async def _cells(
             .limit(MAX_CELLS + 1)
         )
         for r in await session.execute(_filtered(sel, user, filters)):
+            # float(): avg() is op PostgreSQL een numeric (Decimal), op SQLite al een float
+            ax, ay = float(r.ax), float(r.ay)
             cell = found.get((r.cx, r.cy))
             if cell is None:
-                found[(r.cx, r.cy)] = [r.n, r.newest, r.cover, r.ax * r.n, r.ay * r.n]
+                found[(r.cx, r.cy)] = [r.n, r.newest, r.cover, ax * r.n, ay * r.n]
                 continue
             # Dezelfde cel aan beide kanten van 180° (alleen bij heel grote cellen)
             if r.newest is not None and (cell[1] is None or r.newest > cell[1]):
                 cell[1], cell[2] = r.newest, r.cover
             cell[0] += r.n
-            cell[3] += r.ax * r.n
-            cell[4] += r.ay * r.n
+            cell[3] += ax * r.n
+            cell[4] += ay * r.n
     return found
 
 

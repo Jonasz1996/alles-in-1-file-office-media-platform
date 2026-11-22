@@ -24,6 +24,7 @@ from itertools import batched
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import lock_tree
 from app.models import Node
 
 # Keuze 11: zoveel nodes per stuk, met een commit ertussen (de aanroeper)
@@ -34,7 +35,10 @@ IN_LIMIT = 500
 
 async def delete_nodes(session: AsyncSession, ids: Sequence[uuid.UUID]) -> int:
     """Wist deze nodes (kinderen vóór hun ouders) en geeft het aantal. In de transactie van de
-    aanroeper, die commit: hooguit CHUNK nodes per transactie (zie boven)."""
+    aanroeper, die commit: hooguit CHUNK nodes per transactie (zie boven). Op PostgreSQL eerst
+    het slot van de boom: per IN-lijst een DELETE is meer dan één statement (db.lock_tree)."""
+    if ids:
+        await lock_tree(session)
     for part in batched(ids, IN_LIMIT):
         await session.execute(
             delete(Node).where(Node.id.in_(part)).execution_options(synchronize_session=False)

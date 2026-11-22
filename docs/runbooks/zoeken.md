@@ -464,7 +464,7 @@ Per stap (zoals bij 0.7.1 hieronder):
 3. **Een verse kopie** met het image van nu. Hij zegt
    `De reservekopie staat in /data/backup/platform-0015-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
-4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 en 0012.
+4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011, 0012 en 0013.
    `db-downgrade` zegt wat er weggaat:
 
    > De beeldindex gaat weg. Je foto's blijven.
@@ -481,7 +481,7 @@ Per stap (zoals bij 0.7.1 hieronder):
    (`backup/platform-0015-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
    script van de branch.
 5. **0.8.0 installeren** met het script van `59e0250`. Het maakt eerst nog een kopie (nu van
-   `0010`; die vervangt de kopie van `0010` van de update naar de branch, en die van `0012` uit
+   `0010`; die vervangt de kopie van `0010` van de update naar de branch, en die van `0013` uit
    stap 3 blijft), bouwt het image van 0.8.0 en start het.
 
 Wat blijft: alles van 0.8.0. Wat weg is: wie welk bestand uploadde, en de gezichten en de
@@ -491,7 +491,7 @@ en de mappen `/opt/platform/modellen` en `/opt/platform/sleutels/gezichten`. De 
 `analyse` haalt het script van 0.8.0 weg wanneer het de app start (`--remove-orphans`).
 
 **Weer vooruit.** Het script van de branch, zonder `PLATFORM_SRC_REF` (hetzelfde commando als bij
-"Terug naar 0.7.1" hieronder). De database gaat bij de start weer naar `0012`. Wie welk bestand
+"Terug naar 0.7.1" hieronder). De database gaat bij de start weer naar `0013`. Wie welk bestand
 uploadde, komt niet terug: een bestand zonder die regel telt als door de eigenaar geüpload. De
 modellen staan er nog, dus het script haalt niets opnieuw op. Zoeken op beeld staat daarna voor
 iedereen uit (die schakelaar zat in 0012); wie gezichten aan had, krijgt een nieuwe scan.
@@ -520,12 +520,12 @@ Per stap:
    script met het oude image. In een bestand, omdat `curl … | bash` met een adres dat er niet is
    één regel van curl geeft en verder niets doet; dan stond de app al stil met het schema terug.
 2. **Stoppen** (`dc stop platform media`), zodat niets meer naar de nieuwe tabellen schrijft.
-3. **Een verse kopie** van de database zoals hij nu is, op `0012`, met het image van nu
+3. **Een verse kopie** van de database zoals hij nu is, op `0013`, met het image van nu
    (`db-backup`, dezelfde kopie als die van het script). Hij zegt
    `De reservekopie staat in /data/backup/platform-0015-<tijd>.db (… MB).` (in de Console is dat
    `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
-   vervangt de vorige kopie van `0012`; die van `0009` en `0010` blijven.
-4. **Het schema terug** met het image van nu, want alleen dat kent 0010, 0011 en 0012.
+   vervangt de vorige kopie van `0013`; die van `0009`, `0010` en `0012` blijven.
+4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0013.
    `db-downgrade` vraagt eerst, als die er zijn, naar album-items die uit een regel van een slim
    album komen en niet gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden
    ineens gedeeld zijn. Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het

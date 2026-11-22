@@ -23,6 +23,7 @@ Nooit in een log of een antwoord: de vraag, de vector, de score (K1-16).
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -32,12 +33,13 @@ from collections import deque
 from typing import Any, Literal
 
 import anyio
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import Integer, bindparam, func, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.selectable import Join
 
-from app import beeld_rows, errors
+from app import beeld_rows, dbdialect, errors
 from app.analyse import client, monitor, wire
 from app.analyse.wire import Code, Op
 from app.beeld import cache as bcache
@@ -217,17 +219,30 @@ def _cross_join(element: _CrossJoin, compiler: Any, **kw: Any) -> str:
     return joined.replace(" JOIN ", " CROSS JOIN ", 1)
 
 
-def _select(p: SearchParams, user: User) -> Any:
-    """Stap 5: de top als één JSON-parameter, eigen en levend, ftype image, de filters."""
-    r = func.json_each(bindparam("nums")).table_valued("key", "value").alias("r")
+def _select(p: SearchParams, user: User, dialect: str = dbdialect.SQLITE) -> Any:
+    """Stap 5: de top als één JSON-parameter, eigen en levend, ftype image, de filters.
+    PostgreSQL: de top als één lijst (unnest WITH ORDINALITY: key is de plek) en een gewone
+    JOIN; de CROSS JOIN is een hint voor SQLite. De parameter: _nums()."""
     n = engines.alias()
+    if dialect == dbdialect.SQLITE:
+        r = func.json_each(bindparam("nums")).table_valued("key", "value").alias("r")
+        joined = _CrossJoin(r, n, n.c.num == r.c.value)
+    else:
+        nums = bindparam("nums", type_=ARRAY(Integer))
+        r = func.unnest(nums).table_valued("value", with_ordinality="key").render_derived("r")
+        joined = r.join(n, n.c.num == r.c.value)
     sel = (
         select(n.c.id, n.c.owner_id, n.c.num, n.c.blob_id)
-        .select_from(_CrossJoin(r, n, n.c.num == r.c.value))
+        .select_from(joined)
         .where(own_live(n, user.id), n.c.ftype == "image", text(beeld_rows.origin_ok("n")))
         .order_by(r.c.key)
     )
     return filters.apply_all(sel, n, p, user)
+
+
+def _nums(dialect: str, nums: list[int]) -> Any:
+    """De parameter nums van _select: JSON-tekst voor json_each (SQLite), anders de lijst."""
+    return json.dumps(nums) if dialect == dbdialect.SQLITE else nums
 
 
 async def search(
@@ -240,8 +255,6 @@ async def search(
     like: uuid.UUID | None,
 ) -> SearchPage:
     """Stap 0–7. Fallback(reden) als de router gewoon moet zoeken."""
-    import json
-
     if user.role == "guest":
         raise errors.fail(403, "guest", "Gasten hebben geen eigen foto's")
     check_params(q, like, p)
@@ -273,10 +286,11 @@ async def search(
             raise
         bcache.put(key, hits)
     conn = await db.connection()
+    dialect = conn.dialect.name
     rows = (
         await engines.run(
             conn,
-            _select(p, user).params(nums=json.dumps([h[0] for h in hits])),
+            _select(p, user, dialect).params(nums=_nums(dialect, [h[0] for h in hits])),
             SQL_MS,
             "beeld",
         )

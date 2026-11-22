@@ -17,7 +17,10 @@ krijgt 40 Mbit/s en 20 ms via CDP (MediaBrowsers met perf, §3.6).
 De klik: de test zet de start (mark_start van media_harness) en navigeert dan zoals de router
 van de app (pushState en een popstate-event), dus met de app al geladen; de chunk van de speler
 telt bij de eerste run mee. Tussen de runs Esc (de speler sluit zijn sessie) en wachten tot er
-geen ffmpeg meer loopt.
+geen ffmpeg meer loopt. Voor en na de run vooraf wacht de test tot de app stil is (quiet): geen
+taak die klaarstaat of loopt en geen ffmpeg. Zo valt het eerste scannen van de upload (de preview,
+photometa, de zoekindex) niet samen met de probe van de run vooraf, en de analyse die die run
+klaarzet (de sprites) niet met de meting.
 
 Een rapport per meting (media-m6-<naam>.json in $E2E_PERF_OUT); met E2E_PERF_REPORT_ONLY=1 (CI)
 faalt de test nooit op een grens.
@@ -30,6 +33,7 @@ import os
 import shutil
 import statistics
 import subprocess
+import time
 from typing import Any
 
 import pytest
@@ -52,6 +56,8 @@ GATES_MS = {"direct": 2000, "transcode": 5000, "zoeken": 3000}
 # Mc in de tabel van §4.5: strenger dan "Klaar als"; alleen ter informatie
 INFO_MS = {"direct": 1500, "remux": 1000, "transcode": 3000}
 SEEK_TO = 0.7
+# Zo lang (s) geen taak en geen ffmpeg voordat de app stil heet (quiet)
+QUIET_S = 1.0
 
 NAVIGATE_JS = """(href) => {
   window.__e2eMediaMark && window.__e2eMediaMark();
@@ -142,6 +148,33 @@ def settle(ffmpeg_count: Any) -> None:
     assert not ffmpeg_count.wait_zero(30), "ffmpeg loopt nog"
 
 
+def quiet(media: Any, ffmpeg_count: Any, seconds: float = 120) -> None:
+    """Tot de app stil is: QUIET_S lang geen taak die klaarstaat of loopt (/admin/jobs, ook een
+    taak die pas over een paar seconden aan de beurt is) en geen ffmpeg.
+
+    Het eerste scannen van een upload (de preview met meta en frame, photometa, de zoekindex) en
+    de analyse na een play delen de plaatsen van de worker met de probe en de keyframes van een
+    play (Keuze 12: kort 2, achtergrond 1). Komt de probe bij een volle soort, dan zegt de worker
+    busy en geeft /play 503 media_busy (worker, Retry-After: 2); de speler probeert het daarna
+    opnieuw, maar de test eist 200 voor elke play. Photometa kan er ook zonder upload bij komen:
+    de housekeeping van media zet de backfill de eerste keer een minuut na de start meteen klaar.
+    Is alles van de upload klaar, dan heeft die niets meer te doen."""
+    end = time.monotonic() + seconds
+    since: float | None = None
+    state: dict[str, Any] = {}
+    while time.monotonic() < end:
+        state = media.server.call(media.admin, "GET", "/api/v1/admin/jobs", expect=200).json()
+        counts = state["counts"]
+        if counts["queued"] or counts["running"] or ffmpeg_count.count:
+            since = None
+        elif since is None:
+            since = time.monotonic()
+        elif time.monotonic() - since >= QUIET_S:
+            return
+        time.sleep(0.25)
+    raise AssertionError(f"de app werd niet stil binnen {seconds:.0f} s: {state.get('by_type')}")
+
+
 def start(page: Any, node: str) -> None:
     """De klik: binnen de app naar /kijken/:node, met de start van de meting."""
     page.evaluate(NAVIGATE_JS, f"/kijken/{node}")
@@ -193,13 +226,19 @@ def prepare(media: Any, media_browsers: Any, name: str) -> tuple[Any, str, Any, 
     return owner, folder, context, page
 
 
-def first_frames(page: Any, node: str, mode: str, ffmpeg_count: Any, plays: Plays) -> list[float]:
+def first_frames(
+    page: Any, node: str, mode: str, media: Any, ffmpeg_count: Any, plays: Plays
+) -> list[float]:
     """RUNS keer: de klik, het eerste beeld, Esc. Eén run vooraf (de probe, de keyframes en de
-    sprites zijn dan klaar; die horen bij het eerste scannen, niet bij afspelen)."""
+    sprites zijn dan klaar; die horen bij het eerste scannen, niet bij afspelen). Die begint pas
+    als het werk van de upload klaar is, en de meting pas als de analyse van die run klaar is
+    (quiet); elke play, ook die vooraf, moet 200 geven."""
+    quiet(media, ffmpeg_count)
     start(page, node)
     ready_state(page, mode)
     playing_past(page, 0.5)
     stop(page, ffmpeg_count)
+    quiet(media, ffmpeg_count)
     out: list[float] = []
     for _ in range(RUNS):
         start(page, node)
@@ -221,7 +260,7 @@ def test_m6_ma_eerste_beeld_direct(media, media_browsers, ffmpeg_count, big_webm
     owner, folder, context, page = prepare(media, media_browsers, "M6 Ma")
     plays = Plays(context)
     node = upload_path(media, owner, folder, big_webm)
-    times = first_frames(page, node, "direct", ffmpeg_count, plays)
+    times = first_frames(page, node, "direct", media, ffmpeg_count, plays)
     result = {"direct": summary(times), "grens_ms": GATES_MS["direct"]}
     result["bron_mbit_s"] = round(big_webm.stat().st_size * 8 / 120 / 1e6, 1)
     result["netwerk"] = media_browsers.network[-1:]
@@ -239,7 +278,7 @@ def test_m6_ma_eerste_beeld_direct_h264(media, media_browsers, ffmpeg_count, big
     plays = Plays(context)
     source = big_mp4()
     node = upload_path(media, owner, folder, source)
-    times = first_frames(page, node, "direct", ffmpeg_count, plays)
+    times = first_frames(page, node, "direct", media, ffmpeg_count, plays)
     result = {"direct": summary(times), "grens_ms": GATES_MS["direct"]}
     result["bron"] = "H.264 High en AAC in MP4"
     result["bron_mbit_s"] = round(source.stat().st_size * 8 / 120 / 1e6, 1)
@@ -253,7 +292,7 @@ def test_m6_mb_eerste_beeld_transcode(media, media_browsers, ffmpeg_count):
     owner, folder, context, page = prepare(media, media_browsers, "M6 Mb")
     plays = Plays(context)
     node = media.upload(owner, "hevc10_hdr10.mkv", folder).id
-    times = first_frames(page, node, "transcode", ffmpeg_count, plays)
+    times = first_frames(page, node, "transcode", media, ffmpeg_count, plays)
     heights = {c["out"]["quality"]["current"] for c in plays.ok}
     result = {"transcode": summary(times), "grens_ms": GATES_MS["transcode"]}
     result["kwaliteit"] = sorted(str(h) for h in heights)
@@ -288,12 +327,15 @@ def test_m6_mc_zoeken_en_weer_lopen(media, media_browsers, ffmpeg_count, tmp_pat
     }
     for path in tmp_path.glob("*.mkv"):
         path.unlink()
-    # Vooraf, buiten de meting: elke bron één keer (de probe, de keyframes, de sprites)
+    # Vooraf, buiten de meting: elke bron één keer (de probe, de keyframes, de sprites), elk pas
+    # als de app stil is (quiet: het werk van de uploads en van de bron ervoor is dan klaar)
     for mode, node in sources.items():
+        quiet(media, ffmpeg_count)
         start(page, node)
         ready_state(page, mode)
         playing_past(page, 0.5)
         stop(page, ffmpeg_count)
+    quiet(media, ffmpeg_count)
     times = {mode: seeks(page, node, mode, ffmpeg_count) for mode, node in sources.items()}
     assert all(c["status"] == 200 for c in plays.calls), plays.calls
     result = {mode: summary(v) for mode, v in times.items()}

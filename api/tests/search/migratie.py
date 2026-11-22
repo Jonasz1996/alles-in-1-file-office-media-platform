@@ -205,7 +205,8 @@ async def data(settings: Settings) -> dict[str, list]:
 def check_tree(conn) -> int:
     """num uniek en gezet, elk pad = pad van de ouder + num, dead = een node of een map erboven
     in de prullenbak, en photo_geo gelijk aan zijn node. Een synchrone verbinding; geeft het
-    aantal nodes."""
+    aantal nodes. Ook op PostgreSQL (0013): daar komt het volgende num uit node_num_seq."""
+    pg = conn.dialect.name == "postgresql"
     rows = conn.exec_driver_sql(
         "SELECT id, parent_id, num, mpath, dead, deleted_at IS NOT NULL FROM node"
     ).all()
@@ -213,7 +214,11 @@ def check_tree(conn) -> int:
     nums = [r[2] for r in rows]
     assert None not in nums, "een node zonder num"
     assert len(set(nums)) == len(nums), "num is niet uniek"
-    next_num = conn.exec_driver_sql("SELECT next FROM search_seq WHERE id = 1").scalar()
+    next_num = conn.exec_driver_sql(
+        "SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END FROM node_num_seq"
+        if pg
+        else "SELECT next FROM search_seq WHERE id = 1"
+    ).scalar()
     assert next_num > max(nums, default=0)
     for node_id, _parent, _num, mpath, dead, _trashed in rows:
         chain, cur = [], by_id[node_id]
@@ -225,10 +230,11 @@ def check_tree(conn) -> int:
         assert dead == int(any(c[5] for c in chain)), (node_id, dead)
     # photo_geo volgt zijn node: een bestand van dezelfde eigenaar, met dezelfde dead en
     # taken_at (review Z0, haalbaar F2)
+    differs = "IS DISTINCT FROM" if pg else "IS NOT"
     wrong = conn.exec_driver_sql(
         "SELECT g.node_id, g.dead, n.dead, g.taken_at, n.taken_at FROM photo_geo g "
-        "JOIN node n ON n.id = g.node_id WHERE g.owner_id IS NOT n.owner_id "
-        "OR n.kind <> 'file' OR g.dead IS NOT n.dead OR g.taken_at IS NOT n.taken_at"
+        f"JOIN node n ON n.id = g.node_id WHERE g.owner_id {differs} n.owner_id "
+        f"OR n.kind <> 'file' OR g.dead {differs} n.dead OR g.taken_at {differs} n.taken_at"
     ).all()
     assert not wrong, wrong
     return len(rows)

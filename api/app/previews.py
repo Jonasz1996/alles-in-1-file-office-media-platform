@@ -1288,15 +1288,18 @@ async def photo_counts(session: AsyncSession) -> dict[str, int]:
             Blob.preview_meta["later"].as_boolean().is_(true()),
         )
     )
+    # Eén en dezelfde uitdrukking in SELECT en GROUP BY: dan krijgt hij op PostgreSQL ook
+    # dezelfde parameter, en ziet PostgreSQL er één uitdrukking in (op SQLite dezelfde tekst)
+    gave_up = Blob.preview_meta["large_failed"].as_boolean()
     halves = (
         await session.execute(
-            select(Blob.preview_meta["large_failed"].as_boolean(), func.count())
+            select(gave_up, func.count())
             .where(
                 media,
                 Blob.preview == "ready",
                 Blob.preview_meta["partial"].as_boolean().is_(true()),
             )
-            .group_by(Blob.preview_meta["large_failed"].as_boolean())
+            .group_by(gave_up)
         )
     ).all()
     large_failed = sum(count for gave_up, count in halves if gave_up)
