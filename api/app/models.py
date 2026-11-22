@@ -698,6 +698,28 @@ class ArrGrab(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ArrSubtitle(Base):
+    """Fase 11, stap 4: per video en taal wat OpenSubtitles opleverde. state: found (gezet als
+    los bestand naast de video, sub_node_id) | none (niets gevonden; opnieuw na een tijd, die
+    groeit met tries). lang zoals OpenSubtitles hem kent (nl, en, pt-br)."""
+
+    __tablename__ = "arr_subtitle"
+    __table_args__ = (CheckConstraint("state IN ('found', 'none')", name="ck_arr_subtitle_state"),)
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    lang: Mapped[str] = mapped_column(String(8), primary_key=True)
+    state: Mapped[str] = mapped_column(String(8))
+    tries: Mapped[int] = mapped_column(Integer, default=0)
+    tried_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    file_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    release: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sub_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class MediaItem(Base):
     """Eén bestand in een bibliotheek (per node). kind: movie | episode | track | video |
     extra; extra: trailer | featurette | deleted | behind | sample | other, met parent_id de

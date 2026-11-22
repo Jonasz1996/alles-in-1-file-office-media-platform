@@ -623,6 +623,19 @@ const en: Translation<typeof nl> = {
         failed: "failed",
       },
     },
+    subs: {
+      title: "Subtitles: OpenSubtitles",
+      intro:
+        "For every film and episode the app looks for subtitles in the languages below when there are none yet, and puts them as a separate file next to the video. Create a free account and an API key on opensubtitles.com (Profile → API consumers). An account allows more downloads per day.",
+      key: "API key",
+      keyHelp: "Leave empty to keep the saved key.",
+      username: "User (optional)",
+      password: "Password",
+      passwordHelp: "Leave empty to keep the saved password.",
+      languages: "Languages",
+      languagesHelp: "Codes separated by commas, in order: nl, en.",
+      remaining: "Saved: the connection works. {n} downloads left today.",
+    },
     arr: {
       title: "Media management: Prowlarr and qBittorrent",
       intro:

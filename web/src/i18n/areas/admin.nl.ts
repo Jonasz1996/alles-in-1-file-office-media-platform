@@ -632,6 +632,19 @@ export default {
         failed: "mislukt",
       },
     },
+    subs: {
+      title: "Ondertitels: OpenSubtitles",
+      intro:
+        "Voor elke film en aflevering zoekt de app ondertitels in de talen hieronder, als er nog geen is, en zet ze als los bestand naast de video. Maak een gratis account en een API-sleutel op opensubtitles.com (Profiel → API consumers). Met een account mag je meer downloaden per dag.",
+      key: "API-sleutel",
+      keyHelp: "Leeg laten houdt de bewaarde sleutel.",
+      username: "Gebruiker (mag leeg)",
+      password: "Wachtwoord",
+      passwordHelp: "Leeg laten houdt het bewaarde wachtwoord.",
+      languages: "Talen",
+      languagesHelp: "Codes met een komma ertussen, in volgorde: nl, en.",
+      remaining: "Bewaard: de verbinding werkt. Nog {n} downloads vandaag.",
+    },
     arr: {
       title: "Mediabeheer: Prowlarr en qBittorrent",
       intro:

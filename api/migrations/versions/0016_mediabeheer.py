@@ -4,8 +4,9 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Twee nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
-app volgt) en arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst).
+Drie nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
+arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -80,9 +81,33 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_arr_grab_wanted_id", "arr_grab", ["wanted_id"])
+    op.create_table(
+        "arr_subtitle",
+        sa.Column(
+            "node_id",
+            sa.Uuid(),
+            sa.ForeignKey("node.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column("lang", sa.String(length=8), primary_key=True, nullable=False),
+        sa.Column("state", sa.String(length=8), nullable=False),
+        sa.Column("tries", sa.Integer(), nullable=False),
+        sa.Column("tried_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("file_id", sa.Integer(), nullable=True),
+        sa.Column("release", sa.String(length=200), nullable=True),
+        sa.Column(
+            "sub_node_id",
+            sa.Uuid(),
+            sa.ForeignKey("node.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.CheckConstraint("state IN ('found', 'none')", name="ck_arr_subtitle_state"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("arr_subtitle")
     op.drop_index("ix_arr_grab_wanted_id", table_name="arr_grab")
     op.drop_table("arr_grab")
     op.drop_index("ix_arr_wanted_library_id", table_name="arr_wanted")

@@ -351,8 +351,8 @@ FACES_LOST = (
 
 # Wat een downgrade die 0016 weghaalt, kwijtmaakt (fase 11)
 ARR_LOST = (
-    "De lijst van gevolgde films en series en de geschiedenis van de downloads gaan weg. Je "
-    "bibliotheken en bestanden blijven."
+    "De lijst van gevolgde films en series en de geschiedenis van de downloads en ondertitels "
+    "gaan weg. Je bibliotheken en bestanden blijven."
 )
 
 

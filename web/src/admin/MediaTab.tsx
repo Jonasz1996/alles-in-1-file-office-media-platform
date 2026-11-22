@@ -8,7 +8,15 @@
 // Alles is met het toetsenbord te doen: gewone knoppen en formulieren, Alt+8 naar het tabblad
 // (docs/fase-5/toetsenbord-m10.md).
 
-import { type FormEvent, type JSX, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type JSX,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { api, type FileNode } from "../api";
 import { useCurrentUser } from "../currentUser";
 import { liveEvents, type ServerEvent } from "../events";
@@ -48,6 +56,7 @@ import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
 import ArrBlock from "./ArrBlock";
+import SubsBlock from "./SubsBlock";
 import WantedBlock from "./WantedBlock";
 import { usePolling } from "./usePolling";
 
@@ -66,7 +75,10 @@ export type ConfigNumber = keyof typeof CONFIG_LIMITS;
 
 /** Een getal uit een invoerveld (een komma mag ook); undefined als het buiten de grenzen valt of
  * geen getal is. Hele getallen voor alles behalve cpu_budget. */
-export function parseConfigNumber(field: ConfigNumber, text: string): number | undefined {
+export function parseConfigNumber(
+  field: ConfigNumber,
+  text: string,
+): number | undefined {
   const clean = text.trim().replace(",", ".");
   if (!/^\d+(\.\d+)?$/.test(clean)) return undefined;
   const n = Number(clean);
@@ -80,7 +92,8 @@ export function parseConfigNumber(field: ConfigNumber, text: string): number | u
 export function reasonColumns(days: MediaAdmin["reasons"]): string[] {
   const total = new Map<string, number>();
   for (const day of days) {
-    for (const [reason, n] of Object.entries(day.counts)) total.set(reason, (total.get(reason) ?? 0) + (n ?? 0));
+    for (const [reason, n] of Object.entries(day.counts))
+      total.set(reason, (total.get(reason) ?? 0) + (n ?? 0));
   }
   return [...total.entries()]
     .filter(([, n]) => n > 0)
@@ -91,18 +104,29 @@ export function reasonColumns(days: MediaAdmin["reasons"]): string[] {
 /** Het event media.import over de import die er al stond: de lijst van wat overgeslagen is
  * blijft (het event heeft die niet), de tellers en de staat komen uit het event. Een andere job
  * vervangt alles. */
-export function mergeImport(current: ImportView | null, data: Record<string, unknown>): ImportView | null {
-  if (typeof data.job !== "string" || typeof data.state !== "string") return current;
+export function mergeImport(
+  current: ImportView | null,
+  data: Record<string, unknown>,
+): ImportView | null {
+  if (typeof data.job !== "string" || typeof data.state !== "string")
+    return current;
   const event = data as unknown as ImportView;
   if (current && current.job === event.job) {
-    return { ...current, ...event, skipped_items: event.skipped_items ?? current.skipped_items };
+    return {
+      ...current,
+      ...event,
+      skipped_items: event.skipped_items ?? current.skipped_items,
+    };
   }
   return { ...event, skipped_items: event.skipped_items ?? [] };
 }
 
 /** De belastingtest staat uit op de server (503 media_off met reason loadtest). */
 export function loadtestOff(e: unknown): boolean {
-  const err = (typeof e === "object" && e !== null ? e : {}) as { code?: unknown; params?: Record<string, unknown> };
+  const err = (typeof e === "object" && e !== null ? e : {}) as {
+    code?: unknown;
+    params?: Record<string, unknown>;
+  };
   return err.code === "media_off" && err.params?.reason === "loadtest";
 }
 
@@ -111,7 +135,8 @@ export function loadtestOff(e: unknown): boolean {
  * (Nederlands, nooit tekst van buiten). Bij het samenvoegen van golf 5. */
 export function providerError(error: string | null | undefined): string {
   if (!error) return "";
-  if (error === "auth" || error === "media_provider_auth") return t("admin.notice.media_provider_auth");
+  if (error === "auth" || error === "media_provider_auth")
+    return t("admin.notice.media_provider_auth");
   return error;
 }
 
@@ -124,30 +149,48 @@ interface Phase {
 
 /** De regels van het rapport van de belastingtest (§4.6 punt 6 en 7), in de taal van de app. De
  * problemen zelf zijn tekst van de server (Nederlands). */
-export function loadtestLines(report: Record<string, unknown> | null): string[] {
+export function loadtestLines(
+  report: Record<string, unknown> | null,
+): string[] {
   if (!report) return [];
   const lines: string[] = [];
   const phases = (report.phases ?? {}) as Record<string, Phase>;
   for (const [phase, p] of Object.entries(phases)) {
     if (p.skipped) {
-      lines.push(t("admin.media.loadtest.phaseSkipped", { phase, why: p.skipped }));
+      lines.push(
+        t("admin.media.loadtest.phaseSkipped", { phase, why: p.skipped }),
+      );
       continue;
     }
     const result = p.passed
       ? t("admin.media.loadtest.passed")
       : [t("admin.media.loadtest.notPassed"), ...(p.problems ?? [])].join(": ");
-    lines.push(t("admin.media.loadtest.phaseResult", { phase, stalls: p.stalls ?? 0, result }));
+    lines.push(
+      t("admin.media.loadtest.phaseResult", {
+        phase,
+        stalls: p.stalls ?? 0,
+        result,
+      }),
+    );
   }
   if (typeof report.api_p95_ms === "number") {
-    lines.push(t("admin.media.loadtest.apiP95", { ms: fmt.number(report.api_p95_ms, { maximumFractionDigits: 1 }) }));
+    lines.push(
+      t("admin.media.loadtest.apiP95", {
+        ms: fmt.number(report.api_p95_ms, { maximumFractionDigits: 1 }),
+      }),
+    );
   }
   if (typeof report.stopped === "string" && report.stopped) {
-    lines.push(t("admin.media.loadtest.stoppedBecause", { why: report.stopped }));
+    lines.push(
+      t("admin.media.loadtest.stoppedBecause", { why: report.stopped }),
+    );
   }
   if (typeof report.error === "string") lines.push(report.error);
   lines.push(
     t("admin.media.loadtest.result", {
-      result: report.passed ? t("admin.media.loadtest.passed") : t("admin.media.loadtest.notPassed"),
+      result: report.passed
+        ? t("admin.media.loadtest.passed")
+        : t("admin.media.loadtest.notPassed"),
     }),
   );
   return lines;
@@ -164,12 +207,24 @@ export function importTarget(
   return owner.root_id || null;
 }
 
-function badge(state: MediaAdmin["worker"]["state"]): "ok" | "degraded" | "down" {
+function badge(
+  state: MediaAdmin["worker"]["state"],
+): "ok" | "degraded" | "down" {
   return state === "ok" ? "ok" : state === "down" ? "down" : "degraded";
 }
 
-const CLASSES: readonly WorkClass[] = ["transcode", "remux", "background", "short", "control"];
-const CLEARABLE: readonly CacheClearIn["what"][] = ["sessions", "audio", "trick"];
+const CLASSES: readonly WorkClass[] = [
+  "transcode",
+  "remux",
+  "background",
+  "short",
+  "control",
+];
+const CLEARABLE: readonly CacheClearIn["what"][] = [
+  "sessions",
+  "audio",
+  "trick",
+];
 const PARTS = ["sessions", "subs", "trick", "art", "audio"] as const;
 
 // --- het tabblad -----------------------------------------------------------------------------------
@@ -180,7 +235,10 @@ interface Data {
 }
 
 async function load(): Promise<Data> {
-  const [admin, loadtest] = await Promise.all([getAdmin(), getLoadtest().catch(() => null)]);
+  const [admin, loadtest] = await Promise.all([
+    getAdmin(),
+    getLoadtest().catch(() => null),
+  ]);
   return { admin, loadtest };
 }
 
@@ -199,7 +257,8 @@ export default function MediaTab(): JSX.Element {
       liveEvents.subscribe((event: ServerEvent) => {
         if (event.type !== "media.import") return;
         setLive((cur) => mergeImport(cur ?? current, event.data));
-        if (event.data.state === "done" || event.data.state === "failed") void reload();
+        if (event.data.state === "done" || event.data.state === "failed")
+          void reload();
       }),
     [current, reload],
   );
@@ -211,20 +270,37 @@ export default function MediaTab(): JSX.Element {
         {data && (
           <>
             {": "}
-            <span className={`badge ${badge(data.admin.worker.state)}`} data-media="worker-state">
+            <span
+              className={`badge ${badge(data.admin.worker.state)}`}
+              data-media="worker-state"
+            >
               {t(`admin.media.state.${data.admin.worker.state}`)}
             </span>
           </>
         )}
       </h2>
-      {polled.error !== null && <p role="alert">{t("admin.refreshFailed", { error: errorText(polled.error) })}</p>}
-      {!data && polled.error === null && <p className="muted">{t("admin.media.loading")}</p>}
+      {polled.error !== null && (
+        <p role="alert">
+          {t("admin.refreshFailed", { error: errorText(polled.error) })}
+        </p>
+      )}
+      {!data && polled.error === null && (
+        <p className="muted">{t("admin.media.loading")}</p>
+      )}
       {data && <Body data={data} imported={live ?? current} reload={reload} />}
     </section>
   );
 }
 
-function Body({ data, imported, reload }: { data: Data; imported: ImportView | null; reload: Reload }): JSX.Element {
+function Body({
+  data,
+  imported,
+  reload,
+}: {
+  data: Data;
+  imported: ImportView | null;
+  reload: Reload;
+}): JSX.Element {
   const a = data.admin;
   return (
     <>
@@ -250,6 +326,7 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <Providers a={a} reload={reload} />
       <ArrBlock />
       <WantedBlock libraries={a.libraries} />
+      <SubsBlock />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />
@@ -261,7 +338,10 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
  * De focus na een knop die iets deed (zoals in OfficeTab): gaat de knop uit of weg, dan valt de
  * focus naar <body>. Dan terug op de knop als hij er nog is, en anders op de kop van het blok.
  */
-function useFocusAfter(busy: boolean, heading: RefObject<HTMLElement | null>): () => void {
+function useFocusAfter(
+  busy: boolean,
+  heading: RefObject<HTMLElement | null>,
+): () => void {
   const pressed = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (busy) return;
@@ -282,7 +362,10 @@ function useAction(reload: Reload, heading: RefObject<HTMLElement | null>) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const press = useFocusAfter(busy !== null, heading);
-  async function run(key: string, fn: () => Promise<string | null>): Promise<void> {
+  async function run(
+    key: string,
+    fn: () => Promise<string | null>,
+  ): Promise<void> {
     setBusy(key);
     try {
       const message = await fn();
@@ -326,7 +409,9 @@ function Worker({ a }: { a: MediaAdmin }): JSX.Element {
     self === null
       ? t("admin.media.worker.selftestNone")
       : !self.ok
-        ? t("admin.media.worker.selftestFailed", { problems: self.problems.join("; ") })
+        ? t("admin.media.worker.selftestFailed", {
+            problems: self.problems.join("; "),
+          })
         : self.sandbox === "off"
           ? t("admin.media.worker.selftestOff")
           : t("admin.media.worker.selftestOk");
@@ -336,9 +421,15 @@ function Worker({ a }: { a: MediaAdmin }): JSX.Element {
       <Head id="admin-media-worker" title={t("admin.media.worker.title")} />
       <ul className="admin-cards">
         <li className="admin-card">
-          <h4 data-media="worker-mode">{t(`admin.media.worker.mode.${w.mode}`)}</h4>
-          <p>{t("admin.media.worker.since", { time: fmt.dateTime(w.since) })}</p>
-          <p className={self && !self.ok ? "badge down" : undefined}>{selftest}</p>
+          <h4 data-media="worker-mode">
+            {t(`admin.media.worker.mode.${w.mode}`)}
+          </h4>
+          <p>
+            {t("admin.media.worker.since", { time: fmt.dateTime(w.since) })}
+          </p>
+          <p className={self && !self.ok ? "badge down" : undefined}>
+            {selftest}
+          </p>
         </li>
         <li className="admin-card">
           <h4>{t("admin.media.worker.places")}</h4>
@@ -349,21 +440,34 @@ function Worker({ a }: { a: MediaAdmin }): JSX.Element {
               return (
                 <div key={c}>
                   <dt>{t(`admin.media.worker.classes.${c}`)}</dt>
-                  <dd data-media={`place-${c}`}>{t("admin.media.worker.place", { used: use.used, max: use.max })}</dd>
+                  <dd data-media={`place-${c}`}>
+                    {t("admin.media.worker.place", {
+                      used: use.used,
+                      max: use.max,
+                    })}
+                  </dd>
                 </div>
               );
             })}
           </dl>
         </li>
         <li className="admin-card">
-          <h4>{t("admin.media.worker.memory", { size: fmt.bytes((w.rss_kb ?? 0) * 1024) })}</h4>
+          <h4>
+            {t("admin.media.worker.memory", {
+              size: fmt.bytes((w.rss_kb ?? 0) * 1024),
+            })}
+          </h4>
           {children.length === 0 ? (
             <p className="muted">{t("admin.media.worker.noChildren")}</p>
           ) : (
             <ul>
               {children.map((c) => (
                 <li key={c.pid}>
-                  {t("admin.media.worker.child", { name: c.name, pid: c.pid, size: fmt.bytes(c.rss_kb * 1024) })}
+                  {t("admin.media.worker.child", {
+                    name: c.name,
+                    pid: c.pid,
+                    size: fmt.bytes(c.rss_kb * 1024),
+                  })}
                 </li>
               ))}
             </ul>
@@ -386,24 +490,34 @@ function Ffmpeg({ a }: { a: MediaAdmin }): JSX.Element {
         <dl className="admin-totals">
           <div>
             <dt>{t("admin.media.ffmpeg.version")}</dt>
-            <dd data-media="ffmpeg-version">{f.version ?? t("admin.media.ffmpeg.none")}</dd>
+            <dd data-media="ffmpeg-version">
+              {f.version ?? t("admin.media.ffmpeg.none")}
+            </dd>
           </div>
           <div>
             <dt>{t("admin.media.ffmpeg.missing")}</dt>
             <dd className={f.missing.length ? "badge down" : undefined}>
-              {f.missing.length ? f.missing.join(", ") : t("admin.media.ffmpeg.nothing")}
+              {f.missing.length
+                ? f.missing.join(", ")
+                : t("admin.media.ffmpeg.nothing")}
             </dd>
           </div>
           <div>
             <dt>{t("admin.media.ffmpeg.hwaccel")}</dt>
-            <dd>{f.hwaccel.length ? f.hwaccel.join(", ") : t("admin.media.ffmpeg.none")}</dd>
+            <dd>
+              {f.hwaccel.length
+                ? f.hwaccel.join(", ")
+                : t("admin.media.ffmpeg.none")}
+            </dd>
           </div>
           <div>
             <dt>{t("admin.media.ffmpeg.gpu")}</dt>
             <dd>{f.gpu ?? t("admin.media.ffmpeg.noGpu")}</dd>
           </div>
           <div>
-            <dt>{t("admin.media.ffmpeg.encoders", { n: f.encoders.length })}</dt>
+            <dt>
+              {t("admin.media.ffmpeg.encoders", { n: f.encoders.length })}
+            </dt>
             <dd>{t("admin.media.ffmpeg.filters", { n: f.filters.length })}</dd>
           </div>
         </dl>
@@ -421,7 +535,11 @@ function Bench({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
   const reloads = a.native_reloads ?? 0;
   return (
     <section aria-labelledby="admin-media-bench">
-      <Head id="admin-media-bench" title={t("admin.media.bench.title")} heading={heading}>
+      <Head
+        id="admin-media-bench"
+        title={t("admin.media.bench.title")}
+        heading={heading}
+      >
         <Button
           busy={act.busy === "bench"}
           onClick={() => {
@@ -447,9 +565,17 @@ function Bench({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
       <p className="muted">{t("admin.media.bench.help")}</p>
       {act.error && <p role="alert">{act.error}</p>}
       <h3>{t("admin.media.budget.title")}</h3>
-      <p data-media="budget">{t("admin.media.budget.value", { used, total })}</p>
-      {a.budget.ds_starting && <p className="muted">{t("admin.media.budget.dsStarting")}</p>}
-      {reloads > 0 && <p className="muted">{t("admin.media.budget.nativeReloads", { n: reloads })}</p>}
+      <p data-media="budget">
+        {t("admin.media.budget.value", { used, total })}
+      </p>
+      {a.budget.ds_starting && (
+        <p className="muted">{t("admin.media.budget.dsStarting")}</p>
+      )}
+      {reloads > 0 && (
+        <p className="muted">
+          {t("admin.media.budget.nativeReloads", { n: reloads })}
+        </p>
+      )}
     </section>
   );
 }
@@ -459,7 +585,13 @@ function sessionUser(s: SessionView): string {
   return s.user?.display_name || t("admin.media.sessions.unknownUser");
 }
 
-function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
+function Sessions({
+  a,
+  reload,
+}: {
+  a: MediaAdmin;
+  reload: Reload;
+}): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
 
@@ -480,7 +612,11 @@ function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element
 
   return (
     <section aria-labelledby="admin-media-sessions">
-      <Head id="admin-media-sessions" title={t("admin.media.sessions.title")} heading={heading} />
+      <Head
+        id="admin-media-sessions"
+        title={t("admin.media.sessions.title")}
+        heading={heading}
+      />
       {act.error && <p role="alert">{act.error}</p>}
       {a.sessions.length === 0 ? (
         <p className="muted">{t("admin.media.sessions.none")}</p>
@@ -496,7 +632,9 @@ function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element
                 <th className="wide-only">{t("admin.media.sessions.ahead")}</th>
                 <th className="wide-only">{t("admin.media.sessions.since")}</th>
                 <th>
-                  <span className="sr-only">{t("admin.media.sessions.stop")}</span>
+                  <span className="sr-only">
+                    {t("admin.media.sessions.stop")}
+                  </span>
                 </th>
               </tr>
             </thead>
@@ -504,7 +642,9 @@ function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element
               {a.sessions.map((s) => {
                 const user = sessionUser(s);
                 const title = s.title || t("admin.media.sessions.unknownTitle");
-                const rung = s.rung ? ` ${t("admin.media.sessions.rung", { height: s.rung.height })}` : "";
+                const rung = s.rung
+                  ? ` ${t("admin.media.sessions.rung", { height: s.rung.height })}`
+                  : "";
                 return (
                   <tr key={s.id}>
                     <td>{user}</td>
@@ -515,12 +655,20 @@ function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element
                     </td>
                     <td className="wide-only">
                       {s.speed != null
-                        ? t("admin.media.sessions.speedValue", { x: fmt.number(s.speed, { maximumFractionDigits: 1 }) })
+                        ? t("admin.media.sessions.speedValue", {
+                            x: fmt.number(s.speed, {
+                              maximumFractionDigits: 1,
+                            }),
+                          })
                         : ""}
                     </td>
                     <td className="wide-only">
                       {s.ahead_s != null
-                        ? t("admin.media.sessions.aheadValue", { s: fmt.number(s.ahead_s, { maximumFractionDigits: 0 }) })
+                        ? t("admin.media.sessions.aheadValue", {
+                            s: fmt.number(s.ahead_s, {
+                              maximumFractionDigits: 0,
+                            }),
+                          })
                         : ""}
                     </td>
                     <td className="wide-only">{fmt.time(s.created_at)}</td>
@@ -529,7 +677,10 @@ function Sessions({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element
                         variant="danger"
                         busy={act.busy === s.id}
                         disabled={act.busy !== null && act.busy !== s.id}
-                        aria-label={t("admin.media.sessions.stopLabel", { title, user })}
+                        aria-label={t("admin.media.sessions.stopLabel", {
+                          title,
+                          user,
+                        })}
                         onClick={() => void stop(s, user)}
                       >
                         {t("admin.media.sessions.stop")}
@@ -560,7 +711,9 @@ function Reasons({ a }: { a: MediaAdmin }): JSX.Element {
               <tr>
                 <th>{t("admin.media.reasons.day")}</th>
                 {columns.map((r) => (
-                  <th key={r}>{t(`admin.media.reasons.names.${r}` as MessageKey)}</th>
+                  <th key={r}>
+                    {t(`admin.media.reasons.names.${r}` as MessageKey)}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -569,7 +722,12 @@ function Reasons({ a }: { a: MediaAdmin }): JSX.Element {
                 <tr key={day.day}>
                   <td>{fmt.date(day.day)}</td>
                   {columns.map((r) => (
-                    <td key={r}>{fmt.number((day.counts as Record<string, number | undefined>)[r] ?? 0)}</td>
+                    <td key={r}>
+                      {fmt.number(
+                        (day.counts as Record<string, number | undefined>)[r] ??
+                          0,
+                      )}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -593,7 +751,11 @@ function Jobs({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
   const files = a.jobs.failed_files ?? 0;
   return (
     <section aria-labelledby="admin-media-jobs">
-      <Head id="admin-media-jobs" title={t("admin.media.jobs.title")} heading={heading}>
+      <Head
+        id="admin-media-jobs"
+        title={t("admin.media.jobs.title")}
+        heading={heading}
+      >
         {retryable(a.jobs) && (
           <Button
             busy={act.busy === "retry"}
@@ -610,7 +772,11 @@ function Jobs({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
         )}
       </Head>
       <p data-media="jobs">{t("admin.media.jobs.text", { ...a.jobs })}</p>
-      {files > 0 && <p data-media="failed-files">{t("admin.media.jobs.files", { n: files })}</p>}
+      {files > 0 && (
+        <p data-media="failed-files">
+          {t("admin.media.jobs.files", { n: files })}
+        </p>
+      )}
       {act.error && <p role="alert">{act.error}</p>}
     </section>
   );
@@ -618,7 +784,10 @@ function Jobs({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
 
 function rescan(id: string): Promise<unknown> {
   // M10: de route van /beheer (ook van een ander); media/api.ts (M0) kent hem niet
-  return api.request<unknown>("POST", `/api/v1/admin/media/libraries/${encodeURIComponent(id)}/scan`);
+  return api.request<unknown>(
+    "POST",
+    `/api/v1/admin/media/libraries/${encodeURIComponent(id)}/scan`,
+  );
 }
 
 /** Welke bron een bibliotheek met Online metadata aan mist (integratie, punt 6; open punt 3 van
@@ -629,18 +798,34 @@ export function missingProvider(
   providers: MediaAdmin["providers"],
 ): "tmdb" | "musicbrainz" | null {
   if (!lib.online) return null;
-  const name = lib.kind === "movies" || lib.kind === "shows" ? "tmdb" : lib.kind === "music" ? "musicbrainz" : null;
+  const name =
+    lib.kind === "movies" || lib.kind === "shows"
+      ? "tmdb"
+      : lib.kind === "music"
+        ? "musicbrainz"
+        : null;
   if (name === null) return null;
   return providers.find((p) => p.name === name)?.key_set ? null : name;
 }
 
-function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
+function Libraries({
+  a,
+  reload,
+}: {
+  a: MediaAdmin;
+  reload: Reload;
+}): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
-  const missing = (lib: MediaAdmin["libraries"][number]) => missingProvider(lib, a.providers);
+  const missing = (lib: MediaAdmin["libraries"][number]) =>
+    missingProvider(lib, a.providers);
   return (
     <section aria-labelledby="admin-media-libraries">
-      <Head id="admin-media-libraries" title={t("admin.media.libraries.title")} heading={heading} />
+      <Head
+        id="admin-media-libraries"
+        title={t("admin.media.libraries.title")}
+        heading={heading}
+      />
       {act.error && <p role="alert">{act.error}</p>}
       {a.libraries.length === 0 ? (
         <p className="muted">{t("admin.media.libraries.none")}</p>
@@ -653,11 +838,17 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                 <th>{t("admin.media.libraries.owner")}</th>
                 <th className="wide-only">{t("admin.media.libraries.kind")}</th>
                 <th>{t("admin.media.libraries.count")}</th>
-                <th className="wide-only">{t("admin.media.libraries.scanned")}</th>
-                <th className="wide-only">{t("admin.media.libraries.errors")}</th>
+                <th className="wide-only">
+                  {t("admin.media.libraries.scanned")}
+                </th>
+                <th className="wide-only">
+                  {t("admin.media.libraries.errors")}
+                </th>
                 <th className="wide-only">{t("admin.media.libraries.low")}</th>
                 <th>
-                  <span className="sr-only">{t("admin.media.libraries.rescan")}</span>
+                  <span className="sr-only">
+                    {t("admin.media.libraries.rescan")}
+                  </span>
                 </th>
               </tr>
             </thead>
@@ -666,31 +857,57 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                 <tr key={lib.id}>
                   <td className="wrap">
                     {lib.name}
-                    {lib.path && <p className="muted">{t("admin.media.libraries.folder", { path: lib.path })}</p>}
-                    {lib.inside && <p className="badge degraded">{t("admin.media.libraries.inside", { name: lib.inside })}</p>}
-                    {missing(lib) === "tmdb" && <p className="muted" data-media="no-key">{t("admin.media.libraries.noKey")}</p>}
+                    {lib.path && (
+                      <p className="muted">
+                        {t("admin.media.libraries.folder", { path: lib.path })}
+                      </p>
+                    )}
+                    {lib.inside && (
+                      <p className="badge degraded">
+                        {t("admin.media.libraries.inside", {
+                          name: lib.inside,
+                        })}
+                      </p>
+                    )}
+                    {missing(lib) === "tmdb" && (
+                      <p className="muted" data-media="no-key">
+                        {t("admin.media.libraries.noKey")}
+                      </p>
+                    )}
                     {missing(lib) === "musicbrainz" && (
-                      <p className="muted" data-media="no-key">{t("admin.media.libraries.musicbrainzOff")}</p>
+                      <p className="muted" data-media="no-key">
+                        {t("admin.media.libraries.musicbrainzOff")}
+                      </p>
                     )}
                   </td>
                   <td>{lib.owner.display_name}</td>
-                  <td className="wide-only">{t(`admin.media.libraries.kinds.${lib.kind}`)}</td>
+                  <td className="wide-only">
+                    {t(`admin.media.libraries.kinds.${lib.kind}`)}
+                  </td>
                   <td>{fmt.number(lib.item_count)}</td>
                   <td className="wide-only">
-                    {lib.scanned_at ? fmt.dateTime(lib.scanned_at) : t("admin.media.libraries.never")}
+                    {lib.scanned_at
+                      ? fmt.dateTime(lib.scanned_at)
+                      : t("admin.media.libraries.never")}
                   </td>
                   <td className="wide-only">{fmt.number(lib.errors)}</td>
-                  <td className="wide-only">{fmt.number(lib.low_confidence)}</td>
+                  <td className="wide-only">
+                    {fmt.number(lib.low_confidence)}
+                  </td>
                   <td>
                     <Button
                       busy={act.busy === lib.id}
                       disabled={act.busy !== null && act.busy !== lib.id}
-                      aria-label={t("admin.media.libraries.rescanLabel", { name: lib.name })}
+                      aria-label={t("admin.media.libraries.rescanLabel", {
+                        name: lib.name,
+                      })}
                       onClick={() => {
                         act.press();
                         void act.run(lib.id, async () => {
                           await rescan(lib.id);
-                          return t("admin.media.libraries.rescanned", { name: lib.name });
+                          return t("admin.media.libraries.rescanned", {
+                            name: lib.name,
+                          });
                         });
                       }}
                     >
@@ -727,8 +944,14 @@ function Cache({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
 
   return (
     <section aria-labelledby="admin-media-cache">
-      <Head id="admin-media-cache" title={t("admin.media.cache.title")} heading={heading} />
-      <p>{t("admin.media.cache.free", { size: fmt.bytes(a.cache.free_bytes) })}</p>
+      <Head
+        id="admin-media-cache"
+        title={t("admin.media.cache.title")}
+        heading={heading}
+      />
+      <p>
+        {t("admin.media.cache.free", { size: fmt.bytes(a.cache.free_bytes) })}
+      </p>
       {act.error && <p role="alert">{act.error}</p>}
       <div className="table-wrap">
         <table data-media="cache">
@@ -745,7 +968,9 @@ function Cache({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
                       <Button
                         busy={act.busy === what}
                         disabled={act.busy !== null && act.busy !== what}
-                        aria-label={t("admin.media.cache.clearLabel", { part: label })}
+                        aria-label={t("admin.media.cache.clearLabel", {
+                          part: label,
+                        })}
                         onClick={() => void clear(what, label)}
                       >
                         {t("admin.media.cache.clear")}
@@ -763,7 +988,13 @@ function Cache({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
   );
 }
 
-function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Element {
+function Providers({
+  a,
+  reload,
+}: {
+  a: MediaAdmin;
+  reload: Reload;
+}): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
   const [key, setKey] = useState("");
@@ -811,7 +1042,11 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
 
   return (
     <section aria-labelledby="admin-media-providers">
-      <Head id="admin-media-providers" title={t("admin.media.providers.title")} heading={heading} />
+      <Head
+        id="admin-media-providers"
+        title={t("admin.media.providers.title")}
+        heading={heading}
+      />
       <div className="table-wrap">
         <table data-media="providers">
           <thead>
@@ -820,13 +1055,17 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
               <th>{t("admin.media.providers.key")}</th>
               <th className="wide-only">{t("admin.media.providers.lastOk")}</th>
               <th>{t("admin.media.providers.lastError")}</th>
-              <th className="wide-only">{t("admin.media.providers.breaker")}</th>
+              <th className="wide-only">
+                {t("admin.media.providers.breaker")}
+              </th>
             </tr>
           </thead>
           <tbody>
             {a.providers.map((p) => (
               <tr key={p.name}>
-                <th scope="row">{t(`admin.media.providers.names.${p.name}`)}</th>
+                <th scope="row">
+                  {t(`admin.media.providers.names.${p.name}`)}
+                </th>
                 <td>
                   {p.name !== "tmdb"
                     ? t("admin.media.providers.notNeeded")
@@ -834,9 +1073,15 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                       ? t("admin.media.providers.yes")
                       : t("admin.media.providers.no")}
                 </td>
-                <td className="wide-only">{p.last_ok ? fmt.dateTime(p.last_ok) : t("admin.media.providers.never")}</td>
+                <td className="wide-only">
+                  {p.last_ok
+                    ? fmt.dateTime(p.last_ok)
+                    : t("admin.media.providers.never")}
+                </td>
                 <td className="wrap">{providerError(p.last_error)}</td>
-                <td className="wide-only">{t(`admin.media.providers.breakers.${p.breaker}`)}</td>
+                <td className="wide-only">
+                  {t(`admin.media.providers.breakers.${p.breaker}`)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -845,7 +1090,10 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
       {credits && <TmdbAttribution />}
       <h4>{t("admin.media.providers.tmdbTitle")}</h4>
       <form className="stack" onSubmit={save}>
-        <Field label={t("admin.media.providers.tmdbKey")} hint={t("admin.media.providers.tmdbHelp")}>
+        <Field
+          label={t("admin.media.providers.tmdbKey")}
+          hint={t("admin.media.providers.tmdbHelp")}
+        >
           {(c) => (
             <input
               {...c}
@@ -859,7 +1107,12 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
           )}
         </Field>
         <div className="toolbar">
-          <Button type="submit" variant="primary" busy={act.busy === "save"} disabled={!key.trim()}>
+          <Button
+            type="submit"
+            variant="primary"
+            busy={act.busy === "save"}
+            disabled={!key.trim()}
+          >
             {t("admin.media.providers.save")}
           </Button>
           {tmdb?.key_set && (
@@ -876,7 +1129,11 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
               >
                 {t("admin.media.providers.test")}
               </Button>
-              <Button variant="danger" busy={act.busy === "remove"} onClick={() => void remove()}>
+              <Button
+                variant="danger"
+                busy={act.busy === "remove"}
+                onClick={() => void remove()}
+              >
                 {t("admin.media.providers.remove")}
               </Button>
             </>
@@ -888,7 +1145,13 @@ function Providers({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
   );
 }
 
-function Import({ imported, reload }: { imported: ImportView | null; reload: Reload }): JSX.Element {
+function Import({
+  imported,
+  reload,
+}: {
+  imported: ImportView | null;
+  reload: Reload;
+}): JSX.Element {
   const me = useCurrentUser();
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
@@ -933,42 +1196,69 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
   const owner = users.find((u) => u.id === ownerChoice) ?? null;
   const mine = owner !== null && me !== null && owner.id === me.id;
   const target = importTarget(owner, me, picked);
-  const chosen = sources?.find((s) => s.path === (source || sources[0]?.path)) ?? null;
-  const running = imported !== null && (imported.state === "queued" || imported.state === "running");
+  const chosen =
+    sources?.find((s) => s.path === (source || sources[0]?.path)) ?? null;
+  const running =
+    imported !== null &&
+    (imported.state === "queued" || imported.state === "running");
 
   function start(e: FormEvent) {
     e.preventDefault();
     if (!chosen || !owner || !target) return;
     void act.run("import", async () => {
-      await startImport({ source: chosen.path, target_id: target, owner_id: owner.id, move });
+      await startImport({
+        source: chosen.path,
+        target_id: target,
+        owner_id: owner.id,
+        move,
+      });
       return t("admin.media.import.started");
     });
   }
 
   return (
     <section aria-labelledby="admin-media-import">
-      <Head id="admin-media-import" title={t("admin.media.import.title")} heading={heading} />
+      <Head
+        id="admin-media-import"
+        title={t("admin.media.import.title")}
+        heading={heading}
+      />
       <p className="muted">{t("admin.media.import.help")}</p>
       <ImportProgress imported={imported} />
-      {sources !== null && sources.length === 0 && <p>{t("admin.media.import.noSources")}</p>}
+      {sources !== null && sources.length === 0 && (
+        <p>{t("admin.media.import.noSources")}</p>
+      )}
       {sources !== null && sources.length > 0 && (
         <form className="stack" onSubmit={start} data-media="import-form">
           <Field label={t("admin.media.import.source")}>
             {(c) => (
-              <select {...c} name="source" value={chosen?.path ?? ""} onChange={(e) => setSource(e.target.value)}>
+              <select
+                {...c}
+                name="source"
+                value={chosen?.path ?? ""}
+                onChange={(e) => setSource(e.target.value)}
+              >
                 {sources.map((s) => (
                   <option key={s.path} value={s.path}>
-                    {t("admin.media.import.sourceOption", { path: s.path, files: s.files, size: fmt.bytes(s.bytes) })}
+                    {t("admin.media.import.sourceOption", {
+                      path: s.path,
+                      files: s.files,
+                      size: fmt.bytes(s.bytes),
+                    })}
                   </option>
                 ))}
               </select>
             )}
           </Field>
           {chosen && chosen.unreadable > 0 && (
-            <p className="muted">{t("admin.media.import.unreadable", { n: chosen.unreadable })}</p>
+            <p className="muted">
+              {t("admin.media.import.unreadable", { n: chosen.unreadable })}
+            </p>
           )}
           {chosen && move && chosen.unmovable > 0 && (
-            <p role="status">{t("admin.media.import.unmovable", { n: chosen.unmovable })}</p>
+            <p role="status">
+              {t("admin.media.import.unmovable", { n: chosen.unmovable })}
+            </p>
           )}
           <Field label={t("admin.media.import.owner")}>
             {(c) => (
@@ -990,27 +1280,48 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
             )}
           </Field>
           <div className="field">
-            <span id="admin-media-import-target">{t("admin.media.import.target")}</span>
-            <p aria-labelledby="admin-media-import-target" data-media="import-target">
+            <span id="admin-media-import-target">
+              {t("admin.media.import.target")}
+            </span>
+            <p
+              aria-labelledby="admin-media-import-target"
+              data-media="import-target"
+            >
               {picked && mine
                 ? t("admin.media.import.targetPicked", { name: picked.name })
-                : t("admin.media.import.targetRoot", { name: owner?.display_name ?? "" })}
+                : t("admin.media.import.targetRoot", {
+                    name: owner?.display_name ?? "",
+                  })}
             </p>
             {mine && (
               <div className="toolbar">
-                <Button onClick={() => void openPicker()}>{t("admin.media.import.targetPick")}</Button>
+                <Button onClick={() => void openPicker()}>
+                  {t("admin.media.import.targetPick")}
+                </Button>
               </div>
             )}
-            <small className="muted">{t("admin.media.import.targetHelp")}</small>
+            <small className="muted">
+              {t("admin.media.import.targetHelp")}
+            </small>
           </div>
           <fieldset>
             <legend>{t("admin.media.import.how")}</legend>
             <label className="check">
-              <input type="radio" name="import-how" checked={!move} onChange={() => setMove(false)} />
+              <input
+                type="radio"
+                name="import-how"
+                checked={!move}
+                onChange={() => setMove(false)}
+              />
               {t("admin.media.import.copy")}
             </label>
             <label className="check">
-              <input type="radio" name="import-how" checked={move} onChange={() => setMove(true)} />
+              <input
+                type="radio"
+                name="import-how"
+                checked={move}
+                onChange={() => setMove(true)}
+              />
               {t("admin.media.import.move")}
             </label>
           </fieldset>
@@ -1032,7 +1343,11 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
           title={t("admin.media.import.pickTitle")}
           action={t("admin.media.import.pickAction")}
           startId={me.root_id}
-          check={(folder) => (folder.owner && folder.owner.id !== me.id ? t("admin.media.import.notYours") : null)}
+          check={(folder) =>
+            folder.owner && folder.owner.id !== me.id
+              ? t("admin.media.import.notYours")
+              : null
+          }
           onPick={(_id, folder) => {
             setPicked(folder);
             setPicking(false);
@@ -1044,9 +1359,19 @@ function Import({ imported, reload }: { imported: ImportView | null; reload: Rel
   );
 }
 
-function ImportProgress({ imported }: { imported: ImportView | null }): JSX.Element {
-  if (!imported) return <p className="muted">{t("admin.media.import.noneRunning")}</p>;
-  const tone = imported.state === "failed" ? "down" : imported.state === "done" ? "ok" : "degraded";
+function ImportProgress({
+  imported,
+}: {
+  imported: ImportView | null;
+}): JSX.Element {
+  if (!imported)
+    return <p className="muted">{t("admin.media.import.noneRunning")}</p>;
+  const tone =
+    imported.state === "failed"
+      ? "down"
+      : imported.state === "done"
+        ? "ok"
+        : "degraded";
   return (
     <div data-media="import-progress">
       <p role="status">
@@ -1080,7 +1405,10 @@ function ImportProgress({ imported }: { imported: ImportView | null }): JSX.Elem
 const NUMBERS: readonly { field: ConfigNumber; label: MessageKey }[] = [
   { field: "cpu_budget", label: "admin.media.settings.cpuBudget" },
   { field: "max_transcodes", label: "admin.media.settings.maxTranscodes" },
-  { field: "max_user_transcodes", label: "admin.media.settings.maxUserTranscodes" },
+  {
+    field: "max_user_transcodes",
+    label: "admin.media.settings.maxUserTranscodes",
+  },
   { field: "cache_gb", label: "admin.media.settings.cacheGb" },
 ];
 
@@ -1108,10 +1436,18 @@ function formOf(c: MediaConfig): Form {
   };
 }
 
-function Settings({ config, reload }: { config: MediaConfig; reload: Reload }): JSX.Element {
+function Settings({
+  config,
+  reload,
+}: {
+  config: MediaConfig;
+  reload: Reload;
+}): JSX.Element {
   // Begint bij de waarden van de server; verversen laat staan wat de beheerder intypt
   const [form, setForm] = useState<Form>(() => formOf(config));
-  const [problems, setProblems] = useState<Partial<Record<ConfigNumber, string>>>({});
+  const [problems, setProblems] = useState<
+    Partial<Record<ConfigNumber, string>>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1127,7 +1463,8 @@ function Settings({ config, reload }: { config: MediaConfig; reload: Reload }): 
     for (const { field } of NUMBERS) {
       const n = parseConfigNumber(field, form[field]);
       const { min, max } = CONFIG_LIMITS[field];
-      if (n === undefined) found[field] = t("admin.media.settings.invalid", { min, max });
+      if (n === undefined)
+        found[field] = t("admin.media.settings.invalid", { min, max });
       else body[field] = n;
     }
     setProblems(found);
@@ -1142,8 +1479,16 @@ function Settings({ config, reload }: { config: MediaConfig; reload: Reload }): 
     } catch (err) {
       // Boven het plafond uit env: de server noemt het (422, params field en max)
       const params = (err as { params?: Record<string, unknown> }).params;
-      if (params?.field === "max_transcodes" && typeof params.max === "number") {
-        setProblems({ max_transcodes: t("admin.media.settings.invalid", { min: 0, max: params.max }) });
+      if (
+        params?.field === "max_transcodes" &&
+        typeof params.max === "number"
+      ) {
+        setProblems({
+          max_transcodes: t("admin.media.settings.invalid", {
+            min: 0,
+            max: params.max,
+          }),
+        });
       }
       setError(errorText(err));
     } finally {
@@ -1174,7 +1519,10 @@ function Settings({ config, reload }: { config: MediaConfig; reload: Reload }): 
             hint={
               field === "max_transcodes"
                 ? t("admin.media.settings.ceiling")
-                : t("admin.media.settings.between", { min: CONFIG_LIMITS[field].min, max: CONFIG_LIMITS[field].max })
+                : t("admin.media.settings.between", {
+                    min: CONFIG_LIMITS[field].min,
+                    max: CONFIG_LIMITS[field].max,
+                  })
             }
             error={problems[field] ?? null}
           >
@@ -1207,13 +1555,21 @@ function Settings({ config, reload }: { config: MediaConfig; reload: Reload }): 
   );
 }
 
-function Loadtest({ view, reload }: { view: LoadtestView | null; reload: Reload }): JSX.Element {
+function Loadtest({
+  view,
+  reload,
+}: {
+  view: LoadtestView | null;
+  reload: Reload;
+}): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
   const [off, setOff] = useState(false);
   const [streams, setStreams] = useState("3");
   const [seconds, setSeconds] = useState("300");
-  const running = view !== null && (view.state === "running" || view.state === "making_sources");
+  const running =
+    view !== null &&
+    (view.state === "running" || view.state === "making_sources");
 
   function start(e: FormEvent) {
     e.preventDefault();
@@ -1234,12 +1590,18 @@ function Loadtest({ view, reload }: { view: LoadtestView | null; reload: Reload 
   const lines = loadtestLines(view?.report ?? null);
   return (
     <section aria-labelledby="admin-media-loadtest">
-      <Head id="admin-media-loadtest" title={t("admin.media.loadtest.title")} heading={heading} />
+      <Head
+        id="admin-media-loadtest"
+        title={t("admin.media.loadtest.title")}
+        heading={heading}
+      />
       <p className="muted">{t("admin.media.loadtest.help")}</p>
       {view && (
         <p role="status" data-media="loadtest-state">
           {t(`admin.media.loadtest.states.${view.state}`)}
-          {view.phase ? ` (${t("admin.media.loadtest.phase", { phase: view.phase })})` : ""}
+          {view.phase
+            ? ` (${t("admin.media.loadtest.phase", { phase: view.phase })})`
+            : ""}
         </p>
       )}
       {lines.length > 0 && (
@@ -1282,7 +1644,11 @@ function Loadtest({ view, reload }: { view: LoadtestView | null; reload: Reload 
             )}
           </Field>
           <div className="toolbar">
-            <Button type="submit" busy={act.busy === "loadtest"} disabled={running}>
+            <Button
+              type="submit"
+              busy={act.busy === "loadtest"}
+              disabled={running}
+            >
               {t("admin.media.loadtest.start")}
             </Button>
           </div>

@@ -8,6 +8,9 @@ DELETE /api/v1/admin/arr/prowlarr             → 204
 PUT    /api/v1/admin/arr/qbittorrent          QBitIn → QBitTest | 422 arr_link_auth | 503
 POST   /api/v1/admin/arr/qbittorrent/test     → QBitTest | 404 not_found | 422 | 503
 DELETE /api/v1/admin/arr/qbittorrent          → 204
+PUT    /api/v1/admin/arr/opensubtitles        OpenSubsIn → OpenSubsTest | 422 arr_link_auth | 503
+POST   /api/v1/admin/arr/opensubtitles/test   → OpenSubsTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/opensubtitles        → 204
 
 Alleen beheerders. Opslaan test eerst de verbinding; lukt dat niet, dan wordt er niets bewaard.
 Een fout zegt nooit een sleutel of wachtwoord, alleen een vaste reden.
@@ -15,12 +18,13 @@ Een fout zegt nooit een sleutel of wachtwoord, alleen een vaste reden.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 
-from app.arr import prowlarr, qbit
+from app.arr import opensubs, prowlarr, qbit
 from app.arr import settings as arr_settings
 from app.config import Settings, get_settings
 from app.db import Session
@@ -58,6 +62,30 @@ class ProwlarrTest(BaseModel):
 
 class QBitTest(BaseModel):
     version: str
+
+
+class OpenSubsIn(BaseModel):
+    key: str | None = Field(default=None, max_length=200)
+    username: str | None = Field(default=None, max_length=200)
+    password: str | None = Field(default=None, max_length=500)
+    languages: list[str] = Field(
+        default_factory=lambda: ["nl", "en"],
+        min_length=1,
+        max_length=8,
+    )
+
+
+class OpenSubsTest(BaseModel):
+    remaining: int | None
+
+
+LANG_RE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$")
+
+
+def _subs_error(exc: opensubs.OpenSubsError):
+    if isinstance(exc, opensubs.OpenSubsAuth):
+        return fail(422, "arr_link_auth", str(exc))
+    return fail(503, "arr_link_unreachable", str(exc))
 
 
 def _link_error(exc: Exception):
@@ -136,4 +164,42 @@ async def test_qbit(admin: AdminUser, session: Session, settings: Config):
 @router.delete("/qbittorrent", status_code=204)
 async def forget_qbit(admin: AdminUser, session: Session):
     await arr_settings.forget(session, "qbittorrent")
+    return Response(status_code=204)
+
+
+@router.put("/opensubtitles", response_model=OpenSubsTest)
+async def save_opensubs(body: OpenSubsIn, admin: AdminUser, session: Session, settings: Config):
+    languages = [x.strip().lower() for x in body.languages]
+    if not all(LANG_RE.fullmatch(x) for x in languages):
+        raise fail(
+            422, "invalid_input", "Een taal is een code zoals nl of pt-br", field="languages"
+        )
+    try:
+        remaining = await arr_settings.save_opensubs(
+            session,
+            settings,
+            key=body.key,
+            username=body.username,
+            password=body.password,
+            languages=languages,
+        )
+    except opensubs.OpenSubsError as exc:
+        raise _subs_error(exc) from None
+    return OpenSubsTest(remaining=remaining)
+
+
+@router.post("/opensubtitles/test", response_model=OpenSubsTest)
+async def test_opensubs(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_opensubs(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "OpenSubtitles is nog niet ingesteld")
+    try:
+        return OpenSubsTest(remaining=await arr_settings.check_opensubs(conf))
+    except opensubs.OpenSubsError as exc:
+        raise _subs_error(exc) from None
+
+
+@router.delete("/opensubtitles", status_code=204)
+async def forget_opensubs(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "opensubtitles")
     return Response(status_code=204)
