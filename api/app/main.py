@@ -50,6 +50,7 @@ from app.routers import (
     albums,
     albums_rule,
     archive,
+    arr_wanted,
     auth,
     batch,
     beeld,
@@ -613,6 +614,7 @@ app.include_router(media_match.router)
 app.include_router(media_music.router)
 app.include_router(admin_media.router)
 app.include_router(admin_arr.router)
+app.include_router(arr_wanted.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)

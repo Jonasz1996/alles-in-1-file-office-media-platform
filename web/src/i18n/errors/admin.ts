@@ -20,4 +20,7 @@ export default {
   web_app_missing: { en: "The web app has not been built" },
   arr_link_auth: { en: "Prowlarr or qBittorrent refuses the key or password" },
   arr_link_unreachable: { en: "Prowlarr or qBittorrent cannot be reached" },
+  arr_tmdb_needed: { en: "This needs a working TMDB key" },
+  arr_library_kind: { en: "A film belongs in a film library, a series in a series library" },
+  arr_wanted_exists: { en: "You already follow this title in that library" },
 } satisfies Record<string, { en: string }>;

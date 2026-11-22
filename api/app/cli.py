@@ -263,6 +263,8 @@ FACES_REVISION = "0011"
 BEELD_REVISION = "0012"
 # De revisie van PostgreSQL (0.8.2): op SQLite doet hij niets
 PG_REVISION = "0013"
+# De revisie van mediabeheer (fase 11): de lijst van gevolgde films en series
+ARR_REVISION = "0016"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -347,6 +349,10 @@ FACES_LOST = (
 )
 
 
+# Wat een downgrade die 0016 weghaalt, kwijtmaakt (fase 11)
+ARR_LOST = "De lijst van gevolgde films en series gaat weg. Je bibliotheken en bestanden blijven."
+
+
 # Wat een downgrade die 0013 weghaalt op PostgreSQL kwijtmaakt (review PG13-2): place_id past
 # daarna niet meer (48 bits in int32) en wordt NULL; met 0.8.2 komt hij terug (0013 zet de job
 # geo.places dan opnieuw klaar)
@@ -360,6 +366,8 @@ def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
     de database is PostgreSQL (0013 doet alleen daar iets)."""
     lines = []
+    if ARR_REVISION in removed:
+        lines.append(ARR_LOST)
     if postgres and PG_REVISION in removed:
         lines.append(PG_LOST)
     if BEELD_REVISION in removed:

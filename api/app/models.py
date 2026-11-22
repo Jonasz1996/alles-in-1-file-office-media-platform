@@ -630,6 +630,37 @@ class MediaAlbum(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
+class ArrWanted(Base):
+    """Fase 11: een film of serie die de app volgt (wat Radarr en Sonarr "monitored" noemen).
+    De app zoekt hem (stap 3) voor de bibliotheek library_id met het kwaliteitsprofiel profile
+    (een sleutel van arr.score.BUILTIN). seasons: de gevolgde seizoenen van een serie, of NULL
+    voor alle. Weg met de bibliotheek (CASCADE); de bestanden blijven."""
+
+    __tablename__ = "arr_wanted"
+    __table_args__ = (
+        UniqueConstraint("library_id", "kind", "tmdb_id", name="uq_arr_wanted_title"),
+        CheckConstraint("kind IN ('movie', 'show')", name="ck_arr_wanted_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(8))
+    tmdb_id: Mapped[int] = mapped_column(Integer)
+    imdb_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    title: Mapped[str] = mapped_column(String(500))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    runtime_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE"), index=True
+    )
+    profile: Mapped[str] = mapped_column(String(32), default="hd-1080p")
+    seasons: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    monitored: Mapped[bool] = mapped_column(Boolean, default=True)
+    added_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class MediaItem(Base):
     """Eén bestand in een bibliotheek (per node). kind: movie | episode | track | video |
     extra; extra: trailer | featurette | deleted | behind | sample | other, met parent_id de
