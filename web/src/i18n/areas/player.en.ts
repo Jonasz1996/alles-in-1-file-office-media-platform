@@ -22,6 +22,14 @@ const en: Translation<typeof nl> = {
     valueText: "{time} of {duration}",
     chapter: "Chapter: {title}",
   },
+  upscale: {
+    on: "Upscaling on",
+    off: "Upscaling off",
+    choiceOn: "Upscaling: sharper picture",
+    choiceOff: "Upscaling off",
+    active: "running on this device",
+    unavailable: "not possible on this device",
+  },
   quality: {
     label: "Quality",
     auto: "Auto",
@@ -144,6 +152,7 @@ const en: Translation<typeof nl> = {
     end: "Go to the end",
     next: "Next episode",
     info: "Info",
+    upscale: "Upscaling on or off",
     escape: "Exit full screen, cancel the card or go back",
   },
 };

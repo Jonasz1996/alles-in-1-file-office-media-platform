@@ -21,6 +21,14 @@ export default {
     valueText: "{time} van {duration}",
     chapter: "Hoofdstuk: {title}",
   },
+  upscale: {
+    on: "Upscaling aan",
+    off: "Upscaling uit",
+    choiceOn: "Upscaling: scherper beeld",
+    choiceOff: "Upscaling uit",
+    active: "bezig op dit toestel",
+    unavailable: "kan niet op dit toestel",
+  },
   quality: {
     label: "Kwaliteit",
     auto: "Auto",
@@ -143,6 +151,7 @@ export default {
     end: "Naar het eind",
     next: "Volgende aflevering",
     info: "Info",
+    upscale: "Upscaling aan of uit",
     escape: "Volledig scherm uit, de kaart annuleren of terug",
   },
 } as const;
