@@ -143,9 +143,14 @@ function Home(): JSX.Element {
   }, [load]);
 
   const newButton = guest ? null : (
-    <Button onClick={() => void openPicker()} busy={opening} data-new-library="">
-      {t("media.newLibrary.new")}
-    </Button>
+    <>
+      <Link to="/media/verzoeken" className="btn" data-requests="">
+        {t("media.requests.title")}
+      </Link>
+      <Button onClick={() => void openPicker()} busy={opening} data-new-library="">
+        {t("media.newLibrary.new")}
+      </Button>
+    </>
   );
   const Picker = picker;
 

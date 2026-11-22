@@ -623,6 +623,17 @@ const en: Translation<typeof nl> = {
         failed: "failed",
       },
     },
+    requests: {
+      title: "Requests from family members",
+      intro: "A request waits for an admin, unless that person gets automatic approval below.",
+      open: "Go to the requests",
+      auto: "Approve automatically for",
+      noUsers: "There are no regular users yet.",
+      movies: "Library for films",
+      shows: "Library for shows",
+      oldest: "The oldest of that kind",
+      saved: "Saved.",
+    },
     subs: {
       title: "Subtitles: OpenSubtitles",
       intro:

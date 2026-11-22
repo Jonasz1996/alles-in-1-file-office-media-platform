@@ -92,6 +92,8 @@ export const routes: readonly RouteDef[] = [
   route("/media/bibliotheek/:id", () => import("./media/Library"), media, "media.library", "media"),
   route("/media/item/:node", () => import("./media/ItemPage"), media, "media.item", "media"),
   route("/media/serie/:id", () => import("./media/ShowPage"), media, "media.show", "media"),
+  // Fase 11, stap 6: een film of serie vragen (media/RequestsPage.tsx)
+  route("/media/verzoeken", () => import("./media/RequestsPage"), media, "media.requests.title", "media"),
   route("/kijken/:node", () => import("./player/WatchPage"), watch, "player.title", "media"),
   route("/muziek", () => import("./music/MusicHome"), music, "music.title", "music"),
   route("/muziek/album/:id", () => import("./music/AlbumPage"), music, "music.album", "music"),

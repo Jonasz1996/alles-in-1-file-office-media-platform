@@ -23,4 +23,8 @@ export default {
   arr_tmdb_needed: { en: "This needs a working TMDB key" },
   arr_library_kind: { en: "A film belongs in a film library, a series in a series library" },
   arr_wanted_exists: { en: "You already follow this title in that library" },
+  arr_request_exists: { en: "You already requested this" },
+  arr_request_limit: { en: "You already have many requests waiting" },
+  arr_request_decided: { en: "This request has already been decided" },
+  arr_no_library: { en: "There is no library for films or shows to put it in yet" },
 } satisfies Record<string, { en: string }>;

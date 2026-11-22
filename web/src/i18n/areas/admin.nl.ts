@@ -632,6 +632,17 @@ export default {
         failed: "mislukt",
       },
     },
+    requests: {
+      title: "Verzoeken van gezinsleden",
+      intro: "Een verzoek wacht op een beheerder, tenzij die persoon hieronder vanzelf goedkeuring krijgt.",
+      open: "Naar de verzoeken",
+      auto: "Vanzelf goedkeuren voor",
+      noUsers: "Er zijn nog geen gewone gebruikers.",
+      movies: "Bibliotheek voor films",
+      shows: "Bibliotheek voor series",
+      oldest: "De oudste van die soort",
+      saved: "Bewaard.",
+    },
     subs: {
       title: "Ondertitels: OpenSubtitles",
       intro:

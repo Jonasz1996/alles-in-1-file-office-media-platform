@@ -48,6 +48,7 @@ import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
 import ArrBlock from "./ArrBlock";
+import RequestsSettings from "./RequestsSettings";
 import SubsBlock from "./SubsBlock";
 import WantedBlock from "./WantedBlock";
 import { usePolling } from "./usePolling";
@@ -252,6 +253,7 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <ArrBlock />
       <WantedBlock libraries={a.libraries} />
       <SubsBlock />
+      <RequestsSettings libraries={a.libraries} />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />
