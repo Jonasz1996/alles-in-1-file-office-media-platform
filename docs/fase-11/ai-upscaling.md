@@ -52,8 +52,7 @@ Schatting: 1080p → 2160p haalt ongeveer 8–15 beelden/s. Een film van 2 uur (
 is dan ongeveer 4–6 uur GPU. Met 20 minuten per uur is dat ruwweg 12–18 uur op de klok,
 ongeveer één film per dag. 720p → 1440p gaat ongeveer twee keer zo snel.
 
-## Open vraag
+## Beslist
 
-- **Coderen van het resultaat:** de 4K-stukken op de CPU (x265, traag: de CPU wordt de rem) of
-  met NVENC op dezelfde 3060 Ti, binnen hetzelfde venster. Voorstel: NVENC, omdat het deel is
-  van de upscaling en alleen binnen het venster draait.
+- **Coderen met NVENC** op de 3060 Ti, alleen binnen het venster (Jonas, 22-11-2026, kaart).
+  Voor de rest blijft de regel staan: transcoderen bij het kijken gebeurt op de CPU.
