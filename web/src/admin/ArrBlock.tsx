@@ -1,7 +1,13 @@
 // Mediabeheer op /beheer → Media (fase 11, stap 2c): Prowlarr en qBittorrent koppelen en testen.
 // De API (routers/admin_arr.py) geeft nooit een sleutel of wachtwoord terug; de velden daarvoor
 // blijven leeg en "leeg laten" houdt wat er bewaard is.
-import { type FormEvent, type JSX, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type JSX,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import { api } from "../api";
 import { errorText, t } from "../i18n";
 import { Button } from "../ui/Button";
@@ -80,12 +86,16 @@ export default function ArrBlock(): JSX.Element {
   function saveQbit(e: FormEvent) {
     e.preventDefault();
     void run("q-save", async () => {
-      const r = await api.request<{ version: string }>("PUT", `${BASE}/qbittorrent`, {
-        url: qUrl.trim(),
-        username: qUser.trim(),
-        password: qPass || null,
-        save_path: qPath.trim(),
-      });
+      const r = await api.request<{ version: string }>(
+        "PUT",
+        `${BASE}/qbittorrent`,
+        {
+          url: qUrl.trim(),
+          username: qUser.trim(),
+          password: qPass || null,
+          save_path: qPath.trim(),
+        },
+      );
       setQPass("");
       setVersion(r.version);
       return t("admin.media.arr.saved");
@@ -101,13 +111,25 @@ export default function ArrBlock(): JSX.Element {
 
       <h4>
         {t("admin.media.arr.prowlarr")}:{" "}
-        {view?.prowlarr.key_set ? t("admin.media.arr.set") : t("admin.media.arr.notSet")}
+        {view?.prowlarr.key_set
+          ? t("admin.media.arr.set")
+          : t("admin.media.arr.notSet")}
       </h4>
       <form className="stack" onSubmit={saveProwlarr} data-arr="prowlarr">
         <Field label={t("admin.media.arr.url")}>
-          {(c) => <input {...c} name="prowlarr-url" value={pUrl} onChange={(e) => setPUrl(e.target.value)} />}
+          {(c) => (
+            <input
+              {...c}
+              name="prowlarr-url"
+              value={pUrl}
+              onChange={(e) => setPUrl(e.target.value)}
+            />
+          )}
         </Field>
-        <Field label={t("admin.media.arr.key")} hint={t("admin.media.arr.keyHelp")}>
+        <Field
+          label={t("admin.media.arr.key")}
+          hint={t("admin.media.arr.keyHelp")}
+        >
           {(c) => (
             <input
               {...c}
@@ -130,7 +152,10 @@ export default function ArrBlock(): JSX.Element {
                 busy={busy === "p-test"}
                 onClick={() =>
                   void run("p-test", async () => {
-                    const r = await api.request<ProwlarrTest>("POST", `${BASE}/prowlarr/test`);
+                    const r = await api.request<ProwlarrTest>(
+                      "POST",
+                      `${BASE}/prowlarr/test`,
+                    );
                     setSites(r.indexers);
                     return t("admin.media.arr.tested");
                   })
@@ -160,22 +185,42 @@ export default function ArrBlock(): JSX.Element {
           <p className="muted">{t("admin.media.arr.noSites")}</p>
         ) : (
           <p data-arr="sites">
-            {t("admin.media.arr.sites", { n: sites.length })}: {sites.map((s) => s.name).join(", ")}
+            {t("admin.media.arr.sites", { n: sites.length })}:{" "}
+            {sites.map((s) => s.name).join(", ")}
           </p>
         ))}
 
       <h4>
         {t("admin.media.arr.qbit")}:{" "}
-        {view?.qbittorrent.password_set ? t("admin.media.arr.set") : t("admin.media.arr.notSet")}
+        {view?.qbittorrent.password_set
+          ? t("admin.media.arr.set")
+          : t("admin.media.arr.notSet")}
       </h4>
       <form className="stack" onSubmit={saveQbit} data-arr="qbittorrent">
         <Field label={t("admin.media.arr.url")}>
-          {(c) => <input {...c} name="qbit-url" value={qUrl} onChange={(e) => setQUrl(e.target.value)} />}
+          {(c) => (
+            <input
+              {...c}
+              name="qbit-url"
+              value={qUrl}
+              onChange={(e) => setQUrl(e.target.value)}
+            />
+          )}
         </Field>
         <Field label={t("admin.media.arr.username")}>
-          {(c) => <input {...c} name="qbit-user" value={qUser} onChange={(e) => setQUser(e.target.value)} />}
+          {(c) => (
+            <input
+              {...c}
+              name="qbit-user"
+              value={qUser}
+              onChange={(e) => setQUser(e.target.value)}
+            />
+          )}
         </Field>
-        <Field label={t("admin.media.arr.password")} hint={t("admin.media.arr.passwordHelp")}>
+        <Field
+          label={t("admin.media.arr.password")}
+          hint={t("admin.media.arr.passwordHelp")}
+        >
           {(c) => (
             <input
               {...c}
@@ -188,7 +233,14 @@ export default function ArrBlock(): JSX.Element {
           )}
         </Field>
         <Field label={t("admin.media.arr.savePath")}>
-          {(c) => <input {...c} name="qbit-path" value={qPath} onChange={(e) => setQPath(e.target.value)} />}
+          {(c) => (
+            <input
+              {...c}
+              name="qbit-path"
+              value={qPath}
+              onChange={(e) => setQPath(e.target.value)}
+            />
+          )}
         </Field>
         <div className="toolbar">
           <Button type="submit" variant="primary" busy={busy === "q-save"}>
@@ -200,7 +252,10 @@ export default function ArrBlock(): JSX.Element {
                 busy={busy === "q-test"}
                 onClick={() =>
                   void run("q-test", async () => {
-                    const r = await api.request<{ version: string }>("POST", `${BASE}/qbittorrent/test`);
+                    const r = await api.request<{ version: string }>(
+                      "POST",
+                      `${BASE}/qbittorrent/test`,
+                    );
                     setVersion(r.version);
                     return t("admin.media.arr.tested");
                   })
@@ -225,7 +280,9 @@ export default function ArrBlock(): JSX.Element {
           )}
         </div>
       </form>
-      {version && <p data-arr="version">{t("admin.media.arr.version", { version })}</p>}
+      {version && (
+        <p data-arr="version">{t("admin.media.arr.version", { version })}</p>
+      )}
       {error && <p role="alert">{error}</p>}
     </section>
   );

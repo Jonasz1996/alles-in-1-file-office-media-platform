@@ -587,6 +587,28 @@ const en: Translation<typeof nl> = {
       cleared: "{part}: cleared.",
       artNote: "Covers and posters are not cleared here: they do not come back by themselves.",
     },
+    wanted: {
+      title: "Follow: films and series",
+      intro:
+        "Search TMDB for a film or series and follow it. Soon the app will search and download what you follow itself; for now it keeps the list and the calendar.",
+      movie: "Film",
+      show: "Series",
+      search: "Title",
+      searchButton: "Search TMDB",
+      library: "Library",
+      profile: "Quality",
+      noLibrary: "There is no library of this kind yet. Create one on Media first.",
+      nothing: "Nothing found.",
+      follow: "Follow",
+      unfollow: "Stop following",
+      added: "You now follow {title}.",
+      removed: "You no longer follow {title}.",
+      list: "What you follow ({n})",
+      titleCol: "Title",
+      calendar: "Calendar (30 days)",
+      calendarLine: "{date}: {title} {code}",
+      calendarEmpty: "Nothing you follow comes out in the next 30 days.",
+    },
     arr: {
       title: "Media management: Prowlarr and qBittorrent",
       intro:

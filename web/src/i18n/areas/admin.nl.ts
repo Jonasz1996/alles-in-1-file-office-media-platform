@@ -596,6 +596,28 @@ export default {
       cleared: "{part}: opgeruimd.",
       artNote: "Hoezen en posters ruim je hier niet op: die komen niet vanzelf terug.",
     },
+    wanted: {
+      title: "Volgen: films en series",
+      intro:
+        "Zoek een film of serie bij TMDB en volg hem. Straks zoekt en downloadt de app wat je volgt zelf; nu bewaart hij alleen de lijst en de kalender.",
+      movie: "Film",
+      show: "Serie",
+      search: "Titel",
+      searchButton: "Zoeken bij TMDB",
+      library: "Bibliotheek",
+      profile: "Kwaliteit",
+      noLibrary: "Er is nog geen bibliotheek van deze soort. Maak er eerst een op Media.",
+      nothing: "Niets gevonden.",
+      follow: "Volgen",
+      unfollow: "Niet meer volgen",
+      added: "Je volgt nu {title}.",
+      removed: "Je volgt {title} niet meer.",
+      list: "Wat je volgt ({n})",
+      titleCol: "Titel",
+      calendar: "Kalender (30 dagen)",
+      calendarLine: "{date}: {title} {code}",
+      calendarEmpty: "Er komt de komende 30 dagen niets uit van wat je volgt.",
+    },
     arr: {
       title: "Mediabeheer: Prowlarr en qBittorrent",
       intro:
