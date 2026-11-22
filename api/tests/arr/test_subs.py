@@ -16,9 +16,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.arr import opensubs, subs
 from app.arr import settings as arr_settings
 from app.db import get_engine
+from app.main import app
+from app.media.state import MediaState
 from app.models import ArrSubtitle, MediaItem, MediaLibrary, MediaProbe, Node
 from tests.arr.test_wanted import make_library
 from tests.test_files import mkdir, put
+from tests.test_shares import person
 
 pytestmark = pytest.mark.anyio
 
@@ -265,3 +268,25 @@ def test_parsing_and_hash(tmp_path) -> None:
     assert subs.sub_name("Film (2010).mkv", "pt-br") == "Film (2010).pt.srt"
     assert not opensubs._plain_host("evil.example.com")
     assert opensubs._plain_host("vip-api.opensubtitles.com")
+
+
+async def test_sub_offset(client, admin, settings, fake_os, monkeypatch):
+    headers, _ = admin
+    monkeypatch.setattr(app.state, "media", MediaState(enabled=True), raising=False)
+    node_id = await movie(client, headers, settings)
+    url = f"/api/v1/media/sub-offset/{node_id}"
+    assert (await client.get(url, headers=headers)).json() == []
+    body = {"sub_id": "x0", "label": "Nederlands", "offset_ms": -1500}
+    assert (await client.put(url, json=body, headers=headers)).status_code == 204
+    body["offset_ms"] = 2500
+    assert (await client.put(url, json=body, headers=headers)).status_code == 204
+    assert (await client.get(url, headers=headers)).json() == [body]
+    too_far = {**body, "offset_ms": 11 * 60 * 1000}
+    assert (await client.put(url, json=too_far, headers=headers)).status_code == 422
+    assert (
+        await client.put(url, json={**body, "offset_ms": 0}, headers=headers)
+    ).status_code == 204
+    assert (await client.get(url, headers=headers)).json() == []
+    # Een ander ziet de video niet: 404
+    other, _ = await person(client, headers, "gezin@example.nl")
+    assert (await client.get(url, headers=other)).status_code == 404

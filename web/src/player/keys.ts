@@ -17,6 +17,8 @@ export type PlayerAction =
   | "mute"
   | "fullscreen"
   | "subtitles"
+  | "subEarlier"
+  | "subLater"
   | "audio"
   | "pip"
   | "prevChapter"
@@ -42,6 +44,8 @@ export const KEYMAP: Readonly<Record<PlayerAction, readonly Combo[]>> = {
   mute: ["m"],
   fullscreen: ["f"],
   subtitles: ["c"],
+  subEarlier: ["g"],
+  subLater: ["h"],
   audio: ["a"],
   pip: ["p"],
   prevChapter: ["pageup"],

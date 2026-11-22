@@ -4,9 +4,10 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Drie nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+Vier nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
 app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
-arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde).
+arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde) en
+media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -104,9 +105,31 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("state IN ('found', 'none')", name="ck_arr_subtitle_state"),
     )
+    op.create_table(
+        "media_sub_offset",
+        sa.Column(
+            "user_id",
+            sa.Uuid(),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column(
+            "node_id",
+            sa.Uuid(),
+            sa.ForeignKey("node.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column("sub_id", sa.String(length=8), primary_key=True, nullable=False),
+        sa.Column("label", sa.String(length=255), nullable=False),
+        sa.Column("offset_ms", sa.Integer(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("media_sub_offset")
     op.drop_table("arr_subtitle")
     op.drop_index("ix_arr_grab_wanted_id", table_name="arr_grab")
     op.drop_table("arr_grab")

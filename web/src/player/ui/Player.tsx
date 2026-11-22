@@ -33,6 +33,15 @@ import { loadProgress, Reporter, type ProgressSink } from "../playback";
 import { failureOffer, type Notice, type StopReason } from "../session";
 import { waitVtt } from "../subs";
 import {
+  clampOffset,
+  offsetText,
+  type SavedOffset,
+  savedOffset,
+  shiftCues,
+  SUB_MENU_STEP_MS,
+  SUB_STEP_MS,
+} from "../subshift";
+import {
   audioLabel,
   autoSubtitle,
   currentAudio,
@@ -405,6 +414,53 @@ export default function Player(props: PlayerProps): JSX.Element {
     }
   });
 
+  // --- de timing van de ondertitel (fase 11, stap 4): bewaard per video en ondertitel ---
+  const [saved, setSaved] = useState<SavedOffset[]>([]);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setSaved([]);
+    let gone = false;
+    api
+      .request<SavedOffset[]>("GET", `/api/v1/media/sub-offset/${encodeURIComponent(nodeId)}`)
+      .then((rows) => {
+        if (!gone) setSaved(rows);
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [nodeId]);
+  const subLabel = sub ? labelOf(sub) : "";
+  const offsetNow = sub ? savedOffset(saved, sub, subLabel) : 0;
+  useEffect(() => {
+    const v = video.current;
+    if (!v || !sub) return;
+    const el = [...v.querySelectorAll<HTMLTrackElement>("track[data-id]")].find((x) => x.dataset.id === sub);
+    if (!el) return;
+    const apply = () => shiftCues(el.track.cues, offsetNow);
+    apply();
+    el.addEventListener("load", apply);
+    return () => el.removeEventListener("load", apply);
+  }, [sid, sub, offsetNow, selectedState, texts.length]);
+  const shiftSub = (by: number) => {
+    if (!sub) return;
+    const id = sub;
+    const label = subLabel;
+    const to = clampOffset(offsetNow + by);
+    setSaved((rows) => [...rows.filter((r) => r.sub_id !== id), { sub_id: id, label, offset_ms: to }]);
+    announce(t("player.subtitles.offset", { offset: offsetText(to, locale()) }));
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void api
+        .request<void>("PUT", `/api/v1/media/sub-offset/${encodeURIComponent(nodeId)}`, {
+          sub_id: id,
+          label,
+          offset_ms: to,
+        })
+        .catch(() => {});
+    }, 800);
+  };
+
   const onTrackError = (id: string) => {
     // Een <track> die toch 202 kreeg (de ondertitel werd opnieuw gemaakt): wachten
     if (id === sub) setVtt((m) => ({ ...m, [id]: "pending" }));
@@ -575,6 +631,10 @@ export default function Player(props: PlayerProps): JSX.Element {
     return t("player.subtitles.burnForced");
   }
 
+  function burnNowKey(): boolean {
+    return !!ctl.current?.choice.burn;
+  }
+
   const cancelCard = () => setCard("cancelled");
 
   const escape = () => {
@@ -635,6 +695,12 @@ export default function Player(props: PlayerProps): JSX.Element {
         else chooseSub(to);
         break;
       }
+      case "subEarlier":
+        shiftSub(-SUB_STEP_MS);
+        break;
+      case "subLater":
+        shiftSub(SUB_STEP_MS);
+        break;
       case "audio": {
         const to = nextAudio(audioTracks, ctl.current?.choice.audio);
         if (to !== null) chooseAudio(to);
@@ -684,6 +750,9 @@ export default function Player(props: PlayerProps): JSX.Element {
         return audioTracks.length > 1;
       case "subtitles":
         return subs.length > 0;
+      case "subEarlier":
+      case "subLater":
+        return !!sub && !burnNowKey();
       case "pip":
         return pipAvailable(video.current);
       case "prevChapter":
@@ -764,6 +833,31 @@ export default function Player(props: PlayerProps): JSX.Element {
           : { key: s.id, label: subtitleLabel(s, loc, w), checked: sub === s.id && !burnNow, select: () => chooseSub(s.id) },
       ),
   ];
+  if (sub && !burnNow) {
+    subChoices.push(
+      {
+        key: "earlier",
+        label: t("player.subtitles.earlier", { offset: offsetText(-SUB_MENU_STEP_MS, loc) }),
+        hint: offsetNow ? t("player.subtitles.offsetNow", { offset: offsetText(offsetNow, loc) }) : undefined,
+        checked: false,
+        select: () => shiftSub(-SUB_MENU_STEP_MS),
+      },
+      {
+        key: "later",
+        label: t("player.subtitles.later", { offset: offsetText(SUB_MENU_STEP_MS, loc) }),
+        checked: false,
+        select: () => shiftSub(SUB_MENU_STEP_MS),
+      },
+    );
+    if (offsetNow) {
+      subChoices.push({
+        key: "reset",
+        label: t("player.subtitles.resetOffset"),
+        checked: false,
+        select: () => shiftSub(-offsetNow),
+      });
+    }
+  }
   const forced = out?.forced_available;
   if (forced && !subs.some((s) => s.id === forced)) {
     subChoices.push({

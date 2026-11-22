@@ -17,6 +17,7 @@ from app.main import app
 from app.media import types as t
 from app.media.loadtest import LoadtestPlay, LoadtestPlayIn
 from app.media.state import MediaState
+from app.routers import media_suboffset
 from tests.test_files import put, root
 from tests.test_public import new_link, open_link
 
@@ -99,6 +100,25 @@ ENDPOINTS = [
         t.ProgressBatchIn,
         t.ProgressBatchOut,
         None,
+    ),
+    # Fase 11, stap 4: de timing van een ondertitel (eigen tests in tests/arr/test_subs.py)
+    (
+        "GET",
+        "/api/v1/media/sub-offset/{node_id}",
+        None,
+        "user",
+        None,
+        list[media_suboffset.SubOffsetOut],
+        None,
+    ),
+    (
+        "PUT",
+        "/api/v1/media/sub-offset/{node_id}",
+        {"sub_id": "x0", "label": "Nederlands", "offset_ms": 500},
+        "user",
+        media_suboffset.SubOffsetIn,
+        None,
+        204,
     ),
     # M8: koppelen
     (
@@ -363,6 +383,8 @@ BUILT = {
     # M7 (M0-hotfix, alleen deze test; de eigen tests in test_media_progress_api.py)
     ("PUT", "/api/v1/media/progress/{node_id}"),
     ("POST", "/api/v1/media/progress/batch"),
+    ("GET", "/api/v1/media/sub-offset/{node_id}"),
+    ("PUT", "/api/v1/media/sub-offset/{node_id}"),
     # M9 (M0-hotfix, alleen deze test): test_media_music.py en test_media_playlists.py
     ("GET", "/api/v1/media/libraries/{library_id}/albums"),
     ("GET", "/api/v1/media/albums/{album_id}"),

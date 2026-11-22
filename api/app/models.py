@@ -720,6 +720,25 @@ class ArrSubtitle(Base):
     )
 
 
+class SubOffset(Base):
+    """Fase 11, stap 4: de timing van een ondertitel die een gebruiker verschoof, per video en
+    ondertitel (het id uit de sessie, e<index> of x<i>, met zijn label: verandert de lijst, dan
+    past het label niet meer en geldt de verschuiving niet). offset_ms > 0: later tonen."""
+
+    __tablename__ = "media_sub_offset"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    sub_id: Mapped[str] = mapped_column(String(8), primary_key=True)
+    label: Mapped[str] = mapped_column(String(255))
+    offset_ms: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class MediaItem(Base):
     """Eén bestand in een bibliotheek (per node). kind: movie | episode | track | video |
     extra; extra: trailer | featurette | deleted | behind | sample | other, met parent_id de

@@ -66,6 +66,7 @@ from app.routers import (
     media_music,
     media_play,
     media_progress,
+    media_suboffset,
     media_subs,
     memories,
     myshares,
@@ -625,6 +626,7 @@ app.include_router(media_music.router)
 app.include_router(admin_media.router)
 app.include_router(admin_arr.router)
 app.include_router(arr_wanted.router)
+app.include_router(media_suboffset.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)
