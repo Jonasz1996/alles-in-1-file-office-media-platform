@@ -56,6 +56,7 @@ import anyio
 from sqlalchemy import LargeBinary, Select, bindparam, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import dbdialect
 from app.models import BlobText, MediaItem, Node, PhotoOcr, User
 from app.search.query import Parsed
 from app.search.types import Match, SnippetPart
@@ -369,9 +370,12 @@ def _thread() -> anyio.CapacityLimiter:
     return _limiter[1]
 
 
-def _window(column):
+def _window(column, dialect: str = dbdialect.SQLITE):
     """De eerste 4 × WINDOW bytes (UTF-8: genoeg voor WINDOW tekens); _text() maakt er tekst
-    van."""
+    van. PostgreSQL: de eerste WINDOW tekens als tekst (left); een cast naar bytea leest daar
+    een backslash als escape en faalt dan op gewone tekst."""
+    if dialect != dbdialect.SQLITE:
+        return func.left(column, WINDOW)
     return func.substr(cast(column, LargeBinary), 1, 4 * WINDOW)
 
 
@@ -382,26 +386,27 @@ def _text(value: bytes | str | None) -> str | None:
 
 
 @cache
-def _sources() -> Select:
-    """De vraag van sources(), één keer gebouwd (zoals access.own_chains): de ids als één
-    lijst-parameter "ids", wie vraagt als "user"."""
+def _sources(dialect: str = dbdialect.SQLITE) -> Select:
+    """De vraag van sources(), één keer gebouwd per database (zoals access.own_chains): de ids
+    als één lijst-parameter "ids", wie vraagt als "user". PostgreSQL kent geen group_concat:
+    daar string_agg."""
     n = Node.__table__.alias("n")
-    title = (
-        select(func.group_concat(MediaItem.title, " "))
-        .where(MediaItem.node_id == n.c.id)
-        .scalar_subquery()
-    )
+    if dialect == dbdialect.SQLITE:
+        titles = func.group_concat(MediaItem.title, " ")
+    else:
+        titles = func.string_agg(MediaItem.title, " ")
+    title = select(titles).where(MediaItem.node_id == n.c.id).scalar_subquery()
     mine = n.c.owner_id == bindparam("user", type_=n.c.owner_id.type)
-    pocr = case((mine, _window(PhotoOcr.text)), else_=None)
+    pocr = case((mine, _window(PhotoOcr.text, dialect)), else_=None)
     return (
         select(
             n.c.id,
             n.c.search_name,
             title,
-            _window(BlobText.body),
-            _window(BlobText.ocr),
+            _window(BlobText.body, dialect),
+            _window(BlobText.ocr, dialect),
             pocr,
-            _window(BlobText.meta),
+            _window(BlobText.meta, dialect),
         )
         .select_from(n)
         .outerjoin(BlobText, BlobText.blob_sha == n.c.blob_id)
@@ -415,7 +420,7 @@ async def sources(db: AsyncSession, user: User, ids: Sequence[uuid.UUID]) -> lis
     node van user is."""
     if not ids:
         return []
-    sql = _sources()
+    sql = _sources(dbdialect.name_of(db))
     params = {"ids": list(ids), "user": user.id}
     found = {
         row[0]: Source(

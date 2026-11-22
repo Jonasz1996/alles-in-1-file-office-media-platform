@@ -72,5 +72,8 @@ markers = [
     # X3a: beeld_echt vraagt het echte model en de set (BEELD_MODEL, ...); zonder faalt het,
     # dus niet in de gewone run en niet in api-analyse: alleen `-m beeld_echt` in beeld-model
     "beeld_echt: het echte beeldmodel (X3, job beeld-model); niet in de gewone run",
+    # Release 0.8.2 (P2): tests/conftest.py slaat ze over naar gelang PLATFORM_TEST_DATABASE_URL
+    "pg: vraagt PostgreSQL (PLATFORM_TEST_DATABASE_URL); zonder overgeslagen",
+    "sqlite_only: alleen SQLite; met PLATFORM_TEST_DATABASE_URL overgeslagen, met een reden",
 ]
 addopts = "--strict-markers -m 'not media and not media_perf and not provider_real and not zoek_perf and not ocr and not geo and not beeld_echt'"

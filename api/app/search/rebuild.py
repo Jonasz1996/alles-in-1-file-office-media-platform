@@ -31,6 +31,7 @@ fase 6, Keuze 12). Z1; app.cli search-rebuild, search-triggers en search-check r
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import sqlite3
 import time
@@ -38,6 +39,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app import dbgate
@@ -60,6 +62,8 @@ BATCH = 100
 
 
 async def _has_fts(conn: AsyncConnection) -> bool:
+    if conn.dialect.name != "sqlite":
+        return False  # PostgreSQL heeft (nog) geen FTS-index: die komt met 0014 (P5)
     found = await conn.exec_driver_sql(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'fts_node'"
     )
@@ -69,10 +73,12 @@ async def _has_fts(conn: AsyncConnection) -> bool:
 async def _start(conn: AsyncConnection, what: str) -> None:
     """Begint een herbouw als er geen loopt: cursor 0 (eerst schrijven, dan weet geen andere
     herbouw het niet), dan beide FTS-tabellen leeg."""
-    started = await conn.exec_driver_sql(
-        "UPDATE search_state SET cursor = 0, started_at = ?, what = ? "
-        "WHERE id = 1 AND cursor IS NULL RETURNING cursor",
-        (datetime.now(UTC).isoformat(), what),
+    started = await conn.execute(
+        text(
+            "UPDATE search_state SET cursor = 0, started_at = :at, what = :what "
+            "WHERE id = 1 AND cursor IS NULL RETURNING cursor"
+        ),
+        {"at": datetime.now(UTC).isoformat(), "what": what},
     )
     if started.first() is not None:
         await conn.exec_driver_sql("INSERT INTO fts_node(fts_node) VALUES ('delete-all')")
@@ -182,15 +188,23 @@ async def rebuild(
         await asyncio.sleep(pause)
 
 
+# (cursor, hoogste num). Op PostgreSQL komt num uit de reeks node_num_seq (0013) en houdt niets
+# search_seq bij: daar het hoogste num zelf.
+PROGRESS = {
+    "sqlite": (
+        "SELECT s.cursor, q.next - 1 FROM search_state s, search_seq q WHERE s.id = 1 AND q.id = 1"
+    ),
+    "postgresql": (
+        "SELECT s.cursor, (SELECT coalesce(max(num), 0) FROM node) FROM search_state s "
+        "WHERE s.id = 1"
+    ),
+}
+
+
 async def progress(engine: AsyncEngine) -> tuple[int, int] | None:
     """(cursor, hoogste num) als er een herbouw loopt, anders None."""
     async with engine.connect() as conn:
-        row = (
-            await conn.exec_driver_sql(
-                "SELECT s.cursor, q.next - 1 FROM search_state s, search_seq q "
-                "WHERE s.id = 1 AND q.id = 1"
-            )
-        ).first()
+        row = (await conn.exec_driver_sql(PROGRESS[conn.dialect.name])).first()
     if row is None or row[0] is None:
         return None
     return int(row[0]), int(row[1])
@@ -241,9 +255,14 @@ class Restored:
 
 async def restore_triggers(engine: AsyncEngine) -> Restored:
     """De triggers zoals schema.py, wat ze bijhouden opnieuw, en het begin van een herbouw; alles
-    in één transactie. Daarna rebuild()."""
+    in één transactie. Daarna rebuild(). Op PostgreSQL: wat de triggers van 0013 bijhouden
+    opnieuw, met fase6_fill()."""
     out = Restored()
     async with engine.begin() as conn:
+        if conn.dialect.name != "sqlite":
+            found = json.loads((await conn.exec_driver_sql("SELECT fase6_fill()::text")).scalar())
+            out.numbered, out.tree, out.photo_rows = found["num"], found["tree"], found["photo_geo"]
+            return out
         fts = await _has_fts(conn)
         want = schema.TRIGGERS if fts else schema.TRIGGERS_NO_FTS
         have = dict(

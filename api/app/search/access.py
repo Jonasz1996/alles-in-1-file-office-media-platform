@@ -96,21 +96,32 @@ async def search_ranges(
     return Ranges(out, shared)
 
 
-def ranges_sql(ranges: Sequence[tuple[str, str]], alias: str = "n") -> tuple[str, dict]:
+def ranges_sql(
+    ranges: Sequence[tuple[str, str]], alias: str = "n", dialect: str = "sqlite"
+) -> tuple[str, dict]:
     """De voorwaarde op {alias}.mpath voor deze bereiken, met haar parameters. Geen bereiken:
-    een voorwaarde die nooit waar is."""
+    een voorwaarde die nooit waar is. dialect: de naam van de database (dbdialect.name_of);
+    PostgreSQL kent geen 0 als voorwaarde en geen json_each: daar FALSE en
+    jsonb_array_elements (r.value ->> 0 is het begin, ->> 1 het eind)."""
+    pg = dialect == "postgresql"
     if not ranges:
-        return "0", {}
+        return ("FALSE" if pg else "0"), {}
     if len(ranges) <= MAX_OR:
         parts, params = [], {}
         for i, (start, end) in enumerate(ranges):
             parts.append(f"({alias}.mpath >= :rp{i} AND {alias}.mpath < :re{i})")
             params[f"rp{i}"], params[f"re{i}"] = start, end
         return "(" + " OR ".join(parts) + ")", params
-    sql = (
-        f"EXISTS (SELECT 1 FROM json_each(:ranges) AS r "
-        f"WHERE {alias}.mpath >= r.value ->> '$[0]' AND {alias}.mpath < r.value ->> '$[1]')"
-    )
+    if pg:
+        sql = (
+            f"EXISTS (SELECT 1 FROM jsonb_array_elements(CAST(:ranges AS jsonb)) AS r "
+            f"WHERE {alias}.mpath >= (r.value ->> 0) AND {alias}.mpath < (r.value ->> 1))"
+        )
+    else:
+        sql = (
+            f"EXISTS (SELECT 1 FROM json_each(:ranges) AS r "
+            f"WHERE {alias}.mpath >= r.value ->> '$[0]' AND {alias}.mpath < r.value ->> '$[1]')"
+        )
     return sql, {"ranges": json.dumps([list(r) for r in ranges])}
 
 

@@ -205,16 +205,25 @@ async def _photometa_rebuild(db: AsyncSession, saved: dict[str, Any]) -> Rebuild
     return None
 
 
+# Cursor, hoogste num, begin en wat. Op PostgreSQL houdt niets search_seq bij (num komt uit de
+# reeks van 0013): daar het hoogste num zelf.
+_FTS_REBUILD = {
+    "sqlite": (
+        "SELECT s.cursor, q.next - 1, s.started_at, s.what FROM search_state s, search_seq q "
+        "WHERE s.id = 1 AND q.id = 1"
+    ),
+    "postgresql": (
+        "SELECT s.cursor, (SELECT coalesce(max(num), 0) FROM node), s.started_at, s.what "
+        "FROM search_state s WHERE s.id = 1"
+    ),
+}
+
+
 async def _fts_rebuild(db: AsyncSession) -> Rebuild | None:
     """De herbouw in stukken van de index die nu loopt, of None: cursor, begin en wat uit
-    search_state en het hoogste num uit search_seq, in één lezing."""
+    search_state en het hoogste num, in één lezing."""
     conn = await db.connection()
-    row = (
-        await conn.exec_driver_sql(
-            "SELECT s.cursor, q.next - 1, s.started_at, s.what FROM search_state s, search_seq q "
-            "WHERE s.id = 1 AND q.id = 1"
-        )
-    ).first()
+    row = (await conn.exec_driver_sql(_FTS_REBUILD[conn.dialect.name])).first()
     if row is None or row[0] is None:
         return None
     what = row[3] if row[3] in FTS else "text"
@@ -376,7 +385,10 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
             raise _running()
         # De cursor op 0 vóór de 202: een GET direct erna ziet de herbouw al (rebuild.what,
         # LIKE), ook als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor.
-        await rebuild.begin(conn, what)
+        begun = await rebuild.begin(conn, what)
+        if not begun and conn.dialect.name != "sqlite":
+            # PostgreSQL heeft nog geen FTS-index (die komt met 0014): niets te herbouwen
+            raise errors.fail(409, "not_built", "Geen FTS-index op deze database")
         await db.commit()
         start_fts(settings, what)
         log.info("Zoeken: herbouw van de index gestart (%s)", what)
@@ -542,7 +554,9 @@ async def on_start(settings: Settings) -> None:
             elif mark is not None:
                 await _store(db, rebuild=None)
         await db.commit()
-        building = await search_engine.rebuilding(await db.connection())
+        conn = await db.connection()
+        # Op PostgreSQL is er (nog) geen herbouw van de index om verder te laten gaan
+        building = conn.dialect.name == "sqlite" and await search_engine.rebuilding(conn)
     if building and not _fts_running(settings):
         log.info("Zoeken: een onderbroken herbouw van de index gaat verder")
         start_fts(settings, "text")

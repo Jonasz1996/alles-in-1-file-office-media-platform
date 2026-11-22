@@ -177,3 +177,84 @@ async def test_copy_without_superuser(sqlite_with_data):
 async def test_refuses_sqlite_target(sqlite_with_data):
     with pytest.raises(CopyError, match="PostgreSQL"):
         await db_copy(sqlite_with_data, "sqlite+aiosqlite:///x.db")
+
+
+async def _tree(settings: Settings) -> set[tuple]:
+    async with db.get_engine(settings).connect() as conn:
+        found = await conn.execute(select(Node.id, Node.num, Node.mpath, Node.dead))
+        return {tuple(r) for r in found.all()}
+
+
+@pytest.mark.pg
+async def test_copy_de_boom_en_de_gezichten(sqlite_with_data):
+    """Vanaf 0013 (P2; docs/fase-6/i3/pg-0013.md): num, mpath en dead komen mee zoals SQLite ze
+    heeft, ook na verplaatsen en de prullenbak; photo_geo ook; face.seq in de volgorde van rowid.
+    fase6_fill() heeft daarna niets te herstellen, de triggers staan weer aan, en een nieuwe map
+    krijgt een nieuw num en het pad van zijn ouder."""
+    from app.models import Face, PhotoGeo
+    from tests.factories import create_folder, maker
+    from tests.pgboom import boom, nalopen
+
+    s = sqlite_with_data
+    ids = await boom(s)
+    async with maker(s)() as session:
+        # werk naar de prullenbak (onder vakantie), diep eruit (naar de hoofdmap), los terug
+        (await session.get(Node, ids["werk"])).parent_id = ids["vakantie"]
+        (await session.get(Node, ids["diep"])).parent_id = ids["root"]
+        (await session.get(Node, ids["los"])).deleted_at = None
+        await session.flush()
+        for key in ("strand", "schelp"):
+            session.add(PhotoGeo(node_id=ids[key], owner_id=ids["eva"], lat=52.0, lon=4.0,
+                                 x16=1, y16=2, source="exif"))  # fmt: skip
+        # Gezichten met een id die aflopen: de volgorde van rowid is niet die van de id's
+        faces = sorted((uuid.uuid4() for _ in range(6)), reverse=True)
+        for face_id in faces:
+            session.add(Face(id=face_id, node_id=ids["schelp"], owner_id=ids["eva"], x=0.1,
+                             y=0.1, w=0.2, h=0.2, score=0.9, px=64, version=1))  # fmt: skip
+            await session.flush()
+        await session.commit()
+    async with db.get_engine(s).connect() as conn:
+        found = await conn.exec_driver_sql("SELECT id FROM face ORDER BY rowid")
+        assert [uuid.UUID(str(r[0])) for r in found.all()] == faces
+        src_geo = set((await conn.execute(select(PhotoGeo.node_id, PhotoGeo.dead))).all())
+    assert src_geo == {(ids["strand"], 1), (ids["schelp"], 0)}
+    src_tree = await _tree(s)
+
+    name = "c_" + uuid.uuid4().hex
+    url = await _database(name)
+    pg = Settings(data_dir=s.data_dir, web_dist=s.web_dist, jwt_secret="test" * 8,
+                  database_url=url)  # fmt: skip
+    try:
+        said: list[str] = []
+        await db_copy(s, url, say=said.append)
+        [line] = [m for m in said if m.startswith("Nagelopen met fase6_fill")]
+        for part in ("num 0", "tree 0", "photo_geo 0"):
+            assert part in line, line
+        assert await _tree(pg) == src_tree
+        assert await nalopen(pg) == len(src_tree)
+        async with db.get_engine(pg).connect() as conn:
+            got = await conn.execute(select(PhotoGeo.node_id, PhotoGeo.dead))
+            assert set(got.all()) == src_geo
+            got = await conn.exec_driver_sql("SELECT id FROM face ORDER BY seq")
+            assert [r[0] for r in got.all()] == faces
+            got = await conn.exec_driver_sql(
+                "SELECT count(*), count(*) FILTER (WHERE tgenabled = 'D') FROM pg_trigger "
+                "WHERE NOT tgisinternal"
+            )
+            assert tuple(got.one()) == (10, 0)
+            top = (await conn.execute(select(func.max(Node.num)))).scalar_one()
+            werk = (await conn.execute(select(Node.mpath).where(Node.id == ids["werk"]))).one()
+        # Een nieuwe map in werk (in de prullenbak, via vakantie): het volgende num, het pad
+        # van werk erachter, en dead
+        async with maker(pg)() as session:
+            eva = await session.get(User, ids["eva"])
+            new = await create_folder(session, eva, ids["werk"], "nieuw")
+            await session.commit()
+            new_id = new.id
+        [row] = [r for r in await _tree(pg) if r[0] == new_id]
+        assert row[1:] == (top + 1, f"{werk.mpath}{top + 1}/", 1)
+        assert await nalopen(pg) == len(src_tree) + 1
+    finally:
+        await db.get_engine(pg).dispose()
+        db._engine.cache_clear()
+        await _database(name, drop=True)

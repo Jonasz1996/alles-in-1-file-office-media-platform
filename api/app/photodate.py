@@ -26,6 +26,7 @@ from sqlalchemy import bindparam, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import render_meta
+from app.db import lock_tree
 from app.models import Blob, Node
 
 # Jaren daarbuiten zijn een kapotte klok of een kapot bestand
@@ -140,9 +141,11 @@ def set_blob_meta(blob: Blob, capture: dict, exif: dict | None, tz: str) -> date
 async def retime_nodes(session: AsyncSession, taken: list[tuple[str, datetime]]) -> None:
     """De opnamedatum (sha, taken_at) naar alle bestanden met die inhoud die op de tijdlijn
     staan (taken_day gezet), voor veel blobs in één statement (executemany): de backfill
-    houdt het schrijfslot van SQLite zo maar kort vast."""
+    houdt het schrijfslot van SQLite zo maar kort vast. Op PostgreSQL eerst het slot van de
+    boom: bestanden met dezelfde inhoud liggen overal (db.lock_tree)."""
     if not taken:
         return
+    await lock_tree(session)
     node = Node.__table__
     statement = (
         update(node)

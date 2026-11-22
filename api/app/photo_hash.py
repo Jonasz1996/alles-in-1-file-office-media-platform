@@ -37,13 +37,12 @@ from sqlalchemy import (
     delete,
     exists,
     literal,
-    literal_column,
     or_,
     select,
 )
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import dbdialect
 from app.dupes import phash
 from app.models import Blob, BlobHash, BlobText, DupPair, Node
 
@@ -119,8 +118,9 @@ async def _scan(db: AsyncSession, value: int, owner: Any = None) -> list[tuple[s
             )
         )
     # +blob_sha: sorteren na de vier indexen van de stukken, nooit de hele tabel langs de
-    # primaire sleutel om de volgorde
-    rows = await db.execute(sel.order_by(literal_column("+blob_hash.blob_sha")).limit(SCAN))
+    # primaire sleutel om de volgorde (de + alleen op SQLite: dbdialect.NoIndex)
+    no_index = dbdialect.NoIndex(BlobHash.blob_sha, tight=True)
+    rows = await db.execute(sel.order_by(no_index).limit(SCAN))
     return [(sha, value) for sha, value in rows]
 
 
@@ -235,9 +235,10 @@ async def write(db: AsyncSession, hashed: Sequence[Hashed], rows: Sequence[dict[
     opnieuw gehasht is weg, dan de nieuwe, elk alleen als beide blobs er nog zijn."""
     if hashed:
         cols = ("state", "phash", "h0", "h1", "h2", "h3", "version")
-        excluded = sqlite_insert(BlobHash.__table__).excluded
+        dialect = dbdialect.of(db)
+        excluded = dialect.insert(BlobHash.__table__).excluded
         await db.execute(
-            sqlite_insert(BlobHash.__table__).on_conflict_do_update(
+            dialect.insert(BlobHash.__table__).on_conflict_do_update(
                 index_elements=[_HASH.c.blob_sha], set_={c: excluded[c] for c in cols}
             ),
             [_hash_row(h) for h in hashed],
@@ -256,9 +257,10 @@ async def write(db: AsyncSession, hashed: Sequence[Hashed], rows: Sequence[dict[
         bindparam("p_mad", type_=Float),
         bindparam("p_level", type_=String),
     ).where(exists().where(_BLOB.c.sha256 == a), exists().where(_BLOB.c.sha256 == b))
-    excluded = sqlite_insert(DupPair.__table__).excluded
+    dialect = dbdialect.of(db)
+    excluded = dialect.insert(DupPair.__table__).excluded
     await db.execute(
-        sqlite_insert(DupPair.__table__)
+        dialect.insert(DupPair.__table__)
         .from_select(["a", "b", "dist", "mad", "level"], sel)
         .on_conflict_do_update(
             index_elements=[_PAIR.c.a, _PAIR.c.b],
@@ -293,8 +295,9 @@ async def mark_none(db: AsyncSession, shas: Sequence[str]) -> None:
     hash, niet opnieuw proberen); wat al een hash van deze VERSION had, houdt die."""
     if not shas:
         return
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(BlobHash.__table__)
+        dialect.insert(BlobHash.__table__)
         .from_select(
             ["blob_sha", "state", "version"],
             select(_BLOB.c.sha256, literal("none"), literal(VERSION))

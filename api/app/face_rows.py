@@ -19,11 +19,9 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, bindparam, delete, exists, func, insert, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import operators
-from sqlalchemy.sql.expression import UnaryExpression
 
+from app import dbdialect
 from app.models import Face, FaceOwner, FacePerson, FaceScan, PhotoPerson, PhotoPref
 
 CHUNK = 2000  # rijen per transactie bij wissen (zoals Keuze 11)
@@ -35,8 +33,10 @@ def no_index(col: Any) -> Any:
     Met een gewone face.owner_id = :me kiest SQLite (ook 3.46.1, zonder sqlite_stat1) ix_face_new,
     de gedeeltelijke index op owner_id met hidden = 0, en leest dan alle gezichten van de eigenaar:
     bij 60.000 gezichten 50 ms per vraag, en in een batch per foto, met het schrijfslot. Net zo
-    face_scan.state naast node_id IN (...) (anders ix_face_scan_todo: alles wat wacht)."""
-    return UnaryExpression(col, operator=operators.custom_op("+"), type_=col.type)
+    face_scan.state naast node_id IN (...) (anders ix_face_scan_todo: alles wat wacht).
+    Alleen op SQLite: PostgreSQL kent geen unaire + op uuid of tekst en krijgt de kolom zelf
+    (dbdialect.NoIndex; op SQLite dezelfde tekst als ervoor)."""
+    return dbdialect.NoIndex(col)
 
 
 async def has_rows(db: AsyncSession, owner: uuid.UUID) -> bool:
@@ -291,8 +291,9 @@ async def write_group(
     als er geen voorstel is), en bij full de groep. De eerste statement schrijft (face_owner), dus
     de transactie heeft meteen het schrijfslot. Bij full en het eerste stuk: run + 1 en alle
     oude groepen van deze eigenaar weg."""
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(FaceOwner)
+        dialect.insert(FaceOwner)
         .values(owner_id=owner, run=0, wiping=0)
         .on_conflict_do_nothing(index_elements=["owner_id"])
     )

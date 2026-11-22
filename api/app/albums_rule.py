@@ -29,10 +29,9 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, bindparam, case, delete, exists, func, literal_column, or_, select
 from sqlalchemy import update as sql_update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import errors
+from app import dbdialect, errors
 from app.config import Settings
 from app.models import AlbumItem, AlbumRule, AlbumSkip, Node, Person, Tag, User
 from app.people.types import AlbumRuleInfo
@@ -235,8 +234,9 @@ async def refresh(
     if adding:
         at = now()
         # Zonder fout als een verversing of de eigenaar het intussen ook toevoegde
+        dialect = dbdialect.of(db)
         await db.execute(
-            sqlite_insert(AlbumItem).on_conflict_do_nothing(),
+            dialect.insert(AlbumItem).on_conflict_do_nothing(),
             [
                 {
                     "album_id": album_id,
@@ -317,8 +317,9 @@ async def skip(db: AsyncSession, album_id: uuid.UUID, node_ids: list[uuid.UUID])
     """Wat de eigenaar uit een album met een regel haalt: de regel zet het niet terug."""
     if not node_ids or await db.get(AlbumRule, album_id) is None:
         return
+    dialect = dbdialect.of(db)
     await db.execute(
-        sqlite_insert(AlbumSkip)
+        dialect.insert(AlbumSkip)
         .values([{"album_id": album_id, "node_id": i} for i in node_ids])
         .on_conflict_do_nothing()
     )

@@ -47,6 +47,10 @@ from app.db import Base
 from app.search.schema import FTYPE_SQL
 from app.text import fold
 
+# 64 bits op PostgreSQL (migratie 0013); op SQLite is INTEGER al 64 bits en blijft het schema
+# zoals het was
+BIGINT_PG = BigInteger().with_variant(Integer(), "sqlite")
+
 
 def now() -> datetime:
     return datetime.now(UTC)
@@ -708,15 +712,15 @@ class PlaybackState(Base):
     node_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
     )
-    position_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    position_ms: Mapped[int] = mapped_column(BIGINT_PG, default=0, server_default="0")
+    duration_ms: Mapped[int] = mapped_column(BIGINT_PG, default=0, server_default="0")
     watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     play_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     subtitle: Mapped[str | None] = mapped_column(String(48), nullable=True)
     blob_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     origin: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    seq: Mapped[int] = mapped_column(BIGINT_PG, default=0, server_default="0")
     # started_at van de sessie van de laatste stand
     play_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # De laatste overgang naar gezien of end
@@ -870,7 +874,7 @@ class PhotoGeo(Base):
     alt: Mapped[float | None] = mapped_column(Float, nullable=True)
     x16: Mapped[int] = mapped_column(Integer)
     y16: Mapped[int] = mapped_column(Integer)
-    place_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    place_id: Mapped[int | None] = mapped_column(BIGINT_PG, nullable=True)
     country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     admin1: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(8))

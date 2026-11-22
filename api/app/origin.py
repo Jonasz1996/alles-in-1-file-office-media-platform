@@ -24,9 +24,9 @@ from collections.abc import Sequence
 from itertools import batched
 
 from sqlalchemy import Executable, insert, or_, select
-from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import dbdialect
 from app.models import Node, NodeOrigin
 
 CHUNK = 500  # rijen per INSERT of IN (...), zoals de kopie zelf
@@ -36,7 +36,7 @@ def placed_stmt(dialect_name: str, node_id: uuid.UUID, actor_id: uuid.UUID | Non
     """De upsert van placed() in de vorm van deze database: de vorm van SQLite compileert niet op
     PostgreSQL (review A0, contract F2). In één keten, zodat de wachter van Keuze 3
     (test_search_no_replace) de tabel ziet."""
-    dialect = postgresql if dialect_name == "postgresql" else sqlite
+    dialect = dbdialect.module_for(dialect_name)
     excluded = dialect.insert(NodeOrigin).excluded
     return (
         dialect.insert(NodeOrigin)
@@ -51,8 +51,7 @@ def placed_stmt(dialect_name: str, node_id: uuid.UUID, actor_id: uuid.UUID | Non
 async def placed(session: AsyncSession, node_id: uuid.UUID, actor_id: uuid.UUID | None) -> None:
     """De rij van een bestand met nieuwe inhoud (nieuw, of vervangen): actor_id is wie het
     neerzette, None via een uploadlink. Een bestaande rij wordt vervangen."""
-    name = session.get_bind().dialect.name
-    await session.execute(placed_stmt(name, node_id, actor_id))
+    await session.execute(placed_stmt(dbdialect.name_of(session), node_id, actor_id))
 
 
 async def copied(

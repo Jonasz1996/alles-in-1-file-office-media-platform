@@ -25,7 +25,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import db as app_db
-from app import face_rows, jobs
+from app import dbdialect, face_rows, jobs
 from app.config import Settings
 from app.db import get_engine
 from app.models import FaceOwner
@@ -75,7 +75,10 @@ async def wipe_job(settings: Settings, payload: dict[str, Any]) -> None:
     if scope in ("all", "unnamed"):
         while True:
             async with P.lock(owner), _maker(settings)() as db:
-                await db.execute(text("PRAGMA secure_delete = ON"))
+                if dbdialect.name_of(db) == dbdialect.SQLITE:
+                    # Alleen SQLite kent secure_delete; PostgreSQL ruimt oude rijen op met
+                    # (auto)vacuum, en _checkpoint() doet daar niets
+                    await db.execute(text("PRAGMA secure_delete = ON"))
                 if scope == "all":
                     n = await face_rows.wipe_owner_chunk(db, owner)
                     if not n:

@@ -17,11 +17,16 @@ met de hand (de knop "Index herbouwen", of app.cli search-triggers; runbook zoek
   leestransactie (één momentopname): wat de app intussen schrijft, is geen verschil. Daarna is
   de uitkomst één korte schrijfactie.
 - In het log alleen aantallen: geen num, geen naam, geen tekst.
+- Op PostgreSQL (0013, P2) is er (nog) geen FTS-index om te vergelijken. Daar telt
+  fase6_fill(repair => false) wat de triggers bijhouden en niet klopt (num, mpath en dead,
+  photo_geo); zijn er verschillen, dan herstelt fase6_fill() ze meteen. sampled is dan het aantal
+  nodes, bad het aantal verschillen dat er was.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -118,8 +123,10 @@ def _check(url: str) -> rebuild.Checked:
 async def run(settings: Settings) -> AdminCheck | None:
     """Het opruimwerk: de controle als het tijd is; geeft de nieuwe uitkomst, of None als hij
     niet liep (niet aan de beurt, pauze, geen FTS5, een herbouw, geen nodes)."""
-    if "index" in analysis.PAUSED or not settings.db_url.startswith("sqlite"):
+    if "index" in analysis.PAUSED:
         return None
+    if not settings.db_url.startswith("sqlite"):
+        return await _run_postgres(settings)
     maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
     async with maker() as db:
         if not _due(await last(db), now()):
@@ -151,6 +158,53 @@ async def run(settings: Settings) -> AdminCheck | None:
         log.info(
             "Zoeken: wekelijkse controle, %d node(s) vergeleken, geen verschil", result.sampled
         )
+    return result
+
+
+# De soorten van fase6_fill() die de triggers bijhouden; search_seq en search_state niet: op
+# PostgreSQL houdt niets search_seq bij (num komt uit node_num_seq)
+DRIFT = ("num", "tree", "photo_geo")
+
+
+async def _fill(settings: Settings, repair: bool) -> tuple[dict[str, int], int]:
+    async with get_engine(settings).begin() as conn:
+        found = await conn.exec_driver_sql(
+            f"SELECT fase6_fill(repair => {'true' if repair else 'false'})::text"
+        )
+        counts = json.loads(found.scalar_one())
+        nodes = (await conn.exec_driver_sql("SELECT count(*) FROM node")).scalar_one()
+    return counts, int(nodes)
+
+
+async def _run_postgres(settings: Settings) -> AdminCheck | None:
+    """PostgreSQL: tellen wat niet klopt, en dat dan meteen herstellen."""
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as db:
+        if not _due(await last(db), now()):
+            return None
+    counts, nodes = await _fill(settings, repair=False)
+    if nodes == 0:
+        return None
+    bad = sum(int(counts[k]) for k in DRIFT)
+    if bad:
+        await _fill(settings, repair=True)
+    result = AdminCheck(at=now().isoformat(), sampled=nodes, bad=bad)
+    async with maker() as db:
+        row = await db.get(Setting, KEY)
+        if row is None:
+            db.add(Setting(key=KEY, value=result.model_dump()))
+        else:
+            row.value = result.model_dump()
+        await db.commit()
+    if bad:
+        log.warning(
+            "Zoeken: wekelijkse controle (PostgreSQL), %d node(s), %d verschil(len) met de bron, "
+            "hersteld",
+            nodes,
+            bad,
+        )
+    else:
+        log.info("Zoeken: wekelijkse controle (PostgreSQL), %d node(s), geen verschil", nodes)
     return result
 
 
