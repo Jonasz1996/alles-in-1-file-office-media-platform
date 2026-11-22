@@ -599,7 +599,7 @@ export default {
     wanted: {
       title: "Volgen: films en series",
       intro:
-        "Zoek een film of serie bij TMDB en volg hem. Straks zoekt en downloadt de app wat je volgt zelf; nu bewaart hij alleen de lijst en de kalender.",
+        "Zoek een film of serie bij TMDB en volg hem. De app zoekt wat je volgt bij de torrentsites van Prowlarr, laat qBittorrent het downloaden en zet het in de bibliotheek. Een vastgelopen download wordt vervangen door de volgende goede.",
       movie: "Film",
       show: "Serie",
       search: "Titel",
@@ -617,6 +617,20 @@ export default {
       calendar: "Kalender (30 dagen)",
       calendarLine: "{date}: {title} {code}",
       calendarEmpty: "Er komt de komende 30 dagen niets uit van wat je volgt.",
+      searchNow: "Nu zoeken",
+      searchQueued: "{title} wordt binnen een minuut gezocht.",
+      grabs: "Downloads",
+      grabsEmpty: "Nog niets gedownload.",
+      grabsRefresh: "Vernieuwen",
+      grabRelease: "Release",
+      grabState: "Stand",
+      grabSize: "Grootte",
+      state: {
+        downloading: "downloaden ({pct}%)",
+        importing: "importeren",
+        imported: "in de bibliotheek",
+        failed: "mislukt",
+      },
     },
     arr: {
       title: "Mediabeheer: Prowlarr en qBittorrent",

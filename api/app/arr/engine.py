@@ -14,6 +14,8 @@ Een ronde:
    import van fase 5 klaar (verplaatsen) naar de map van de bibliotheek, als de eigenaar van de
    bibliotheek. Zonder video (ingepakt in rar, of iets anders) faalt de grab: de volgende release.
    Er wordt na de import niet geseed (keuze voor nu: zo blijft er één kopie op de schijf).
+   Slaat de import een bestand over (bv. "in gebruik"), dan blijft het in de staging staan; de
+   app probeert zo'n rest elk `LEFTOVER_RETRY` opnieuw, een dag lang (`LEFTOVER_GIVE_UP`).
 3. **Zoeken.** Elke gevolgde titel zonder lopende of geslaagde grab, hooguit eens per
    `SEARCH_HOURS`, en alleen wat nog niet in de bibliotheek staat: een film met hetzelfde TMDB-
    of IMDb-id (of dezelfde titel en hooguit een jaar verschil) is er al; van een serie telt per
@@ -66,6 +68,8 @@ VIDEO = frozenset({".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm", ".wmv
 SUBS = frozenset({".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx"})
 SAMPLE = re.compile(r"(?i)(^|[\W_])sample([\W_]|$)")
 ACTIVE = ("downloading", "importing")
+LEFTOVER_RETRY = timedelta(hours=1)
+LEFTOVER_GIVE_UP = timedelta(days=1)
 
 
 def _now() -> datetime:
@@ -492,6 +496,40 @@ async def start_import(source: str, library: MediaLibrary) -> None:
     await importer.start(source, library.root_id, library.owner_id, move=True)
 
 
+async def leftovers(session: AsyncSession, settings: Settings) -> None:
+    """Wat de import in de staging liet staan, opnieuw importeren (hooguit één per ronde)."""
+    root = staging_dir(settings)
+    if not root.is_dir():
+        return
+    now = _now()
+    for grab_dir in sorted(root.iterdir()):
+        try:
+            grab_id = uuid.UUID(grab_dir.name)
+        except ValueError:
+            continue
+        grab = await session.get(ArrGrab, grab_id)
+        if grab is None or grab.state != "imported":
+            continue
+        done = _aware(grab.done_at) or now
+        tried = _aware(grab.updated_at) or done
+        if now - done > LEFTOVER_GIVE_UP or now - tried < LEFTOVER_RETRY:
+            continue
+        if not await asyncio.to_thread(_files, grab_dir):
+            continue
+        wanted = await session.get(ArrWanted, grab.wanted_id)
+        library = await session.get(MediaLibrary, wanted.library_id) if wanted else None
+        if library is None:
+            continue
+        try:
+            await start_import(f"arr/{grab.id}", library)
+        except HTTPException:
+            return  # er loopt een import (of hij kan nu niet): volgende ronde
+        grab.updated_at = now
+        await session.commit()
+        log.info("arr: rest van %s opnieuw naar de import", grab.release)
+        return
+
+
 async def _fail(session: AsyncSession, grab: ArrGrab, reason: str) -> None:
     grab.state = "failed"
     grab.reason = reason[:200]
@@ -613,6 +651,7 @@ async def tick(settings: Settings) -> None:
         except qbit.QBitError as exc:
             log.warning("arr: qBittorrent: %s", exc)
             return
+        await leftovers(session, settings)
         await asyncio.to_thread(clean_staging, settings)
         now = _now()
         busy_rows = await session.scalars(

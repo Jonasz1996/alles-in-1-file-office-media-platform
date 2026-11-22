@@ -1,6 +1,6 @@
-// Films en series volgen, en de kalender (fase 11, stap 2e). Op /beheer → Media, want volgen is
-// voorlopig alleen voor beheerders; verzoeken van gezinsleden komen in stap 6. De API staat in
-// routers/arr_wanted.py. Volgen zoekt nog niets: dat doet stap 3.
+// Films en series volgen, de kalender en de downloads (fase 11, stap 2e en 3). Op /beheer → Media,
+// want volgen is voorlopig alleen voor beheerders; verzoeken van gezinsleden komen in stap 6. De
+// API staat in routers/arr_wanted.py; het zoeken en downloaden zelf in app/arr/engine.py.
 import {
   type FormEvent,
   type JSX,
@@ -53,6 +53,25 @@ interface CalendarEntry {
   aired: string;
 }
 
+interface Grab {
+  id: string;
+  title: string;
+  season: number | null;
+  episode: number | null;
+  release: string;
+  size: number;
+  state: "downloading" | "importing" | "imported" | "failed";
+  reason: string | null;
+  progress: number;
+  created_at: string;
+}
+
+function code(season: number | null, episode: number | null): string {
+  if (season === null) return "";
+  const s = `S${String(season).padStart(2, "0")}`;
+  return episode === null ? s : `${s}E${String(episode).padStart(2, "0")}`;
+}
+
 export default function WantedBlock({
   libraries,
 }: {
@@ -65,6 +84,7 @@ export default function WantedBlock({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState("hd-1080p");
   const [calendar, setCalendar] = useState<CalendarEntry[] | null>(null);
+  const [grabs, setGrabs] = useState<Grab[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +96,12 @@ export default function WantedBlock({
     fitting.find((l) => l.id === libraryId)?.id ?? fitting[0]?.id ?? "";
 
   const reload = useCallback(async () => {
-    setWanted(await api.request<Wanted[]>("GET", `${BASE}/wanted`));
+    const [w, g] = await Promise.all([
+      api.request<Wanted[]>("GET", `${BASE}/wanted`),
+      api.request<Grab[]>("GET", `${BASE}/grabs?limit=50`),
+    ]);
+    setWanted(w);
+    setGrabs(g);
   }, []);
 
   useEffect(() => {
@@ -137,6 +162,25 @@ export default function WantedBlock({
       await reload();
       return t("admin.media.wanted.removed", { title: w.title });
     });
+  }
+
+  function searchNow(w: Wanted) {
+    void run(`search-${w.id}`, async () => {
+      await api.request<unknown>(
+        "POST",
+        `${BASE}/wanted/${encodeURIComponent(w.id)}/search`,
+      );
+      return t("admin.media.wanted.searchQueued", { title: w.title });
+    });
+  }
+
+  function stateText(g: Grab): string {
+    if (g.state === "downloading") {
+      return t("admin.media.wanted.state.downloading", {
+        pct: Math.floor(g.progress * 100),
+      });
+    }
+    return t(`admin.media.wanted.state.${g.state}`);
   }
 
   const libraryName = (id: string) =>
@@ -271,7 +315,14 @@ export default function WantedBlock({
                   </th>
                   <td className="wide-only">{libraryName(w.library_id)}</td>
                   <td>{profileName(w.profile)}</td>
-                  <td>
+                  <td className="toolbar">
+                    <Button
+                      busy={busy === `search-${w.id}`}
+                      disabled={!w.monitored}
+                      onClick={() => searchNow(w)}
+                    >
+                      {t("admin.media.wanted.searchNow")}
+                    </Button>
                     <Button
                       variant="danger"
                       busy={busy === `remove-${w.id}`}
@@ -279,6 +330,56 @@ export default function WantedBlock({
                     >
                       {t("admin.media.wanted.unfollow")}
                     </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="admin-head">
+        <h4>{t("admin.media.wanted.grabs")}</h4>
+        <Button
+          busy={busy === "grabs"}
+          onClick={() =>
+            void run("grabs", async () => {
+              await reload();
+              return null;
+            })
+          }
+        >
+          {t("admin.media.wanted.grabsRefresh")}
+        </Button>
+      </div>
+      {grabs.length === 0 ? (
+        <p className="muted">{t("admin.media.wanted.grabsEmpty")}</p>
+      ) : (
+        <div className="table-wrap">
+          <table data-arr="grabs">
+            <thead>
+              <tr>
+                <th>{t("admin.media.wanted.titleCol")}</th>
+                <th className="wide-only">
+                  {t("admin.media.wanted.grabRelease")}
+                </th>
+                <th className="wide-only">
+                  {t("admin.media.wanted.grabSize")}
+                </th>
+                <th>{t("admin.media.wanted.grabState")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grabs.map((g) => (
+                <tr key={g.id} data-state={g.state}>
+                  <th scope="row">
+                    {g.title} {code(g.season, g.episode)}
+                  </th>
+                  <td className="wide-only">{g.release}</td>
+                  <td className="wide-only">{fmt.bytes(g.size)}</td>
+                  <td>
+                    {stateText(g)}
+                    {g.state === "failed" && g.reason ? ` · ${g.reason}` : ""}
                   </td>
                 </tr>
               ))}
@@ -315,7 +416,7 @@ export default function WantedBlock({
                 {t("admin.media.wanted.calendarLine", {
                   date: fmt.date(e.aired),
                   title: e.title,
-                  code: `S${String(e.season).padStart(2, "0")}E${String(e.episode).padStart(2, "0")}`,
+                  code: code(e.season, e.episode),
                 })}
                 {e.episode_title ? ` · ${e.episode_title}` : ""}
               </li>

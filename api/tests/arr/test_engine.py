@@ -280,3 +280,35 @@ async def test_grabs_and_search_now(client, admin, settings, world):
     assert r.status_code == 202
     async with maker(settings)() as session:
         assert (await session.get(ArrWanted, wanted)).searched_at is None
+
+
+async def test_leftovers_are_imported_again(client, admin, settings, world):
+    headers, _ = admin
+    lib = await make_library(client, headers, settings, "movies", "Films")
+    await follow(settings, lib, kind="movie", tmdb_id=27205, imdb_id="tt1375666",
+                 title="Inception", year=2010, runtime_min=148)  # fmt: skip
+    await engine.tick(settings)
+    [grab] = await grabs(settings)
+    name = "Inception.2010.1080p.WEB-DL.x264-GOED"
+    finish(world, grab, settings, name, {"Inception.2010.1080p.mkv": b"film"})
+    await engine.tick(settings)
+    assert len(world.imports) == 1  # de nep-import verplaatst niets: er blijft een rest
+
+    # Te vroeg: nog geen nieuwe poging
+    await engine.tick(settings)
+    assert len(world.imports) == 1
+
+    async with maker(settings)() as session:
+        row = await session.get(ArrGrab, grab.id)
+        row.done_at = row.updated_at = engine._now() - 2 * engine.LEFTOVER_RETRY
+        await session.commit()
+    await engine.tick(settings)
+    assert world.imports[1:] == [(f"arr/{grab.id}", lib)]
+
+    # Na een dag geeft de app het op
+    async with maker(settings)() as session:
+        row = await session.get(ArrGrab, grab.id)
+        row.done_at = row.updated_at = engine._now() - 2 * engine.LEFTOVER_GIVE_UP
+        await session.commit()
+    await engine.tick(settings)
+    assert len(world.imports) == 2

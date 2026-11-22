@@ -590,7 +590,7 @@ const en: Translation<typeof nl> = {
     wanted: {
       title: "Follow: films and series",
       intro:
-        "Search TMDB for a film or series and follow it. Soon the app will search and download what you follow itself; for now it keeps the list and the calendar.",
+        "Search TMDB for a film or show and follow it. The app searches the Prowlarr torrent sites for what you follow, has qBittorrent download it and puts it in the library. A stalled download is replaced by the next good one.",
       movie: "Film",
       show: "Series",
       search: "Title",
@@ -608,6 +608,20 @@ const en: Translation<typeof nl> = {
       calendar: "Calendar (30 days)",
       calendarLine: "{date}: {title} {code}",
       calendarEmpty: "Nothing you follow comes out in the next 30 days.",
+      searchNow: "Search now",
+      searchQueued: "{title} will be searched within a minute.",
+      grabs: "Downloads",
+      grabsEmpty: "Nothing downloaded yet.",
+      grabsRefresh: "Refresh",
+      grabRelease: "Release",
+      grabState: "State",
+      grabSize: "Size",
+      state: {
+        downloading: "downloading ({pct}%)",
+        importing: "importing",
+        imported: "in the library",
+        failed: "failed",
+      },
     },
     arr: {
       title: "Media management: Prowlarr and qBittorrent",
