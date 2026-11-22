@@ -18,4 +18,6 @@ export default {
   unknown_user: { en: "One or more users do not exist" },
   user_being_deleted: { en: "This account is already being deleted" },
   web_app_missing: { en: "The web app has not been built" },
+  arr_link_auth: { en: "Prowlarr or qBittorrent refuses the key or password" },
+  arr_link_unreachable: { en: "Prowlarr or qBittorrent cannot be reached" },
 } satisfies Record<string, { en: string }>;
