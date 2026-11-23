@@ -563,9 +563,15 @@ def stopped() -> bool:
     return stop is not None and stop.stopped
 
 
-def stopped_page(p: SearchParams) -> SearchPage:
+def stopped_page(p: SearchParams, engine: Literal["fts", "like"] = "fts") -> SearchPage:
     return SearchPage(
-        results=[], more=False, offset=p.offset, partial=True, ranked=False, engine="fts"
+        results=[],
+        more=False,
+        offset=p.offset,
+        partial=True,
+        ranked=False,
+        engine=engine,
+        names_only=engine == "like",
     )
 
 

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import access, analysis, userdelete
 from app.db import get_engine
 from app.models import User
+from app.search import limits
 from tests.search import motoren, wereld
 from tests.search.migratie import check_fts, check_tree
 from tests.search.referentie import Referentie
@@ -269,8 +270,12 @@ async def test_zoeken_van_nu_volgt_de_referentie(client, settings, monkeypatch):
     """Zoeken op naam zoals in 0.7.0 (LikeFallback; sinds Z1 met de index uit, zoals het harnas
     van de e2e): wat elke persoon krijgt, is wat Referentie.op_naam zegt. De e2e
     (e2e/test_zoek_z0.py) doet hetzelfde in de echte app. FtsEngine tegen Referentie.zoek:
-    test_search_access.py."""
+    test_search_access.py.
+
+    Geen grens van de snelheid per gebruiker: elke persoon stelt alle NAAMVRAGEN na elkaar, en
+    sinds de review van PR #6 (F5) telt ook LikeFallback mee. De grens: test_search_limits.py."""
     monkeypatch.setattr(settings, "search_index", "uit")
+    monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
     w = await W.bouw_async(settings)
     ref = await _lees(settings)
     for naam in W.GEBRUIKERS:

@@ -30,7 +30,7 @@ from app.config import Settings
 from app.db import get_engine
 from app.models import MediaLibrary, Node
 from app.people import search as people_search
-from app.search import filters_photo
+from app.search import filters_photo, limits
 from tests.search import motoren
 from tests.test_files import mkdir, new_user, put, root
 
@@ -49,6 +49,10 @@ class Motor(str):
 
 @pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> Motor:
+    # Geen grens van de snelheid per gebruiker: _beide stelt elke vraag twee keer, en sinds de
+    # review van PR #6 (F5) telt ook LikeFallback mee. Het gaat hier om wat er gevonden wordt;
+    # de grens zelf: test_search_limits.py.
+    monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")
     found = Motor(request.param)
