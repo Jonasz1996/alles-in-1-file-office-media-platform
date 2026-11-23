@@ -39,3 +39,19 @@ Ander adres kiezen: houd bij het starten van de app de **rode knop** ingedrukt.
 ```sh
 ares-package apps/webos      # geeft org.platform.tv_1.0.0_all.ipk
 ```
+
+## Welke tv's
+
+De tv-stand is de gewone web-app van het platform. Die is gebouwd voor recente browsers (de
+standaard van Vite 8, ongeveer Chromium 111 of nieuwer). Op LG-tv's is dat webOS 25 (modellen van
+2025) of nieuwer. Op een oudere tv kan het scherm na het verbinden leeg blijven; dan is een
+aparte build voor een oudere Chromium nodig (Vite `build.target`, bv. `chrome87` voor webOS 22).
+
+## De tv-stand in het platform
+
+- `/tv?app=webos` zet de tv-stand aan op dat toestel (onthouden), `/tv?uit=1` zet hem uit.
+- Code: `web/src/tv/` (tv.ts: de toetsen; spatial.ts: pijltjes naar het dichtstbijzijnde element;
+  tv.css: groter en een duidelijke focus).
+- Toetsen: pijltjes, OK, Terug (venster dicht, pagina terug, op de start de app dicht),
+  Afspelen/Pauze/Stop/Vooruit/Terugspoelen in de speler, groen = ondertitels, geel = scherper
+  maken, blauw = info.

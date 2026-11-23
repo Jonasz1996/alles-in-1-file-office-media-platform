@@ -748,7 +748,7 @@ en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stap
    (opruimregels en stappen klaar, 23-11-2026; de eindtest doet Jonas)
 9. Eigen app voor de LG webOS-tv (de speler van het platform, met upscaling en ondertitels,
    te bedienen met de afstandsbediening) en een downloadpagina op het platform voor de
-   client-apps
+   client-apps (gebouwd 23-11-2026: `/apps`, `apps/webos`, de tv-stand in `web/src/tv/`)
 10. Later: Android-app, met media zoals Plex of Jellyfin en sync zoals de Nextcloud-app
 11. Later, misschien: apps voor Linux en Windows, met alle functies (media en sync)
 
