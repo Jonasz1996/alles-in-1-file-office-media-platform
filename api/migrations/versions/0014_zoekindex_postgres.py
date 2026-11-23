@@ -24,7 +24,8 @@ Op PostgreSQL:
   mediabibliotheek (B), tekst en OCR van de inhoud (C), meta (D). otsv: tsv met de OCR van een
   foto (C) erbij, alleen als die er is; die is alleen van de eigenaar (Keuze 16 en 25a). GIN op
   tsv en otsv. capped: de tekst was te groot en is ingekort (/admin/search telt ze).
-- fts_rows(nums, cur): de rijen zoals ze uit de bron volgen, zonder te schrijven.
+- fts_rows(nums, cur): de rijen zoals ze uit de bron volgen, zonder te schrijven; check() van
+  app/search/rebuild.py vergelijkt ermee (review van PR #6, F13).
 - fts_name: een view (rowid, search_name) op node; de stukken van namen zoeken met LIKE, zonder
   index. Geen extensie zoals pg_trgm: alleen wat PostgreSQL zelf heeft (plan 0.8.2, vraag 1).
 - fts_refresh(nums, force): de rijen van die nums opnieuw uit de bron, alleen buiten een herbouw
@@ -146,7 +147,7 @@ BEGIN
 END $$
 """,
     # De rijen van fts_node zoals ze uit de bron volgen, voor de nums tot en met cur (NULL: alle),
-    # zonder te schrijven; fts_refresh schrijft ze
+    # zonder te schrijven; fts_refresh schrijft ze, check() vergelijkt ermee
     "fts_rows": """
 CREATE OR REPLACE FUNCTION fts_rows(nums bigint[], cur bigint DEFAULT NULL)
 RETURNS TABLE (rowid bigint, tsv tsvector, otsv tsvector, capped boolean)

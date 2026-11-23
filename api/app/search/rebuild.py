@@ -396,10 +396,10 @@ def _memory_sizes(
 async def _check_pg(
     conn: AsyncConnection, out: Checked, rng: random.Random, sample: int, full: bool
 ) -> Checked:
-    """check() op PostgreSQL (0014): een steekproef van nums opnieuw met fts_refresh in een
-    transactie die terugrolt, en vergelijken met wat er stond. fts_name is daar een view op
-    node: niets te controleren. Geen integrity-check van FTS5; de spoken (rijen zonder node)
-    wel."""
+    """check() op PostgreSQL (0014): een steekproef van nums, elke rij van fts_node vergeleken
+    met fts_rows (zoals de bron hem nu zou geven). Alleen lezen: geen slot op rijen van
+    fts_node, geen WAL (review van PR #6, F13). fts_name is daar een view op node: niets te
+    controleren. Geen integrity-check van FTS5; de spoken (rijen zonder node) wel."""
     nums = [row[0] for row in await conn.exec_driver_sql("SELECT num FROM node")]
     if None in nums:
         out.bad.append((0, f"{nums.count(None)} node(s) zonder num"))
@@ -411,35 +411,22 @@ async def _check_pg(
         "WHERE n.id IS NULL LIMIT 100"
     )
     out.bad += [(row[0], "fts_node: geen node") for row in ghosts]
-    trans = await conn.begin_nested() if conn.in_transaction() else await conn.begin()
-    try:
-        for start in range(0, len(picked), BATCH):
-            part = picked[start : start + BATCH]
-            was = {
-                row[0]: (row[1], row[2])
-                for row in await conn.execute(
-                    text(
-                        "SELECT rowid, tsv::text, otsv::text FROM fts_node WHERE rowid = ANY(:nums)"
-                    ),
-                    {"nums": part},
-                )
-            }
-            await conn.execute(text("SELECT fts_refresh(:nums, true)"), {"nums": part})
-            now_ = {
-                row[0]: (row[1], row[2])
-                for row in await conn.execute(
-                    text(
-                        "SELECT rowid, tsv::text, otsv::text FROM fts_node WHERE rowid = ANY(:nums)"
-                    ),
-                    {"nums": part},
-                )
-            }
-            for num in part:
-                if was.get(num) != now_.get(num):
-                    out.bad.append((num, "fts_node"))
-    finally:
-        await trans.rollback()
+    for start in range(0, len(picked), BATCH):
+        part = picked[start : start + BATCH]
+        found = await conn.execute(text(_PG_DIFF), {"nums": part})
+        out.bad += [(row[0], "fts_node") for row in found]
     return out
+
+
+# De nums waar fts_node anders is dan fts_rows (0014), of een van beide de rij niet heeft
+_PG_DIFF = (
+    "SELECT coalesce(f.rowid, r.rowid) "
+    "FROM (SELECT * FROM fts_node WHERE rowid = ANY(:nums)) AS f "
+    "FULL JOIN fts_rows(:nums) AS r ON r.rowid = f.rowid "
+    "WHERE f.rowid IS NULL OR r.rowid IS NULL OR f.tsv IS DISTINCT FROM r.tsv "
+    "OR f.otsv IS DISTINCT FROM r.otsv OR f.capped IS DISTINCT FROM r.capped "
+    "ORDER BY 1"
+)
 
 
 async def check(

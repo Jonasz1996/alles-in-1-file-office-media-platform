@@ -93,7 +93,7 @@ async def test_check_vindt_een_verschil_en_triggers_herstelt(client, settings):
     assert f"num {num}: fts_node" in uit
     assert "brief" not in uit.lower()
     assert "Herstel: python -m app.cli search-triggers" in uit
-    # check() rolt zijn eigen fts_refresh terug: de fout staat er nog
+    # check() schrijft niet (F13): de fout staat er nog
     assert await een(settings, "SELECT tsv = ''::tsvector FROM fts_node WHERE rowid = :n", n=num)
     terug = await run_cli(settings, "search-triggers")
     assert terug.returncode == 0, terug.stderr.decode()
@@ -416,3 +416,35 @@ async def test_een_herbouw_wacht_op_een_schrijver_die_al_bezig_is(settings):
     async with engine.connect() as conn:
         await conn.run_sync(check_fts)
     assert wachtte
+
+
+async def test_check_schrijft_niet(settings):
+    """check() (search-check en de weekcontrole) vergelijkt fts_node met fts_rows, zonder te
+    schrijven: geen slot op rijen van fts_node, geen WAL naar de replica's. Hij werkt dus ook in
+    een transactie die alleen leest (review van PR #6, F13)."""
+    w = await W.bouw_async(settings)
+    num = await een(settings, "SELECT num FROM node WHERE id = :i", i=w.ids["brief"])
+    engine = get_engine(settings)
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE fts_node SET tsv = ''::tsvector WHERE rowid = :n"), {"n": num}
+        )
+        await conn.execute(
+            sa.text(
+                "UPDATE fts_node SET capped = true WHERE rowid = (SELECT min(rowid) FROM fts_node)"
+            )
+        )
+    eerste = await een(settings, "SELECT min(rowid) FROM fts_node")
+
+    def alleen_lezen(conn) -> None:
+        conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+
+    await engine.dispose()
+    sa.event.listen(engine.sync_engine, "begin", alleen_lezen)
+    try:
+        found = await rebuild.check(engine, full=True)
+    finally:
+        sa.event.remove(engine.sync_engine, "begin", alleen_lezen)
+        await engine.dispose()
+    assert sorted(found.bad) == sorted([(num, "fts_node"), (eerste, "fts_node")])
+    assert found.sampled == await een(settings, "SELECT count(*) FROM node")
