@@ -25,7 +25,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import beeld_rows
 from app.analysis import VERSIONS, Step
 from app.beeld import jobs as bjobs
 from app.beeld import types as vt
@@ -352,6 +354,62 @@ async def test_een_andere_gen_in_de_kop_maakt_het_bestand_opnieuw(client, mensen
     assert na is not None and na.built_gen == later
     assert lees(path)[0].gen == later
     assert vecfile.is_current(settings.beeld_dir, user, later)
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
+
+
+@pytest.mark.pg
+async def test_een_vector_tijdens_de_bouw_maakt_het_bestand_niet_bij(
+    client, mensen, beeld, monkeypatch
+):
+    """Op PostgreSQL leest build aantal, gen en rijen uit één momentopname (REPEATABLE READ).
+    Komt er tijdens de bouw een vector bij (in een andere transactie, met een hogere gen), dan
+    staat die niet in het bestand en ook niet in de gen van de kop: het bestand loopt dan achter
+    en de job maakt het opnieuw. Eerder las build de nieuwe gen na het aantal, en heette een
+    bestand zonder de nieuwe foto bij (review van golf 2, pg-analyse F5). Alleen PostgreSQL: op
+    SQLite leest build zonder transactie (pysqlite), en daar staat dit nog open (w2.md)."""
+    (eva, eva_id), _ = mensen
+    fake, settings = beeld
+    user = uuid.UUID(eva_id)
+    await nep.beeld_aan(client, eva)
+    await nep.run_jobs(settings)
+    for i, kleur in enumerate(("rood", "groen")):
+        await foto(client, eva, settings, f"{kleur}.jpg", kleur, seed=i)
+    await nep.embed_all(settings)
+    blauw = await foto(client, eva, settings, "blauw.jpg", "blauw", seed=2)
+    async with nep.maker(settings)() as db:
+        num = await db.scalar(sa.select(Node.num).where(Node.id == uuid.UUID(blauw["id"])))
+
+    echt = AsyncSession.scalar
+    tussendoor: list[str] = []
+
+    async def scalar(self, statement, *args, **kwargs):
+        found = await echt(self, statement, *args, **kwargs)
+        if not tussendoor and str(statement).lstrip().startswith("SELECT count(*)"):
+            tussendoor.append("embed")  # één keer: direct na het aantal van build
+            async with nep.maker(settings)() as other:
+                vec = nep.pack(nep.vector(nep.KLEUREN["blauw"]))
+                await beeld_rows.write_embed(other, blauw["sha"], vec)
+                await other.commit()
+        return found
+
+    monkeypatch.setattr(AsyncSession, "scalar", scalar)
+    built = await _bouw(settings, eva_id)
+    monkeypatch.setattr(AsyncSession, "scalar", echt)
+    assert tussendoor == ["embed"]
+    head, nums, _vecs, _shas = lees(built.path)
+    stand = await nep.owner(settings, eva_id)
+    assert stand is not None and stand.built_gen == head.gen
+    async with nep.maker(settings)() as db:
+        behind = await bjobs._behind(db, user, settings)
+    # Wat het bestand ook mist, het mag niet bij heten: de nieuwe foto staat erin, of het loopt
+    # achter
+    assert num in nums or behind, (head, nums, num, stand.gen, stand.built_gen)
+    assert num not in nums and head.count == 2 and stand.gen > stand.built_gen
+    # De job maakt het opnieuw, nu met de nieuwe foto
+    await bjobs.vec_job(settings, {"user": user.hex})
+    head, nums, _vecs, _shas = lees(built.path)
+    assert num in nums and head.count == 3
     async with nep.maker(settings)() as db:
         assert not await bjobs._behind(db, user, settings)
 
