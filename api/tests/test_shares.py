@@ -734,8 +734,9 @@ async def test_lijst_van_een_gedeelde_map_zonder_query_per_bestand(client, setup
     # Zonder de tijdslimiet van PostgreSQL rond elke vraag (deadline: SAVEPOINT, SET LOCAL en
     # RELEASE): die komen per vraag, niet per bestand
     vragen = [q for q in seen if not q.startswith(("SAVEPOINT", "RELEASE", "SET LOCAL"))]
-    # 15, hoeveel bestanden er ook zijn (de eerste assert); per bestand een vraag zou 27 meer zijn
-    assert len(vragen) <= 15, "\n----\n".join(vragen)
+    # Minder dan 15, zoals op SQLite (daar zijn die drie er niet), hoeveel bestanden er ook zijn;
+    # per bestand een vraag zou 27 meer zijn
+    assert len(vragen) < 15, "\n----\n".join(vragen)
 
 
 @pytest.mark.anyio
