@@ -108,7 +108,9 @@ async def _pg_exec(sql: str) -> None:
 
 async def _pg_make_template(name: str) -> None:
     """Het sjabloon: een eigen database, gemigreerd tot de nieuwste revisie, zonder verbinding
-    erop (CREATE DATABASE ... TEMPLATE weigert een sjabloon met een open verbinding)."""
+    erop (CREATE DATABASE ... TEMPLATE weigert een sjabloon met een open verbinding). Mislukt
+    het migreren, dan gaat de database weer weg: anders bleef er per test die settings vraagt
+    een tpl_<uuid> staan (pytest_sessionfinish wist alleen een sjabloon dat gelukt is)."""
     import shutil
     import tempfile
 
@@ -117,8 +119,13 @@ async def _pg_make_template(name: str) -> None:
     try:
         s = Settings(data_dir=tmp, web_dist=tmp / "web", jwt_secret="test" * 8,
                      database_url=_pg_url(name))  # fmt: skip
-        await upgrade(s)
-        await db.get_engine(s).dispose()
+        try:
+            await upgrade(s)
+        finally:
+            await db.get_engine(s).dispose()
+    except BaseException:
+        await _pg_exec(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        raise
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

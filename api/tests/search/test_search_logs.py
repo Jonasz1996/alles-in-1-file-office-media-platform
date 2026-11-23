@@ -89,18 +89,40 @@ def _alles(caplog) -> str:
     return "\n".join(form.format(r) for r in caplog.records)
 
 
-@motoren.needs_fts
-async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog, mismatch_verwacht):
-    w = await W.bouw_async(settings)
-    eva, hans = await kop(client, "eva"), await kop(client, "hans")
-    # Alles van de app en van uvicorn (ook met PLATFORM_LOG_LEVEL=debug), en de rest vanaf INFO
-    # (de app zet de wortel nooit lager; aiosqlite logt op DEBUG elke SQL met zijn parameters)
+def _app_op_debug(caplog) -> None:
+    """Alles van de app en van uvicorn (ook met PLATFORM_LOG_LEVEL=debug), en de rest vanaf INFO
+    (de app zet de wortel nooit lager; aiosqlite logt op DEBUG elke SQL met zijn parameters)."""
     caplog.set_level(logging.INFO)
     for naam in ("platform", "uvicorn", "app"):
         caplog.set_level(logging.DEBUG, logger=naam)
+
+
+async def test_niets_in_de_log_van_de_app(client, settings, caplog):
+    """Elke vraag langs elk eindpunt, met de app op DEBUG: geen regel bevat iets van de vragen.
+    Dit deel hangt niet af van de zoekmotor en draait dus ook op PostgreSQL (met LikeFallback tot
+    golf 3); de mismatch en de databasefout bij een suggestie staan hieronder, met needs_fts."""
+    await W.bouw_async(settings)
+    eva = await kop(client, "eva")
+    _app_op_debug(caplog)
     for pad, params in vragen():
         r = await client.get(pad, params=params, headers=eva)
         assert gedaan(r), (pad, r.text)
+    assert W.TEKST_WOORD not in _alles(caplog)
+    for record in caplog.records:
+        tekst = logging.Formatter().format(record)
+        assert lekken(tekst) == [], (record.name, lekken(tekst))
+
+
+@motoren.needs_fts
+async def test_niets_in_de_log_bij_een_mismatch_of_een_databasefout(
+    client, settings, monkeypatch, caplog, mismatch_verwacht
+):
+    """De tweede controle van de toegang (search_access_mismatch) en de suggesties zijn van
+    FtsEngine: LikeFallback kent geen tweede controle en geeft geen suggesties (zonder vraag aan
+    de database). Daarom needs_fts."""
+    w = await W.bouw_async(settings)
+    eva, hans = await kop(client, "eva"), await kop(client, "hans")
+    _app_op_debug(caplog)
     # Een mismatch in hetzelfde verzoek: alleen het node-id
     echt = engine.search_ranges
 

@@ -166,7 +166,9 @@ async def _rank(
     if not bjobs.ready(found):
         raise Fallback("no_model")
     # Zonder built_gen: een bestand met een andere gen dan built_gen zet search() al klaar om
-    # opnieuw te maken; tot dan zoekt rank erin (de sha per treffer houdt oude inhoud tegen)
+    # opnieuw te maken. Tot dan weigert de worker het (RankArgs.gen is built_gen, de kop heeft
+    # een andere: BAD_REQUEST); _call logt dat als waarschuwing en geeft Fallback("slow"), dus
+    # zoekt de router gewoon. Er wordt niet in het oude bestand gezocht
     if not vecfile.is_current(settings.beeld_dir, user.id):
         raise Fallback("slow")  # nog geen bestand, of van een oude versie: het komt zo
     fd = vecfile.open_for_worker(settings.beeld_dir, user.id)

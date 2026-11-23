@@ -177,3 +177,29 @@ async def test_bij_gelijke_score_op_num_ook_over_de_paginas(client, admin):
         per_pagina += [h["node"]["id"] for h in page["results"]]
         assert page["more"] is (offset < 2)
     assert per_pagina == ids
+
+
+@pytest.mark.usefixtures("_ruim")
+async def test_bij_gelijke_treffers_houden_de_paginas_de_volgorde_van_de_lijst(client, admin):
+    """Het deel van de test hierboven dat niet van de motor afhangt: pagina voor pagina dezelfde
+    volgorde als de hele lijst, niets dubbel, en more klopt. Welke volgorde dat is bij gelijke
+    treffers, verschilt per motor (FtsEngine: num; LikeFallback: soort, naam, id), dus die eist
+    alleen de test hierboven (needs_fts). Zo draait dit ook op PostgreSQL."""
+    headers, _ = admin
+    root_id = (await root(client, headers))["folder"]["id"]
+    ids = []
+    for map_ in ("c", "a", "b"):
+        folder = await mkdir(client, headers, root_id, map_)
+        ids.append((await put(client, headers, folder, "gelijk.txt", b"x")).json()["id"])
+    r = await client.get("/api/v1/search", params={"q": "gelijk"}, headers=headers)
+    lijst = [h["node"]["id"] for h in r.json()["results"]]
+    assert sorted(lijst) == sorted(ids)
+    per_pagina = []
+    for offset in range(3):
+        r = await client.get(
+            "/api/v1/search", params={"q": "gelijk", "limit": 1, "offset": offset}, headers=headers
+        )
+        page = r.json()
+        per_pagina += [h["node"]["id"] for h in page["results"]]
+        assert page["more"] is (offset < 2)
+    assert per_pagina == lijst
