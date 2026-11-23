@@ -15,6 +15,7 @@ const en: Translation<typeof nl> = {
     admin: "Admin",
     media: "Media",
     music: "Music",
+    dupes: "Duplicates",
   },
   search: {
     region: "Search everything",
