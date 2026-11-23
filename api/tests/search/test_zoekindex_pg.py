@@ -21,6 +21,7 @@ from app.db import get_engine
 from app.models import Node
 from app.search import engine as engines
 from app.search import rebuild, weekcheck
+from app.search.query import parse
 from tests.search import wereld as W
 from tests.search.migratie import check_fts, migrate
 from tests.search.test_search_access import kop
@@ -158,3 +159,50 @@ async def test_terug_naar_0_8_1_met_db_downgrade_houdt_de_rijen(client, settings
     assert await een(settings, "SELECT to_regclass('fts_node') IS NULL")
     na = {t: await een(settings, f'SELECT count(*) FROM "{t}"') for t in voor}
     assert na == voor
+
+
+# Review van PR #6 (F2): de letters van deze blokken (Latijn, Grieks, Cyrillisch), elk midden in
+# een woord. SQLite vindt ze (unicode61 met remove_diacritics 2 en de naam-vorm van fold()).
+BLOKKEN = ((0x41, 0x24F), (0x370, 0x3FF), (0x400, 0x52F), (0x1E00, 0x1EFF), (0x1F00, 0x1FFF))
+
+
+def _woorden() -> list[str]:
+    uit = []
+    for lo, hi in BLOKKEN:
+        for cp in range(lo, hi + 1):
+            tekst = "ka" + chr(cp) + "pa"
+            p = parse(tekst)
+            if chr(cp).isalpha() and p is not None and len(p.terms) == 1:
+                uit.append(tekst)
+    return uit
+
+
+async def test_tekens_buiten_het_latijn_vindt_de_index(settings):
+    """cf_fold vouwt zoals fold(): NFKD, zonder tekens op een letter, casefold. Elke letter
+    vindt zichzelf, en zonder accent of met hoofdletters vindt hij de tekst ook (zoals FTS5)."""
+    woorden = _woorden()
+    assert len(woorden) > 1000
+    vragen = [parse(w).tsquery() for w in woorden]
+    async with get_engine(settings).connect() as conn:
+        mis = await conn.execute(
+            sa.text(
+                "SELECT t FROM unnest(CAST(:t AS text[]), CAST(:q AS text[])) AS x(t, q) "
+                "WHERE NOT cf_tsv(t, 'C') @@ to_tsquery('simple', q)"
+            ),
+            {"t": woorden, "q": vragen},
+        )
+        assert mis.scalars().all() == []
+        for tekst, vraag in (
+            ("λόγος", "λογος"),
+            ("Αθήνα", "αθηνα"),
+            ("ёлка", "елка"),
+            ("Йошкар-Ола", "йошкар"),
+            ("ΛΌΓΟΣ", "λόγος"),
+            ("Ǣsir", "æsir"),
+            ("Straße", "STRASSE"),
+        ):
+            gevonden = await conn.execute(
+                sa.text("SELECT cf_tsv(:t, 'C') @@ to_tsquery('simple', :q)"),
+                {"t": tekst, "q": parse(vraag).tsquery()},
+            )
+            assert gevonden.scalar() is True, (tekst, vraag)
