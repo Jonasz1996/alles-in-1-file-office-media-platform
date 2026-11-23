@@ -744,7 +744,8 @@ en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stap
 5. Upscaling bij het afspelen (zie hieronder)
 6. Verzoeken en meldingen
 7. Home met rijen, collecties, activiteit, profielen, kinderslot, intro overslaan
-8. Opruimregels, de stappen voor ClusterForge en de eindtest
+8. Opruimregels, de stappen voor ClusterForge (`docs/fase-11/clusterforge.md`) en de eindtest
+   (opruimregels en stappen klaar, 23-11-2026; de eindtest doet Jonas)
 9. Eigen app voor de LG webOS-tv (de speler van het platform, met upscaling en ondertitels,
    te bedienen met de afstandsbediening) en een downloadpagina op het platform voor de
    client-apps

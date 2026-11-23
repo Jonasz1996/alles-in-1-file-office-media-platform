@@ -34,6 +34,7 @@ rest niet tegen; de log noemt nooit een sleutel of wachtwoord.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import re
@@ -425,6 +426,17 @@ def _files(root: Path) -> list[Path]:
     return sorted(out)
 
 
+def _place(src: Path, dest: Path) -> None:
+    """Een harde link; kan dat niet (de downloads op een andere schijf, zoals in het cluster),
+    dan een kopie."""
+    try:
+        os.link(src, dest)
+    except OSError as exc:
+        if exc.errno not in (errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EMLINK):
+            raise
+        shutil.copy2(src, dest)
+
+
 def stage(settings: Settings, grab: ArrGrab, wanted: ArrWanted, source: Path) -> Path | None:
     """De video's en ondertitels met een harde link in <staging>/<grab>/…; geeft de bronmap voor
     de import (relatief aan de importmap) of None zonder video."""
@@ -439,14 +451,14 @@ def stage(settings: Settings, grab: ArrGrab, wanted: ArrWanted, source: Path) ->
         target = top / folder_name(wanted)
         target.mkdir(parents=True, exist_ok=True)
         base = folder_name(wanted)
-        os.link(video, target / f"{base}{video.suffix.lower()}")
+        _place(video, target / f"{base}{video.suffix.lower()}")
         for sub in subs:
             # Film.nl.srt houdt zijn taal; anders gewoon de naam van de film
             lang = sub.stem.rsplit(".", 1)[-1] if "." in sub.stem else ""
             suffix = f".{lang}" if 2 <= len(lang) <= 3 and lang.isalpha() else ""
             dest = target / f"{base}{suffix}{sub.suffix.lower()}"
             if not dest.exists():
-                os.link(sub, dest)
+                _place(sub, dest)
     else:
         show = _safe(wanted.title)
         for f in videos + subs:
@@ -458,7 +470,7 @@ def stage(settings: Settings, grab: ArrGrab, wanted: ArrWanted, source: Path) ->
             target.mkdir(parents=True, exist_ok=True)
             dest = target / _safe(f.name)
             if not dest.exists():
-                os.link(f, dest)
+                _place(f, dest)
     return top.relative_to(staging_dir(settings).parent)
 
 
