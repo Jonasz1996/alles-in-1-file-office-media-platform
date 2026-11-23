@@ -189,6 +189,7 @@ async def test_12_tegelijk_geeft_429(client, admin, beeld):
     assert nep.code(druk) == "search_busy" and druk.headers["retry-after"] == "1"
 
 
+@pytest.mark.sqlite_only("het plan van SQLite (json_each, ix_node_num); PostgreSQL gebruikt unnest")
 async def test_het_plan_van_stap_5(client, mensen, beeld):
     """De SQL van stap 5 begint bij json_each en zoekt de node op met ix_node_num (Keuze 14);
     geen AUTOMATIC index."""
@@ -243,8 +244,11 @@ async def test_de_voortgang_telt_alleen_als_er_iets_open_staat(client, mensen, b
     assert len(gezien) == 1, [sql for sql, _ in gezien]
     sql, args = gezien[0]
     assert "GROUP BY" not in sql and "LIMIT" in sql, sql
-    async with engine.connect() as conn:
-        await conn.run_sync(lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",)))
+    if not settings.database_url:  # het plan van SQLite; PostgreSQL kiest zelf
+        async with engine.connect() as conn:
+            await conn.run_sync(
+                lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",))
+            )
     # één van de vier weer open: dan telt hij wel, en 3 van de 4 zijn klaar
     sha = await nep.sha_of(settings, rood["id"])
     async with engine.begin() as conn:

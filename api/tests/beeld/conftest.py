@@ -36,11 +36,17 @@ def _beeld_weer_uit():
 
 
 @pytest.fixture
-async def beeld(tmp_path, client):
-    """(nep, settings): de analyse aan met de nep, beeld aangemeld, de monitor op ok."""
+async def beeld(tmp_path, client, settings):
+    """(nep, settings): de analyse aan met de nep, beeld aangemeld, de monitor op ok. Dezelfde
+    database als `settings` (op PostgreSQL met analyse_postgres, P4)."""
+    extra = (
+        {"database_url": settings.database_url, "analyse_postgres": True}
+        if settings.database_url
+        else {}
+    )
     async with FakeAnalyseWorker(tmp_path / "run" / "worker.sock") as fake:
         nep = Nep(fake).install()
-        on = fake.settings(tmp_path, rate_limits=False, beeld_rebuild_s=0)
+        on = fake.settings(tmp_path, rate_limits=False, beeld_rebuild_s=0, **extra)
         app.dependency_overrides[get_settings] = lambda: on
         monitor._status = await monitor.check(on)
         assert monitor.status().state == "ok", monitor.status()

@@ -56,13 +56,13 @@ def nep(fake) -> faces_nep.FacesNep:
 
 
 @pytest.fixture
-async def settings(tmp_path, fake, nep):
+async def settings(tmp_path, fake, nep, pg_extra):
     """Settings met ANALYSE aan, de socket van de nep en PLATFORM_FACES_KEYS buiten de datamap.
     De stand van de monitor is ok (een echte caps bij de nep)."""
     keys = tmp_path / "sleutels"
     keys.mkdir()
     (tmp_path / "data").mkdir()
-    s = fake.settings(tmp_path / "data", faces_keys=str(keys))
+    s = fake.settings(tmp_path / "data", faces_keys=str(keys), **pg_extra)
     await upgrade(s)
     state.reset()
     state.configure(s)

@@ -165,6 +165,10 @@ class Settings(BaseSettings):
     # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes), en kijkt de app nooit
     # naar de socket (app/analyse/monitor.py: de stand is off)
     analyse_enabled: bool = False
+    # Gezichten en zoeken op beeld ook op PostgreSQL (0.8.2, P4): 0013 bracht de triggers die
+    # gezichten en beeld wissen naar PostgreSQL. In het cluster zet platform.env dit aan met
+    # ANALYSE=aan; op SQLite doet het niets
+    analyse_postgres: bool = False
     # De socket in analyse-run, en de sleutel waarmee de worker zich bewijst (§3.11): 64 hex uit
     # .env (ANALYSE_WORKER_KEY). Leeg of korter dan 32 tekens is down: key_missing; gelijk aan
     # het geheim van de app of aan de sleutel van de mediaworker is down: key_reused
@@ -211,11 +215,14 @@ class Settings(BaseSettings):
 
     @property
     def analyse_on(self) -> bool:
-        """PLATFORM_ANALYSE_ENABLED, en de database is SQLite. Op PostgreSQL maken 0011 en 0012
-        alleen de tabellen, zonder de triggers die gezichten en beeld wissen; daar blijven
-        gezichten en beeld uit, zoals FTS (Keuze 76; review A0, veilig F5). De monitor zegt dan
-        down met no_sqlite, de rij analyse draait niet en de schakelaars gaan niet aan."""
-        return self.analyse_enabled and self.db_url.startswith("sqlite")
+        """PLATFORM_ANALYSE_ENABLED, en de database is SQLite, of PostgreSQL met
+        PLATFORM_ANALYSE_POSTGRES (0.8.2, P4: 0013 brengt de triggers die gezichten en beeld
+        wissen naar PostgreSQL). Zonder die tweede schakelaar blijven gezichten en beeld op
+        PostgreSQL uit (Keuze 76; review A0, veilig F5): de monitor zegt dan down met no_sqlite,
+        de rij analyse draait niet en de schakelaars gaan niet aan."""
+        if not self.analyse_enabled:
+            return False
+        return self.db_url.startswith("sqlite") or self.analyse_postgres
 
     @property
     def beeld_dir(self) -> Path:

@@ -538,6 +538,17 @@ async def test_op_postgresql_blijft_de_analyse_uit(fake, tmp_path):
     assert (await monitor.check(sqlite)).state == "ok"
 
 
+async def test_op_postgresql_aan_met_analyse_postgres(fake, tmp_path):
+    """0.8.2, P4: met PLATFORM_ANALYSE_POSTGRES staat de analyse ook op PostgreSQL aan (0013
+    bracht de triggers); zonder blijft hij uit zoals hierboven."""
+    settings = fake.settings(tmp_path, database_url=PG, analyse_postgres=True)
+    assert settings.analyse_on and "analyse" in jobs.active_lanes(settings)
+    assert (await monitor.check(settings)).state == "ok"
+    # Zonder PLATFORM_ANALYSE_ENABLED doet de tweede schakelaar niets
+    uit = fake.settings(tmp_path, database_url=PG, analyse_postgres=True, analyse_enabled=False)
+    assert not uit.analyse_on
+
+
 # --- de echte pid 1 (X2a): de standen tegen app/analyse/worker/server.py ---
 #
 # pid 1 draait hier in dit proces, zonder numpy (caps start geen kind). De modellen zijn twee

@@ -573,6 +573,21 @@ def _stub(name: str) -> int:
 FACES_COMMANDS = ("analyse-bench", "analyse-kwaliteit")
 
 
+def _keys_check(settings: Settings, wipe: bool) -> int:
+    """sleutels-check (app/people/faces/keycheck.py, 0.8.2 P4)."""
+    from app.people.faces import keycheck
+
+    async def run() -> keycheck.KeyCheck:
+        try:
+            return await keycheck.check(settings, wipe=wipe)
+        finally:
+            await get_engine(settings).dispose()
+
+    code, lines = keycheck.report(asyncio.run(run()))
+    print("\n".join(lines), file=sys.stdout if code == 0 else sys.stderr)
+    return code
+
+
 def _faces_measure(settings: Settings, args: argparse.Namespace) -> int:
     """analyse-bench en analyse-kwaliteit (app/people/faces/meten.py, X2b)."""
     from app.people.faces import meten
@@ -763,6 +778,15 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "analyse-kwaliteit", help="de kwaliteit van de voorstellen meten tegen de eigen ja en nee"
     )
+    keys = commands.add_parser(
+        "sleutels-check",
+        help="welke eigenaren versleutelde gezichten hebben zonder sleutel (cluster)",
+    )
+    keys.add_argument(
+        "--wissen",
+        action="store_true",
+        help="hun gezichten bewust wissen, zodat de app ze met een nieuwe sleutel opnieuw zoekt",
+    )
     search_bench.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
@@ -800,6 +824,8 @@ def main(argv: list[str] | None = None) -> int:
         return _analyse_status(settings, args.wait)
     if args.command in FACES_COMMANDS:
         return _faces_measure(settings, args)
+    if args.command == "sleutels-check":
+        return _keys_check(settings, args.wissen)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:

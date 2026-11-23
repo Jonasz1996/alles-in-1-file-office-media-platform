@@ -38,9 +38,12 @@ API_DIR = Path(__file__).resolve().parents[2]
 async def _cli(settings, *args: str, analyse: bool) -> tuple[int, str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PLATFORM_ANALYSE")}
     env.update(PLATFORM_DATA_DIR=str(settings.data_dir), PYTHONDONTWRITEBYTECODE="1")
+    if settings.database_url:
+        env["PLATFORM_DATABASE_URL"] = settings.database_url
     if analyse:
         env.update(
             PLATFORM_ANALYSE_ENABLED="true",
+            PLATFORM_ANALYSE_POSTGRES="true",
             PLATFORM_ANALYSE_WORKER=str(settings.data_dir / "geen" / "worker.sock"),
             PLATFORM_ANALYSE_WORKER_KEY=secrets.token_hex(32),
         )

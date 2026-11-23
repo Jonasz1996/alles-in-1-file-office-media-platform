@@ -156,6 +156,7 @@ def frozen_heap():
     gc.unfreeze()
 
 
+@pytest.mark.sqlite_only("BZ8 meet de SQLite-triggers van beeld; op PostgreSQL staan ze in 0013")
 async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, beeld, frozen_heap):
     """Een import van 500 foto's met en zonder de drie triggers van beeld, twee keer per kant,
     in blokken van 25 om de beurt (ABBA); de som per kant telt. Met: hooguit 10% trager. De

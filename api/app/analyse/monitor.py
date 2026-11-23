@@ -71,8 +71,8 @@ TEXT = {
     "sandbox": "de afscherming van de container analyse klopt niet (de zelftest faalde)",
     "bad_answer": "de analyse geeft een antwoord op caps dat niet klopt",
     "no_sqlite": (
-        "de analyse werkt alleen met SQLite: op PostgreSQL blijven gezichten en beeld uit "
-        "(Keuze 76)"
+        "de analyse staat uit op PostgreSQL: zet PLATFORM_ANALYSE_POSTGRES=true om gezichten "
+        "en beeld daar aan te zetten (Keuze 76, 0.8.2)"
     ),
 }
 

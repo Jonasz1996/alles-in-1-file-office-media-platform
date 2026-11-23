@@ -188,7 +188,15 @@ STOP: ContextVar[Stop | None] = ContextVar("zoek_stop", default=None)
 @asynccontextmanager
 async def deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline]:
     """De grens van ms milliseconden voor alles wat in het blok op conn draait. Een vraag die de
-    grens raakt, eindigt het blok zonder fout; .hit zegt dat het gebeurde."""
+    grens raakt, eindigt het blok zonder fout; .hit zegt dat het gebeurde.
+
+    Op PostgreSQL (0.8.2): een savepoint met SET LOCAL statement_timeout. Een vraag op de grens
+    geeft query_canceled (57014); het savepoint gaat terug en de transactie eromheen blijft
+    bruikbaar. Een Stop van een nieuwere vraag werkt daar tussen de rondes (engine.stopped)."""
+    if conn.dialect.name == "postgresql":
+        async with _pg_deadline(conn, ms) as d:
+            yield d
+        return
     raw = await conn.get_raw_connection()
     d = Deadline(ms)
     timer = Timer(sqlite3_of(raw), asyncio.get_running_loop())
@@ -213,3 +221,32 @@ async def deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline]:
             timer.stop()
         else:
             timer.stop_after(raw.driver_connection)
+
+
+@asynccontextmanager
+async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline]:
+    from sqlalchemy import text
+
+    d = Deadline(ms)
+    stop = STOP.get()
+    if stop is not None and stop.stopped:
+        d.hit = True
+        yield d
+        return
+    nested = await conn.begin_nested()
+    try:
+        await conn.execute(text(f"SET LOCAL statement_timeout = {max(1, int(ms))}"))
+        yield d
+    except exc.DBAPIError as e:
+        if getattr(e.orig, "sqlstate", None) != "57014" and "canceling statement" not in str(e):
+            await nested.rollback()
+            raise
+        d.hit = True
+        await nested.rollback()
+        return
+    except BaseException:
+        await nested.rollback()
+        raise
+    # SET LOCAL geldt na de release van het savepoint tot het eind van de transactie: terugzetten
+    await conn.execute(text("SET LOCAL statement_timeout TO DEFAULT"))
+    await nested.commit()

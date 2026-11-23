@@ -131,9 +131,81 @@ async def database_url(tmp_path):
     await _pg_database(name, drop=True)
 
 
+# Op PostgreSQL migreert elke test anders zijn eigen lege database tot de head: dat kost per test
+# een paar seconden en liet de job api-postgres over zijn uur lopen. Nu migreert elk testproces
+# één sjabloondatabase, en krijgt elke test met `settings` een kopie (CREATE DATABASE … TEMPLATE,
+# een kopie van bestanden). Tests die een lege database willen (migratietests), vragen zelf
+# `database_url`.
+_PG_TEMPLATE: list[str] = []
+
+
+async def _pg_template(tmp_path_factory) -> str:
+    if _PG_TEMPLATE:
+        return _PG_TEMPLATE[0]
+    name = f"tmpl_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    url = await _pg_database(name)
+    s = Settings(
+        data_dir=tmp_path_factory.mktemp("sjabloon"),
+        web_dist=Path("/nonexistent"),
+        jwt_secret="test" * 8,
+        database_url=url,
+    )
+    await upgrade(s)
+    await db.get_engine(s).dispose()
+    db._engine.cache_clear()
+    _PG_TEMPLATE.append(name)
+    return name
+
+
+async def _pg_drop_template() -> None:
+    if _PG_TEMPLATE:
+        await _pg_database(_PG_TEMPLATE.pop(), drop=True)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if PG_URL and _PG_TEMPLATE:
+        import asyncio
+
+        try:
+            asyncio.run(_pg_drop_template())
+        except Exception:  # opruimen mag een run nooit laten falen
+            pass
+
+
+async def _pg_copy(template: str) -> str:
+    import asyncpg
+
+    name = "t_" + uuid.uuid4().hex
+    base = PG_URL.replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(base)
+    try:
+        await conn.execute(f'CREATE DATABASE "{name}" TEMPLATE "{template}"')
+    finally:
+        await conn.close()
+    return PG_URL.rsplit("/", 1)[0] + "/" + name
+
+
 @pytest.fixture
-async def settings(tmp_path, database_url):
-    extra = {"database_url": database_url} if PG_URL else {}
+async def pg_extra(tmp_path_factory):
+    """Voor fixtures die zelf Settings maken (gezichten, beeld): op PostgreSQL de velden voor een
+    eigen kopie van het sjabloon (database_url, en analyse_postgres zodat gezichten en beeld daar
+    aan kunnen, P4); op SQLite niets."""
+    if not PG_URL:
+        yield {}
+        return
+    url = await _pg_copy(await _pg_template(tmp_path_factory))
+    yield {"database_url": url, "analyse_postgres": True}
+    await _pg_database(url.rsplit("/", 1)[1], drop=True)
+
+
+@pytest.fixture
+async def settings(tmp_path, tmp_path_factory):
+    extra: dict = {}
+    name = None
+    if PG_URL:
+        url = await _pg_copy(await _pg_template(tmp_path_factory))
+        name = url.rsplit("/", 1)[1]
+        extra = {"database_url": url}
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
@@ -142,6 +214,8 @@ async def settings(tmp_path, database_url):
     # snelheidstests) trager naarmate de run langer is
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
+    if name is not None:
+        await _pg_database(name, drop=True)
 
 
 @pytest.fixture
