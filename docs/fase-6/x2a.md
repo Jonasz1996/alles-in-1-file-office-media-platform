@@ -292,9 +292,13 @@ De groei van het echte image meet de job `images` (A0: ≤ 160 MB); X2a voegt ge
    omzetter is er (X3a) en draait via de dienst `analyse-omzetten`; de rest blijft van X3b.]
    [Golf 6: de rest gebouwd door X3b ([x3b.md](x3b.md)).]
 5. **De kleurvolgorde** (BGR naar YuNet, RGB naar SFace) ligt vast in laag 2; welke de juiste is,
-   beslist laag 4 (Vraag 8: standaard op de LXC).
-6. De standaarden van de vragen blijven staan (Vraag 8 nee, 10 (a), 11 uit, 12b nee, 13 twee
-   leveringen, 14 250 ms); B49–B70, Vraag 4 en Vraag 8–14 zijn niet als besloten gemarkeerd.
+   beslist laag 4 (Vraag 8: standaard op de LXC). [17 november 2026: Vraag 8 is nee
+   (besloten: standaard, Jonas 2026-11-17). Laag 4 (`test_faces_quality.py`) is niet gebouwd; de kleurvolgorde
+   blijft bij besluit niet gemeten (x2b.md, Afwijkingen 3).]
+6. ~~De standaarden van de vragen blijven staan (Vraag 8 nee, 10 (a), 11 uit, 12b nee, 13 twee
+   leveringen, 14 250 ms); B49–B70, Vraag 4 en Vraag 8–14 zijn niet als besloten gemarkeerd.~~
+   [17 november 2026: Jonas zette ze op die standaarden. B49–B71, Vraag 4 en Vraag 8–14 zijn
+   besloten: standaard, Jonas 2026-11-17.]
 7. ~~**`e2e/test_office_o2.py::test_samen_bewerken_geeft_een_versie_met_beide_teksten` was één
    keer rood**~~ [I2: hersteld in P5 (`919d7f8`): Bram sluit pas als zijn statusregel weet dat
    Anna weg is; geen grens veranderd.] (de office-e2e met de nep-DS, terwijl ernaast de volle API-suite van X3a op

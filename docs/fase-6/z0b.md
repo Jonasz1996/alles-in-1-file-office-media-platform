@@ -14,8 +14,8 @@ staat, wat de samenvoeging veranderde, en waar het bewijs voor elke regel van Ke
 verslagen per deel blijven de bron voor de details.
 
 Z0b bouwt op wat Jonas koos: gezichten en zoeken op beeld zitten in fase 6 en staan per gebruiker
-standaard uit. Vraag 4 (wie ziet de plek) is niet beantwoord, dus de standaard geldt: alleen de
-eigenaar. Vraag 8–14 op hun standaard. Van B49–B70 zijn alleen B53 en B57 besloten.
+standaard uit. Vraag 4 (wie ziet de plek) ~~is niet beantwoord~~ is besloten: standaard, Jonas 2026-11-17, dus de
+standaard geldt: alleen de eigenaar. Vraag 8–14 op hun standaard. Van B49–B70 zijn alleen B53 en B57 besloten.
 
 ## De delen
 

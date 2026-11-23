@@ -45,8 +45,10 @@ Wat I1 verder liet liggen, staat met de reden onder
 [Niet gedaan, met de reden](#niet-gedaan-met-de-reden).
 
 Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gezichten en beeld)
-besloten; B49–B70 blijven verder voorstel, en Vraag 4 en Vraag 8–14 zijn nog open. 0.8.0 draait
-dus op de standaarden van het ontwerp. Een tag komt er alleen als Jonas ja zegt.
+besloten; ~~B49–B70 blijven verder voorstel, en Vraag 4 en Vraag 8–14 zijn nog open~~. 0.8.0 draait
+dus op de standaarden van het ontwerp. Een tag komt er alleen als Jonas ja zegt. [17 november 2026:
+Jonas zette alles op de standaard. B49–B71, Vraag 4 en Vraag 8–14 zijn besloten: standaard, Jonas 2026-11-17;
+er komt geen tag.]
 
 ## Hoe het liep
 
@@ -351,10 +353,10 @@ I2.
 
 I1 zette geen nieuwe standaard in `api/app/config.py`: dat bestand is sinds `16ccb8d` niet
 veranderd. 0.8.0 draait op de standaarden van het ontwerp, omdat Jonas over B49–B70 (behalve B53
-en B57) en Vraag 4 en 8–14 nog niet koos: de plaatsnamen aan (`PLAATSEN`, `places = "aan"`), OCR
+en B57) en Vraag 4 en 8–14 toen niet koos: de plaatsnamen aan (`PLAATSEN`, `places = "aan"`), OCR
 aan op de server (`ocr_enabled = True`, B53), "Tekst in foto's herkennen" per gebruiker uit, de
 plek van een foto alleen voor de eigenaar (Vraag 4), en gezichten en zoeken op beeld nog niet
-beschikbaar.
+beschikbaar. [17 november 2026: die standaarden zijn nu het besluit (besloten: standaard, Jonas 2026-11-17).]
 
 Wat I1 wel vastlegde, zijn vaste waarden in de code, geen instellingen:
 

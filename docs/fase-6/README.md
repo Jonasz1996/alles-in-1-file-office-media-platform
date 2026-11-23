@@ -35,12 +35,18 @@ script `Let op: …` en gaat het door. Per gebruiker staat alles uit, tot die he
 Account → Foto's. Het image is ±118–141 MB groter, voor numpy en
 onnxruntime, ook met de analyse uit.
 
-Van de beslissingskaarten van fase 6 zijn alleen B53 (OCR) en B57 (personen, gezichten en beeld)
-besloten; de rest is voorstel. Sinds 0.8.0 koos je één ding: zoeken op beeld toch uitbrengen
-(Keuze 85, 16 november 2026). Vraag 4 en Vraag 8–14 heb je nog niet beantwoord; 0.8.1 draait op
-de standaarden. Zo ziet alleen de eigenaar de plek van een foto (Vraag 4), en staat zoeken op beeld
-per gebruiker uit (Vraag 11). Bij 0.8.1 kwamen er negen vragen bij, elk met een standaard. Zie
-[Vragen voor Jonas](#vragen-voor-jonas).
+Alle keuzes van fase 6 zijn besloten. B53 (OCR) en B57 (personen, gezichten en beeld) koos je op
+3 november 2026, en op 16 november 2026 koos je zoeken op beeld toch uit te brengen (Keuze 85). Op
+17 november 2026 zette je de rest op de standaard ("Standaard vastzetten"): de andere kaarten
+B49–B71, Vraag 4 en Vraag 8–14, en de vragen bij 0.8.0 en 0.8.1. Hun status is
+**besloten: standaard, Jonas 2026-11-17**. 0.8.1 draaide al op die standaarden, dus er verandert
+niets: alleen de eigenaar ziet de plek van een foto (Vraag 4), en zoeken op beeld staat per
+gebruiker uit (Vraag 11). Zie [Vragen voor Jonas](#vragen-voor-jonas).
+
+Ook op 17 november 2026 kwam PR #2 op de branch (samengevoegd, `aa6fa8b`): `app.cli db-copy`
+kopieert de SQLite van één node naar PostgreSQL voor het cluster, de tests kunnen op PostgreSQL
+draaien met `PLATFORM_TEST_DATABASE_URL`, en CI heeft de job `api-postgres`. Voor wie alleen
+SQLite gebruikt, verandert er niets.
 
 ## Klaar als
 
@@ -219,7 +225,7 @@ Platform terug met `MET_DATABASE=downgrade`). Er gaan geen rijen verloren.
   uitloopt (zie [Planning](#planning)).~~ [16 november 2026: het blijft in 0.8.1. Je koos "Toch
   uitbrengen" (Keuze 85 in het [bouwontwerp](bouwontwerp.md)), ook al vinden een paar woorden
   weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel). De uitleg bij de schakelaar zegt wat je mag
-  verwachten.] Per gebruiker standaard uit (Vraag 11; die heb je nog niet beantwoord).
+  verwachten.] Per gebruiker standaard uit (Vraag 11, besloten: standaard, Jonas 2026-11-17).
 - **De pagina `/over`** (Account → **Bronnen en licenties**): de bronnen van de kaart (GeoNames en
   Natural Earth) en van de modellen (YuNet, SFace en SigLIP 2), met hun licentie, en de pakketten
   van de analyse. Voor iedereen die is ingelogd, ook een gast, en ook met de analyse uit.
@@ -281,23 +287,23 @@ Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
 | Zoeken zonder index | Tijdens **Index herbouwen**, en op PostgreSQL, zoekt het platform alleen op naam, zoals 0.7.0 (met LIKE). Het werkt, maar langzamer; `/beheer` zegt het. PostgreSQL is niet getest. | het runbook, "De index herbouwen"; [z0-api.md](z0-api.md) |
 | Een vraag die te lang duurt | Na ±120 ms geeft zoeken de eerste treffers, niet per se de beste, met een melding. Dat kan bij iemand met meer dan 64 gedeelde mappen, en bij alleen een datumfilter op foto's; dan kan die pagina ook leeg zijn, met de melding "Niets gevonden binnen de tijd". | [z1.md](z1.md), Open |
 | De volgorde | Zoeken telt woorden over alle gebruikers. De volgorde van bijna gelijke treffers zegt daardoor een heel klein beetje over bestanden van anderen. Er is geen score en geen totaal. | risico R7 in het [bouwontwerp](bouwontwerp.md) |
-| De kaart met een filter op soort, map, camera, persoon of tag | tot een halve seconde voor de hele wereld (gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s, eigen grens 0,5 s); zonder zo'n filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie. | [z3.md](z3.md), Open; een vraag hieronder |
+| De kaart met een filter op soort, map, camera, persoon of tag | tot een halve seconde voor de hele wereld (gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s, eigen grens 0,5 s); zonder zo'n filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie. | [z3.md](z3.md), Open; Vragen voor Jonas: 0,5 s is goed (besloten: standaard, Jonas 2026-11-17) |
 | Land en Plaats op `/fotos` | hooguit 500 plaatsen, de meeste foto's eerst: wie meer plaatsen heeft, mist de kleinste en soms een land. Camera is een tekstveld. | [z6.md](z6.md), Open |
 | "Niet gelijk" op `/dubbel` | kan niet ongedaan: die groep komt niet terug. | [z5.md](z5.md), Open |
 | Herinneringen per map verbergen | kan niet in de web-app; wel een dag, of een persoon. | [z6.md](z6.md), Open |
 | Het kader van een persoon | ~~blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Migratie 0011 zet dat recht; die staat al op de branch (A0) en hoort bij 0.8.1.~~ [0.8.1: opgelost met migratie 0011; het kader gaat weg, de persoon blijft.] | [z0b.md](z0b.md), [a0.md](a0.md) |
-| OCR | Een foto met precies dezelfde inhoud als een bestand dat er al was, krijgt zijn tekst pas bij de volgende start. "Tekst in foto's herkennen" uit wist de tekst die er is niet (een vraag hieronder). Van een PDF leest OCR hooguit 200 gescande pagina's. Met de knop **Tekst herkennen**: 20 keer per uur en 200 pagina's per dag per gebruiker. Een volle, liggende scan kost ±6 pagina's per minuut, ±160 minuten per 1.000 pagina's. | [x1.md](x1.md), Open |
+| OCR | Een foto met precies dezelfde inhoud als een bestand dat er al was, krijgt zijn tekst pas bij de volgende start. "Tekst in foto's herkennen" uit wist de tekst die er is niet (Vragen voor Jonas: niet wissen, besloten: standaard, Jonas 2026-11-17). Van een PDF leest OCR hooguit 200 gescande pagina's. Met de knop **Tekst herkennen**: 20 keer per uur en 200 pagina's per dag per gebruiker. Een volle, liggende scan kost ±6 pagina's per minuut, ±160 minuten per 1.000 pagina's. | [x1.md](x1.md), Open |
 | Uploaden terwijl de index schrijft | De upload wacht hooguit ±1 s op een schijf waar het wegschrijven (`fsync`) tot ±200 ms extra kost. Op een tragere schijf langer. | [z2.md](z2.md); `api/app/dbgate.py` |
 | De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. | het runbook, "De wekelijkse controle" |
 | De bronvermelding | GeoNames en Natural Earth staan onder de kaart en in de [README](../../README.md) (Bronnen). ~~De pagina `/over` is er nog niet.~~ [0.8.1: `/over` is er, via Account → Bronnen en licenties, ook met de analyse uit.] | [z3.md](z3.md), Open |
-| Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8, standaard nee). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan op **niet gemeten, geen gereedschap** tot er een antwoord is op Vraag 8. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
+| Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8 is nee, besloten: standaard, Jonas 2026-11-17). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die blijven bij besluit op **niet gemeten, geen gereedschap**. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
 | Zoeken op beeld: zwakke woorden (0.8.1) | 'bergen' en 'boot' vinden weinig in de testset ('berg' en 'bootje' wel); "Meer zoals deze" haalde 0,475, waar het ontwerp 0,7 wilde. Zo uitgebracht met Keuze 85; de uitleg bij de schakelaar zegt het. | [x3b.md](x3b.md); Keuze 85 in het [bouwontwerp](bouwontwerp.md) |
 | Gezichten en zoeken op beeld op jouw CPU (0.8.1) | Gemeten in de sandbox en in CI, niet op jouw CPU. `analyse-bench` (gezichten) en `beeld-bench` (zoeken op beeld) meten het daar; zie [Op de LXC](#op-de-lxc). | de runbooks [gezichten.md](../runbooks/gezichten.md) en [analyse.md](../runbooks/analyse.md) |
 | De metingen van 0.8.1 | De tijd en het geheugen van gezichten en beeld zijn gemeten met modellen van de echte vorm, maar met willekeurige gewichten. Over de kwaliteit zeggen ze niets; die komt alleen uit BZ4 in CI. De testfoto's van de grote belastingtest (M13) hadden geen gezichten: het herkennen (SFace) en het groeperen zaten er niet in. | [metingen.md](metingen.md), M10–M13 |
 | Zoeken op beeld na een herstart (0.8.1) | Na een herstart van de container laadt het opwarmen het tekstmodel één keer (±1,7 s in de sandbox). Dat betaalt het opwarmen (zodra iemand op `/zoeken` zoeken op beeld kiest of het infopaneel van een eigen foto opent, of na het bouwen van de beeldindex), niet de eerste zoekvraag. | [integratie-2.md](integratie-2.md), De review (U1) |
-| Zoeken op beeld terwijl gezichten gescand worden (0.8.1) | De grens van 250 ms is gemeten terwijl de gezichtenscan wachtte (191,8 ms). Liep de scan van 5.000 foto's ernaast, dan was het 290,4 ms (9 van 103 vragen boven 250 ms); dat was een stap zonder poort. Een vraag hieronder. | [metingen.md](metingen.md), Bevinding 12 |
+| Zoeken op beeld terwijl gezichten gescand worden (0.8.1) | De grens van 250 ms is gemeten terwijl de gezichtenscan wachtte (191,8 ms). Liep de scan van 5.000 foto's ernaast, dan was het 290,4 ms (9 van 103 vragen boven 250 ms); dat was een stap zonder poort. Zo blijft het: de standaard (besloten: standaard, Jonas 2026-11-17; Vragen voor Jonas). | [metingen.md](metingen.md), Bevinding 12 |
 | `/over` (0.8.1) | Alleen voor wie is ingelogd, ook een gast; een bezoeker zonder account ziet de pagina niet. | [integratie-2.md](integratie-2.md), Bekende grenzen |
-| Het budget van de schermen van gezichten (0.8.1) | 11.964 van 12.000 B: nog 36 B ruimte. Wie daar iets toevoegt, moet eerst iets anders kleiner maken of een hogere grens vragen. Een vraag hieronder. | `web/scripts/budget.mjs` |
+| Het budget van de schermen van gezichten (0.8.1) | 11.964 van 12.000 B: nog 36 B ruimte. Wie daar iets toevoegt, moet eerst iets anders kleiner maken of een hogere grens vragen. De grens blijft: de standaard (besloten: standaard, Jonas 2026-11-17; Vragen voor Jonas). | `web/scripts/budget.mjs` |
 | Office: Sluiten schuift | Gaat een andere bewerker weg, dan wordt de statusregel korter en schuift **Sluiten** in de kopbalk ±80 px. Wie precies dan klikt, kan naast de knop loslaten. De test wacht er nu op; de app is niet veranderd. | [integratie-2.md](integratie-2.md), Bekende grenzen |
 | De tijdstest van de namen | In de volle testsuite was één tijdstest een paar keer net te traag (0,51–0,56 s tegen 0,5 s). Waarom, is niet bewezen; de grens bleef, en bij rood zegt de test nu meer. In de volle suite van 0.8.1 was hij groen. | [integratie-2.md](integratie-2.md), Bekende grenzen |
 | Reservekopieën en gezichten (0.8.1) | De reservekopieën van het platform bevatten geen gezichten: na het terugzetten begint de scan opnieuw. De sleutels staan in `/opt/platform/sleutels/gezichten`, niet op `/tank`. | het runbook [gezichten.md](../runbooks/gezichten.md) |
@@ -320,8 +326,12 @@ Dat betekent:
 - **De kaart: geen tegels van buiten.** Alleen landsgrenzen. Er gaat niets naar een kaartdienst.
 - **Plaatsnamen en landsgrenzen downloaden bij de installatie** (de oude Vraag 5 en 6): de kaartjes
   zijn ingetrokken, omdat "alles" ze dekt. De standaard geldt.
-- **Wie ziet de plek van een foto** (Vraag 4): die heb je **niet** beantwoord. Tot je dat doet,
-  geldt de standaard: alleen de eigenaar. Dat is geen keuze van jou.
+- **Wie ziet de plek van een foto** (Vraag 4): ~~die heb je **niet** beantwoord. Tot je dat doet,
+  geldt de standaard: alleen de eigenaar. Dat is geen keuze van jou.~~ [17 november 2026: je koos
+  de standaard, alleen de eigenaar; besloten: standaard, Jonas 2026-11-17.]
+- **De rest: de standaard** (17 november 2026, "Standaard vastzetten"). Vraag 4 en Vraag 8–14, de
+  andere kaarten B49–B71, en de vragen bij 0.8.0 en 0.8.1 staan op hun standaard:
+  besloten: standaard, Jonas 2026-11-17. Zie [Vragen voor Jonas](#vragen-voor-jonas).
 
 ## Doel
 
@@ -395,13 +405,13 @@ laat zien hoe ver het is.
 
 ## Planning
 
-±43 werkdagen (≈ 9 weken), in twee delen (Vraag 13):
+±43 werkdagen (≈ 9 weken), in twee delen (Vraag 13; besloten: standaard, Jonas 2026-11-17):
 
 - **0.8.0 rond dag 27**: zoeken, tekst, OCR, foto-gegevens, de kaart, duplicaten, personen,
   herinneringen en slimme albums.
 - **0.8.1 rond dag 43**: gezichten en zoeken op beeld.
 
-Kies je één oplevering, dan is het ±41 werkdagen. Het stappenplan gaf 3 weken; dat was zonder
+Met één oplevering was het ±41 werkdagen geweest. Het stappenplan gaf 3 weken; dat was zonder
 gezichten en beeld, en zonder review per golf. Loopt het uit, dan schuift eerst zoeken met woorden
 op beeld, dan beeld helemaal (naar een fase 6b), dan de groepen "Wie is dit?" van gezichten. Geen
 privacyregel schuift. [16 november 2026: zoeken op beeld is gebouwd en blijft in 0.8.1 (Keuze
@@ -468,103 +478,111 @@ staat het uit tot die het zelf aanzet. Met `ANALYSE=uit` zie je er niets van. Ho
   standaard nee). De grenzen voor een voorstel (0,45) en voor een groep (0,50) zijn voorlopig;
   `app.cli analyse-kwaliteit` meet ze op je eigen LXC tegen je eigen ja en nee, en tot dan zegt
   `/beheer` "niet gemeten". Niets wordt vanzelf bevestigd. Twee eisen van het ontwerp hebben
-  geen gereedschap ("≥ 95% van de portretten" en "kleurvolgorde ≥ 0,05 hoger"): die staan op
-  "niet gemeten, geen gereedschap" tot er een antwoord is op Vraag 8.
+  geen gereedschap ("≥ 95% van de portretten" en "kleurvolgorde ≥ 0,05 hoger"): die blijven
+  "niet gemeten, geen gereedschap". Dat is besloten: Vraag 8 is nee (besloten: standaard, Jonas 2026-11-17), dus
+  er komt geen set echte gezichten in CI. De kwaliteit meet alleen jij, met `analyse-kwaliteit` op je
+  LXC.
 
 ## Vragen voor Jonas
 
-Elke vraag heeft een standaard. Tot je antwoordt, bouwen we daarop door; niemand hoeft te
-wachten.
+**Besloten op 17 november 2026.** Je koos "Standaard vastzetten": elke vraag hieronder staat op
+haar standaard, met de status **besloten: standaard, Jonas 2026-11-17**. Er verandert niets aan de app: 0.8.1
+draaide al zo. De andere antwoorden blijven staan als uitleg; wil je er later een omgooien, dan is
+dat een nieuwe keuze.
 
 4. **Wie ziet de plek van een foto?** Standaard: **alleen de eigenaar**, en het deeldialoog
    waarschuwt dat een download de plek meeneemt. Anders: GPS uit downloads halen (±2 dagen), of
-   "wie ik deel, ziet de plek ook".
+   "wie ik deel, ziet de plek ook". (besloten: standaard, Jonas 2026-11-17)
 8. **Mogen echte gezichten van NASA in CI gebruikt worden om de herkenning te meten?** Dat is
    biometrie van echte mensen, bij naam, op servers van GitHub in de VS. Standaard: **nee**; dan
-   meet je de kwaliteit op je eigen server, en verlaat niets je huis.
+   meet je de kwaliteit op je eigen server, en verlaat niets je huis. (besloten: standaard, Jonas 2026-11-17)
 9. **Worden foto's gescand die een ander in jouw map zette?** Standaard: **nee, tenzij die ander
-   het zelf aan heeft**; een upload via een link nooit.
+   het zelf aan heeft**; een upload via een link nooit. (besloten: standaard, Jonas 2026-11-17)
 10. **Hoe komt het model voor zoeken op beeld op je server?** Standaard: **`install.sh` downloadt
     het origineel van Google (via huggingface.co) en zet het één keer om op je server**, zonder
-    nieuw pakket.
+    nieuw pakket. (besloten: standaard, Jonas 2026-11-17)
 11. **Staat zoeken op beeld standaard aan?** Standaard: **uit**, tot gemeten is of "Meer zoals
     deze" op een portret dezelfde persoon terugvindt. Wie het wil, zet het aan.
+    (besloten: standaard, Jonas 2026-11-17)
 12. **Wat mag CI gebruiken om zoeken op beeld na te rekenen?** Standaard: **ja** voor een vaste set
     van 120 foto's uit het publiek domein (alleen in CI), **nee** voor de officiële bibliotheken
-    als meetlat.
+    als meetlat. (besloten: standaard, Jonas 2026-11-17)
 13. **Leveren we in twee delen op?** Standaard: **ja**: de kern rond dag 27, gezichten en beeld
-    rond dag 43.
+    rond dag 43. Zo gebeurd: 0.8.0 en 0.8.1. (besloten: standaard, Jonas 2026-11-17)
 14. **Mag zoeken op beeld 250 ms duren?** Standaard: **ja**; gewoon zoeken houdt zijn 200 ms.
+    (besloten: standaard, Jonas 2026-11-17)
 
 Vraag 1, 2, 3, 5, 6, 7 en 15 heb je beantwoord, of ze zijn ingetrokken (zie "Wat je koos"). De vragen
 staan uitgebreid in het [bouwontwerp](bouwontwerp.md) onder "Vragen voor Jonas".
 
-Nieuw bij 0.8.0, ook elk met een standaard:
+Nieuw bij 0.8.0, ook elk met een standaard (besloten: standaard, Jonas 2026-11-17):
 
 - **Een tag voor 0.8.0 en 0.7.1?** Een tag is een vast label op een commit, zoals `v0.8.0`. Er is
   er nu geen voor 0.7.1 of 0.8.0; de weg terug gebruikt de volledige commit, zoals bij eerdere
-  versies. Standaard: **geen tags**. Zeg je ja, dan komt `v0.8.0` op de commit van 0.8.0 en
-  `v0.7.1` op `80d5bb8`.
+  versies. Standaard: **geen tags** (besloten: standaard, Jonas 2026-11-17). Met ja was `v0.8.0` op de commit van
+  0.8.0 gekomen en `v0.7.1` op `80d5bb8`.
 - **Waar staat 0.8.0?** Standaard: **op de branch** `claude/stappenplan-uitwerken-lu4uv3`, en je
-  werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md). Anders gaat het naar
-  `main`, en dan is het weer het gewone commando.
+  werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md) (besloten: standaard, Jonas 2026-11-17).
+  Anders was het naar `main` gegaan, met het gewone commando.
 - **Moet "Tekst in foto's herkennen" uit ook de tekst wissen?** Nu blijft de tekst die er al is;
-  er komen alleen geen nieuwe foto's meer bij. Standaard: **niet wissen** ([x1.md](x1.md), Open 1).
+  er komen alleen geen nieuwe foto's meer bij. Standaard: **niet wissen** ([x1.md](x1.md), Open 1;
+  besloten: standaard, Jonas 2026-11-17).
 - **Duplicaten: eerst de groepen "Bijna zeker gelijk" vormen, en dan pas "Lijkt erop"?** Nu is een
   groep zo zeker als zijn zwakste paar. Lijkt één foto in een groep maar een beetje, dan staat de
   hele groep onder "Lijkt erop", ook als de andere onderling bijna zeker gelijk zijn. Standaard:
-  **zo laten** ([z3.md](z3.md), Open).
+  **zo laten** ([z3.md](z3.md), Open; besloten: standaard, Jonas 2026-11-17).
 - **Is een halve seconde goed genoeg voor de kaart met een filter op soort, map, camera, persoon of
   tag?** Gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s (M1) voor de hele wereld; zonder zo'n
   filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie, na die van 0.8.1. Standaard:
-  **ja**, met een eigen grens van 0,5 s ([z3.md](z3.md), Open).
+  **ja**, met een eigen grens van 0,5 s ([z3.md](z3.md), Open; besloten: standaard, Jonas 2026-11-17).
 - **Voorrang voor een video die na verspringen opnieuw moet starten?** Springt iemand voorbij wat
   al klaar is, dan start het omzetten opnieuw met minder dan één stukje voorraad, terwijl een
   andere video op volle kracht doorwerkt; dan kan het beeld kort haperen (fase 5, Bevinding 3).
   Standaard: **ja, na elke herstart** (verspringen, een nieuwe poging na een fout, verder na een
   pauze): die video krijgt voorrang tot 10 s beeld klaar is, hooguit 20 s, en andere kijkers
-  houden zolang 10 s voorsprong in plaats van 60 s. Zo zit het in 0.8.0. Anders: alleen na
-  verspringen, alleen de eerste twee stukjes, of niets veranderen
-  ([beslissingen.md](../fase-0/beslissingen.md), B71).
+  houden zolang 10 s voorsprong in plaats van 60 s. Zo zit het in 0.8.0 (besloten: standaard, Jonas 2026-11-17).
+  De andere antwoorden waren: alleen na verspringen, alleen de eerste twee stukjes, of niets
+  veranderen ([beslissingen.md](../fase-0/beslissingen.md), B71).
 - **Wat telt de meting van media als haperen, vlak na verspringen?** Landt de meetspeler na een
   sprong in de laatste fractie van een stukje van 2 s, en moet het volgende stukje van een herstart
   komen, dan telt hij 0,2 s later één keer haperen, omdat geen herstart dat stukje zo snel maakt,
-  hoe rustig de server ook is. Zo landt ±1 op 4 sprongen; een browser telt het niet. Voorstel:
-  **wachten op voorraad** (na een sprong speelt de meetspeler pas verder als er een heel stukje
-  klaarstaat; dat wachten telt als springtijd, met een harde grens van 3 s). Anders: tellen zoals de
-  browser, of zo laten. Tot je kiest, telt de meting zoals nu ([metingen.md](metingen.md),
-  Bevinding 3).
+  hoe rustig de server ook is. Zo landt ±1 op 4 sprongen; een browser telt het niet. Standaard:
+  **tellen zoals nu** (besloten: standaard, Jonas 2026-11-17; [metingen.md](metingen.md), Bevinding 3). De andere
+  antwoorden waren: wachten op voorraad (na een sprong speelt de meetspeler pas verder als er een
+  heel stukje klaarstaat; dat wachten telt als springtijd, met een harde grens van 3 s), of tellen
+  zoals de browser.
 
-Nieuw bij 0.8.1, ook elk met een standaard. Je hoeft niets te kiezen; zeg het alleen als je het
-anders wilt:
+Nieuw bij 0.8.1, ook elk met een standaard (besloten: standaard, Jonas 2026-11-17):
 
 - **Waar staat 0.8.1?** Standaard: **op de branch** `claude/stappenplan-uitwerken-lu4uv3`, net als
-  0.8.0, en je werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md). Anders gaat
-  het naar `main`, en dan is het weer het gewone commando.
+  0.8.0, en je werkt bij met `PLATFORM_BRANCH`, zoals in de [README](../../README.md). Anders was
+  het naar `main` gegaan, met het gewone commando.
 - **Een tag voor 0.8.1?** Standaard: **geen tag**, zoals bij 0.7.x en 0.8.0. De docs noemen de
-  volledige commit van 0.8.1 als de weg terug voor de volgende versie: `ae163ac69470343de7bc8d876db1a48e7da9331e`. Zeg je ja, dan komt `v0.8.1` op die commit.
+  volledige commit van 0.8.1 als de weg terug voor de volgende versie: `ae163ac69470343de7bc8d876db1a48e7da9331e`. Met ja was `v0.8.1` op die commit gekomen.
 - **Twee eisen voor gezichten zonder gereedschap.** "Op ≥ 95% van de portretten precies het goede
   gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere" kunnen we alleen
-  meten met een set echte gezichten, en die is er niet zolang Vraag 8 op nee staat. Standaard:
-  0.8.1 komt uit met beide op **niet gemeten, geen gereedschap**, Vraag 8 blijft open, en het
-  gereedschap komt later. Anders: Vraag 8 op ja (een openbare set gezichten in CI, met jouw akkoord
-  voor die set; ±1–2 dagen werk).
+  meten met een set echte gezichten, en die komt er niet: Vraag 8 is nee. Standaard: beide blijven
+  **niet gemeten, geen gereedschap**. Wat wel te meten is, meet jij met `analyse-kwaliteit` op je
+  LXC (precisie, zuiverheid en vangst). Het andere antwoord was Vraag 8 op ja (een openbare set
+  gezichten in CI, met jouw akkoord voor die set; ±1–2 dagen werk).
 - **`BEELD=uit` samen met `ANALYSE=uit`.** Vraag je bij de installatie beide uit, dan onthoudt
   `.env` alleen `ANALYSE=uit`; zet je later `ANALYSE=aan`, dan komt zoeken op beeld mee, met de
   download van 1,55 GB. (a) Ook `BEELD=uit` onthouden; (b) zo laten en in de eindtekst zeggen dat
-  `BEELD` alleen telt met de analyse aan. Tot je kiest, blijft het zoals het is.
+  `BEELD` alleen telt met de analyse aan. Standaard: **zo laten**; `install.sh` verandert niet.
 - **Een vraag die te laat is, houdt de analyse 5 s bezig.** Daarna stopt de worker het kind hard.
-  Standaard: **zo laten**. Anders: een eigen pakket dat het kind eerder vrijmaakt, met tests.
+  Standaard: **zo laten**. Het andere antwoord was een eigen pakket dat het kind eerder vrijmaakt, met tests.
 - **De job `beeld-model` in CI** start niet als alleen de tests van de echte vorm (BZ5, BZ6)
-  veranderen; die draaien we met de hand. Standaard: **zo laten**. Anders: die bestanden erbij.
+  veranderen; die draaien we met de hand. Standaard: **zo laten**. Het andere antwoord was: die
+  bestanden erbij.
 - **De analyse met een lagere voorrang starten.** Start iemand de analyse zelf met `nice`, dan kan
   het kind voor zoeken op beeld niet starten. In de container zoals `install.sh` hem start, gebeurt
-  dat niet. Standaard: **zo laten**. Anders: het kind past zich aan, met een test.
+  dat niet. Standaard: **zo laten**. Het andere antwoord was: het kind past zich aan, met een test.
 - **Nog 36 B ruimte in de schermen van gezichten.** Standaard: **de grens blijft**; wie er iets
-  toevoegt, maakt eerst iets anders kleiner of vraagt het je. Anders: de grens nu ophogen.
+  toevoegt, maakt eerst iets anders kleiner of vraagt het je. Het andere antwoord was: de grens nu
+  ophogen.
 - **Zoeken op beeld terwijl gezichten gescand worden** (290,4 ms, zie Bekende grenzen).
-  Standaard: **zo laten**: de poort van 250 ms geldt voor de gewone belasting. Anders: een aparte
-  meting erbij, of de scan laten wijken voor een zoekvraag (een codewijziging).
+  Standaard: **zo laten**: de poort van 250 ms geldt voor de gewone belasting. De andere antwoorden
+  waren: een aparte meting erbij, of de scan laten wijken voor een zoekvraag (een codewijziging).
 
 Uitgebreider, met de opties: [integratie-2.md](integratie-2.md#vragen-voor-jonas).
 
@@ -648,8 +666,8 @@ Na het bijwerken naar 0.8.1 (of 0.8.0). De commando's staan in de runbooks
   herbouwen, zoeken meten, en terug naar 0.8.0 en 0.7.1). Voor 0.8.1 ook
   [analyse.md](../runbooks/analyse.md) (de container, zoeken op beeld) en
   [gezichten.md](../runbooks/gezichten.md) (de gegevens, de sleutels, wissen, de wet).
-- [beslissingen](../fase-0/beslissingen.md): B49–B60 en B61–B70 voor fase 6. B53 en B57 zijn
-  besloten; de rest is voorstel.
+- [beslissingen](../fase-0/beslissingen.md): B49–B71 voor fase 6. B53 en B57 zijn besloten
+  (3 november 2026); de rest is besloten: standaard, Jonas 2026-11-17.
 
 ## Hoe het gebouwd is
 

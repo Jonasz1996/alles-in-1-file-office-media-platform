@@ -176,12 +176,13 @@ leeg is of op pauze staat: hij wacht anders op de scan.
 ## Hoe goed is het: `analyse-kwaliteit`
 
 **De kwaliteit is niet gemeten**, ook niet voor 0.8.1. In de sandbox zijn er geen echte
-gezichten (Vraag 8 heeft de standaard nee: geen foto's van NASA in CI), dus de drempels zijn
+gezichten (Vraag 8 is nee, besloten: standaard, Jonas 2026-11-17: geen foto's van NASA in CI), dus de drempels zijn
 voorlopig: **0,50** voor groepen en **0,45** voor een voorstel (strenger dan 0,363 van OpenCV), in
 `app/people/faces/drempels.py`. `/beheer` zegt "niet gemeten" tot dit commando gedraaid heeft.
 Twee poorten van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het
-goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan voor
-0.8.1 op "niet gemeten, geen gereedschap"; het gereedschap komt pas met een antwoord op Vraag 8.
+goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die blijven op
+"niet gemeten, geen gereedschap": met Vraag 8 op nee komt dat gereedschap er niet. Wat wel te meten
+is, meet je hieronder.
 
 ```bash
 dc exec -T platform python -m app.cli analyse-kwaliteit
