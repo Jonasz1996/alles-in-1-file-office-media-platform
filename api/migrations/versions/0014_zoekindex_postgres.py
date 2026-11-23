@@ -29,6 +29,7 @@ Op PostgreSQL:
   index. Geen extensie zoals pg_trgm: alleen wat PostgreSQL zelf heeft (plan 0.8.2, vraag 1).
 - fts_refresh(nums, force): de rijen van die nums opnieuw uit de bron, alleen buiten een herbouw
   of voor nums die de herbouw al deed (zoals schema.in_), of altijd met force (de herbouw zelf).
+  De cursor leest hij met FOR SHARE: een stuk van de herbouw en een schrijver wachten op elkaar.
 - Triggers: node (nieuw, naam of inhoud anders, weg), blob_text, photo_ocr en media_item houden
   fts_node gelijk met de bron.
 - De index wordt meteen gevuld (de update loopt met de app uit).
@@ -174,7 +175,12 @@ BEGIN
     RETURN;
   END IF;
   IF NOT force THEN
-    SELECT cursor INTO cur FROM search_state WHERE id = 1;
+    -- FOR SHARE: een stuk van de herbouw (rebuild._chunk) zet de cursor met een UPDATE van deze
+    -- rij. Loopt dat stuk, dan wacht deze trigger tot het klaar is en leest hij de nieuwe
+    -- cursor. Leest hij eerst, dan wacht het stuk tot deze transactie klaar is, en ziet het
+    -- haar rijen. Anders kon een stuk een rij met de oude bron schrijven terwijl deze
+    -- schrijver hem oversloeg (review van PR #6, F4).
+    SELECT cursor INTO cur FROM search_state WHERE id = 1 FOR SHARE;
   END IF;
   DELETE FROM fts_node WHERE rowid = ANY(nums) AND (cur IS NULL OR rowid <= cur);
   INSERT INTO fts_node (rowid, tsv, otsv, capped) SELECT * FROM fts_rows(nums, cur);

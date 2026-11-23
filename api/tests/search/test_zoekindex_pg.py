@@ -12,6 +12,8 @@ Wat hier vastligt, alleen op PostgreSQL (marker pg):
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 import sqlalchemy as sa
 from alembic import command
@@ -382,3 +384,35 @@ async def test_de_functies_van_de_index_in_een_parallel_plan(settings):
         blokken = dict(found.all())
         assert set(blokken) == {"cf_add", "fts_doc"}
         assert set(blokken.values()) == {"u"}
+
+
+async def test_een_herbouw_wacht_op_een_schrijver_die_al_bezig_is(settings):
+    """Een schrijver begint terwijl de herbouw nog niets deed (cursor 0): zijn trigger slaat
+    de rij over, want die komt in een stuk. Het stuk mag dan niet klaar zijn met de oude naam
+    voor de schrijver commit: dan bleef fts_node oud (review van PR #6, F4). fts_refresh leest
+    de cursor met FOR SHARE; het stuk wacht op de commit van de schrijver en ziet de nieuwe
+    naam."""
+    w = await W.bouw_async(settings)
+    engine = get_engine(settings)
+    async with engine.begin() as conn:
+        await conn.execute(sa.text("UPDATE search_state SET cursor = 0 WHERE id = 1"))
+
+    async def stuk() -> tuple[int, bool]:
+        async with engine.begin() as conn:
+            return await rebuild._chunk(conn, 100_000)
+
+    async with engine.connect() as schrijver:
+        await schrijver.execute(
+            sa.text("UPDATE node SET search_name = 'okapiplan.txt' WHERE id = :i"),
+            {"i": w.ids["brief"]},
+        )
+        taak = asyncio.create_task(stuk())
+        await asyncio.sleep(1.0)
+        wachtte = not taak.done()
+        await schrijver.commit()
+        _, klaar = await taak
+    assert klaar
+    assert await een(settings, "SELECT cursor FROM search_state WHERE id = 1") is None
+    async with engine.connect() as conn:
+        await conn.run_sync(check_fts)
+    assert wachtte
