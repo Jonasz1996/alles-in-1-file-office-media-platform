@@ -1,6 +1,7 @@
 # Fase 11, stap 5c: AI-upscaling op de RTX 3060 Ti (ontwerp)
 
-Stand: 22-11-2026, ontwerp, nog niet gebouwd.
+Stand: 23-11-2026. Gebouwd: de app-kant (rij, venster, API) en de container in
+`infra/upscaler/` (met de stappen voor de host in de README). Nog niet op de kaart gemeten.
 
 ## Wat vaststaat (Jonas)
 
@@ -25,12 +26,12 @@ Stand: 22-11-2026, ontwerp, nog niet gebouwd.
 2. **Een eigen container `upscaler`**, alleen op jbogaertmedia2 (in ClusterForge vastgezet op
    die node). Hij haalt werk bij de app via de interne API met een eigen token. Het werk is:
    welk bestand, en vanaf welk stuk.
-3. **In stukken van 30 s.** De container doet per stuk dit:
+3. **In stukken van 10 s** (eerst 30 s; 10 s houdt de tijdelijke PNG's onder ~4 GB). De container doet per stuk dit:
    - ffmpeg pakt de beelden uit op de CPU;
    - het AI-model vergroot ze ×2 op de GPU;
    - de beelden worden weer gecodeerd tot één stuk.
-   Elk klaar stuk wordt bewaard. Om :40 stopt hij na het lopende stuk (een stuk duurt hooguit
-   ~1 minuut, dus ruim voor :45). Het volgende uur gaat hij verder bij het volgende stuk.
+   Elk klaar stuk wordt bewaard. Hij begint geen stuk meer als de tijd tot :40 korter is dan het
+   vorige stuk × 1,3. Het volgende uur gaat hij verder bij het volgende stuk.
 4. **VRAM-grens.** De container kiest de tile-grootte zo dat hij onder een grens blijft (standaard
    4 GB van de 8 GB). Ziet `nvidia-smi` vóór de start een ander proces met veel geheugen, dan
    wacht hij tot het volgende venster.

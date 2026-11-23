@@ -925,6 +925,10 @@ jobs:
           "${single[@]}" "${analyse[@]}" --profile omzetten config -q
           # Mediabeheer (fase 11): qBittorrent en Prowlarr
           "${single[@]}" -f infra/single/compose.arr.yaml config -q
+          # AI-upscaling (fase 11, stap 5c): de container voor de node met de RTX 3060 Ti
+          cp infra/upscaler/.env.example infra/upscaler/.env
+          docker compose -f infra/upscaler/compose.yaml config -q
+          rm infra/upscaler/.env
           # De afscherming van DS zoals ontworpen: geen poort naar buiten, een intern netwerk,
           # cap_drop ALL met alleen deze capabilities, no-new-privileges en pids_limit
           "${single[@]}" -f infra/single/compose.office.yaml -f infra/single/compose.office-limits.yaml \

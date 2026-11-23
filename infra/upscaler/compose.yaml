@@ -1,0 +1,23 @@
+# De upscaler (fase 11, stap 5c), alleen op jbogaertmedia2 (de node met de RTX 3060 Ti).
+# Vóór de eerste start: de stappen in README.md (driver op de Proxmox-host, de kaart naar deze
+# LXC, NVIDIA container toolkit). Het token maak je op /beheer → Media → AI-upscaling.
+#
+#   cp .env.example .env   # PLATFORM_URL en UPSCALER_TOKEN invullen
+#   docker compose up -d --build
+services:
+  upscaler:
+    build: .
+    image: platform-upscaler:local
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Tijdelijke beelden: per stuk van 10 s ongeveer 4 GB; het origineel en de klare stukken
+      # blijven tot de film klaar is
+      - ${UPSCALER_WORK_DIR:-./work}:/work
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${UPSCALER_GPU:-0}"]
+              capabilities: [gpu, compute, video, utility, graphics]
