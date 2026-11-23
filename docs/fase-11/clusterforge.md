@@ -90,7 +90,49 @@ docker ps --format '{{.Names}}: {{.Status}}' | grep -E 'platform|qbittorrent|pro
 Op de andere nodes mogen qbittorrent en prowlarr **niet** draaien. In /beheer → Media moet
 "Mediabeheer" qBittorrent en Prowlarr als verbonden tonen.
 
-## 7. Terug
+## 7. Films en series op 2 kopieën, de rest op 3
+
+Jonas (23-11-2026): per plek, niet per soort bestand. Wat in een bibliotheek voor films of series
+staat (vroeger Plex) mag op 2 kopieën; al de rest (vroeger Nextcloud, ook de video's daarin)
+blijft op 3.
+
+Onze bestanden staan in SeaweedFS op hun hash (`blobs/ab/cd/<sha256>`), niet op hun plek in de
+boom. Daarom zet de app inhoud waar alleen films en series naar wijzen in een tweede map,
+`blobs-media/`, naast `blobs/` (`api/app/blobsplit.py`, elk uur, en bij de start). Staat dezelfde
+inhoud ook in iemands eigen map, dan blijft of komt ze terug in `blobs/`. Nieuwe downloads en
+uploads komen eerst in `blobs/` en verhuizen binnen het uur. Een verhuisde kopie blijft nog een
+dag in `.weg/` liggen (een lopende stream leest verder) en gaat dan weg.
+
+Stappen, na de update (niet vóór 0.8.2):
+
+1. **Het pad in de filer zoeken.** De app ziet `/data/blobs`; in SeaweedFS is dat
+   `<filerpad van de mount>/blobs`. Op de VIP-node: `mount | grep -i weed` of de unit van de
+   mount bekijken (`-filer.path=`, standaard `/`). Daarna in `weed shell`: `fs.ls <pad>` moet
+   `blobs` tonen.
+2. **De regel zetten** (in `weed shell`, één keer, geldt voor het hele cluster):
+   ```
+   fs.configure -locationPrefix=<pad>/blobs-media/ -collection=media -replication=001 -apply
+   ```
+   `001` is 2 kopieën op verschillende servers; met 3 nodes overleeft dat het verlies van één
+   node. Een eigen collectie maakt het nakijken makkelijk (stap 5).
+3. **Let op de mount-opties.** Geeft de mount zelf `-replication=` of `-collection=` mee, dan
+   wint die van de regel uit stap 2. Haal ze dan weg uit de mount en zet de standaard (002) op
+   de master (`-defaultReplication=002`) of in een regel voor `<pad>/`:
+   `fs.configure -locationPrefix=<pad>/ -replication=002 -apply`.
+4. **Aanzetten in de app:** `PLATFORM_BLOB_SPLIT=true` in de omgeving van de app-container
+   (`/etc/clusterforge/platform.env`, zoals de andere PLATFORM_-instellingen; de template moet
+   die doorgeven), dan "Platform bijwerken" of de app herstarten. De eerste ronde kopieert alle
+   films en series één keer (dat duurt even en vraagt tijdelijk extra ruimte per film).
+5. **Nakijken:** in `weed shell` `volume.list` (of `collection.list`): de volumes van collectie
+   `media` hebben `replication:001`, de rest `002`. In de log van de app staat na een ronde
+   `blobsplit: {'naar_media': …}`.
+
+Zonder `PLATFORM_BLOB_SPLIT` doet de app niets en blijft alles in `blobs/`. Uitzetten kan altijd:
+wat al in `blobs-media/` staat, blijft daar leesbaar (de app kijkt in beide mappen). Terug naar 3
+kopieën voor alles: de regel van stap 2 op `-replication=002` zetten en de map één keer laten
+herschrijven (`fs.configure` geldt alleen voor wat nieuw geschreven wordt).
+
+## 8. Terug
 
 "Platform terug" zet de vorige versie terug. Omdat 0016 tabellen toevoegt, eerst de downgrade
 van de database (het commando doet `alembic downgrade <vorige head>` voor het de oude versie

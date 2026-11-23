@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     clients_dir: Path = Path("clients")
     # Waar GitHub de gebouwde apps zet (release "clients"); leeg: niet ophalen (app.client_fetch)
     clients_repo: str = "Jonasz1996/alles-in-1-file-office-media-platform"
+    # Films en series in blobs-media/ (app/blobsplit.py), voor 2 kopieën in SeaweedFS
+    blob_split: bool = False
 
     # Poorten in de container. https start pas zodra er een certificaat is; het domein
     # stel je in op /beheer.

@@ -555,6 +555,12 @@ async def lifespan(app: FastAPI):
         if settings.environment == "production"
         else None
     )
+    # Films en series naar blobs-media/ (2 kopieën in het cluster); alleen met PLATFORM_BLOB_SPLIT
+    split_task = None
+    if settings.blob_split:
+        from app import blobsplit
+
+        split_task = asyncio.create_task(blobsplit.loop(settings), name="blobsplit")
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal(app):
         yield
@@ -572,6 +578,8 @@ async def lifespan(app: FastAPI):
         arr_task.cancel()
     if clients_task is not None:
         clients_task.cancel()
+    if split_task is not None:
+        split_task.cancel()
     await certs.stop()
     log.info("Platform %s gestopt", __version__)
 
