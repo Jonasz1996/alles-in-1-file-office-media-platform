@@ -48,7 +48,9 @@ jobs:
   api-postgres:
     name: API op PostgreSQL (cluster)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # De hele suite: lokaal 42,6 min (4 cores), in CI geschat ±30 min (docs/fase-6/i3/w2.md).
+    # Het doel blijft < 45 min; 60 is de grens van de job zelf, met marge (geen poort voor tests)
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17-alpine
@@ -72,9 +74,12 @@ jobs:
           python-version: "3.12"
       - name: ffmpeg voor de previews van video's
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Dezelfde suite als de job api, dus ook de scans van OCR (tests/ocr/scans.py) in DejaVu Sans
+      - name: DejaVu Sans voor de scans van OCR (X1)
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - run: uv sync --frozen
       # faulthandler_timeout: een test die vastloopt, laat na 10 minuten zijn stacks zien (geen
-      # plugin voor een tijdslimiet; de job zelf stopt na 45 minuten)
+      # plugin voor een tijdslimiet; de job zelf stopt na 60 minuten)
       - run: >-
           uv run pytest -q -rf -o faulthandler_timeout=600
           --junitxml="$RUNNER_TEMP/api-postgres.xml"
