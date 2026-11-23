@@ -19,8 +19,8 @@ Op PostgreSQL:
   app/search/engine.py dezelfde vorm houden). tsv: naam (A), titel uit de mediabibliotheek (B),
   tekst en OCR van de inhoud (C), meta (D). otsv: tsv met de OCR van een foto (C) erbij, alleen
   als die er is; die is alleen van de eigenaar (Keuze 16 en 25a). GIN op tsv en otsv.
-- fts_name: een view (rowid, search_name) op node; de stukken van namen zoeken met LIKE, met een
-  trigram-index op node.search_name als pg_trgm er is (anders zonder index).
+- fts_name: een view (rowid, search_name) op node; de stukken van namen zoeken met LIKE, zonder
+  index. Geen extensie zoals pg_trgm: alleen wat PostgreSQL zelf heeft (plan 0.8.2, vraag 1).
 - fts_refresh(nums, force): de rijen van die nums opnieuw uit de bron, alleen buiten een herbouw
   of voor nums die de herbouw al deed (zoals schema.in_), of altijd met force (de herbouw zelf).
 - Triggers: node (nieuw, naam of inhoud anders, weg), blob_text, photo_ocr en media_item houden
@@ -166,22 +166,6 @@ WHEN = {
     ),
 }
 
-TRGM = """
-DO $$
-BEGIN
-  BEGIN
-    CREATE EXTENSION IF NOT EXISTS pg_trgm;
-  EXCEPTION WHEN others THEN
-    RAISE NOTICE 'pg_trgm niet beschikbaar: de stukken van namen zoeken zonder index';
-  END;
-  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS ix_node_search_name_trgm ON node '
-            'USING gin (search_name gin_trgm_ops)';
-  END IF;
-END $$
-"""
-
-
 # fase6_fill (0013) zette een cursor van search_state altijd terug op NULL: op PostgreSQL liep
 # toen nooit een herbouw. Met de index van 0014 is een cursor een herbouw die loopt (search-
 # triggers, db-copy, beheer); de weekcontrole mag die niet afbreken. Dezelfde functie, zonder
@@ -218,7 +202,6 @@ def upgrade() -> None:
     op.execute("CREATE INDEX ix_fts_node_tsv ON fts_node USING gin (tsv)")
     op.execute("CREATE INDEX ix_fts_node_otsv ON fts_node USING gin (otsv)")
     op.execute("CREATE VIEW fts_name AS SELECT num AS rowid, search_name FROM node")
-    op.execute(TRGM)
     for sql in FUNCTION_SQL.values():
         op.execute(sql)
     for name, table, when, func in TRIGGERS:
@@ -246,4 +229,5 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS cf_fold(text)")
     op.execute("DROP VIEW IF EXISTS fts_name")
     op.execute("DROP TABLE IF EXISTS fts_node")
+    # Een eerdere vorm van 0014 (PR #6, vóór de samenvoeging) maakte deze index met pg_trgm
     op.execute("DROP INDEX IF EXISTS ix_node_search_name_trgm")
