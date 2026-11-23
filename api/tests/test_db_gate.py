@@ -36,7 +36,7 @@ from app.storage import BlobStore
 from tests import test_files
 from tests.factories import create_user
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("de schrijfpoort is voor het ene schrijfslot van SQLite")]
 
 
 def maker(settings):

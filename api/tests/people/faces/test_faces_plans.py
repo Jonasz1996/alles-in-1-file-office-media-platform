@@ -23,7 +23,7 @@ from tests.factories import create_user, maker
 from tests.people.faces.conftest import aan, draai, foto
 from tests.test_photos import login
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("EXPLAIN QUERY PLAN van SQLite")]
 
 A = (0.10, 0.10, 0.20, 0.25)
 B = (0.60, 0.20, 0.20, 0.25)

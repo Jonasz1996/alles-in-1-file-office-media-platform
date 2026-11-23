@@ -56,7 +56,7 @@ from tests.test_media_import import run_import, world  # noqa: F401
 from tests.test_shares import person
 from tests.test_user_delete import block_and_delete
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("FTS5 en de triggers van 0010 in SQLite (spike S2)")]
 
 
 def pad(settings) -> Path:

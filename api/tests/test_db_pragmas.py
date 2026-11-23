@@ -29,7 +29,7 @@ from app.migrate import alembic_config
 from app.search import weekcheck
 from tests import test_files
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("PRAGMA's van SQLite")]
 
 WANT = (1, 2)  # secure_delete aan, temp_store MEMORY
 

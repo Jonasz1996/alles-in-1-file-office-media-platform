@@ -29,6 +29,8 @@ async def run_cli(settings, *args: str, stdin: bytes | None = None):
         "PLATFORM_DATA_DIR": str(settings.data_dir),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    if settings.database_url:  # PostgreSQL: het subproces moet dezelfde database zien
+        env["PLATFORM_DATABASE_URL"] = settings.database_url
     return await anyio.run_process(
         [sys.executable, "-m", "app.cli", *args],
         cwd=API_DIR,
@@ -45,11 +47,7 @@ async def revision(settings) -> str:
 
 async def has_table(settings, name: str) -> bool:
     async with get_engine(settings).connect() as conn:
-        found = await conn.scalar(
-            sa.text("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=:n"),
-            {"n": name},
-        )
-    return bool(found)
+        return await conn.run_sync(lambda c: sa.inspect(c).has_table(name))
 
 
 def test_check_downgrade():
@@ -192,7 +190,14 @@ async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
     """Een album met twee items van een regel die niet gedeeld worden, en één met de hand."""
     user, root, album = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     foto1, foto2, foto3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    moment = datetime(2026, 11, 3, 9, 0, tzinfo=UTC).isoformat()
+    pg = bool(settings.database_url)
+    moment = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+    if not pg:
+        moment = moment.isoformat()
+
+    def h(x: uuid.UUID) -> uuid.UUID | str:
+        return x if pg else x.hex
+
     async with get_engine(settings).begin() as conn:
         await conn.execute(
             sa.text(
@@ -200,7 +205,7 @@ async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
                 "quota_bytes, root_id, created_at) VALUES (:id, 'eva@example.nl', 'Eva', 'x', "
                 "'user', 0, :root, :t)"
             ),
-            {"id": user.hex, "root": root.hex, "t": moment},
+            {"id": h(user), "root": h(root), "t": moment},
         )
         for node_id, name, kind in (
             (root, "", "dir"),
@@ -213,13 +218,14 @@ async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
                 sa.text(
                     "INSERT INTO node (id, parent_id, owner_id, name, kind, size, created_at, "
                     "modified_at, search_name) VALUES (:id, :parent, :owner, :name, :kind, 0, "
-                    ":t, :t, :name)"
+                    ":t, :t, :sname)"
                 ),
                 {
-                    "id": node_id.hex,
-                    "parent": None if kind != "file" else root.hex,
-                    "owner": user.hex,
+                    "id": h(node_id),
+                    "parent": None if kind != "file" else h(root),
+                    "owner": h(user),
                     "name": name,
+                    "sname": name,
                     "kind": kind,
                     "t": moment,
                 },
@@ -235,8 +241,8 @@ async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
                     "VALUES (:album, :node, :t, :source, :shared)"
                 ),
                 {
-                    "album": album.hex,
-                    "node": node_id.hex,
+                    "album": h(album),
+                    "node": h(node_id),
                     "t": moment,
                     "source": source,
                     "shared": shared,
@@ -344,6 +350,7 @@ def _backups(settings) -> list[Path]:
 
 
 @pytest.mark.anyio
+@pytest.mark.sqlite_only("sqlite3.backup; op PostgreSQL maakt db-backup een pg_dump")
 async def test_db_backup_maakt_een_kopie_terwijl_de_app_draait(settings):
     """Keuze 52: een kopie met sqlite3.Connection.backup, genoemd naar de head en de tijd. De
     app blijft draaien: deze test houdt een schrijver open."""
@@ -386,6 +393,7 @@ async def test_db_backup_maakt_een_kopie_terwijl_de_app_draait(settings):
 
 
 @pytest.mark.anyio
+@pytest.mark.sqlite_only("sqlite3.backup; op PostgreSQL maakt db-backup een pg_dump")
 async def test_db_backup_houdt_per_head_de_nieuwste(settings):
     folder = settings.data_dir / "backup"
     folder.mkdir()
@@ -413,6 +421,7 @@ async def test_db_backup_houdt_per_head_de_nieuwste(settings):
 
 
 @pytest.mark.anyio
+@pytest.mark.sqlite_only("sqlite3.backup; op PostgreSQL maakt db-backup een pg_dump")
 async def test_db_backup_zonder_database(settings, tmp_path):
     leeg = tmp_path / "leeg"
     leeg.mkdir()

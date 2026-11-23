@@ -26,7 +26,7 @@ from app import db, jobs
 from app import migrate as migrate_mod
 from app.db import Checkpoint, get_engine, sqlite_path, wal_truncate, wal_truncate_retry
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("de WAL van SQLite")]
 
 
 def _wal(path: Path) -> int:
