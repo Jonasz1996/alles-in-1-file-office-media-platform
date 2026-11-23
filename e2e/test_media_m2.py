@@ -65,7 +65,7 @@ def expect_focus_text(page: Any, text: str) -> None:
     )
 
 
-def tab_to(page: Any, selector: str, presses: int = 12) -> None:
+def tab_to(page: Any, selector: str, presses: int = 20) -> None:
     """Tab tot het element van selector de focus heeft (hooguit presses keer)."""
     for _ in range(presses):
         page.keyboard.press("Tab")

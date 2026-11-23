@@ -280,7 +280,10 @@ async def wandel(data_dir: Path) -> dict[str, Any]:
     from app.migrate import upgrade
     from app.security import SecurityConfig, SecurityPolicy, login_limiter
 
-    settings = Settings(data_dir=data_dir, web_dist=data_dir / "web", jwt_secret="test" * 8)
+    # clients_repo leeg: POST /api/v1/apps/refresh gaat in een test niet naar GitHub
+    settings = Settings(
+        data_dir=data_dir, web_dist=data_dir / "web", jwt_secret="test" * 8, clients_repo=""
+    )
     assert not settings.analyse_enabled
     await upgrade(settings)
     app.dependency_overrides[get_settings] = lambda: settings

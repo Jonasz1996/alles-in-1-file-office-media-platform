@@ -51,4 +51,9 @@ export default {
   // Van de web-app zelf (api.ts): geen verbinding, en een fout zonder tekst van de server
   network: { en: "No connection to the server. Please try again." },
   http_error: { en: "Error {status}" },
+  // Algemene codes (fase 11)
+  conflict: { en: "This is not possible in its current state" },
+  forbidden: { en: "You are not allowed to do this" },
+  unauthorized: { en: "Not signed in or the token is not valid" },
+  clients_fetch: { en: "Fetching the apps from GitHub failed" },
 } satisfies Record<string, { en: string }>;

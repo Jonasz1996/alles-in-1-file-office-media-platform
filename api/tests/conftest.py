@@ -134,6 +134,7 @@ async def database_url(tmp_path):
 @pytest.fixture
 async def settings(tmp_path, database_url):
     extra = {"database_url": database_url} if PG_URL else {}
+    extra["clients_repo"] = ""  # nooit naar GitHub vanuit een test (POST /api/v1/apps/refresh)
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
