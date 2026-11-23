@@ -2,7 +2,8 @@
 
 Op SQLite wissen de triggers van 0011 en 0012 de gezichten en de beeldvectoren van een node
 die weggaat; op PostgreSQL doen de triggers van 0013 dat (migrations/versions/0013_postgres.py,
-TRIGGERS). Ontbreekt er een, of staat er een uit (ALTER TABLE … DISABLE TRIGGER), dan blijven
+TRIGGERS). Ontbreekt er een, of vuurt er een niet in een gewone sessie (ALTER TABLE … DISABLE
+TRIGGER, of ENABLE REPLICA TRIGGER zonder session_replication_role = replica), dan blijven
 gezichten van gewiste foto's staan. Daarom staat de analyse op PostgreSQL alleen aan als
 check() ze allemaal aan zag (Settings.analyse_pg_block: anders no_pg_triggers).
 
@@ -37,14 +38,23 @@ TRIGGERS: tuple[tuple[str, str], ...] = (
     ("person_bd_face", "person"),
 )
 
-# De triggers die aan staan (tgenabled 'D' is uit), op de tabellen in het schema van de app
+# De triggers die in deze sessie vuren, op de tabellen in het schema van de app. tgenabled: 'O'
+# (ENABLE) vuurt met session_replication_role origin of local, 'A' (ENABLE ALWAYS) altijd, 'R'
+# (ENABLE REPLICA) alleen met replica, 'D' nooit. De sessie van check() heeft dezelfde rol en
+# database als de app, dus ook dezelfde standaard voor session_replication_role
 FOUND = text(
     """
     SELECT t.tgname, c.relname
     FROM pg_trigger t
     JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE NOT t.tgisinternal AND t.tgenabled <> 'D' AND n.nspname = current_schema()
+    WHERE NOT t.tgisinternal AND n.nspname = current_schema()
+      AND CASE t.tgenabled
+            WHEN 'A' THEN true
+            WHEN 'O' THEN current_setting('session_replication_role') <> 'replica'
+            WHEN 'R' THEN current_setting('session_replication_role') = 'replica'
+            ELSE false
+          END
     """
 )
 

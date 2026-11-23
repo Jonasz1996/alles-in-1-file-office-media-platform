@@ -116,6 +116,25 @@ async def test_een_trigger_uit_houdt_de_analyse_uit(settings, caplog):
             await conn.execute(text("ALTER TABLE person ENABLE TRIGGER person_bd_face"))
         assert await pgcheck.check(s) and s.analyse_on
 
+        # ENABLE REPLICA: tgenabled 'R', alleen met session_replication_role = replica. In een
+        # gewone sessie (origin) vuurt hij nooit, dus telt hij als uit (review golf 2, F2)
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE person ENABLE REPLICA TRIGGER person_bd_face"))
+            assert await conn.scalar(text("SHOW session_replication_role")) == "origin"
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="platform.analyse"):
+            assert await pgcheck.check(s) is False
+        assert not s.analyse_on and s.analyse_pg_block() == "no_pg_triggers"
+        logged = [r.getMessage() for r in caplog.records if r.name == "platform.analyse"]
+        assert len(logged) == 1 and logged[0].endswith(": person_bd_face"), logged
+        # ENABLE ALWAYS: tgenabled 'A', vuurt in elke sessie, dus aan
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE person ENABLE ALWAYS TRIGGER person_bd_face"))
+        assert await pgcheck.check(s) and s.analyse_on
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE person ENABLE TRIGGER person_bd_face"))
+        assert await pgcheck.check(s) and s.analyse_on
+
         # Zonder PLATFORM_ANALYSE_POSTGRES: geen enkele vraag aan de database, en uit
         gezien: list[str] = []
 
