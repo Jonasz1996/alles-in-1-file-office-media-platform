@@ -1,9 +1,9 @@
 name: Desktop-app
 
-# Fase 11, stap 11: de desktop-app (apps/desktop, Tauri 2) bouwen voor Windows (.exe, een
-# installatieprogramma van NSIS) en Linux (.deb). Download ze onder Actions → deze run →
-# Artifacts; een beheerder zet ze op het platform als <data>/apps/platform-windows.exe en
-# <data>/apps/platform-linux.deb (de downloadpagina /apps biedt ze dan aan).
+# Fase 11, stap 11-12: de desktop-app (apps/desktop, Tauri 2) bouwen voor Windows (.exe, een
+# installatieprogramma van NSIS), Linux (.deb, amd64), Linux op arm64 (.deb, ook voor
+# telefoons met Droidian) en macOS (.dmg, Intel en Apple-chip in één). Ze gaan in de release
+# "clients"; het platform haalt ze daar zelf op voor de downloadpagina /apps.
 on:
   push:
     paths:
@@ -21,9 +21,20 @@ jobs:
           - name: Windows
             os: windows-latest
             bundle: nsis
+            out: platform-windows.exe
           - name: Linux
             os: ubuntu-22.04
             bundle: deb
+            out: platform-linux.deb
+          - name: Linux arm64 en Droidian
+            os: ubuntu-22.04-arm
+            bundle: deb
+            out: platform-linux-arm64.deb
+          - name: macOS
+            os: macos-latest
+            bundle: dmg
+            target: universal-apple-darwin
+            out: platform-macos.dmg
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -39,6 +50,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
@@ -46,15 +59,12 @@ jobs:
         with:
           node-version: "22"
       - name: Bouwen
-        run: npx --yes @tauri-apps/cli@2.12.6 build --bundles ${{ matrix.bundle }}
+        run: npx --yes @tauri-apps/cli@2.12.6 build --bundles ${{ matrix.bundle }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Namen voor de downloadpagina
         run: |
           mkdir -p out
-          if [ "${{ runner.os }}" = Windows ]; then
-            cp src-tauri/target/release/bundle/nsis/*.exe out/platform-windows.exe
-          else
-            cp src-tauri/target/release/bundle/deb/*.deb out/platform-linux.deb
-          fi
+          dir=src-tauri/target/${{ matrix.target && format('{0}/', matrix.target) || '' }}release/bundle/${{ matrix.bundle }}
+          cp "$dir"/*.${{ matrix.bundle == 'nsis' && 'exe' || matrix.bundle }} out/${{ matrix.out }}
       - name: In de release "clients" zetten (het platform haalt ze daar op)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
@@ -66,6 +76,6 @@ jobs:
           gh release upload clients out/* --clobber
       - uses: actions/upload-artifact@v4
         with:
-          name: platform-${{ matrix.bundle == 'nsis' && 'windows' || 'linux' }}
+          name: ${{ matrix.out }}
           path: apps/desktop/out/*
           retention-days: 30

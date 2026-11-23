@@ -89,8 +89,17 @@ async fn error_of(res: Response) -> anyhow::Error {
     } else {
         (None, detail.as_str().unwrap_or("").to_owned())
     };
-    let message = if message.is_empty() { format!("HTTP {status}") } else { message };
-    ApiError { status, code, message }.into()
+    let message = if message.is_empty() {
+        format!("HTTP {status}")
+    } else {
+        message
+    };
+    ApiError {
+        status,
+        code,
+        message,
+    }
+    .into()
 }
 
 impl Api {
@@ -100,7 +109,10 @@ impl Api {
             .user_agent(concat!("platform-desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("http-client");
-        Api { http, access: Mutex::new(None) }
+        Api {
+            http,
+            access: Mutex::new(None),
+        }
     }
 
     fn base() -> Result<String> {
@@ -111,9 +123,16 @@ impl Api {
     }
 
     pub async fn info(&self, base: &str) -> Result<()> {
-        let res = self.http.get(format!("{}/api/v1/info", base.trim_end_matches('/'))).send().await?;
+        let res = self
+            .http
+            .get(format!("{}/api/v1/info", base.trim_end_matches('/')))
+            .send()
+            .await?;
         if !res.status().is_success() {
-            bail!("Geen platform op dit adres (HTTP {})", res.status().as_u16());
+            bail!(
+                "Geen platform op dit adres (HTTP {})",
+                res.status().as_u16()
+            );
         }
         Ok(())
     }
@@ -123,7 +142,12 @@ impl Api {
         let res = self
             .http
             .post(format!("{}/api/v1/auth/login", Self::base()?))
-            .json(&LoginIn { email, password, code, device: &dev })
+            .json(&LoginIn {
+                email,
+                password,
+                code,
+                device: &dev,
+            })
             .send()
             .await?;
         if !res.status().is_success() {
@@ -150,7 +174,10 @@ impl Api {
         if let (Some(server), Some(rt)) = (cfg.server.clone(), cfg.refresh_token.clone()) {
             let _ = self
                 .http
-                .post(format!("{}/api/v1/auth/logout", server.trim_end_matches('/')))
+                .post(format!(
+                    "{}/api/v1/auth/logout",
+                    server.trim_end_matches('/')
+                ))
                 .json(&serde_json::json!({ "refresh_token": rt }))
                 .send()
                 .await;
@@ -170,7 +197,9 @@ impl Api {
         if access.is_some() && *access != old {
             return Ok(());
         }
-        let rt = config::load().refresh_token.ok_or_else(|| anyhow!("Niet ingelogd"))?;
+        let rt = config::load()
+            .refresh_token
+            .ok_or_else(|| anyhow!("Niet ingelogd"))?;
         let res = self
             .http
             .post(format!("{}/api/v1/auth/refresh", Self::base()?))
@@ -222,12 +251,18 @@ impl Api {
     }
 
     pub async fn root(&self) -> Result<Listing> {
-        Ok(self.call(Method::GET, "/api/v1/files/root", || None).await?.json().await?)
+        Ok(self
+            .call(Method::GET, "/api/v1/files/root", || None)
+            .await?
+            .json()
+            .await?)
     }
 
     pub async fn children(&self, id: &str) -> Result<Vec<Node>> {
         let l: Listing = self
-            .call(Method::GET, &format!("/api/v1/files/{id}/children"), || None)
+            .call(Method::GET, &format!("/api/v1/files/{id}/children"), || {
+                None
+            })
             .await?
             .json()
             .await?;
@@ -236,17 +271,28 @@ impl Api {
 
     /// De map `name` in `parent` (bestaat hij al, dan die).
     pub async fn folder(&self, parent: &str, name: &str) -> Result<Node> {
-        if let Some(n) = self.children(parent).await?.into_iter().find(|n| n.kind == "dir" && n.name == name) {
+        if let Some(n) = self
+            .children(parent)
+            .await?
+            .into_iter()
+            .find(|n| n.kind == "dir" && n.name == name)
+        {
             return Ok(n);
         }
         let body = serde_json::to_vec(&serde_json::json!({ "name": name }))?;
         let res = self
-            .http_json(Method::POST, &format!("/api/v1/files/{parent}/folders"), body)
+            .http_json(
+                Method::POST,
+                &format!("/api/v1/files/{parent}/folders"),
+                body,
+            )
             .await;
         match res {
             Ok(r) => Ok(r.json().await?),
             Err(e) => {
-                if e.downcast_ref::<ApiError>().and_then(|a| a.code.as_deref()) == Some("name_taken") {
+                if e.downcast_ref::<ApiError>().and_then(|a| a.code.as_deref())
+                    == Some("name_taken")
+                {
                     self.children(parent)
                         .await?
                         .into_iter()
@@ -288,7 +334,14 @@ impl Api {
     }
 
     /// Een bestand van deze computer uploaden in map `folder` als `name`.
-    pub async fn upload(&self, folder: &str, name: &str, file: &Path, conflict: &str, mtime_ms: Option<u64>) -> Result<Node> {
+    pub async fn upload(
+        &self,
+        folder: &str,
+        name: &str,
+        file: &Path,
+        conflict: &str,
+        mtime_ms: Option<u64>,
+    ) -> Result<Node> {
         let mut path = format!(
             "/api/v1/files/{folder}/upload?name={}&conflict={conflict}",
             urlencoding::encode(name)
@@ -309,10 +362,15 @@ impl Api {
     /// De inhoud van een bestand van het platform naar `target` (eerst naar een tijdelijk
     /// bestand ernaast, dan in één keer op zijn plaats).
     pub async fn download(&self, id: &str, target: &Path) -> Result<()> {
-        let res = self.call(Method::GET, &format!("/api/v1/files/{id}/content"), || None).await?;
+        let res = self
+            .call(Method::GET, &format!("/api/v1/files/{id}/content"), || None)
+            .await?;
         let tmp = target.with_file_name(format!(
             ".{}.platform-tmp",
-            target.file_name().and_then(|n| n.to_str()).unwrap_or("download")
+            target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("download")
         ));
         let mut out = tokio::fs::File::create(&tmp).await?;
         let mut stream = res.bytes_stream();
@@ -327,7 +385,8 @@ impl Api {
 
     /// Naar de prullenbak van het platform (terug te zetten).
     pub async fn trash(&self, id: &str) -> Result<()> {
-        self.call(Method::DELETE, &format!("/api/v1/files/{id}"), || None).await?;
+        self.call(Method::DELETE, &format!("/api/v1/files/{id}"), || None)
+            .await?;
         Ok(())
     }
 }

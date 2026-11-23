@@ -14,8 +14,8 @@ import { toast } from "../ui/toast";
 
 interface ClientApp {
   id: string;
-  platform: "webos" | "android" | "windows" | "linux";
-  state: "ready" | "later";
+  platform: "webos" | "android" | "windows" | "linux" | "linuxarm" | "macos" | "ios";
+  state: "ready" | "later" | "web";
   version: string | null;
   file: string | null;
   size: number | null;
@@ -38,14 +38,17 @@ async function download(app: ClientApp): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+// Platformen met uitleg in stappen: about.apps.<platform>.step1 … stepN
+const STEPS: Partial<Record<ClientApp["platform"], number>> = { webos: 4, linuxarm: 3, macos: 3, ios: 3 };
+
 function Steps({ platform }: { platform: ClientApp["platform"] }): JSX.Element | null {
-  if (platform !== "webos") return null;
+  const count = STEPS[platform];
+  if (!count) return null;
   return (
     <ol className="apps-steps">
-      <li>{t("about.apps.webos.step1")}</li>
-      <li>{t("about.apps.webos.step2")}</li>
-      <li>{t("about.apps.webos.step3")}</li>
-      <li>{t("about.apps.webos.step4")}</li>
+      {Array.from({ length: count }, (_, i) => (
+        <li key={i}>{t(`about.apps.${platform}.step${i + 1}` as Parameters<typeof t>[0])}</li>
+      ))}
     </ol>
   );
 }
@@ -103,7 +106,9 @@ export default function AppsPage(_: RouteProps): JSX.Element {
         <section key={app.id} aria-labelledby={`apps-${app.id}`} data-app={app.id}>
           <h2 id={`apps-${app.id}`}>{t(`about.apps.${app.platform}.name`)}</h2>
           <p className="muted">{t(`about.apps.${app.platform}.text`)}</p>
-          {app.state === "ready" ? (
+          {app.state === "web" ? (
+            <Steps platform={app.platform} />
+          ) : app.state === "ready" ? (
             <>
               <p>
                 <Button variant="primary" busy={busy === app.id} onClick={() => void get(app)}>

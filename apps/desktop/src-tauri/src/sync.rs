@@ -58,7 +58,11 @@ pub fn forget_state() {
 }
 
 fn skip(name: &str) -> bool {
-    name.starts_with('.') || name.starts_with("~$") || name.ends_with(".platform-tmp") || name == "desktop.ini" || name == "Thumbs.db"
+    name.starts_with('.')
+        || name.starts_with("~$")
+        || name.ends_with(".platform-tmp")
+        || name == "desktop.ini"
+        || name == "Thumbs.db"
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
@@ -71,7 +75,11 @@ fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
 
 fn local_seen(path: &Path, etag: &str) -> Result<Seen> {
     let meta = std::fs::metadata(path)?;
-    Ok(Seen { size: meta.len(), mtime: mtime_ms(&meta), etag: etag.to_owned() })
+    Ok(Seen {
+        size: meta.len(),
+        mtime: mtime_ms(&meta),
+        etag: etag.to_owned(),
+    })
 }
 
 fn same(path: &Path, seen: &Seen) -> bool {
@@ -94,19 +102,38 @@ fn stamp(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}-{m:02}-{d:02} {:02}{:02}", rest / 3600, rest % 3600 / 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}{:02}",
+        rest / 3600,
+        rest % 3600 / 60
+    )
 }
 
 fn host() -> String {
     std::env::var("COMPUTERNAME")
         .ok()
-        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|h| h.trim().to_owned()))
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|h| h.trim().to_owned())
+        })
+        .filter(|h| !h.is_empty())
+        .or_else(|| {
+            // macOS heeft geen /etc/hostname
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        })
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "computer".into())
 }
 
 fn conflict_name(name: &str) -> String {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let tag = format!("conflict {} {}", stamp(secs), host());
     match name.rfind('.') {
         Some(dot) if dot > 0 => format!("{} ({tag}){}", &name[..dot], &name[dot..]),
@@ -127,7 +154,9 @@ mod tests {
 /// Eén ronde. `progress`: het pad dat nu aan de beurt is.
 pub async fn run(api: &Api, progress: &(dyn Fn(&str) + Sync)) -> Result<Option<Counts>> {
     let cfg = config::load();
-    let Some(folder) = cfg.folder.clone() else { return Ok(None) };
+    let Some(folder) = cfg.folder.clone() else {
+        return Ok(None);
+    };
     if cfg.refresh_token.is_none() {
         return Ok(None);
     }
@@ -135,7 +164,11 @@ pub async fn run(api: &Api, progress: &(dyn Fn(&str) + Sync)) -> Result<Option<C
     let remote = match cfg.remote_folder.clone() {
         Some(id) => id,
         None => {
-            let name = folder.file_name().and_then(|n| n.to_str()).unwrap_or("Computer").to_owned();
+            let name = folder
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Computer")
+                .to_owned();
             let root = api.root().await?;
             let id = api.folder(&root.folder.id, &name).await?.id;
             let keep = id.clone();
@@ -146,7 +179,17 @@ pub async fn run(api: &Api, progress: &(dyn Fn(&str) + Sync)) -> Result<Option<C
     let old = load_state();
     let mut next = State::new();
     let mut counts = Counts::default();
-    walk(api, &folder, &remote, "", &old, &mut next, &mut counts, progress).await?;
+    walk(
+        api,
+        &folder,
+        &remote,
+        "",
+        &old,
+        &mut next,
+        &mut counts,
+        progress,
+    )
+    .await?;
     save_state(&next)?;
     Ok(Some(counts))
 }
@@ -204,7 +247,17 @@ fn walk<'a>(
                     None => api.folder(remote, &name).await?.id,
                 };
                 let sub = format!("{path}/");
-                walk(api, &local_dir, &remote_dir, &sub, old, next, counts, progress).await?;
+                walk(
+                    api,
+                    &local_dir,
+                    &remote_dir,
+                    &sub,
+                    old,
+                    next,
+                    counts,
+                    progress,
+                )
+                .await?;
                 continue;
             }
             progress(&path);
@@ -215,7 +268,15 @@ fn walk<'a>(
                         std::fs::remove_file(lp)?;
                         counts.removed += 1;
                     } else {
-                        let up = api.upload(remote, &name, lp, "replace", Some(local_seen(lp, "")?.mtime)).await?;
+                        let up = api
+                            .upload(
+                                remote,
+                                &name,
+                                lp,
+                                "replace",
+                                Some(local_seen(lp, "")?.mtime),
+                            )
+                            .await?;
                         next.insert(path, local_seen(lp, &up.etag)?);
                         counts.up += 1;
                     }
@@ -239,13 +300,16 @@ fn walk<'a>(
                         next.insert(path, local_seen(lp, &rn.etag)?);
                     } else if here && there {
                         let mtime = local_seen(lp, "")?.mtime;
-                        api.upload(remote, &conflict_name(&name), lp, "rename", Some(mtime)).await?;
+                        api.upload(remote, &conflict_name(&name), lp, "rename", Some(mtime))
+                            .await?;
                         api.download(&rn.id, lp).await?;
                         next.insert(path, local_seen(lp, &rn.etag)?);
                         counts.conflicts += 1;
                     } else if here {
                         let mtime = local_seen(lp, "")?.mtime;
-                        let up = api.upload(remote, &name, lp, "replace", Some(mtime)).await?;
+                        let up = api
+                            .upload(remote, &name, lp, "replace", Some(mtime))
+                            .await?;
                         next.insert(path, local_seen(lp, &up.etag)?);
                         counts.up += 1;
                     } else if there {

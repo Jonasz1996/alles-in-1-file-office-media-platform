@@ -26,7 +26,13 @@ log = logging.getLogger(__name__)
 
 TAG = "clients"
 ROUND_S = 6 * 3600
-NAMES = ("platform-android.apk", "platform-windows.exe", "platform-linux.deb")
+NAMES = (
+    "platform-android.apk",
+    "platform-windows.exe",
+    "platform-linux.deb",
+    "platform-linux-arm64.deb",
+    "platform-macos.dmg",
+)
 MAX_BYTES = 500 * 1024 * 1024
 
 

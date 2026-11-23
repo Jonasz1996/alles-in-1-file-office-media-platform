@@ -58,6 +58,27 @@ const en: Translation<typeof nl> = {
       name: "Linux",
       text: "Media and file sync on your Linux computer.",
     },
+    linuxarm: {
+      name: "Linux phone (Droidian) and Linux on arm64",
+      text: "The same app as for Linux, for devices with an arm64 chip: phones with Droidian or postmarketOS and e.g. a Raspberry Pi.",
+      step1: "Install the .deb on the phone: sudo apt install ./platform-linux-arm64.deb",
+      step2: "Open Platform settings, enter the platform address and sign in. Optionally choose a folder to sync.",
+      step3: "A phone has no system tray: syncing runs while the app is open. Open the settings with the Platform settings shortcut.",
+    },
+    macos: {
+      name: "macOS",
+      text: "Media and file sync on your Mac (Intel and Apple silicon).",
+      step1: "Open the .dmg and drag Platform to Applications.",
+      step2: "The app is not registered with Apple (that costs money). The first time: open Platform, click Done, and go to System Settings → Privacy & Security → Open Anyway.",
+      step3: "If macOS says the app is damaged: run xattr -cr /Applications/Platform.app in Terminal and open it again.",
+    },
+    ios: {
+      name: "iPhone and iPad",
+      text: "Not an App Store app (an own app there costs money every year), but the platform itself as an app on your home screen: no address bar, its own icon.",
+      step1: "Open this platform's address in Safari.",
+      step2: "Tap the share button (square with arrow) and choose Add to Home Screen.",
+      step3: "Open Platform from the home screen and sign in. Upload files and photos with the upload button; background sync is not possible on iOS.",
+    },
   },
   account: {
     title: "About this platform",

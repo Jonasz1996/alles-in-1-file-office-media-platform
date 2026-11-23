@@ -13,7 +13,7 @@
         "title": "Platform",
         "width": 1280,
         "height": 820,
-        "minWidth": 480,
+        "minWidth": 320,
         "minHeight": 400
       }
     ],
@@ -26,7 +26,8 @@
     "active": true,
     "targets": [
       "nsis",
-      "deb"
+      "deb",
+      "dmg"
     ],
     "icon": [
       "icons/32x32.png",
@@ -42,7 +43,11 @@
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libayatana-appindicator3-1"
-        ]
+        ],
+        "desktopTemplate": "linux/platform.desktop",
+        "files": {
+          "/usr/share/applications/platform-instellingen.desktop": "linux/platform-instellingen.desktop"
+        }
       }
     },
     "windows": {
@@ -53,6 +58,10 @@
           "English"
         ]
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
     }
   }
 }

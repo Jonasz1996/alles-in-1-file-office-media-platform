@@ -36,8 +36,9 @@ WEBOS_FILES = ("appinfo.json", "index.html", "icon.png", "largeIcon.png")
 
 class ClientApp(BaseModel):
     id: str
-    platform: Literal["webos", "android", "windows", "linux"]
-    state: Literal["ready", "later"]
+    platform: Literal["webos", "android", "windows", "linux", "linuxarm", "macos", "ios"]
+    # web: geen bestand, de app is het platform zelf in de browser (iOS: Zet op beginscherm)
+    state: Literal["ready", "later", "web"]
     version: str | None = None
     file: str | None = None  # het adres om te downloaden
     size: int | None = None
@@ -48,6 +49,8 @@ BUILT = (
     ("android", "android", "platform-android.apk"),
     ("windows", "windows", "platform-windows.exe"),
     ("linux", "linux", "platform-linux.deb"),
+    ("linuxarm", "linuxarm", "platform-linux-arm64.deb"),
+    ("macos", "macos", "platform-macos.dmg"),
 )
 
 
@@ -167,6 +170,9 @@ async def list_apps(user: CurrentUser, settings: Settings = Depends(get_settings
             )
         else:
             out.append(ClientApp(id=app_id, platform=platform, state="later"))  # type: ignore[arg-type]
+    # iPhone en iPad: een eigen app in de App Store kost elk jaar geld; het platform zelf is een
+    # web-app (manifest.webmanifest) die je met Safari op het beginscherm zet
+    out.append(ClientApp(id="ios", platform="ios", state="web"))
     return out
 
 

@@ -61,6 +61,27 @@ export default {
       name: "Linux",
       text: "Media en het synchroniseren van je bestanden op je Linux-computer.",
     },
+    linuxarm: {
+      name: "Linux-telefoon (Droidian) en Linux op arm64",
+      text: "Dezelfde app als voor Linux, voor toestellen met een arm64-chip: telefoons met Droidian of postmarketOS en bv. een Raspberry Pi.",
+      step1: "Installeer het .deb op de telefoon: sudo apt install ./platform-linux-arm64.deb",
+      step2: "Open Platform-instellingen, vul het adres van het platform in en log in. Kies eventueel een map om te synchroniseren.",
+      step3: "Op een telefoon is er geen systeemvak: het synchroniseren loopt zolang de app open is. De instellingen open je met de snelkoppeling Platform-instellingen.",
+    },
+    macos: {
+      name: "macOS",
+      text: "Media en het synchroniseren van je bestanden op je Mac (Intel en Apple-chip).",
+      step1: "Open de .dmg en sleep Platform naar Apps.",
+      step2: "De app is niet bij Apple geregistreerd (dat kost geld). De eerste keer: open Platform, klik Gereed, en ga naar Systeeminstellingen → Privacy en beveiliging → Open toch.",
+      step3: "Meldt macOS dat de app beschadigd is: voer in Terminal xattr -cr /Applications/Platform.app uit en open hem opnieuw.",
+    },
+    ios: {
+      name: "iPhone en iPad",
+      text: "Geen app uit de App Store (een eigen app daar kost elk jaar geld), maar het platform zelf als app op je beginscherm: zonder adresbalk, met een eigen icoon.",
+      step1: "Open het adres van dit platform in Safari.",
+      step2: "Tik op de deelknop (vierkant met pijl) en kies Zet op beginscherm.",
+      step3: "Open Platform vanaf het beginscherm en log in. Bestanden en foto's opladen gaat met de uploadknop; synchroniseren op de achtergrond kan op iOS niet.",
+    },
   },
   // Op /account: de weg naar deze pagina, voor iedereen die is ingelogd
   account: {

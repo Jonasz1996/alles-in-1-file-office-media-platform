@@ -89,9 +89,18 @@ async fn set_server(app: State<'_, Shared>, url: String) -> Result<String, Strin
 }
 
 #[tauri::command]
-async fn login(app: State<'_, Shared>, email: String, password: String, code: Option<String>) -> Result<String, String> {
+async fn login(
+    app: State<'_, Shared>,
+    email: String,
+    password: String,
+    code: Option<String>,
+) -> Result<String, String> {
     let code = code.filter(|c| !c.trim().is_empty());
-    match app.api.login(email.trim(), &password, code.as_deref()).await {
+    match app
+        .api
+        .login(email.trim(), &password, code.as_deref())
+        .await
+    {
         Ok(name) => {
             app.wake.notify_one();
             Ok(name)
@@ -113,10 +122,15 @@ async fn logout(app: State<'_, Shared>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn choose_folder(handle: AppHandle, app: State<'_, Shared>) -> Result<Option<String>, String> {
+async fn choose_folder(
+    handle: AppHandle,
+    app: State<'_, Shared>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = handle.dialog().file().blocking_pick_folder();
-    let Some(picked) = picked else { return Ok(None) };
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
     let path = picked.into_path().map_err(err)?;
     let mut cfg = config::load();
     cfg.folder = Some(path.clone());
@@ -165,7 +179,11 @@ fn open_remote(window: &WebviewWindow) -> Result<(), String> {
 
 /// De eigen pagina van de app (instellingen).
 fn open_settings(window: &WebviewWindow) {
-    let local = if cfg!(windows) { "http://tauri.localhost/index.html" } else { "tauri://localhost/index.html" };
+    let local = if cfg!(windows) {
+        "http://tauri.localhost/index.html"
+    } else {
+        "tauri://localhost/index.html"
+    };
     if let Ok(url) = Url::parse(local) {
         let _ = window.navigate(url);
     }
@@ -183,12 +201,16 @@ fn show(handle: &AppHandle) -> Option<WebviewWindow> {
 fn watch(app: &Shared) {
     let mut slot = app.watcher.lock().unwrap();
     *slot = None;
-    let Some(folder) = config::load().folder else { return };
+    let Some(folder) = config::load().folder else {
+        return;
+    };
     let me = app.clone();
     let made = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
             let ours = ev.paths.iter().all(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".platform-tmp"))
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(".platform-tmp"))
             });
             if !ours && !ev.kind.is_access() {
                 me.wake.notify_one();
@@ -223,7 +245,10 @@ async fn sync_loop(handle: AppHandle, app: Shared) {
         let result = sync::run(&app.api, &progress).await;
         match result {
             Ok(Some(c)) => {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let _ = config::update(|cfg| {
                     cfg.last_run = Some(now);
                     cfg.last_error = None;
@@ -241,6 +266,23 @@ async fn sync_loop(handle: AppHandle, app: Shared) {
     }
 }
 
+/// Een telefoon met Linux (Droidian, postmarketOS: Phosh of Plasma Mobile). Daar is geen
+/// systeemvak: sluiten stopt de app, en de instellingen opent een eigen snelkoppeling
+/// ("Platform-instellingen", met --instellingen). PLATFORM_MOBIEL=1 forceert het.
+fn mobile() -> bool {
+    if std::env::var_os("PLATFORM_MOBIEL").is_some() {
+        return true;
+    }
+    let desk = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    desk.contains("phosh") || desk.contains("plasma-mobile") || desk.contains("lomiri")
+}
+
+fn wants_settings(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--instellingen")
+}
+
 fn main() {
     let shared: Shared = Arc::new(App {
         api: api::Api::new(),
@@ -251,8 +293,12 @@ fn main() {
         watcher: std::sync::Mutex::new(None),
     });
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|handle, _, _| {
-            show(handle);
+        .plugin(tauri_plugin_single_instance::init(|handle, args, _| {
+            if let Some(w) = show(handle) {
+                if wants_settings(&args) {
+                    open_settings(&w);
+                }
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .manage(shared.clone())
@@ -274,7 +320,7 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Afsluiten", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &settings, &now, &quit])?;
             let tray_app = shared.clone();
-            TrayIconBuilder::with_id("tray")
+            let tray = TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().expect("icoon"))
                 .tooltip("Platform")
                 .menu(&menu)
@@ -293,14 +339,19 @@ fn main() {
                     "quit" => handle.exit(0),
                     _ => {}
                 })
-                .build(app)?;
+                .build(app);
+            if let Err(e) = tray {
+                // Zonder systeemvak (bv. op een telefoon) werkt de app gewoon verder
+                eprintln!("geen systeemvak: {e}");
+            }
             watch(&shared);
             let handle = app.handle().clone();
             let loop_app = shared.clone();
             tauri::async_runtime::spawn(async move { sync_loop(handle, loop_app).await });
             // Ingelogd en een adres: meteen naar het platform
             let cfg = config::load();
-            if cfg.server.is_some() && cfg.refresh_token.is_some() {
+            let args: Vec<String> = std::env::args().collect();
+            if cfg.server.is_some() && cfg.refresh_token.is_some() && !wants_settings(&args) {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = open_remote(&w);
                 }
@@ -308,12 +359,23 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Sluiten: naar het systeemvak; synchroniseren loopt door
+            // Sluiten: naar het systeemvak; synchroniseren loopt door. Op een telefoon (geen
+            // systeemvak) stopt de app gewoon.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if mobile() {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("de app kon niet starten");
+        .build(tauri::generate_context!())
+        .expect("de app kon niet starten")
+        .run(|_handle, _event| {
+            // macOS: een klik op het Dock-icoon toont het verborgen venster weer
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show(_handle);
+            }
+        });
 }

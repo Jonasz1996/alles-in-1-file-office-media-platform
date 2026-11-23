@@ -27,7 +27,9 @@ fn default_interval() -> u64 {
 }
 
 pub fn dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("org.platform.desktop")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("org.platform.desktop")
 }
 
 fn path() -> PathBuf {
