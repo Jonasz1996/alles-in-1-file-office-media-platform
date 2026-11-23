@@ -135,7 +135,11 @@ async def queue_plan(
 
 
 async def queue_scan(db: AsyncSession) -> None:
-    await jobs.enqueue(db, SCAN, {}, key=SCAN)
+    """faces.scan klaarzetten, in de transactie van de aanroeper. Alleen ontdubbeld tegen een
+    scan die klaarstaat, niet tegen een die loopt (jobs.chain, zoals analysis._wake): die kan zijn
+    laatste blik (_again) al gehad hebben, en dan bleef wat nu op wait komt liggen tot de ronde
+    van elk uur. De rij analyse heeft één worker: de opvolger loopt na de scan van nu."""
+    await jobs.chain(db, SCAN, {}, key=SCAN)
 
 
 async def _creators_on(db: AsyncSession, ids: set[uuid.UUID]) -> set[uuid.UUID]:
@@ -424,11 +428,9 @@ async def _restore(settings: Settings, items: list[Item], *, tries: bool = False
 def _open_previews(settings: Settings, items: list[Item], metas: dict[str, Any]) -> None:
     """De 1024 van elke foto alleen-lezen openen. Geen 1024: too_small als de previews klaar
     zijn en er geen 1024 komt (het origineel is te klein), anders no_preview (wacht)."""
-    blobs = BlobStore(settings.blob_dir)
     for item in items:
-        path = previews.directory(blobs, item.sha) / LARGE_NAME
         try:
-            item.fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            item.fd = _open_large(settings, item.sha)
         except FileNotFoundError:
             meta = metas.get(item.sha)
             sizes = (meta or {}).get("sizes") or []
@@ -436,6 +438,21 @@ def _open_previews(settings: Settings, items: list[Item], metas: dict[str, Any])
             item.code = "too_small" if done and previews.LARGE not in sizes else "no_preview"
         except OSError:
             item.code = "no_preview"
+
+
+def _open_large(settings: Settings, sha: str) -> int:
+    """De 1024 van deze inhoud, alleen-lezen (OSError als dat niet gaat)."""
+    path = previews.directory(BlobStore(settings.blob_dir), sha) / LARGE_NAME
+    return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+
+
+def _large_now(settings: Settings, sha: str) -> bool:
+    """Gaat de 1024 nu wel open? Voor een foto die bij _open_previews nog no_preview was."""
+    try:
+        os.close(_open_large(settings, sha))
+    except OSError:
+        return False
+    return True
 
 
 def _vectors_ok(raw: bytes) -> bool:
@@ -551,6 +568,16 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
                     await face_rows.set_scan(
                         db, item.node, {"state": "wait", "updated_at": at}, only_busy=True
                     )
+                    continue
+                if item.code == "no_preview" and _large_now(settings, item.sha):
+                    # De 1024 kwam tijdens de batch (preview.large). Zijn faces.plan (sha) vond
+                    # de foto busy en liet hem staan; met no_preview wachtte hij dan tot de ronde
+                    # van elk uur. Dus weer wait zonder code en zonder poging: _again kiest hem.
+                    # Hier, na het schrijfslot: een plan dat al commitde, zette de 1024 eerder
+                    await face_rows.set_scan(
+                        db, item.node, {"state": "wait", "code": None, "updated_at": at},
+                        only_busy=True,
+                    )  # fmt: skip
                     continue
                 if item.photo is None:
                     await _set_code(db, item, at)
