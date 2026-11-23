@@ -227,8 +227,7 @@ class Server(uvicorn.Server):
 
 
 def _proxies(settings: Settings) -> list[str] | None:
-    found = [p.strip() for p in settings.trusted_proxies.split(",") if p.strip()]
-    return found or None
+    return settings.trusted_proxy_list() or None
 
 
 def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
@@ -239,7 +238,7 @@ def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
         log_level=settings.log_level,
         # Alleen met een vertrouwde proxy (PLATFORM_TRUSTED_PROXIES) X-Forwarded-For en -Proto
         # geloven: dan zijn het IP (limieten, logs) en https (cookies, adressen) die van de client
-        proxy_headers=bool(settings.trusted_proxies.strip()),
+        proxy_headers=bool(settings.trusted_proxy_list()),
         forwarded_allow_ips=_proxies(settings),
         server_header=False,
         http=GuardedHttp,
