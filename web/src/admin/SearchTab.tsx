@@ -8,6 +8,9 @@
 //
 // Z0 zette de tab (Beheer.tsx, Alt+9, een eigen chunk); de aanroepen staan in ./searchApi. Ververst
 // elke 5 seconden zolang het tabblad zichtbaar is (usePolling, zoals de andere tabbladen).
+// 0.8.2 (z0-web.md Open 6): de tab luistert ook naar search.progress (elke 10 s naar beheerders
+// tijdens een backfill of herbouw). De voortgang van de herbouw die de tab toont, komt daarmee
+// meteen bij (withProgress); de rest wacht op de volgende GET.
 //
 // Z0b (Keuze 55): onder het deel van Z7 de blokken "Gezichten" (FacesBlock.tsx, van X2) en "Zoeken
 // op beeld" (BeeldBlock.tsx, van X3), in dezelfde chunk. Beheer.tsx laadt de gebieden
@@ -18,7 +21,9 @@
 // naar de kop van zijn deel als de knop weg is (docs/fase-6/toetsenbord-z7.md).
 
 import { type JSX, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type ServerEvent, useServerEvents } from "../events";
 import { errorText, fmt, t } from "../i18n";
+import { SEARCH_PROGRESS, type SearchProgressData } from "../search/types";
 import { Button } from "../ui/Button";
 import { confirm } from "../ui/dialogs";
 import { toast } from "../ui/toast";
@@ -70,6 +75,23 @@ export function checkText(check: AdminSearch["check"]): string {
   return t("admin.search.index.checkOk", { n: check.sampled, count, time });
 }
 
+/** De gegevens van een search.progress, of null als het iets anders is (of onzin). */
+export function progressOf(event: ServerEvent): SearchProgressData | null {
+  if (event.type !== SEARCH_PROGRESS) return null;
+  const { what, done } = event.data;
+  if (typeof what !== "string" || typeof done !== "number" || !Number.isFinite(done)) return null;
+  return { what: what as SearchProgressData["what"], done };
+}
+
+/** De stand met de voortgang uit search.progress: alleen voor de herbouw die de stand al toont
+ * (dezelfde what). Een ander soort (de backfill van de tekst, of een herbouw die de tab nog niet
+ * kent) laat de stand zoals hij is: die komt met de volgende GET. */
+export function withProgress(s: AdminSearch, p: SearchProgressData): AdminSearch {
+  if (!s.rebuild || s.rebuild.what !== p.what) return s;
+  const done = Math.min(1, Math.max(0, p.done));
+  return done === s.rebuild.done ? s : { ...s, rebuild: { ...s.rebuild, done } };
+}
+
 /** De tekst van de index als deel van 1 (0 tot 1); null zonder bestanden met tekst. */
 export function textFraction(index: AdminSearch["index"]): number | null {
   if (index.text_total <= 0) return null;
@@ -82,7 +104,20 @@ type Reload = () => Promise<void>;
 
 export default function SearchTab(): JSX.Element {
   const polled = usePolling(adminSearch, POLL_MS);
-  return <SearchView data={polled.data} error={polled.error} reload={polled.reload} />;
+  // De stand met search.progress erin, bij deze GET (base); een nieuwe GET begint weer bij zichzelf
+  const [live, setLive] = useState<{ base: AdminSearch; shown: AdminSearch } | null>(null);
+  useServerEvents((event) => {
+    const progress = progressOf(event);
+    const base = polled.data;
+    if (!progress || !base) return;
+    setLive((cur) => {
+      const from = cur?.base === base ? cur.shown : base;
+      const shown = withProgress(from, progress);
+      return shown === from ? cur : { base, shown };
+    });
+  });
+  const data = live && live.base === polled.data ? live.shown : polled.data;
+  return <SearchView data={data} error={polled.error} reload={polled.reload} />;
 }
 
 /** De tab bij een gegeven stand (los te toetsen zonder server). */
