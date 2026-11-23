@@ -387,7 +387,7 @@ opnieuw, en ±1 op 4 sprongen landt in het laatste stukje van een segment. In ee
 runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %, zonder dat de
 server iets fout doet; dat M7e drie keer goed ging, is dus deels geluk. CI merkt het niet: daar
 draait `zoek_samen --kort` alleen fase b (geen sprong), en de test van de belastingtest springt
-nooit zo dicht bij het eind van een segment. Wat de meting hier telt, was een vraag aan Jonas
+nooit zo dicht bij het eind van een segment. Wat de meting hier telt, lag als vraag bij Jonas
 (kaartje van 11 november 2026). Op 17 november 2026 koos hij de standaard: het blijft zoals het is
 (besloten: standaard, Jonas 2026-11-17).
 
@@ -651,7 +651,7 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    sprong met een herstart 0,6–1 s langer). De speler heeft dan bijna geen voorraad, en
    2 s media binnen ±0,2 s haalt geen herstart. ±1 op 4 sprongen landt zo; in een ronde van drie
    runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %. Een browser telt
-   dit niet (`mse.ts`). Wat de poort hier telt, was een vraag aan Jonas; de standaard geldt: tellen
+   dit niet (`mse.ts`). Wat de poort hier telt, lag als vraag bij Jonas; de standaard geldt: tellen
    zoals nu (besloten: standaard, Jonas 2026-11-17).
 4. **Photometa wijkt niet voor live transcoderen** (open). Nice 19 weegt alleen binnen één sessie of
    cpu-cgroup, en het renderkind, ffmpeg en de worker in zijn eigen container zitten elk apart
@@ -682,7 +682,7 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
     minstens 13 GiB vrij op de schijf van de tijdelijke map.
 12. **Zoeken op beeld naast de gezichtenscan** (M13, stap `zonder_defer`, een rapport): p95
     290,4 ms, 9 van 103 vragen boven 250 ms. De poort van stap 2 (191,8 ms) meet zonder de scan
-    ernaast, omdat `faces.plan` wacht tot de index bij is (Keuze 65). Dit was een vraag aan Jonas,
+    ernaast, omdat `faces.plan` wacht tot de index bij is (Keuze 65). Dit lag als vraag bij Jonas,
     met als standaard (a): (a) zo laten, BZ6 is de poort van stap 2 en stap 3 een rapport; (b) een
     aparte meting of rapportregel terwijl de scan loopt; (c) de scan laten wijken voor een
     beeldvraag (een codewijziging, met een nieuwe test). Het werd (a) (besloten: standaard, Jonas 2026-11-17).

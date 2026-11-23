@@ -85,7 +85,7 @@ de kaarten te beantwoorden. Claude houdt daarom de standaarden hierboven aan (oo
 ze blijven in gebruik en blijven **voorstel**, en Jonas kan elk ervan later nog anders kiezen.
 
 **Fase 6 (B49–B71): besloten.** Op 17 november 2026 koos Jonas "Standaard vastzetten": elke keuze
-van fase 6 die nog open was, staat op de standaard van het bouwontwerp en heeft de status
+van fase 6 zonder antwoord staat op de standaard van het bouwontwerp en heeft de status
 **besloten: standaard, Jonas 2026-11-17**. Dat geldt voor B49–B71 (B53 en B57 waren al besloten),
 voor Vraag 4 en Vraag 8–14 van het bouwontwerp, voor de vragen bij 0.8.0 (I1) en voor de negen
 vragen bij 0.8.1 (I2). Alles draaide al op die standaarden, dus de app verandert er niet door.

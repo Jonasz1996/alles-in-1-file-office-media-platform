@@ -1,8 +1,8 @@
 > Werkdocument: het bouwontwerp van fase 6 (zoeken en foto's), revisie 3. Revisie 3 is leidend.
 > Revisie 2 staat in [bouwontwerp-r2.md](bouwontwerp-r2.md), revisie 1 in
 > [bouwontwerp-r1.md](bouwontwerp-r1.md).
-> Jonas besliste op 3 november 2026 over de omvang. Op 17 november 2026 zette hij elke vraag die
-> toen nog open was op haar standaard ("Standaard vastzetten"):
+> Jonas besliste op 3 november 2026 over de omvang. Op 17 november 2026 koos hij voor elke vraag
+> zonder antwoord de standaard ("Standaard vastzetten"):
 > besloten: standaard, Jonas 2026-11-17. Zie "Vragen voor Jonas".
 > Bijgewerkt na de spike (Z0, 3 november 2026). Wat de spike veranderde, staat erin als
 > "Herzien na de spike (Sx)"; de uitkomsten per stap staan in [spike.md](spike.md). Revisie 3

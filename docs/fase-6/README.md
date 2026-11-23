@@ -197,7 +197,7 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
   uitloopt (zie [Planning](#planning)).~~ [16 november 2026: het blijft in 0.8.1. Je koos "Toch
   uitbrengen" (Keuze 85 in het [bouwontwerp](bouwontwerp.md)), ook al vinden een paar woorden
   weinig ('bergen' en 'boot'; 'berg' en 'bootje' wel). De uitleg bij de schakelaar zegt wat je mag
-  verwachten.] Per gebruiker standaard uit (Vraag 11; die heb je nog niet beantwoord).
+  verwachten.] Per gebruiker standaard uit (Vraag 11, besloten: standaard, Jonas 2026-11-17).
 - **De pagina `/over`** (Account → **Bronnen en licenties**): de bronnen van de kaart (GeoNames en
   Natural Earth) en van de modellen (YuNet, SFace en SigLIP 2), met hun licentie, en de pakketten
   van de analyse. Voor iedereen die is ingelogd, ook een gast, en ook met de analyse uit.
@@ -268,7 +268,7 @@ Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
 | Uploaden terwijl de index schrijft | De upload wacht hooguit ±1 s op een schijf waar het wegschrijven (`fsync`) tot ±200 ms extra kost. Op een tragere schijf langer. | [z2.md](z2.md); `api/app/dbgate.py` |
 | De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. | het runbook, "De wekelijkse controle" |
 | De bronvermelding | GeoNames en Natural Earth staan onder de kaart en in de [README](../../README.md) (Bronnen). ~~De pagina `/over` is er nog niet.~~ [0.8.1: `/over` is er, via Account → Bronnen en licenties, ook met de analyse uit.] | [z3.md](z3.md), Open |
-| Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8, standaard nee). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die staan op **niet gemeten, geen gereedschap** tot er een antwoord is op Vraag 8. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
+| Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8 is nee, besloten: standaard, Jonas 2026-11-17). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die blijven bij besluit op **niet gemeten, geen gereedschap**. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
 | Zoeken op beeld: zwakke woorden (0.8.1) | 'bergen' en 'boot' vinden weinig in de testset ('berg' en 'bootje' wel); "Meer zoals deze" haalde 0,475, waar het ontwerp 0,7 wilde. Zo uitgebracht met Keuze 85; de uitleg bij de schakelaar zegt het. | [x3b.md](x3b.md); Keuze 85 in het [bouwontwerp](bouwontwerp.md) |
 | Gezichten en zoeken op beeld op jouw CPU (0.8.1) | Gemeten in de sandbox en in CI, niet op jouw CPU. `analyse-bench` (gezichten) en `beeld-bench` (zoeken op beeld) meten het daar; zie [Op de LXC](#op-de-lxc). | de runbooks [gezichten.md](../runbooks/gezichten.md) en [analyse.md](../runbooks/analyse.md) |
 | De metingen van 0.8.1 | De tijd en het geheugen van gezichten en beeld zijn gemeten met modellen van de echte vorm, maar met willekeurige gewichten. Over de kwaliteit zeggen ze niets; die komt alleen uit BZ4 in CI. De testfoto's van de grote belastingtest (M13) hadden geen gezichten: het herkennen (SFace) en het groeperen zaten er niet in. | [metingen.md](metingen.md), M10–M13 |
@@ -302,7 +302,7 @@ Dat betekent:
   geldt de standaard: alleen de eigenaar. Dat is geen keuze van jou.~~ [17 november 2026: je koos
   de standaard, alleen de eigenaar; besloten: standaard, Jonas 2026-11-17.]
 - **De rest: de standaard** (17 november 2026, "Standaard vastzetten"). Vraag 4 en Vraag 8–14, de
-  kaarten B49–B71 die nog niet besloten waren, en de vragen bij 0.8.0 en 0.8.1 staan op hun standaard:
+  andere kaarten B49–B71, en de vragen bij 0.8.0 en 0.8.1 staan op hun standaard:
   besloten: standaard, Jonas 2026-11-17. Zie [Vragen voor Jonas](#vragen-voor-jonas).
 
 ## Doel

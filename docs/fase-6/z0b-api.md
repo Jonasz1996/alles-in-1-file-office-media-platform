@@ -10,7 +10,7 @@ in Z0b: die zijn van A0 (0011 en 0012, §3.1a). Er komt geen model, geen numpy o
 geen nieuwe afhankelijkheid.
 
 Z0b bouwt op wat Jonas besliste: gezichten en zoeken op beeld zitten in fase 6 en staan per
-gebruiker standaard uit; Vraag 4 is nog open, dus de standaard (alleen de eigenaar) geldt; Vraag
+gebruiker standaard uit; Vraag 4 ~~is nog open, dus~~ is besloten: standaard, Jonas 2026-11-17, dus de standaard (alleen de eigenaar) geldt; Vraag
 8–14 op de standaard. Van B49–B70 zijn alleen B53 en B57 beslist.
 
 ## Wat er is

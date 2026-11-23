@@ -518,7 +518,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
 - [x] EXIF en GPS: datum, camera, locatie; kaartweergave; offline
   reverse geocoding. Datum en camera kwamen in fase 3 (B22); nieuw is de
   plek uit GPS. Alleen de eigenaar ziet die in de app (de standaard van
-  Vraag 4, Jonas koos nog niet). In het bestand zelf blijft de plek
+  Vraag 4, besloten: standaard, Jonas 2026-11-17). In het bestand zelf blijft de plek
   staan; wie zo'n foto deelt, krijgt daar een waarschuwing over. Wie de
   plek uitzet op `/account`, wist zijn plekken (B54). Een eigen kaart
   (SVG) met alleen landsgrenzen, zonder kaarttegels van buiten. Land en
@@ -539,7 +539,7 @@ Doel: alles terugvinden, ook op inhoud en op wat er op een foto staat.
   de vectoren in de SQLite in plaats van pgvector) is ook gepland voor
   0.8.1, ~~maar kan naar een eigen fase 6b schuiven~~ (B57, B66, B68).
   [2026-11-16: het blijft in 0.8.1, standaard uit per gebruiker (Keuze 85 in
-  docs/fase-6/bouwontwerp.md; Vraag 11 staat nog open).]
+  docs/fase-6/bouwontwerp.md; Vraag 11 ~~staat nog open~~ is besloten: standaard, Jonas 2026-11-17: uit).]
   [Gebouwd in 0.8.1 (16 november 2026,
   `ae163ac69470343de7bc8d876db1a48e7da9331e`): gezichten vanzelf herkennen met YuNet en SFace, en zoeken
   op wat er op een foto staat met SigLIP 2. Beide rekenen op de eigen server, in de container
@@ -592,7 +592,7 @@ grenzen staan in [docs/fase-6/README.md](fase-6/README.md), de integratie in
 [docs/fase-6/integratie-2.md](fase-6/integratie-2.md).
 
 Besluiten (17-11-2026): Jonas koos "Standaard vastzetten". Alle keuzes van fase 6
-die nog open waren, staan op hun standaard: B49–B71 (B53 en B57 waren al
+zonder antwoord staan op hun standaard: B49–B71 (B53 en B57 waren al
 besloten), Vraag 4 en Vraag 8–14, en de vragen bij 0.8.0 en 0.8.1. Hun status is
 "besloten: standaard, Jonas 2026-11-17"; zie
 [docs/fase-0/beslissingen.md](fase-0/beslissingen.md). Er verandert niets aan de
