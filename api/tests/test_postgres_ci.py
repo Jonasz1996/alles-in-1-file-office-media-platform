@@ -5,7 +5,8 @@ Deze test leest ci.yml als tekst, zoals test_media_ci.py:
 - F2: een -m op de commandoregel vervangt de -m van addopts (api/pyproject.toml). Een pytest met
   een eigen -m in api-postgres of api-postgres-15 houdt dus zelf elke uitsluiting van addopts
   (not media, not zoek_perf, ...). Anders draaien bijvoorbeeld de tijdtests van zoek_perf (100.000
-  nodes op SQLite, grens 10 s) in een job die blokkeert, waar ze niet voor gemaakt zijn.
+  nodes op SQLite, grens 10 s) in een job die blokkeert, waar ze niet voor gemaakt zijn. Behalve
+  beeld_echt: die tests staan niet onder api/tests (zie NIET_ONDER_TESTS).
 - F5: de rol eigenaar van api-postgres-15 is zoals op ClusterForge: NOSUPERUSER CREATEDB, zonder
   CREATEROLE. De rol die test_dbcopy.py nodig heeft, maakt de superuser vooraf en geeft hem aan
   eigenaar (PLATFORM_TEST_PG_ROLE).
@@ -15,10 +16,16 @@ from __future__ import annotations
 
 import re
 import tomllib
+from pathlib import Path
 
 from tests.test_media_ci import ROOT, job
 
 JOBS = ("api-postgres", "api-postgres-15")
+# beeld_echt staat alleen in api/tests_analyse/, niet onder testpaths, en ci.yml noemt hem alleen
+# in api-analyse en beeld-model (tests/analyse/test_beeld_ci.py). Hier hoeft een -m hem dus niet
+# uit te sluiten; test_geen_beeld_echt_onder_tests houdt vast dat dat zo blijft.
+NIET_ONDER_TESTS = ("not beeld_echt",)
+TESTS = ROOT / "api" / "tests"
 MARK = re.compile(r"""\bpytest\b[^\n]*?\s-m\s+("[^"]*"|'[^']*'|[^\s"']+)""")
 
 
@@ -40,7 +47,7 @@ def _marks(name: str) -> list[str]:
 
 
 def test_een_eigen_m_houdt_de_uitsluitingen_van_addopts():
-    terms = _addopts_not()
+    terms = [t for t in _addopts_not() if t not in NIET_ONDER_TESTS]
     assert "not zoek_perf" in terms and "not media" in terms
     seen = 0
     for name in JOBS:
@@ -63,3 +70,12 @@ def test_de_rol_eigenaar_zoals_op_clusterforge():
     text = "\n".join(lines)
     assert "PLATFORM_TEST_PG_ROLE:" in text
     assert re.search(r"GRANT \w+ TO eigenaar", text), text
+
+
+def test_geen_beeld_echt_onder_tests():
+    """Waarom NIET_ONDER_TESTS mag: geen test onder api/tests heeft de marker beeld_echt."""
+    eigen = {Path(__file__).resolve(), (TESTS / "analyse" / "test_beeld_ci.py").resolve()}
+    for path in TESTS.rglob("*.py"):
+        if path.resolve() in eigen:
+            continue
+        assert "beeld_echt" not in path.read_text(), path
