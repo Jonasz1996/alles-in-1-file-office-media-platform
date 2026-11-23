@@ -75,6 +75,8 @@ export default {
     continue: "Verder kijken",
     nextUp: "Volgende aflevering",
     recent: "Net toegevoegd",
+    released: "Onlangs verschenen",
+    libraryRow: "Nieuw in {name}",
     emptyTitle: "Nog geen bibliotheken",
     emptyText: "Kies een map met Nieuwe bibliotheek, of open een map in Bestanden en kies Als bibliotheek gebruiken. Wat erin staat, verschijnt dan vanzelf hier.",
     toFiles: "Naar Bestanden",

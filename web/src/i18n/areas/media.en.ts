@@ -76,6 +76,8 @@ const en: Translation<typeof nl> = {
     continue: "Continue watching",
     nextUp: "Next up",
     recent: "Recently added",
+    released: "Recently released",
+    libraryRow: "New in {name}",
     emptyTitle: "No libraries yet",
     emptyText: "Choose a folder with New library, or open a folder in Files and choose Use as library. What is in it then shows up here by itself.",
     toFiles: "Go to Files",

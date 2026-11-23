@@ -522,6 +522,15 @@ class Card(BaseModel):
     episode: int | None = None
 
 
+class LibraryRow(BaseModel):
+    """Een rij op de start per bibliotheek (fase 11, stap 7): het laatst toegevoegd."""
+
+    library_id: uuid.UUID
+    name: str
+    kind: LibraryKind
+    cards: list[Card] = Field(default_factory=list)
+
+
 class MediaHome(BaseModel):
     """GET /api/v1/media/home. continue is een sleutelwoord in Python: het veld heet
     continue_ en gaat als "continue" over de API."""
@@ -532,6 +541,8 @@ class MediaHome(BaseModel):
     continue_: list[Card] = Field(default_factory=list, alias="continue")
     next_up: list[Card] = Field(default_factory=list)
     recent: list[Card] = Field(default_factory=list)
+    released: list[Card] = Field(default_factory=list)
+    library_rows: list[LibraryRow] = Field(default_factory=list)
 
 
 class CardPage(BaseModel):

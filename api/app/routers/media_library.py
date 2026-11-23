@@ -38,6 +38,7 @@ from app.media.types import (
     Library,
     LibraryIn,
     LibraryPatch,
+    LibraryRow,
     MediaHome,
     ShowDetail,
 )
@@ -97,9 +98,10 @@ async def scan_library(
 
 
 @router.get("/home", response_model=MediaHome)
-async def home(user: CurrentUser, request: Request, session: Session):
+async def home(user: CurrentUser, request: Request, session: Session, settings: Config):
     """De start: bibliotheken, en de drie rijen van M7 (Verder kijken, Volgende aflevering en Net
-    toegevoegd; die laatste is items.recent van hier, met de stand uit het geheugen erover). Bij
+    toegevoegd; die laatste is items.recent van hier, met de stand uit het geheugen erover), en
+    sinds fase 11 Onlangs verschenen en een rij per bibliotheek. Bij
     het samenvoegen van golf 4: de eigen terugval voor Net toegevoegd (uit de tijd van de stub
     van M7, die lege rijen gaf) is weg."""
     runtime.require(request)
@@ -107,11 +109,18 @@ async def home(user: CurrentUser, request: Request, session: Session):
     ids = [s.library.id for s in found]
     counts = await media_library.counts(session, ids)
     rows = await progress.home_rows(session, user.id, ids)
+    reader = media_items.Reader(session, settings, user)
+    per_library = await media_items.library_rows(reader, [s.library for s in found])
     return MediaHome(
         libraries=[media_library.view(s, counts.get(s.library.id, 0)) for s in found],
         continue_=rows.get("continue") or [],
         next_up=rows.get("next_up") or [],
         recent=rows.get("recent") or [],
+        released=await media_items.released(reader, ids),
+        library_rows=[
+            LibraryRow(library_id=lib.id, name=lib.name, kind=lib.kind, cards=cards)
+            for lib, cards in per_library
+        ],
     )
 
 

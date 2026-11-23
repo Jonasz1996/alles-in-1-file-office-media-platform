@@ -672,6 +672,41 @@ async def recent(reader: Reader, library_ids: list[uuid.UUID], limit: int = RECE
     return await reader.cards(await reader.visible(list(rows.all())))
 
 
+async def released(reader: Reader, library_ids: list[uuid.UUID], limit: int = RECENT) -> list[Card]:
+    """Onlangs verschenen (fase 11, stap 7): films van dit jaar en vorig jaar, de nieuwste
+    eerst (zonder datum van verschijnen telt het jaar uit de bibliotheek)."""
+    if not library_ids:
+        return []
+    rows = await reader.session.scalars(
+        select(MediaItem)
+        .where(
+            MediaItem.library_id.in_(library_ids),
+            MediaItem.present.is_(True),
+            MediaItem.kind == "movie",
+            MediaItem.extra.is_(None),
+            MediaItem.year >= now().year - 1,
+        )
+        .order_by(MediaItem.year.desc(), MediaItem.added_at.desc(), MediaItem.node_id.desc())
+        .limit(limit)
+    )
+    return await reader.cards(await reader.visible(list(rows.all())))
+
+
+async def library_rows(
+    reader: Reader, libraries: list[MediaLibrary], limit: int = RECENT
+) -> list[tuple[MediaLibrary, list[Card]]]:
+    """Per bibliotheek met films, series of video's een rij: wat er het laatst bij kwam (bij
+    series de serie, niet de aflevering)."""
+    out: list[tuple[MediaLibrary, list[Card]]] = []
+    for library in libraries:
+        if library.kind == "music":
+            continue
+        cards = (await page(reader, library, None, "added", None, limit)).items
+        if cards:
+            out.append((library, cards))
+    return out
+
+
 async def can_write(session: AsyncSession, user: User, node: Node) -> bool:
     """Mag deze gebruiker het bestand bewerken (de eigenaar, of een deling met schrijven)?"""
     if node.owner_id == user.id:

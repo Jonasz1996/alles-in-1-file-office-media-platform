@@ -297,9 +297,27 @@ async def test_home_met_net_toegevoegd(people, client):
     home = r.json()
     assert [(x["id"], x["item_count"]) for x in home["libraries"]] == [(lib, 2)]
     assert sorted(c["title"] for c in home["recent"]) == ["Een", "Twee"]
+    # Fase 11, stap 7: een rij per bibliotheek; Onlangs verschenen alleen recente jaren
+    [row] = home["library_rows"]
+    assert row["library_id"] == lib and row["kind"] == "movies"
+    assert sorted(c["title"] for c in row["cards"]) == ["Een", "Twee"]
+    assert home["released"] == []
     # Bas ziet niets
     r = await client.get("/api/v1/media/home", headers=p["bas"])
     assert r.json()["libraries"] == [] and r.json()["recent"] == []
+    assert r.json()["library_rows"] == [] and r.json()["released"] == []
+
+
+async def test_home_onlangs_verschenen(people, client):
+    p = people
+    await make(client, p["jonas"], p["films"])
+    year = media_items.now().year
+    await upload(client, p["jonas"], p["films"], f"Nieuw ({year}).mkv")
+    await upload(client, p["jonas"], p["films"], f"Vorig ({year - 1}).mkv")
+    await upload(client, p["jonas"], p["films"], "Oud (1999).mkv")
+    await scan(p["settings"])
+    home = (await client.get("/api/v1/media/home", headers=p["jonas"])).json()
+    assert [c["title"] for c in home["released"]] == ["Nieuw", "Vorig"]
 
 
 async def test_het_item_met_wat_de_analyse_al_weet(people, client):

@@ -244,6 +244,17 @@ export interface MediaHome {
   next_up: Card[];
   /** Nieuw toegevoegd */
   recent: Card[];
+  /** Onlangs verschenen: films van dit en vorig jaar (fase 11, stap 7) */
+  released: Card[];
+  /** Per bibliotheek het laatst toegevoegd (fase 11, stap 7) */
+  library_rows: LibraryRow[];
+}
+
+export interface LibraryRow {
+  library_id: string;
+  name: string;
+  kind: LibraryKind;
+  cards: Card[];
 }
 
 /** GET /api/v1/media/libraries/{id}/items: de query. */

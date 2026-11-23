@@ -1,5 +1,6 @@
 // /media (fase 5, M2): de start van media. De bibliotheken die je ziet, en de rijen Verder kijken
-// en Volgende aflevering (de data van M7, via GET /api/v1/media/home) en Net toegevoegd. De rijen
+// en Volgende aflevering (de data van M7, via GET /api/v1/media/home) en Net toegevoegd; sinds
+// fase 11 ook Onlangs verschenen en per bibliotheek het laatst toegevoegd. De rijen
 // Verder kijken en Volgende aflevering zijn van M7 (media/rows): die bewegen live mee. Een rij
 // is een lijst kaarten met één tabstop: ← en → (en Home/End) verplaatsen de focus. Nieuwe
 // bibliotheek (niet voor gasten) opent de mappenkiezer en dan de dialoog voor die map; beide
@@ -177,6 +178,18 @@ function Home(): JSX.Element {
       {home && <NextUpRow cards={home.next_up} />}
       {home && home.libraries.length > 0 && <LibraryList libraries={home.libraries} />}
       {home && home.recent.length > 0 && <CardRow id="recent" title={t("media.home.recent")} cards={home.recent} />}
+      {home && (home.released ?? []).length > 0 && (
+        <CardRow id="released" title={t("media.home.released")} cards={home.released} />
+      )}
+      {home &&
+        (home.library_rows ?? []).map((row) => (
+          <CardRow
+            key={row.library_id}
+            id={`lib-${row.library_id}`}
+            title={t("media.home.libraryRow", { name: row.name })}
+            cards={row.cards}
+          />
+        ))}
       {Picker && <Picker onClose={closePicker} />}
     </main>
   );
