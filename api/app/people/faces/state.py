@@ -44,7 +44,10 @@ def now() -> datetime:
 
 
 def _key(url: Any) -> str:
-    return make_url(str(url)).render_as_string(hide_password=False)
+    # make_url neemt een str (settings.db_url) en een URL (die van de engine). Niet str(url): dat
+    # verbergt het wachtwoord (***), en dan vond settings_for de Settings van een database met
+    # een wachtwoord nooit (zoals app/search/engine.py, _key)
+    return make_url(url).render_as_string(hide_password=False)
 
 
 def configure(settings: Settings) -> None:
