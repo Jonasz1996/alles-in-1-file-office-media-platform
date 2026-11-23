@@ -165,8 +165,7 @@ Herstel zoals purge en retime: `write()` en `clear()` nemen eerst `db.lock_tree`
 niets). Daarna 12 van 12 groen, en de boom en `photo_geo.dead` kloppen (`check_tree`,
 `fase6_fill` geeft nul).
 
-Niet nagedaan: `wipe_chunk` (locatie "uit") en de keten `geo.places`. Die schrijven
-`photo_geo` met één statement per transactie en zetten geen node vast. Zie "Open punten".
+Niet nagedaan: `wipe_chunk` (locatie "uit") en de keten `geo.places`. Zie "Open punten".
 
 ## Tests
 
@@ -190,7 +189,9 @@ Nieuw:
 Aangepast:
 
 - `tests/beeld/conftest.py` en `tests/people/faces/conftest.py` gebruiken de fixture
-  `database_url` (via `tests/analyse/pgdb.py`); op PostgreSQL krijgen de Settings
+  `database_url_head` van P3 (via `tests/analyse/pgdb.py`; bij de samenvoeging, eerst was het
+  `database_url`): op PostgreSQL een kopie van het gemigreerde sjabloon, dezelfde database als de
+  fixture `settings`; op PostgreSQL krijgen de Settings
   `PLATFORM_ANALYSE_POSTGRES` en kijkt `pgcheck` naar de echte triggers van de testdatabase.
   `tests/beeld/nep.py` hoefde niet te veranderen: hij krijgt de Settings van de fixture `beeld`,
   ook in `tests/search/test_search_logs.py`.
@@ -232,7 +233,25 @@ groen in die volgorde, op SQLite en op PostgreSQL.
 
 ### Gemeten
 
-{{GEMETEN}}
+De laatste hele runs van deze branch zijn niet afgemaakt (de bouwer werd gestopt). Lokaal draaien
+we de hele suite niet meer (werkwijze van Jonas, 23-11); CI op de gepushte commit van golf 2 geeft
+die getallen (job api voor SQLite, api-postgres voor PostgreSQL 17).
+
+Gemeten bij de samenvoeging van golf 2 ([w2.md](w2.md)), op de kop met P3 erbij, gericht: alle
+tests in `tests/beeld/` en `tests/people/faces/` (hun fixtures veranderden), en de andere
+bestanden van dit pakket. 4 cores, PostgreSQL 16 in `/dev/shm`, `-o faulthandler_timeout=600`.
+
+| Deel | SQLite | PostgreSQL 16 |
+|---|---|---|
+| `tests/beeld/` | 187 passed (167 s) | 187 passed (160 s) |
+| `tests/people/faces/` | 104 passed (97 s) | 97 passed, 7 `sqlite_only` (73 s) |
+| `tests/analyse/test_analyse_monitor.py`, `test_analyse_pg.py` | 39 passed, 1 `pg` (16 s) | 40 passed (18 s) |
+| `tests/test_pg_photo_rows.py` | 12 `pg` | 12 passed (8 s) |
+| `test_photo_settings.py`, `test_jobs_lanes.py`, `test_compose_analyse.py` | 32 passed | 32 passed |
+
+Niets rood, niets nieuw overgeslagen. De 55 tests van `tests/beeld/` en de 4 van
+`test_photo_settings.py` en `test_jobs_lanes.py` die in de hele run van P3 op PostgreSQL rood
+waren, slagen hier.
 
 ## SQLite blijft gelijk
 
@@ -312,7 +331,11 @@ Overig:
 - `pgcheck` kijkt alleen bij de start en bij de cli. Zet iemand een trigger uit terwijl de app
   draait, dan merkt de app dat pas bij de volgende start. De wekelijkse controle (`weekcheck`)
   zou het kunnen meenemen.
-- `wipe_chunk` en `geo.places` naast een verplaatsing: niet nagedaan. Het zijn losse statements
-  op `photo_geo` zonder slot op `node`; een deadlock is daar minder waarschijnlijk, maar niet
-  uitgesloten.
+- `wipe_chunk` en `geo.places` naast een verplaatsing: niet nagedaan. `wipe_chunk` is één
+  DELETE per transactie. `geo.places` (`run_places`) is dat niet (gezien bij de samenvoeging,
+  [w2.md](w2.md)): hij werkt tot 1000 rijen van `photo_geo` bij in één transactie, en `geo_biu`
+  (BEFORE INSERT OR UPDATE) zet bij elke rij de node vast (`FOR SHARE`), op volgorde van
+  `node_id`. Dat is hetzelfde patroon als `write()` vóór het slot van de boom; 40P01 naast een
+  verplaatsing is daar dus mogelijk. Voorstel: `lock_tree` ook in `run_places`, met een proef
+  zoals `test_pg_photo_rows.py`.
 - De deadline van beeld zoeken op PostgreSQL (P5).

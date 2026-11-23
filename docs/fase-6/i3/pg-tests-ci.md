@@ -20,6 +20,9 @@ Branch `wip/i3-pg-tests-ci`, gemaakt vanaf `cbd0922` (golf 1 samengevoegd, zie [
 - De deadlock van de office-test is weg; niemand heeft de `--deselect` meer nodig.
 - CI: api-postgres blokkeert (45 min), en de nieuwe job api-postgres-15 draait als eigenaar
   zonder superuser.
+- Na de samenvoeging van golf 2 ([w2.md](w2.md)): de twee fouten in de app (Open 1 en 2) zijn
+  hersteld, de tests van P4 draaien op het sjabloon, en elk bestand dat P3 of P4 raakte is groen op
+  SQLite en op PostgreSQL 16. De job api-postgres stopt nu pas na 60 min (zie CI).
 
 ## Wat er veranderde
 
@@ -132,7 +135,7 @@ Met de parameters erbij, zoals de junit van de run op PostgreSQL ze overslaat:
 ## CI
 
 **api-postgres** (PostgreSQL 17) blokkeert nu: geen `continue-on-error` meer, `timeout-minutes:
-45`, de health-check `pg_isready -U platform -d postgres`, pytest met
+45` (bij de samenvoeging 60, zie hieronder), de health-check `pg_isready -U platform -d postgres`, pytest met
 `-o faulthandler_timeout=600` (een test die vastloopt, laat na 10 minuten zijn stacks zien; geen
 plugin voor een tijdslimiet) en `--junitxml`; bij rood komt het junit-bestand als artifact
 (`actions/upload-artifact@v4`, dat ci.yml al gebruikte). De aparte stap voor `test_dbcopy.py` is
@@ -156,6 +159,15 @@ Lokaal nagedaan op PostgreSQL 16 (geen 15 in de sandbox) met dezelfde rol:
 `yamllint -s .github/workflows/ci.yml` is groen. Een echte run in CI is er nog niet (er is niet
 gepusht).
 
+**Bij de samenvoeging (golf 2, [w2.md](w2.md)) veranderde nog:**
+
+- `timeout-minutes` van api-postgres is 60 in plaats van 45. De hele suite duurde lokaal 42 min
+  39 s; 45 is dan te krap als grens van de job. Het is geen poort voor de tests: het doel blijft
+  dat de suite in CI onder 45 min blijft (plan: onder 30). De eerste run in CI zegt of dat lukt.
+- api-postgres installeert DejaVu Sans (`fonts-dejavu-core`), net als de job api. Het is
+  dezelfde suite, en de scans van OCR (`tests/ocr/scans.py`) tekenen in DejaVu Sans; zonder
+  faalt het. In de sandbox stond het lettertype er al, dus de lokale run zag dat niet.
+
 ## Metingen: hoe lang de hele suite duurt
 
 Alles lokaal: 4 CPU's, PostgreSQL 16 in `/dev/shm` (`fsync=off`), `-o faulthandler_timeout=600
@@ -176,8 +188,10 @@ Waar de 15 minuten vandaan komen:
 | Tests die een gemigreerde database krijgen (`pytest --setup-plan`: `database_url_head`) | 2025 |
 | Verwacht verschil: 2025 × 0,46 s | 930 s, 15,5 min |
 
-**A/B op een deelset** (`tests/geo` en `tests/test_office_callback.py`, om en om met en zonder
-sjabloon): loopt nog; de uitslag komt hier.
+**A/B op een deelset** (`tests/geo` en `tests/test_office_callback.py`). De run van P3 werd
+gestopt. Bij de samenvoeging één keer elk, na elkaar, op PostgreSQL 16 op de
+kop van golf 2: met sjabloon 204 passed in 105 s, met `PLATFORM_TEST_PG_TEMPLATE=0` 204 passed in
+144 s. Het sjabloon scheelt hier 39 s (27 %).
 
 **In CI.** De job api-postgres haalde nog nooit het eind (de deadlock; op `cbd0922` na 60 min
 afgebroken), dus een tijd van vóór dit pakket is er in CI niet. De job met de hele suite op
@@ -185,7 +199,10 @@ SQLite duurt in CI 35 tot 38 min, lokaal 54 tot 55 min. Met die verhouding wordt
 CI ongeveer 29 min: net onder het doel van 30 min uit het plan, en ruim onder de grens van 45
 min. Dat is een schatting; de eerste run in CI na de samenvoeging geeft het echte getal.
 
-**SQLite.** De hele suite op SQLite op deze branch: loopt nog; de uitslag komt hier.
+**SQLite.** De hele suite op SQLite op deze branch is niet afgemaakt (de bouwer werd gestopt).
+Lokaal draaien we de hele suite niet meer (werkwijze van Jonas, 23-11): CI op de gepushte commit
+van golf 2 (job api) geeft het getal. Wat wel lokaal liep: de gerichte runs van de samenvoeging,
+alle bestanden die P3 of P4 raakte, op SQLite en op PostgreSQL 16 (zie [w2.md](w2.md)).
 
 ## Nog rood op PostgreSQL
 
@@ -209,6 +226,14 @@ hierboven, zonder de bench).
 
 Tot P4 erbij is en de twee fouten in de app hersteld zijn, is api-postgres in CI dus rood.
 
+**Na de samenvoeging (golf 2).** Alle 63 tests hierboven slagen in de gerichte runs op
+PostgreSQL 16: de 55 van `tests/beeld/`, die van `test_search_logs.py`, `test_photo_settings.py`
+en `test_jobs_lanes.py` (P4), de twee van `test_places_later.py` (Open 1) en
+`test_bench_maakt_de_boom` (Open 2). Daarbij was één test nieuw rood door de samenvoeging zelf:
+`test_photometa.py::test_een_stuk_schrijft_kort` (P3 verwachtte één slot van de boom, P4 neemt het
+in `photo_rows.write` nog eens). Hersteld in de test; zie [w2.md](w2.md). Of de hele suite op
+PostgreSQL groen is, zegt CI op de gepushte commit.
+
 ## Open
 
 1. **`run_places` telt verkeerd op PostgreSQL** (`app/photo_rows.py`, `run_places`). De log
@@ -220,6 +245,8 @@ Tot P4 erbij is en de twee fouten in de app hersteld zijn, is api-postgres in CI
    `rows=1`. De rijen zelf kloppen (de tests controleren ze en dat deel slaagt). Herstel hoort in
    de app: tel per rij (`execute` per rij in het stuk), of lees het aantal terug met
    `RETURNING`. Op SQLite blijft het getal dan gelijk.
+   **Hersteld bij de samenvoeging (`ee2bddf`):** op PostgreSQL voert `run_places` de UPDATE per
+   rij uit en telt elke rowcount; SQLite houdt de ene executemany.
 2. **search-bench met `PLATFORM_DATABASE_URL`** (`app/search/bench.py`, `maak`). `maak` maakt
    `Settings(data_dir=…)`; die leest ook `PLATFORM_DATABASE_URL`. Staat die op PostgreSQL, dan
    migreert de bench de database van de app in plaats van zijn eigen `platform.db`, en schrijft
@@ -229,6 +256,8 @@ Tot P4 erbij is en de twee fouten in de app hersteld zijn, is api-postgres in CI
    database_url="")` in `maak`, zodat de bench altijd zijn eigen bestand neemt; op SQLite zonder
    die variabele verandert er niets. P5 (zoek-perf op PostgreSQL) kiest daarna of de bench ook
    PostgreSQL moet kunnen.
+   **Hersteld bij de samenvoeging (`ee2bddf`):** `maak` neemt nu `Settings(data_dir=…,
+   database_url="")`.
 3. **Zoeken op PostgreSQL tot golf 3** (voor P5): LikeFallback draait buiten `limits.admit`
    (Keuze 13: zo zocht 0.7.0), dus op het cluster gelden de grenzen van zoeken (2 tegelijk, 1 per
    gebruiker, de snelheid) nog niet. Ook kent LikeFallback geen tweede controle van de toegang
@@ -240,7 +269,8 @@ Tot P4 erbij is en de twee fouten in de app hersteld zijn, is api-postgres in CI
    zelf doet dat niet; alleen de test maakt zo een doel. Voor de updatestappen van ClusterForge:
    maak het doel van `db-copy` als de eigenaar zelf, of geef de rol eerst aan de beheerder.
 5. **De duur in CI** is een schatting (29 min, zie Metingen). Na de eerste run in CI: het echte
-   getal hier zetten, en `timeout-minutes: 45` laten staan zolang er ruim marge is.
+   getal hier zetten. De grens van de job is bij de samenvoeging 60 min geworden (zie CI); terug
+   naar 45 kan als de echte duur ruim daaronder blijft.
 
 ## Afwijkingen van het plan
 
