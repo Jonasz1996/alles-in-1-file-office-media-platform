@@ -745,6 +745,11 @@ en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stap
 6. Verzoeken en meldingen
 7. Home met rijen, collecties, activiteit, profielen, kinderslot, intro overslaan
 8. Opruimregels, de stappen voor ClusterForge en de eindtest
+9. Eigen app voor de LG webOS-tv (de speler van het platform, met upscaling en ondertitels,
+   te bedienen met de afstandsbediening) en een downloadpagina op het platform voor de
+   client-apps
+10. Later: Android-app, met media zoals Plex of Jellyfin en sync zoals de Nextcloud-app
+11. Later, misschien: apps voor Linux en Windows, met alle functies (media en sync)
 
 - [ ] Upscaling bij het afspelen. Twee lagen: (a) in de speler zelf, met een eigen
   WebGL-shader (scherper opschalen en randen verfijnen, zoals FSR 1 of Anime4K doen) die op
@@ -896,8 +901,10 @@ Wat de API al in fase 2 en 5 moet hebben voor de apps:
 - Afspeelinfo-endpoint dat direct play, remux of transcode teruggeeft
   met de HLS-URL
 
-Volgorde: eerst LG TV (kleinste, hergebruikt de web-player en bewijst de
-media-API), dan Windows (sync), dan Android.
+Volgorde (Jonas, 23-11-2026): eerst LG TV (kleinste, hergebruikt de web-player en bewijst
+de media-API), samen met een downloadpagina op het platform voor alle client-apps; dan
+Android (media en sync); daarna eventueel Linux en Windows, met alle functies. Zie fase 11,
+stappen 9 tot 11.
 
 ## Extra features (backlog)
 
