@@ -109,8 +109,15 @@ function move(dir: Dir): boolean {
   if (!current || current === document.body || !(root as Node).contains(current) || !visible(current)) {
     return first();
   }
-  const list = candidates(root).filter((el) => el !== current && !el.contains(current));
-  const i = best(current.getBoundingClientRect(), list.map((el) => el.getBoundingClientRect()), dir);
+  const all = candidates(root);
+  const list = all.filter((el) => el !== current && !el.contains(current));
+  let from = current.getBoundingClientRect();
+  if (!all.includes(current)) {
+    // De focus staat op iets dat zelf geen knop is, bv. de titel na een paginawissel. Die is
+    // breed en zijn midden ligt ver rechts; reken dan vanaf de linkerrand (leesvolgorde).
+    from = new DOMRect(from.left, from.top, 1, from.height);
+  }
+  const i = best(from, list.map((el) => el.getBoundingClientRect()), dir);
   if (i < 0) return false;
   focus(list[i]);
   return true;
