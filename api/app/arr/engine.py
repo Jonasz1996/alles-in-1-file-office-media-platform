@@ -50,7 +50,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.arr import facts, prowlarr, qbit, score, subs, torznab
+from app.arr import cleanup, facts, prowlarr, qbit, score, subs, torznab
 from app.arr import settings as arr_settings
 from app.arr.release import parse_release
 from app.config import Settings
@@ -700,4 +700,10 @@ async def loop(settings: Settings) -> None:
             raise
         except Exception:  # noqa: BLE001
             log.exception("arr: een ronde ondertitels mislukte")
+        try:
+            await cleanup.tick(settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("arr: een ronde opruimen mislukte")
         await asyncio.sleep(INTERVAL_S)

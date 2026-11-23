@@ -4,14 +4,15 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Negen nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+Tien nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
 app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
 arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde) en
 media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof) en
 arr_request (app.models.ArrRequest, de verzoeken van gezinsleden) en arr_upscale
 (app.models.ArrUpscale, de rij van de AI-upscaling) en media_facts (app.models.MediaFacts,
 collectie en kijkwijzer uit TMDB) en media_profile (app.models.MediaProfile, profielen en
-kinderslot) en media_intro (app.models.MediaIntro, intro overslaan).
+kinderslot) en media_intro (app.models.MediaIntro, intro overslaan) en arr_cleanup (app.models.ArrCleanup,
+de opruimregels).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -223,9 +224,29 @@ def upgrade() -> None:
         sa.Column("end_ms", sa.Integer(), nullable=True),
         sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False),
     )
+    op.create_table(
+        "arr_cleanup",
+        sa.Column("id", sa.Uuid(), primary_key=True, nullable=False),
+        sa.Column("kind", sa.String(length=8), nullable=False),
+        sa.Column("target_id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "library_id",
+            sa.Uuid(),
+            sa.ForeignKey("media_library.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("title", sa.String(length=255), nullable=False),
+        sa.Column("reason", sa.String(length=32), nullable=False),
+        sa.Column("due_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("kept", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("done_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("kind", "target_id", name="uq_arr_cleanup_target"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("arr_cleanup")
     op.drop_table("media_intro")
     op.drop_table("media_profile")
     op.drop_index("ix_media_facts_collection", table_name="media_facts")

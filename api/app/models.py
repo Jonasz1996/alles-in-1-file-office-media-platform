@@ -735,6 +735,29 @@ class ArrRequest(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ArrCleanup(Base):
+    """Fase 11, stap 8: een film of serie die volgens de opruimregels weg mag (app.arr.cleanup).
+    Eerst op de lijst "binnenkort weg" tot due_at; kept: een beheerder hield hem tegen (blijft
+    dan altijd staan); done_at: naar de prullenbak gegaan. kind: movie (target = node van de
+    film) | show (target = id van de serie)."""
+
+    __tablename__ = "arr_cleanup"
+    __table_args__ = (UniqueConstraint("kind", "target_id", name="uq_arr_cleanup_target"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(8))
+    target_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(String(32))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    kept: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class ArrUpscale(Base):
     """Fase 11, stap 5c: een video die de upscaler (eigen container op de node met de RTX 3060
     Ti) vooraf met AI vergroot. state: queued | running | done | failed | cancelled.
