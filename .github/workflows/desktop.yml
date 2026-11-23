@@ -25,6 +25,8 @@ jobs:
             os: ubuntu-22.04
             bundle: deb
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: apps/desktop
@@ -53,6 +55,15 @@ jobs:
           else
             cp src-tauri/target/release/bundle/deb/*.deb out/platform-linux.deb
           fi
+      - name: In de release "clients" zetten (het platform haalt ze daar op)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view clients >/dev/null 2>&1 || gh release create clients --prerelease \
+            --title "Client-apps" --notes "De gebouwde apps; het platform haalt ze zelf op voor /apps." \
+            --target "${{ github.sha }}" || true
+          gh release upload clients out/* --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: platform-${{ matrix.bundle == 'nsis' && 'windows' || 'linux' }}

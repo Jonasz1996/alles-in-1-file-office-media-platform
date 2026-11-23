@@ -24,7 +24,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from app import __version__, errors, events, jobs, photometa, previews
+from app import __version__, client_fetch, errors, events, jobs, photometa, previews
 from app.analyse import monitor as analyse_monitor
 from app.arr import engine as arr_engine
 from app.certs import CertManager
@@ -549,6 +549,12 @@ async def lifespan(app: FastAPI):
         if settings.media_enabled
         else None
     )
+    # De client-apps van GitHub naar data/apps (fase 11, stap 9-11); alleen in productie
+    clients_task = (
+        asyncio.create_task(client_fetch.loop(settings), name="client-apps")
+        if settings.environment == "production"
+        else None
+    )
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal(app):
         yield
@@ -564,6 +570,8 @@ async def lifespan(app: FastAPI):
     cleaner.cancel()
     if arr_task is not None:
         arr_task.cancel()
+    if clients_task is not None:
+        clients_task.cancel()
     await certs.stop()
     log.info("Platform %s gestopt", __version__)
 

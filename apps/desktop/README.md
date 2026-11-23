@@ -28,7 +28,9 @@ GitHub bouwt bij elke push naar `apps/desktop` (workflow **Desktop-app**):
 Zelf bouwen: Rust, Node 22 en op Linux `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
 librsvg2-dev`, dan `npx @tauri-apps/cli@2 build` in deze map.
 
-## Op de downloadpagina zetten
+## Op de downloadpagina
 
-Leg de bestanden als `platform-windows.exe` en `platform-linux.deb` in de map `apps` van de data
-van het platform (standalone: `/opt/platform/data/platform/apps/`, eigenaar 10001).
+Vanzelf: de workflow zet elke build in de release `clients` van het repo, en het platform haalt
+de nieuwste daar zelf op (bij de start en elke 6 uur; `app/client_fetch.py`) naar de map `apps`
+van zijn data. De pagina `/apps` geeft ze dan van de eigen server. Meteen ophalen: een beheerder
+doet `POST /api/v1/apps/refresh`.

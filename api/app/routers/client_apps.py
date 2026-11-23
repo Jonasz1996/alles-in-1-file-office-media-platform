@@ -6,8 +6,9 @@ GET /api/v1/apps/file/{name}    → een gebouwde app uit data_dir/apps (bijv. pl
 
 De webOS-app is klein (apps/webos): ze opent de tv-stand van het platform. Het .ipk maakt de app
 hier zelf (ar met debian-binary, control.tar.gz en data.tar.gz, zoals ares-package), met in
-config.js het adres waarop de pagina gevraagd werd. Andere apps (Android, later Windows en Linux)
-legt een beheerder als bestand in data_dir/apps; zolang dat er niet is, staan ze als "later".
+config.js het adres waarop de pagina gevraagd werd. De andere apps (Android, Windows, Linux)
+bouwt GitHub; het platform haalt ze zelf op naar data_dir/apps (app.client_fetch). Zolang een
+app er niet is, staat ze als "later".
 Alleen voor wie is ingelogd.
 """
 
@@ -26,7 +27,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.errors import fail
-from app.security import CurrentUser
+from app.security import AdminUser, CurrentUser
 
 router = APIRouter(prefix="/api/v1/apps", tags=["apps"])
 
@@ -184,6 +185,18 @@ async def webos(user: CurrentUser, request: Request, settings: Settings = Depend
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.post("/refresh", response_model=list[ClientApp])
+async def refresh(admin: AdminUser, settings: Settings = Depends(get_settings)):  # noqa: B008
+    """Meteen de nieuwste apps van GitHub halen (anders elke 6 uur vanzelf)."""
+    from app import client_fetch
+
+    try:
+        await client_fetch.fetch(settings)
+    except Exception as exc:  # noqa: BLE001
+        raise fail(502, "clients_fetch", f"Ophalen bij GitHub mislukte: {exc}") from exc
+    return await list_apps(admin, settings)
 
 
 @router.get("/file/{name}")

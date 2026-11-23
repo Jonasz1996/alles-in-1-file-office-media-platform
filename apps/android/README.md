@@ -33,8 +33,9 @@ Er is geen Android Studio nodig: GitHub bouwt de APK bij elke push naar `apps/an
 
 Zelf bouwen kan ook: `./gradlew assembleDebug` (JDK 17 en de Android SDK nodig).
 
-## Op de downloadpagina zetten
+## Op de downloadpagina
 
-Leg de APK als `platform-android.apk` in de map `apps` van de data van het platform
-(standalone: `/opt/platform/data/platform/apps/`, eigenaar 10001). De pagina `/apps` biedt
-hem dan aan. Een debug-APK mag daar ook staan, hernoemd naar `platform-android.apk`.
+Vanzelf: de workflow zet elke build in de release `clients` van het repo, en het platform haalt
+de nieuwste daar zelf op (bij de start en elke 6 uur; `app/client_fetch.py`) naar de map `apps`
+van zijn data. De pagina `/apps` geeft ze dan van de eigen server. Meteen ophalen: een beheerder
+doet `POST /api/v1/apps/refresh`.
