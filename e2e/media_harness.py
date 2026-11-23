@@ -684,6 +684,13 @@ class MediaBrowsers(Browsers):
     def new_context(self, **options: Any) -> Any:
         context = super().new_context(**options)
         context.add_init_script(FRAME_JS)
+        # Upscaling in de speler (fase 11, stap 5a) staat standaard aan, maar op de runner rekent
+        # WebGL in software: dat vertraagt het afspelen, en de ondertitels tekent de speler dan
+        # zelf (de <track> staat op "hidden"). In de e2e uit, tenzij een test het zelf aanzet.
+        context.add_init_script(
+            "try { if (localStorage.getItem('player.upscale.v1') === null)"
+            " localStorage.setItem('player.upscale.v1', 'false'); } catch (e) {}"
+        )
         if self.perf:
             context.on("page", lambda page: self._throttle(context, page))
         return context
