@@ -31,6 +31,7 @@ pocr passen, en zijn score telt pocr niet mee. Elke treffer gaat daarna door de 
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time as clock
@@ -265,6 +266,14 @@ class FtsMatch(ColumnElement):
         self.table_name = table_name
         self.parsed = parsed
         self.owner = owner
+        self.against: Any = None
+
+    def self_group(self, against: Any = None) -> Any:
+        """Onthoudt waartegen SQLAlchemy groepeert (de AND van de WHERE): op SQLite krijgt de
+        MATCH dan dezelfde haakjes als in 0.8.1 (review van PR #6, F17)."""
+        found = copy.copy(self)
+        found.against = against
+        return found
 
 
 @compiles(FtsMatch)
@@ -272,7 +281,10 @@ def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
     t, parsed = element.table_name, element.parsed
     if compiler.dialect.name == "sqlite":
         expr = parsed.match if t == "fts_node" else parsed.names
-        return compiler.process(literal_column(t).op("MATCH")(bindparam(f"{t}_expr", expr)), **kw)
+        found = literal_column(t).op("MATCH")(bindparam(f"{t}_expr", expr))
+        if element.against is not None:
+            found = found.self_group(against=element.against)
+        return compiler.process(found, **kw)
     if t == "fts_name":
         long_words = [w for w in parsed.words if len(w) >= 3]
         parts = [
@@ -404,7 +416,9 @@ class InRanges(ColumnElement):
 @compiles(InRanges)
 def _in_ranges(element: InRanges, compiler: Any, **kw: Any) -> str:
     sql, params = ranges_sql(element.ranges, element.alias, compiler.dialect.name)
-    return f"({compiler.process(text(sql).bindparams(**params), **kw)})"
+    found = compiler.process(text(sql).bindparams(**params), **kw)
+    # SQLite: zonder extra haakjes, zoals in 0.8.1 (F17)
+    return found if compiler.dialect.name == "sqlite" else f"({found})"
 
 
 @compiles(NumNotIn)
@@ -541,8 +555,10 @@ async def is_small(conn: AsyncConnection, roots: Ranges) -> bool:
     if len(roots.ranges) > MAX_OR:
         return False
     sql, params = ranges_sql(roots.ranges, dialect=conn.dialect.name)
+    # PostgreSQL wil een naam voor de subquery; SQLite houdt de tekst van 0.8.1 (F17)
+    name = "" if conn.dialect.name == "sqlite" else " AS small"
     count = text(
-        f"SELECT count(*) FROM (SELECT 1 FROM node AS n WHERE {sql} LIMIT {SMALL + 1}) AS small"
+        f"SELECT count(*) FROM (SELECT 1 FROM node AS n WHERE {sql} LIMIT {SMALL + 1}){name}"
     )
     return (await conn.execute(count.bindparams(**params))).scalar_one() <= SMALL
 
