@@ -735,6 +735,40 @@ class ArrRequest(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ArrUpscale(Base):
+    """Fase 11, stap 5c: een video die de upscaler (eigen container op de node met de RTX 3060
+    Ti) vooraf met AI vergroot. state: queued | running | done | failed | cancelled.
+    segments_*: stukken van 30 s (de upscaler meldt ze; hervatten gaat per stuk).
+    result_node_id: de tweede versie naast het origineel ("<naam> - AI 4K.mkv")."""
+
+    __tablename__ = "arr_upscale"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued', 'running', 'done', 'failed', 'cancelled')",
+            name="ck_arr_upscale_state",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), index=True
+    )
+    state: Mapped[str] = mapped_column(String(10), default="queued")
+    scale: Mapped[int] = mapped_column(Integer, default=2)
+    segments_done: Mapped[int] = mapped_column(Integer, default=0)
+    segments_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    result_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ArrSubtitle(Base):
     """Fase 11, stap 4: per video en taal wat OpenSubtitles opleverde. state: found (gezet als
     los bestand naast de video, sub_node_id) | none (niets gevonden; opnieuw na een tijd, die

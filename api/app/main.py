@@ -52,6 +52,7 @@ from app.routers import (
     albums_rule,
     archive,
     arr_requests,
+    arr_upscale,
     arr_wanted,
     auth,
     batch,
@@ -629,6 +630,9 @@ app.include_router(admin_arr.router)
 app.include_router(arr_wanted.router)
 app.include_router(arr_requests.router)
 app.include_router(arr_requests.admin_router)
+app.include_router(arr_upscale.router)
+app.include_router(arr_upscale.admin_router)
+app.include_router(arr_upscale.worker_router)
 app.include_router(media_suboffset.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)

@@ -28,6 +28,10 @@ const en: Translation<typeof nl> = {
     again: "Scan again",
     started: "The scan of {name} has started.",
   },
+  upscale: {
+    button: "AI upscaling",
+    queued: "Queued for AI upscaling. It runs between :20 and :40 of every hour; follow it in Admin → Media.",
+  },
   requests: {
     title: "Requests",
     intro: "Request a film or show. An admin approves it; then the platform finds and downloads it and puts it in the library.",

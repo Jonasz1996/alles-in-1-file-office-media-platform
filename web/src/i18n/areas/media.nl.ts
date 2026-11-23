@@ -27,6 +27,10 @@ export default {
     again: "Opnieuw scannen",
     started: "De scan van {name} is gestart.",
   },
+  upscale: {
+    button: "AI-upscaling",
+    queued: "In de rij voor AI-upscaling. Het gebeurt tussen :20 en :40 van elk uur; volg het op Beheer → Media.",
+  },
   requests: {
     title: "Verzoeken",
     intro: "Vraag een film of serie. Een beheerder keurt het goed; daarna zoekt en downloadt het platform hem en zet hem in de bibliotheek.",

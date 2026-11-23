@@ -26,5 +26,8 @@ export default {
   arr_request_exists: { en: "You already requested this" },
   arr_request_limit: { en: "You already have many requests waiting" },
   arr_request_decided: { en: "This request has already been decided" },
+  arr_upscale_exists: { en: "This video is already in the queue" },
+  arr_upscale_kind: { en: "Only a film, episode or video can be upscaled" },
+  arr_upscale_stopped: { en: "This job is no longer running" },
   arr_no_library: { en: "There is no library for films or shows to put it in yet" },
 } satisfies Record<string, { en: string }>;

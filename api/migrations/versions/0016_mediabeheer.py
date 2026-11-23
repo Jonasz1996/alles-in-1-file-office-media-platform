@@ -4,11 +4,12 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Vijf nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+Zes nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
 app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
 arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde) en
 media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof) en
-arr_request (app.models.ArrRequest, de verzoeken van gezinsleden).
+arr_request (app.models.ArrRequest, de verzoeken van gezinsleden) en arr_upscale
+(app.models.ArrUpscale, de rij van de AI-upscaling).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -116,6 +117,35 @@ def upgrade() -> None:
     )
     op.create_index("ix_arr_request_user_id", "arr_request", ["user_id"])
     op.create_table(
+        "arr_upscale",
+        sa.Column("id", sa.Uuid(), primary_key=True, nullable=False),
+        sa.Column(
+            "node_id", sa.Uuid(), sa.ForeignKey("node.id", ondelete="CASCADE"), nullable=False
+        ),
+        sa.Column("state", sa.String(length=10), nullable=False),
+        sa.Column("scale", sa.Integer(), nullable=False),
+        sa.Column("segments_done", sa.Integer(), nullable=False),
+        sa.Column("segments_total", sa.Integer(), nullable=True),
+        sa.Column("reason", sa.String(length=200), nullable=True),
+        sa.Column(
+            "result_node_id",
+            sa.Uuid(),
+            sa.ForeignKey("node.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_by", sa.Uuid(), sa.ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("seen_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "state IN ('queued', 'running', 'done', 'failed', 'cancelled')",
+            name="ck_arr_upscale_state",
+        ),
+    )
+    op.create_index("ix_arr_upscale_node_id", "arr_upscale", ["node_id"])
+    op.create_table(
         "arr_subtitle",
         sa.Column(
             "node_id",
@@ -163,6 +193,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("media_sub_offset")
+    op.drop_index("ix_arr_upscale_node_id", table_name="arr_upscale")
+    op.drop_table("arr_upscale")
     op.drop_index("ix_arr_request_user_id", table_name="arr_request")
     op.drop_table("arr_request")
     op.drop_table("arr_subtitle")

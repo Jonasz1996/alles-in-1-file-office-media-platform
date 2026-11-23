@@ -20,6 +20,7 @@ import { episodeCode, progressFraction, resumeAt } from "./grid";
 import { libraryPath, showPath, watchPath } from "./index";
 import { affectsItem, analysisRows, extraKey, streamText } from "./library";
 import { ItemMatchActions } from "./match/Actions";
+import { UpscaleButton } from "./UpscaleButton";
 import { TmdbAttribution } from "./match/Attribution";
 import { fromTmdb } from "./match/match";
 import type { Item } from "./types";
@@ -76,6 +77,8 @@ function ItemView({ item, reload }: { item: Item; reload(): void }): JSX.Element
             )}
             {/* M8: Koppelen en Bewerken (alleen met schrijfrecht) */}
             <ItemMatchActions item={item} onChanged={reload} />
+            {/* Fase 11, stap 5c: AI-upscaling (alleen beheerders) */}
+            <UpscaleButton nodeId={item.node_id} kind={item.kind} />
           </div>
           {done > 0 && (
             <span className="media-progress media-item-progress" aria-hidden="true">
