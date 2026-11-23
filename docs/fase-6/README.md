@@ -207,8 +207,9 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
 - **Platform terug zonder gegevensverlies**: `MET_DATABASE=downgrade` laat het nieuwe image het
   schema terugzetten (`db-downgrade`), in plaats van de back-up van vóór de update terug te zetten
   ([runbook](../runbooks/cluster.md#terugzetten)).
-- **Tests op PostgreSQL** in CI: een sjabloondatabase per testproces (de job duurt ±10 minuten in
-  plaats van een uur), en de tests die echt alleen over SQLite gaan, zijn als zodanig gemarkeerd.
+- **Tests op PostgreSQL** in CI: een sjabloondatabase per testproces, zodat een test niet elke
+  keer alle migraties draait, en de tests die echt alleen over SQLite gaan, zijn als zodanig
+  gemarkeerd. Hoe lang de job duurt, zegt de eerste run in CI ([i3/w2.md](i3/w2.md)).
 
 Terug naar 0.8.1 op PostgreSQL: eerst `python -m app.cli db-downgrade 0012 --ja` met 0.8.2 (of
 Platform terug met `MET_DATABASE=downgrade`). Er gaan geen rijen verloren.
@@ -284,7 +285,7 @@ Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
 
 | Wat | De grens | Waar het staat |
 |---|---|---|
-| Zoeken zonder index | Tijdens **Index herbouwen**, en op PostgreSQL, zoekt het platform alleen op naam, zoals 0.7.0 (met LIKE). Het werkt, maar langzamer; `/beheer` zegt het. PostgreSQL is niet getest. | het runbook, "De index herbouwen"; [z0-api.md](z0-api.md) |
+| Zoeken zonder index | Tijdens **Index herbouwen**, en op PostgreSQL, zoekt het platform alleen op naam, zoals 0.7.0 (met LIKE). Het werkt, maar langzamer; `/beheer` zegt het. PostgreSQL is niet getest. [0.8.2: PostgreSQL heeft een eigen index (migratie 0014); alleen tijdens het herbouwen zoekt het daar op naam, zoals op SQLite.] | het runbook, "De index herbouwen"; [z0-api.md](z0-api.md) |
 | Een vraag die te lang duurt | Na ±120 ms geeft zoeken de eerste treffers, niet per se de beste, met een melding. Dat kan bij iemand met meer dan 64 gedeelde mappen, en bij alleen een datumfilter op foto's; dan kan die pagina ook leeg zijn, met de melding "Niets gevonden binnen de tijd". | [z1.md](z1.md), Open |
 | De volgorde | Zoeken telt woorden over alle gebruikers. De volgorde van bijna gelijke treffers zegt daardoor een heel klein beetje over bestanden van anderen. Er is geen score en geen totaal. | risico R7 in het [bouwontwerp](bouwontwerp.md) |
 | De kaart met een filter op soort, map, camera, persoon of tag | tot een halve seconde voor de hele wereld (gemeten in de sandbox 0,31–0,34 s en in CI 0,43 s, eigen grens 0,5 s); zonder zo'n filter binnen 0,15 s. Sneller kan alleen met een nieuwe migratie. | [z3.md](z3.md), Open; Vragen voor Jonas: 0,5 s is goed (besloten: standaard, Jonas 2026-11-17) |
@@ -294,7 +295,7 @@ Wil je het echt kwijt, wis het dan eerst met de analyse aan (het runbook
 | Het kader van een persoon | ~~blijft staan als een foto een nieuwe versie krijgt, ook als het beeld anders is. Migratie 0011 zet dat recht; die staat al op de branch (A0) en hoort bij 0.8.1.~~ [0.8.1: opgelost met migratie 0011; het kader gaat weg, de persoon blijft.] | [z0b.md](z0b.md), [a0.md](a0.md) |
 | OCR | ~~Een foto met precies dezelfde inhoud als een bestand dat er al was, krijgt zijn tekst pas bij de volgende start.~~ [0.8.2: meteen.] "Tekst in foto's herkennen" uit wist de tekst die er is niet (Vragen voor Jonas: niet wissen, besloten: standaard, Jonas 2026-11-17). Van een PDF leest OCR hooguit 200 gescande pagina's. Met de knop **Tekst herkennen**: 20 keer per uur en 200 pagina's per dag per gebruiker. Een volle, liggende scan kost ±6 pagina's per minuut, ±160 minuten per 1.000 pagina's. | [x1.md](x1.md), Open |
 | Uploaden terwijl de index schrijft | De upload wacht hooguit ±1 s op een schijf waar het wegschrijven (`fsync`) tot ±200 ms extra kost. Op een tragere schijf langer. | [z2.md](z2.md); `api/app/dbgate.py` |
-| De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. | het runbook, "De wekelijkse controle" |
+| De wekelijkse controle | loopt alleen met de index (FTS5), niet met LIKE of op PostgreSQL. [0.8.2: ook op PostgreSQL, met de index van 0014.] | het runbook, "De wekelijkse controle" |
 | De bronvermelding | GeoNames en Natural Earth staan onder de kaart en in de [README](../../README.md) (Bronnen). ~~De pagina `/over` is er nog niet.~~ [0.8.1: `/over` is er, via Account → Bronnen en licenties, ook met de analyse uit.] | [z3.md](z3.md), Open |
 | Gezichten: de kwaliteit (0.8.1) | Niet gemeten: de tests hebben geen set met echte gezichten (Vraag 8 is nee, besloten: standaard, Jonas 2026-11-17). De drempels (0,45 voor een voorstel, 0,50 voor een groep) zijn voorlopig; `analyse-kwaliteit` meet ze op je LXC tegen je eigen ja en nee, en tot dan zegt `/beheer` "niet gemeten". Twee eisen van het ontwerp hebben geen gereedschap: "op ≥ 95% van de portretten precies het goede gezicht gevonden" en "de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere". Die blijven bij besluit op **niet gemeten, geen gereedschap**. | het runbook [gezichten.md](../runbooks/gezichten.md), "Hoe goed is het"; [x2b.md](x2b.md), Open |
 | Zoeken op beeld: zwakke woorden (0.8.1) | 'bergen' en 'boot' vinden weinig in de testset ('berg' en 'bootje' wel); "Meer zoals deze" haalde 0,475, waar het ontwerp 0,7 wilde. Zo uitgebracht met Keuze 85; de uitleg bij de schakelaar zegt het. | [x3b.md](x3b.md); Keuze 85 in het [bouwontwerp](bouwontwerp.md) |
