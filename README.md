@@ -189,15 +189,17 @@ Deze gelden ook nog in 0.8.1. Alles staat in [docs/fase-6/README.md](docs/fase-6
 belangrijkste:
 
 - **"Niet gelijk" op `/dubbel` kan niet ongedaan:** die groep komt niet meer terug.
-- **Herinneringen per map verbergen** kan in de web-app nog niet; per dag en per persoon wel.
+- ~~**Herinneringen per map verbergen** kan in de web-app nog niet; per dag en per persoon wel.~~
+  Sinds 0.8.2 kan het: **Een map verbergen…** boven de herinneringen op `/fotos`.
 - **Land en Plaats in de filters op `/fotos`** kennen hooguit 500 plaatsen (die met de meeste
   foto's eerst); wie meer plaatsen heeft, mist de kleinste plaatsen en soms een land. **Camera**
   is een tekstveld.
 - **OCR:** gescande PDF's leest het vanzelf, foto's alleen met **Tekst herkennen** of als je onder
   Account → Foto's "Tekst in foto's herkennen" aanzet. Een volle liggende scan kost ±160 minuten
-  per 1.000 pagina's (rechte scans ±60). Upload je een foto die er al was (dezelfde inhoud), dan
+  per 1.000 pagina's (rechte scans ±60). ~~Upload je een foto die er al was (dezelfde inhoud), dan
   leest het die pas na de volgende start. Wie een PDF alleen mag lezen, ziet niet of OCR klaar is;
-  de tekst vindt hij wel. OCR werkt alleen met media aan (de standaard).
+  de tekst vindt hij wel.~~ Sinds 0.8.2 leest het zo'n foto meteen, en ziet wie een PDF alleen mag
+  lezen de stand van OCR (zonder knop). OCR werkt alleen met media aan (de standaard).
 - **De kaart van de hele wereld met een filter op soort, map, camera, persoon of tag** kan tot een
   halve seconde duren; met alleen datum, plaats of land blijft hij onder 150 ms.
 - **Meer dan 64 gedeelde mappen, of een filter op foto's met alleen een datum,** kan een half

@@ -659,7 +659,10 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    open.
 5. **Een GPS-waarde met 60,0 seconden geeft geen plek** (de testfoto's gerepareerd in `d5624b5`; de
    app is een open punt voor I2). M9 vond het: `_dms` in de testfoto's gaf (54, 47, 60.0), en
-   `render_meta` leest seconden alleen onder 60. Bij een camera is het niet gezien.
+   `render_meta` leest seconden alleen onder 60. Bij een camera is het niet gezien. [0.8.2:
+   precies 60,0 s telt nu als de volgende minuut (`45f80aa3`); boven 60 blijft het geen plek. Geen
+   nieuwe versie van photometa: alleen nieuwe of opnieuw gelezen foto's krijgen de plek
+   ([i3/fase6-rest.md](i3/fase6-rest.md)).]
 6. **Een pagina op zijn kant kost OCR ±3× zo veel** (M5, een rapport). Elke pagina van 90° gaat door
    OSD; over de mix haalt OCR de poort ruim (23,2 tegen 8 pagina's per minuut). De trage brieven
    van 0° in run 2 zijn niet verklaard.

@@ -18,7 +18,9 @@ Tab, Enter, Spatie, de pijlen en typen; nergens een klik (docs/fase-6/toetsenbor
 - De pagina van één persoon: de volgorde van Tab, F2 (hernoemen; de focus gaat terug naar het
   raster), Verbergen en "Verborgen personen tonen" op /fotos/personen, Niet in herinneringen,
   Samenvoegen (de combobox in het dialoog), het raster (pijlen, viewer, Spatie, Mod+A en
-  Downloaden als zip) en Wissen (Shift+Delete en de knop, met de vraag).
+  Downloaden als zip) en Wissen (Shift+Delete en de knop, met de vraag). Hangt de vraag naar de
+  stand van gezichten, dan komt het dialoog na 3 s toch, en een tweede Shift+Delete vraagt dan
+  niets (0.8.2; de DOM-test van review integratie-2, C5).
 - Account → Foto's: gezichten en zoeken op beeld aanzetten kan nog niet (de API zegt 409); de
   reden staat onder het vinkje, het vinkje blijft uit en de rest van de pagina werkt door.
 - Land, Plaats en Camera op /fotos (I1, S7): met een places.sqlite uit de kleine bronnen van
@@ -32,6 +34,7 @@ De foto's komen van een vaste dag (LATEST), niet van nu.
 from __future__ import annotations
 
 import re
+import time
 import zipfile
 from datetime import UTC, date, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
@@ -801,6 +804,82 @@ def test_de_pagina_van_een_persoon_met_het_toetsenbord(server, fien, context_as)
     assert over["people"] == []
     # De foto's zelf blijven
     assert len(server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"]) == PHOTOS
+
+
+def is_stand(r) -> bool:
+    return r.request.method == "GET" and r.url.endswith("/api/v1/me/photo-settings")
+
+
+def test_wissen_wacht_hooguit_3_s_en_vraagt_een_keer(server, fien, context_as):
+    """Wissen op de pagina van een persoon (0.8.1, P2): tussen de toets en het dialoog zit GET
+    /me/photo-settings (staan gezichten aan, dan noemt het dialoog ze). Hangt dat verzoek, dan komt
+    het dialoog na SETTINGS_WAIT_MS (3 s) toch, met de zin van 0.8.0. Een tweede Shift+Delete in
+    die tijd vraagt niets: één verzoek, één dialoog. Antwoordt de server, dan komt het dialoog
+    meteen (ruim binnen die 3 s). Tot nu toe stond dit alleen als brontekst in een test (review
+    integratie-2, C5)."""
+    items = server.call(fien, "GET", "/api/v1/photos", expect=200).json()["items"]
+    server.call(
+        fien, "POST", f"/api/v1/files/{items[0]['id']}/people", json={"name": "Anna"}, expect=201
+    )
+    alle = server.call(fien, "GET", "/api/v1/people", expect=200).json()["people"]
+    anna = alle[0]["id"]
+    zin = "Anna verdwijnt van al je foto's. De foto's zelf blijven."
+
+    # page.route met een service worker ziet niet alles (Chrome 156): die staat hier uit
+    context = context_as(fien, service_workers="block")
+    page = context.new_page()
+    page.goto(f"/fotos/personen/{anna}")
+    kop = page.get_by_role("heading", level=1)
+    expect(kop).to_have_text("Anna")
+    raster = page.get_by_role("grid", name="Foto's van Anna", exact=True)
+    expect(raster.get_by_role("gridcell")).to_have_count(1)
+
+    # Vanaf nu hangt GET /me/photo-settings: geen antwoord tot de test hem loslaat
+    vast = []
+
+    def houd(route) -> None:
+        if route.request.method == "GET":
+            vast.append(route)
+        else:
+            route.continue_()
+
+    context.route("**/api/v1/me/photo-settings", houd)
+    vraag = page.get_by_role("dialog", name="Wissen", exact=True)
+    kop.focus()
+    begin = time.monotonic()
+    page.keyboard.press("Shift+Delete")
+    page.keyboard.press("Shift+Delete")  # nog een keer, terwijl de eerste wacht
+    expect(vraag).to_be_visible(timeout=10_000)
+    gewacht = time.monotonic() - begin
+    assert gewacht >= 2.9, gewacht
+    assert len(vast) == 1  # het verzoek van de eerste toets; het hangt nog
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    expect(vraag).to_contain_text(zin)
+    expect(vraag).not_to_contain_text("gezichten")
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(vraag).to_have_count(0)
+    vast.pop().continue_()
+    context.unroute("**/api/v1/me/photo-settings", houd)
+
+    # Nu antwoordt de server: het dialoog komt meteen
+    kop.focus()
+    begin = time.monotonic()
+    with page.expect_response(is_stand) as stand:
+        page.keyboard.press("Shift+Delete")
+    assert stand.value.status == 200
+    expect(vraag).to_be_visible()
+    snel = time.monotonic() - begin
+    assert snel < 2.9, snel
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    expect(vraag).to_contain_text(zin)
+    expect(vraag.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(vraag).to_have_count(0)
+    expect(kop).to_have_text("Anna")
+    # Niets gewist
+    na = server.call(fien, "GET", "/api/v1/people", expect=200).json()["people"]
+    assert [p["id"] for p in na] == [anna]
 
 
 def test_account_fotos_gezichten_en_beeld_nog_niet(server, user_factory, context_as):

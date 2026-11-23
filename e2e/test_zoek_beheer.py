@@ -11,6 +11,9 @@
    foto's vragen eerst; Esc doet niets (geen POST) en de focus blijft op de knop.
 2. Een gewone gebruiker: geen Beheer in het menu, /beheer/zoeken is "Geen toegang" zonder één
    aanroep van /admin/search, en elke route van Z7 geeft hem 403.
+3. "Meer laden" in de lijst van mislukte (0.8.2): met 61 mislukte (meer dan een pagina van 50)
+   haalt Enter de rest met de cursor van de server; daarna is de knop weg en staat de focus op de
+   kop van het blok.
 
 De mislukte inhoud is een docx die wel te lezen is: de test zet zijn stap text met de server uit
 op failed. Na "Mislukte opnieuw" en hervatten leest de app hem echt opnieuw (done).
@@ -27,6 +30,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -48,6 +52,7 @@ WACHT_S = 60.0
 HERVAT_S = 15.0
 N = 3_000  # meer nodes dan rebuild.CHUNK (2.000): de herbouw heeft twee stukken
 WOORD = "notulenwoordbeheer"  # alleen in de tekst van de docx die op failed komt
+MISLUKT = 61  # meer dan een pagina van GET /admin/search/failed (admin.PAGE, 50)
 ACTIEF = """() => {
   const a = document.activeElement;
   if (!a) return "-";
@@ -442,3 +447,71 @@ def test_een_gewone_gebruiker_ziet_geen_tab_en_krijgt_403(
     # Niets veranderd: geen pauze, geen herbouw
     na = stand(beheer)
     assert na["paused"] is False and na["rebuild"] is None
+
+
+# --- 3. "Meer laden" in de lijst van mislukte --------------------------------------------------
+
+
+def test_meer_laden_in_de_lijst_van_mislukte(beheer: Beheer, browsers: Browsers) -> None:
+    """61 inhouden van de boom krijgen hun stap text op failed (rechtstreeks in SQLite, zoals de
+    fixture). De lijst toont er 50 en "Meer laden"; Enter haalt de andere 11 met de cursor van de
+    server (één GET), zonder dubbele en in de volgorde van de server (de nieuwste eerst, dan de
+    sha256). Daarna is de knop weg en staat de focus op de kop "Mislukte inhouden". Na de andere
+    tests: die tellen één mislukte."""
+
+    def mislukt(data_dir: Path) -> list[tuple[str, str]]:
+        con = sqlite3.connect(data_dir / "platform.db")
+        try:
+            rijen = con.execute(
+                "SELECT updated_at, blob_sha FROM analysis WHERE step = 'text' AND state = 'done' "
+                "ORDER BY blob_sha LIMIT ?",
+                (MISLUKT,),
+            ).fetchall()
+            assert len(rijen) == MISLUKT
+            con.executemany(
+                "UPDATE analysis SET state = 'failed', code = 'unreadable', tries = 3 "
+                "WHERE blob_sha = ? AND step = 'text'",
+                [(sha,) for _, sha in rijen],
+            )
+            con.commit()
+        finally:
+            con.close()
+        return rijen
+
+    rijen = beheer.server.seeded(mislukt)
+    # De volgorde van admin.failed: updated_at, dan sha (in SQLite tekst in één vorm, zie
+    # bench._tijd), de nieuwste eerst
+    verwacht = [sha for _, sha in sorted(rijen, reverse=True)]
+    assert stand(beheer)["index"]["failed"] == MISLUKT
+
+    page = browsers.context_as(beheer.admin).new_page()
+    page.goto("/beheer/zoeken")
+    expect(page.locator('[data-search="failed"]')).to_have_text(f"{MISLUKT} inhouden")
+    toggle = page.locator('[data-search="failed-toggle"]')
+    tab_to(page, toggle)
+    with page.expect_response(is_admin_search("GET", "/failed")) as eerste:
+        page.keyboard.press("Enter")
+    assert eerste.value.status == 200
+    assert "cursor=" not in eerste.value.url
+    pagina = eerste.value.json()
+    assert len(pagina["items"]) == 50 and pagina["cursor"]
+    sha_cellen = page.locator('[data-search="failed-list"] tbody tr td:first-child')
+    expect(sha_cellen).to_have_count(50)
+    meer = page.locator('[data-search="failed-more"]')
+    expect(meer).to_have_text("Meer laden")
+
+    tab_to(page, meer, limit=5)
+    with page.expect_response(is_admin_search("GET", "/failed")) as tweede:
+        page.keyboard.press("Enter")
+    assert tweede.value.status == 200
+    assert parse_qs(urlsplit(tweede.value.url).query)["cursor"] == [pagina["cursor"]]
+    rest = tweede.value.json()
+    assert len(rest["items"]) == MISLUKT - 50 and rest["cursor"] is None
+    expect(sha_cellen).to_have_count(MISLUKT)
+    expect(meer).to_have_count(0)
+    expect(
+        page.get_by_role("heading", name="Mislukte inhouden", level=3, exact=True)
+    ).to_be_focused()
+    assert [i["sha"] for i in pagina["items"] + rest["items"]] == verwacht
+    assert sha_cellen.all_inner_texts() == verwacht
+    expect(toggle).to_have_text("Lijst verbergen")

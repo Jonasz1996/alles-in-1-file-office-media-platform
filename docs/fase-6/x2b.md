@@ -288,10 +288,12 @@ onder het slot).
    naar voor gezichten (±0,8 kB per gezicht; `/beheer` toont de ruimte). X3b zet die controle
    voor beeld neer; gezichten kunnen er bij I2 een regel bij krijgen.~~ [I2: gedaan in P1
    (`e0a271e`): `gezichten_ruimte` waarschuwt onder 105 MB vrij op `DATA_ROOT`, nooit fataal.]
-8. **Niet in een e2e** (toetsenbord-x2.md): V, Spatie om te deselecteren, Home en End, "Meer
-   laden", "Niet benoemde gezichten wissen", "Misschien ook Anna", "?" met Ja, Nee en Niet tonen
+8. **Niet in een e2e** (toetsenbord-x2.md): ~~V, Spatie om te deselecteren, Home en End, "Meer
+   laden", "Niet benoemde gezichten wissen",~~ "Misschien ook Anna", "?" met Ja, Nee en Niet tonen
    in de viewer, "Opnieuw zoeken" en "Mislukte opnieuw". De toetsen toetst `faces.test.ts`, de API
-   erachter `tests/people/faces/`.
+   erachter `tests/people/faces/`. [0.8.2: de doorgehaalde staan in
+   `test_wie_is_dit_met_v_spatie_home_end_meer_laden_en_wissen`; zie
+   [i3/fase6-rest.md](i3/fase6-rest.md).]
 9. ~~**Samenvoegen met X3b**: allebei veranderen `ci.yml` (dezelfde regel `ANALYSE_TESTS` rond
    regel 128: de som van beide), `docs/runbooks/analyse.md` ("Wat er nog niet is": naast elkaar)
    en `infra/single/README.md`; en `server.BUILT`/`child.handlers()` (G5-C4: X3b eerst, dan X2b).~~
