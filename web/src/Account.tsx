@@ -54,20 +54,7 @@ export function Account({
   const [passwordChanged, setPasswordChanged] = useState(0);
 
   // Na reset-account: alleen een eigen wachtwoord kiezen; daarna (opnieuw ophalen) 2FA
-  if (user.password_change_required) {
-    return (
-      <main className="account">
-        <h1>{t("account.title")}</h1>
-        <p>
-          {user.display_name} <span className="muted">({user.email})</span>
-        </p>
-        <p>
-          <strong>{t("account.tempPassword")}</strong> {t("account.tempPasswordText")}
-        </p>
-        <PasswordChange totpEnabled={user.totp_enabled} temporary onChanged={onChange} />
-      </main>
-    );
-  }
+  if (user.password_change_required) return <TempPassword user={user} onChange={onChange} />;
 
   return (
     <main className="account">
@@ -128,6 +115,22 @@ export function Account({
 }
 
 const MIN_PASSWORD = 10;
+
+/** Na reset-account: alleen een eigen wachtwoord kiezen; daarna (opnieuw ophalen) 2FA. */
+function TempPassword({ user, onChange }: { user: User; onChange: () => void }): JSX.Element {
+  return (
+    <main className="account">
+      <h1>{t("account.title")}</h1>
+      <p>
+        {user.display_name} <span className="muted">({user.email})</span>
+      </p>
+      <p>
+        <strong>{t("account.tempPassword")}</strong> {t("account.tempPasswordText")}
+      </p>
+      <PasswordChange totpEnabled={user.totp_enabled} temporary onChanged={onChange} />
+    </main>
+  );
+}
 
 function PasswordChange({
   totpEnabled,
