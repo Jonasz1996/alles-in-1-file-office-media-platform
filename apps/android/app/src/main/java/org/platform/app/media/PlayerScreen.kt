@@ -87,7 +87,10 @@ fun PlayerScreen(app: PlatformApp, node: String, onDone: () -> Unit) {
                     .setSelectionFlags(if (t.default || t.forced) C.SELECTION_FLAG_DEFAULT else 0)
                     .build()
             }
-            val item = MediaItem.Builder().setUri(app.api.url(url)).setSubtitleConfigurations(subs).apply {
+            // De adressen van de sessie zijn relatief aan /api/v1/stream/{sid}/ ("file", "master.m3u8")
+            val stream = if (url.startsWith("/") || url.startsWith("http")) app.api.url(url)
+            else app.api.url("/api/v1/stream/${out.sid}/$url")
+            val item = MediaItem.Builder().setUri(stream).setSubtitleConfigurations(subs).apply {
                 if (out.urls.master != null) setMimeType(MimeTypes.APPLICATION_M3U8)
             }.build()
             player.setMediaItem(item, out.start_ms)
