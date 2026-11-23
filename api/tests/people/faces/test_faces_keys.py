@@ -24,10 +24,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
-from app import backup
+from app import backup, dbdialect
 from app.analyse import status
 from app.models import Face, FaceScan, PhotoPref
-from app.people.faces import crypto, keycheck, scan
+from app.people.faces import crypto, keycheck, scan, wipe
 from tests.conftest import database_env
 from tests.factories import create_user, maker
 from tests.people.faces.conftest import aan, draai, foto
@@ -181,6 +181,74 @@ async def test_sleutels_check_in_orde_en_wat_er_mis_kan_zijn(settings, nep, mijn
         keys.unlink()
         echt.rename(keys)
     assert (await _check(settings)).ok
+
+
+async def test_een_andere_sleutel_telt_als_weg(client, settings, nep, admin, mijn_uid):
+    """Een sleutelbestand dat er goed uitziet (32 bytes, 0600, de goede eigenaar), maar dat de
+    gezichten van de eigenaar niet opent: een andere sleutel, bijvoorbeeld van een andere node na
+    een nieuwe sleutel daar. sleutels-check zegt het altijd. Op PostgreSQL (het cluster) telt
+    zo'n sleutel ook als weg: /beheer en analyse-status zeggen "sleutel ontbreekt", en de scan
+    laat de eigenaar wachten in plaats van nieuwe gezichten met die tweede sleutel te
+    versleutelen. Op SQLite (één node, de app maakt zijn sleutel zelf) doen de scan en /beheer
+    wat ze deden (review van golf 2, pg-analyse F1)."""
+    eva = await _eva(settings, nep)
+    path = crypto.key_path(settings, eva)
+    bewaard = path.read_bytes()
+    path.write_bytes(os.urandom(crypto.KEY_BYTES))
+    os.chmod(path, 0o600)
+    assert keycheck.problem(path) is None  # als bestand in orde
+
+    found = await _check(settings)
+    assert not found.ok and found.needed == 1 and found.problems["wrong"] == 1, found
+    assert sum(found.problems.values()) == 1, found
+    async with maker(settings)() as db:
+        pg = dbdialect.is_pg(db)
+        assert await crypto.missing_owners(settings, db) == ([eva] if pg else [])
+        assert await crypto.key_lost(settings, db, eva) is pg
+    r = await client.get(ADMIN, headers=admin[0])
+    assert r.json()["faces"]["keys_missing"] == (1 if pg else 0)
+    assert eva.hex not in r.text
+    if pg:
+        # De scan wacht: geen nieuwe vector met de verkeerde sleutel
+        nieuw = await foto(settings, nep, eva, "1.jpg", [(A, 3)])
+        async with maker(settings)() as db:
+            await scan.queue_plan(db, "owner", owner=eva)
+            await db.commit()
+        await draai(settings)
+        assert await _sealed(settings, eva) == 2
+        async with maker(settings)() as db:
+            rij = await db.scalar(select(FaceScan).where(FaceScan.node_id == nieuw))
+        assert rij is not None and rij.state == "wait", rij
+
+    # De goede sleutel terug: alles weer in orde, en de scan gaat verder
+    path.write_bytes(bewaard)
+    found = await _check(settings)
+    assert found.ok, found
+    async with maker(settings)() as db:
+        assert await crypto.missing_owners(settings, db) == []
+        assert not await crypto.key_lost(settings, db, eva)
+    if pg:
+        async with maker(settings)() as db:
+            await scan.queue_scan(db)
+            await db.commit()
+        await draai(settings)
+        assert await _sealed(settings, eva) == 3
+
+
+async def test_tijdens_het_wissen_van_niet_benoemde_is_de_sleutel_nodig(settings, nep, mijn_uid):
+    """Een wisronde "unnamed" laat gezichten aan en de benoemde gezichten met hun vector: de
+    sleutel is dan nog nodig. Alleen bij "uit" en een verbod (gezichten niet aan) niet (review
+    van golf 2, pg-analyse F7)."""
+    eva = await _eva(settings, nep)
+    async with maker(settings)() as db:
+        await wipe.queue_wipe(db, eva, "unnamed")  # klaargezet, nog niet gedraaid
+        await db.commit()
+    path = crypto.key_path(settings, eva)
+    path.unlink()
+    found = await _check(settings)
+    assert not found.ok and found.needed == 1 and found.problems["missing"] == 1, found
+    async with maker(settings)() as db:
+        assert await crypto.missing_owners(settings, db) == [eva]
 
 
 async def test_sleutels_check_eigenaar_niet_10001(settings, nep):

@@ -60,13 +60,26 @@ async def has_sealed(db: AsyncSession, owner: uuid.UUID) -> bool:
     return found is not None
 
 
+async def sealed_sample(db: AsyncSession, owner: uuid.UUID) -> tuple[uuid.UUID, bytes] | None:
+    """Eén versleutelde vector van deze eigenaar (de id van het gezicht en vec), of None: dezelfde
+    rijen als has_sealed. Om te zien of een sleutel zijn gezichten opent (crypto.key_opens)."""
+    found = (
+        await db.execute(
+            select(Face.id, Face.vec)
+            .where(Face.owner_id == owner, Face.hidden == 0, Face.vec.is_not(None))
+            .limit(1)
+        )
+    ).first()
+    return None if found is None else (found[0], bytes(found[1]))
+
+
 async def key_owners(db: AsyncSession) -> list[uuid.UUID]:
-    """Wie een sleutel nodig heeft: gezichten aan (photo_pref.faces), geen wisronde
-    (face_owner.wiping), en minstens één versleutelde vector. Bij "uit" en een verbod gaat de
-    sleutel eerst weg en wist de wisronde de rijen daarna: die eigenaren horen er niet bij."""
+    """Wie een sleutel nodig heeft: gezichten aan (photo_pref.faces) en minstens één versleutelde
+    vector. Bij "uit" en een verbod staan gezichten niet aan: de sleutel gaat eerst weg en de
+    wisronde wist de rijen daarna, dus die eigenaren horen er niet bij. Een wisronde "unnamed"
+    laat gezichten aan en de benoemde gezichten met hun vector: die eigenaar hoort er wel bij."""
     on = await db.scalars(select(PhotoPref.user_id).where(PhotoPref.faces == "aan"))
-    wiping = set(await db.scalars(select(FaceOwner.owner_id).where(FaceOwner.wiping == 1)))
-    return [o for o in sorted(on) if o not in wiping and await has_sealed(db, o)]
+    return [o for o in sorted(on) if await has_sealed(db, o)]
 
 
 async def lock_pref(db: AsyncSession, owner: uuid.UUID) -> str | None:

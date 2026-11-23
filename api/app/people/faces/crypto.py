@@ -13,7 +13,9 @@ elke kopie van zijn vectoren onleesbaar, ook een snapshot of een kopie van de da
 Een sleutel die weg is terwijl er nog versleutelde gezichten van die eigenaar staan (zonder "uit":
 een node zonder de sleutels van de andere, een map die niet meekwam), wordt nooit stilletjes door
 een nieuwe vervangen: ensure_key weigert dan (KeyLost), de scan laat die eigenaar wachten, en
-/beheer en analyse-status zeggen "sleutel ontbreekt" met het aantal eigenaren (0.8.2, P4).
+/beheer en analyse-status zeggen "sleutel ontbreekt" met het aantal eigenaren (0.8.2, P4). Op
+PostgreSQL geldt dat ook voor een sleutel die zijn gezichten niet opent (key_opens: een andere
+sleutel); sleutels-check zegt dat op beide databases.
 
 Nooit een sleutel, vector of byte daarvan in een log, fout of antwoord: alleen aantallen.
 """
@@ -29,7 +31,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import face_rows
+from app import dbdialect, face_rows
 from app.analyse import wire
 from app.config import Settings
 
@@ -77,15 +79,43 @@ def load_key(settings: Settings, owner: uuid.UUID) -> bytes | None:
     return data if len(data) == KEY_BYTES else None
 
 
+async def key_opens(db: AsyncSession, owner: uuid.UUID, key: bytes | None) -> bool:
+    """Opent key een versleuteld gezicht van owner (één rij, face_rows.sealed_sample)? Zonder
+    versleutelde gezichten: True. Eén sleutel per eigenaar: gaat die rij niet open, dan is dit
+    een andere sleutel (bijvoorbeeld een nieuwe van een andere node) of hij is kapot."""
+    found = await face_rows.sealed_sample(db, owner)
+    if found is None:
+        return True
+    face_id, sealed = found
+    return open_vec(key, face_id, sealed) is not None
+
+
 async def key_lost(settings: Settings, db: AsyncSession, owner: uuid.UUID) -> bool:
-    """Geen sleutel, maar wel versleutelde gezichten van owner (face_rows.has_sealed)."""
-    return load_key(settings, owner) is None and await face_rows.has_sealed(db, owner)
+    """Geen sleutel, maar wel versleutelde gezichten van owner (face_rows.has_sealed). Op
+    PostgreSQL ook een sleutel die die gezichten niet opent (key_opens): op een cluster kan een
+    node een andere sleutel hebben, en de scan zou daarmee nieuwe gezichten versleutelen naast de
+    oude. Op SQLite (één node, de app maakt de sleutel zelf) zoals voor 0.8.2: met een sleutel
+    geen vraag aan de database."""
+    key = load_key(settings, owner)
+    if key is None:
+        return await face_rows.has_sealed(db, owner)
+    if not dbdialect.is_pg(db):
+        return False
+    return not await key_opens(db, owner, key)
 
 
 async def missing_owners(settings: Settings, db: AsyncSession) -> list[uuid.UUID]:
-    """De eigenaren die een sleutel nodig hebben (face_rows.key_owners) en er geen hebben. Voor
-    /beheer en analyse-status: alleen het aantal komt naar buiten."""
-    return [o for o in await face_rows.key_owners(db) if load_key(settings, o) is None]
+    """De eigenaren die een sleutel nodig hebben (face_rows.key_owners) en er geen hebben; op
+    PostgreSQL ook wie een sleutel heeft die zijn gezichten niet opent (zoals key_lost: dit zijn
+    de eigenaren op wie de scan wacht). Voor /beheer en analyse-status: alleen het aantal komt
+    naar buiten."""
+    pg = dbdialect.is_pg(db)
+    out = []
+    for owner in await face_rows.key_owners(db):
+        key = load_key(settings, owner)
+        if key is None or (pg and not await key_opens(db, owner, key)):
+            out.append(owner)
+    return out
 
 
 async def ensure_key(settings: Settings, db: AsyncSession, owner: uuid.UUID) -> bytes:
