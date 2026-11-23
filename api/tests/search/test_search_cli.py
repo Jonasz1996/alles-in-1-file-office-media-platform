@@ -97,7 +97,6 @@ async def test_check_tijdens_een_herbouw(client, settings):
     assert (await run_cli(settings, "search-check")).returncode == 0
 
 
-@pytest.mark.sqlite_only("de bench bouwt een SQLite-database")
 async def test_bench_nooit_in_een_map_met_een_database(client, settings, tmp_path):
     await W.bouw_async(settings)
     for data in (settings.data_dir, tmp_path / "anders"):
