@@ -785,11 +785,74 @@ export default {
         beeld: "Zoeken op beeld",
       },
     },
-    // Het blok Gezichten (FacesBlock, 0.8.2): hier en niet in photos_faces, dat in de chunk van
-    // gezichten zit (budget faces, 12 kB)
+    // Het blok Gezichten (FacesBlock; Keuze 67, van X2): alleen aantallen, nooit per gebruiker of
+    // gezicht. Hier en niet in photos_faces: dat gebied laadt elk scherm van gezichten mee (budget
+    // faces, 12 kB), en deze regels toont alleen /beheer. faceKeys kwam in 0.8.2 (P4); faces stond
+    // tot 0.8.2 in photos_faces.admin. De kop en de zin zonder analyse (photos_faces.title en
+    // notReady) staan nog in photos_faces
     faceKeys: {
       title: "Sleutels",
       missing: "sleutel ontbreekt voor {n} eigenaar(s) (app.cli sleutels-check)",
+    },
+    faces: {
+      analyse: "Analyse",
+      state: {
+        ok: "werkt",
+        down: "niet bereikbaar",
+        models_missing: "een model ontbreekt of klopt niet",
+        off: "uit (ANALYSE=uit)",
+      },
+      reason: {
+        key_missing: "de sleutel PLATFORM_ANALYSE_WORKER_KEY ontbreekt",
+        key_reused: "de sleutel van de analyse is gelijk aan een andere sleutel",
+        no_socket: "de socket van de analyse is er niet (draait de container analyse?)",
+        refused: "de analyse weigert de verbinding",
+        handshake: "de analyse bewijst zich niet",
+        no_answer: "de analyse antwoordt niet binnen 5 s",
+        sandbox: "de afscherming van de container klopt niet",
+        bad_answer: "de analyse geeft een antwoord dat niet klopt",
+        pg_not_enabled: "ANALYSE_POSTGRES staat uit",
+        no_pg_triggers: "een trigger van 0013 ontbreekt",
+      },
+      models: "Modellen",
+      model: "{name}, versie {version}",
+      shaOk: "sha256 klopt",
+      shaBad: "sha256 klopt niet",
+      noModels: "geen (de app weet niet wat er in de container staat)",
+      limits: "Grenzen",
+      limitsValue: "{cpus} cpu's, {mem} geheugen",
+      noLimits: "zonder grenzen",
+      usersOn: "Gebruikers met gezichten aan",
+      queue: "Rij analyse",
+      queueValue: "{waiting} wachtend, {hour} in het laatste uur",
+      waitsFor: {
+        transcodes: "wacht op het omzetten van video's",
+        office: "wacht op OnlyOffice",
+        paused: "gepauzeerd",
+      },
+      failed: "Mislukt",
+      noFailed: "niets",
+      total: "Totaal",
+      totalValue: "{faces} gezichten, waarvan {named} benoemd; ±{bytes} in de database",
+      speed: "Snelheid",
+      speedValue: "{n} foto's per minuut (analyse-bench, {time})",
+      eta: "nog ±{time} voor wat er wacht",
+      notBenched: "niet gemeten (app.cli analyse-bench)",
+      wipe: "Wissen",
+      wipeWaiting: "wissen wacht op een lezer",
+      quality: "Kwaliteit",
+      qualityOk: "gemeten op {time}: de poorten gehaald",
+      qualityBad: "gemeten op {time}: de poorten niet gehaald",
+      notMeasured: "niet gemeten",
+      allowed: "Gezichtsherkenning toestaan",
+      offTitle: "Gezichtsherkenning verbieden?",
+      offText: "Alle gezichten en getallen van alle gebruikers worden gewist. Wie het aan had, staat daarna op uit.",
+      offConfirm: "Verbieden en wissen",
+      saved: "Opgeslagen.",
+      backups:
+        "Reservekopieën die het platform maakt, bevatten geen gezichten. Maak je zelf snapshots van /data (ZFS, restic), dan staan ze daar versleuteld in. Na 'uit' zijn ze daar niet meer te lezen, zolang de map met sleutels niet in die snapshots zit.",
+      retry: "Mislukte opnieuw",
+      retried: "De mislukte foto's staan weer in de rij.",
     },
     failed: {
       title: "Mislukte inhouden",
