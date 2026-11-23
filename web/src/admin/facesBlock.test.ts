@@ -131,7 +131,7 @@ describe("het blok met een stand (Keuze 67)", () => {
     );
     expect(markup).toMatch(/<button type="button" class="btn" data-search="faces-retry">Mislukte opnieuw<\/button>/);
     // Nooit een naam van een gebruiker of een gezicht; geen sleutel van het woordenboek
-    expect(markup).not.toMatch(/photos_faces\.|\{[a-z]+\}/);
+    expect(markup).not.toMatch(/photos_faces\.|admin\.search\.|\{[a-z]+\}/);
   });
 
   it("zonder grenzen, met mislukt per code, met wissen dat wacht en verboden", () => {
@@ -182,6 +182,6 @@ describe("het blok met een stand (Keuze 67)", () => {
     expect(row(markup, "analyse")).toBe("not reachable: the analysis does not answer within 5 s");
     expect(row(markup, "quality")).toBe("not measured");
     expect(row(markup, "limits")).toBe("no limits");
-    expect(markup).not.toMatch(/photos_faces\.|\{[a-z]+\}/);
+    expect(markup).not.toMatch(/photos_faces\.|admin\.search\.|\{[a-z]+\}/);
   });
 });

@@ -346,6 +346,5 @@ describe("de teksten van gezichten", () => {
     expect(keys(en)).toEqual(keys(nl));
     expect(nl.switch.consent).toContain("biometrische data");
     expect(nl.switch.consent).toContain("Reservekopieën van het platform bevatten ze niet");
-    expect(nl.admin.notMeasured).toBe("niet gemeten");
   });
 });

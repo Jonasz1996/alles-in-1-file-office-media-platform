@@ -1,8 +1,10 @@
 // Het blok "Gezichten" in de tab "Zoeken en foto's" op /beheer (fase 6, van X2; Keuze 67): de
 // container analyse en de modellen, de rij, aantallen (nooit per gebruiker, nooit een gezicht), de
 // schakelaar "Gezichtsherkenning toestaan" en de zin over reservekopieën. Z0b zette het blok neer
-// (Keuze 55), in de chunk van de tab, met het gebied photos_faces. De stand komt uit
-// AdminSearch.faces (./searchApi); de tab ververst hem elke 5 s.
+// (Keuze 55), in de chunk van de tab, met het gebied photos_faces (de kop en de zin zonder
+// analyse); de regels staan sinds 0.8.2 in admin.search.faces, zodat de schermen van gezichten ze
+// niet meeladen (budget faces, 12 kB). De stand komt uit AdminSearch.faces (./searchApi); de tab
+// ververst hem elke 5 s.
 //
 // null (de analyse staat uit of de map met sleutels ontbreekt: gezichten draaien niet op deze
 // server) houdt het blok van 0.8.0: de kop en één zin, zonder knop of schakelaar; sinds 0.8.1 (I2)
@@ -50,33 +52,33 @@ const REASONS = [
 
 /** De regel Analyse: de stand, met bij down de reden en bij models_missing de namen. */
 export function analyseText(f: Pick<AdminFaces, "analyse" | "reason">): string {
-  const state = t(`photos_faces.admin.state.${f.analyse}`);
+  const state = t(`admin.search.faces.state.${f.analyse}`);
   if (!f.reason || (f.analyse !== "down" && f.analyse !== "models_missing")) return state;
   const known = (REASONS as readonly string[]).includes(f.reason);
-  const reason = known ? t(`photos_faces.admin.reason.${f.reason as (typeof REASONS)[number]}`) : f.reason;
+  const reason = known ? t(`admin.search.faces.reason.${f.reason as (typeof REASONS)[number]}`) : f.reason;
   return `${state}: ${reason}`;
 }
 
 /** De regel Rij analyse: wachtend, gedaan in het laatste uur, en waar hij op wacht. */
 export function queueText(q: AdminFaces["queue"]): string {
-  const text = t("photos_faces.admin.queueValue", { waiting: fmt.number(q.waiting), hour: fmt.number(q.done_hour) });
-  return q.waits_for ? `${text}; ${t(`photos_faces.admin.waitsFor.${q.waits_for}`)}` : text;
+  const text = t("admin.search.faces.queueValue", { waiting: fmt.number(q.waiting), hour: fmt.number(q.done_hour) });
+  return q.waits_for ? `${text}; ${t(`admin.search.faces.waitsFor.${q.waits_for}`)}` : text;
 }
 
 /** De regel Snelheid: de laatste analyse-bench en de geschatte tijd voor wat er wacht. */
 export function speedText(f: Pick<AdminFaces, "bench" | "eta_s">): string {
-  if (!f.bench) return t("photos_faces.admin.notBenched");
-  const text = t("photos_faces.admin.speedValue", {
+  if (!f.bench) return t("admin.search.faces.notBenched");
+  const text = t("admin.search.faces.speedValue", {
     n: fmt.number(f.bench.photos_per_minute, { maximumFractionDigits: 1 }),
     time: fmt.dateTime(f.bench.at),
   });
-  return f.eta_s && f.eta_s > 0 ? `${text}; ${t("photos_faces.admin.eta", { time: fmt.duration(f.eta_s) })}` : text;
+  return f.eta_s && f.eta_s > 0 ? `${text}; ${t("admin.search.faces.eta", { time: fmt.duration(f.eta_s) })}` : text;
 }
 
 /** De regel Kwaliteit: de laatste analyse-kwaliteit, of "niet gemeten". */
 export function qualityText(q: AdminFaces["quality"]): string {
-  if (!q) return t("photos_faces.admin.notMeasured");
-  return t(q.ok ? "photos_faces.admin.qualityOk" : "photos_faces.admin.qualityBad", { time: fmt.dateTime(q.at) });
+  if (!q) return t("admin.search.faces.notMeasured");
+  return t(q.ok ? "admin.search.faces.qualityOk" : "admin.search.faces.qualityBad", { time: fmt.dateTime(q.at) });
 }
 
 function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
@@ -89,9 +91,9 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
     if (busy) return; // niet uitschakelen: dan raakt het vinkje de focus kwijt
     if (!want) {
       const ok = await confirm({
-        title: t("photos_faces.admin.offTitle"),
-        message: t("photos_faces.admin.offText"),
-        confirm: t("photos_faces.admin.offConfirm"),
+        title: t("admin.search.faces.offTitle"),
+        message: t("admin.search.faces.offText"),
+        confirm: t("admin.search.faces.offConfirm"),
         danger: true,
       });
       if (!ok) return;
@@ -100,7 +102,7 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
     try {
       const next = await patchAdminSearch({ faces_allowed: want });
       setAllowed(next.faces?.allowed ?? want);
-      toast(t("photos_faces.admin.saved"), { kind: "ok" });
+      toast(t("admin.search.faces.saved"), { kind: "ok" });
     } catch (e) {
       toast(errorText(e), { kind: "error" });
     } finally {
@@ -112,7 +114,7 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
     setBusy("retry");
     try {
       await rebuildSearch("faces");
-      toast(t("photos_faces.admin.retried"), { kind: "ok" });
+      toast(t("admin.search.faces.retried"), { kind: "ok" });
     } catch (e) {
       toast(errorText(e), { kind: "error" });
     } finally {
@@ -122,48 +124,48 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
 
   const models =
     faces.models.length === 0
-      ? t("photos_faces.admin.noModels")
+      ? t("admin.search.faces.noModels")
       : faces.models
           .map(
             (m) =>
-              `${t("photos_faces.admin.model", { name: m.name, version: m.version })}: ${t(
-                m.sha_ok ? "photos_faces.admin.shaOk" : "photos_faces.admin.shaBad",
+              `${t("admin.search.faces.model", { name: m.name, version: m.version })}: ${t(
+                m.sha_ok ? "admin.search.faces.shaOk" : "admin.search.faces.shaBad",
               )}`,
           )
           .join("; ");
   const limits = faces.limits
-    ? t("photos_faces.admin.limitsValue", {
+    ? t("admin.search.faces.limitsValue", {
         cpus: fmt.number(faces.limits.cpus, { maximumFractionDigits: 2 }),
         mem: fmt.bytes(faces.limits.mem_mb * 1024 * 1024),
       })
-    : t("photos_faces.admin.noLimits");
+    : t("admin.search.faces.noLimits");
   const failed =
     faces.failed_by_code.length === 0
-      ? t("photos_faces.admin.noFailed")
+      ? t("admin.search.faces.noFailed")
       : faces.failed_by_code.map((c) => `${c.code} ${fmt.number(c.n)}`).join(", ");
   const rows: [string, string, string][] = [
-    ["analyse", t("photos_faces.admin.analyse"), analyseText(faces)],
-    ["models", t("photos_faces.admin.models"), models],
-    ["limits", t("photos_faces.admin.limits"), limits],
-    ["users", t("photos_faces.admin.usersOn"), fmt.number(faces.users_on)],
-    ["queue", t("photos_faces.admin.queue"), queueText(faces.queue)],
-    ["failed", t("photos_faces.admin.failed"), failed],
+    ["analyse", t("admin.search.faces.analyse"), analyseText(faces)],
+    ["models", t("admin.search.faces.models"), models],
+    ["limits", t("admin.search.faces.limits"), limits],
+    ["users", t("admin.search.faces.usersOn"), fmt.number(faces.users_on)],
+    ["queue", t("admin.search.faces.queue"), queueText(faces.queue)],
+    ["failed", t("admin.search.faces.failed"), failed],
     [
       "total",
-      t("photos_faces.admin.total"),
-      t("photos_faces.admin.totalValue", {
+      t("admin.search.faces.total"),
+      t("admin.search.faces.totalValue", {
         faces: fmt.number(faces.faces),
         named: fmt.number(faces.named),
         bytes: fmt.bytes(faces.db_bytes),
       }),
     ],
-    ["speed", t("photos_faces.admin.speed"), speedText(faces)],
+    ["speed", t("admin.search.faces.speed"), speedText(faces)],
   ];
-  if (faces.wipe_waiting) rows.push(["wipe", t("photos_faces.admin.wipe"), t("photos_faces.admin.wipeWaiting")]);
+  if (faces.wipe_waiting) rows.push(["wipe", t("admin.search.faces.wipe"), t("admin.search.faces.wipeWaiting")]);
   // 0.8.2: een eigenaar met versleutelde gezichten zonder sleutel (alleen het aantal)
   if (faces.keys_missing > 0)
     rows.push(["keys", t("admin.search.faceKeys.title"), t("admin.search.faceKeys.missing", { n: fmt.number(faces.keys_missing) })]);
-  rows.push(["quality", t("photos_faces.admin.quality"), qualityText(faces.quality)]);
+  rows.push(["quality", t("admin.search.faces.quality"), qualityText(faces.quality)]);
 
   return (
     <section aria-labelledby="admin-faces-title">
@@ -185,13 +187,13 @@ function FacesState({ faces }: { faces: AdminFaces }): JSX.Element {
             data-search="faces-allowed"
             onChange={(e) => void toggle(e.target.checked)}
           />
-          {t("photos_faces.admin.allowed")}
+          {t("admin.search.faces.allowed")}
         </label>
       </p>
-      <p className="muted">{t("photos_faces.admin.backups")}</p>
+      <p className="muted">{t("admin.search.faces.backups")}</p>
       <p>
         <Button busy={busy === "retry"} data-search="faces-retry" onClick={() => void retry()}>
-          {t("photos_faces.admin.retry")}
+          {t("admin.search.faces.retry")}
         </Button>
       </p>
     </section>
