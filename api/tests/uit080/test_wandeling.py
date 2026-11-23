@@ -39,6 +39,8 @@ NIEUW = {
     "media_intro": 0,
     "media_profile": 0,
     "media_sub_offset": 0,
+    # Het logboek van account resetten (0018): de wandeling reset niemand
+    "account_reset": 0,
 }
 
 
@@ -59,6 +61,19 @@ FASE11 = (
 )
 
 
+def zonder_reset(waarde):
+    """Account resetten (0018) zet in elke gebruiker het veld password_change_required (hier altijd
+    false): zonder dat veld moet een antwoord gelijk zijn aan dat van 0.8.0."""
+    if isinstance(waarde, dict):
+        return {k: zonder_reset(v) for k, v in waarde.items() if k != "password_change_required"}
+    if isinstance(waarde, list):
+        return [zonder_reset(v) for v in waarde]
+    # Een lijst bewaart elke vorm als tekst (wandel.vorm, json.dumps met sort_keys)
+    if isinstance(waarde, str) and waarde.startswith("{") and "password_change_required" in waarde:
+        return json.dumps(zonder_reset(json.loads(waarde)), sort_keys=True)
+    return waarde
+
+
 def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     nu = wandel.in_een_nieuw_proces(tmp_path)
     # Elke route van 0.8.0 (292 met hun methoden, behalve de stroom /events) voor niemand, Eva,
@@ -71,7 +86,7 @@ def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     anders = {
         k: {"0.8.0": v, "nu": nu["antwoorden"][k]}
         for k, v in OUD["antwoorden"].items()
-        if nu["antwoorden"][k] != v
+        if zonder_reset(nu["antwoorden"][k]) != v
         # De beschrijving van de API telt de routes van fase 11 mee
         and k.split()[1] != "/api/openapi.json"
     }
