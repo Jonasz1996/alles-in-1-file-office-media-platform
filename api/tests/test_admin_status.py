@@ -26,7 +26,9 @@ async def test_systeemblok(client, admin, settings, monkeypatch):
     body = await status(client, headers)
     system = body["system"]
     assert system["version"] == __version__
-    assert system["mode"] == "standalone" and system["db_kind"] == "sqlite"
+    # De soort database van deze run: sqlite, of postgresql met PLATFORM_TEST_DATABASE_URL
+    soort = "postgresql" if settings.database_url else "sqlite"
+    assert system["mode"] == "standalone" and system["db_kind"] == soort
     assert 290 <= system["uptime_s"] <= 400
     assert system["db_bytes"] > 0
     assert system["jobs"] == {

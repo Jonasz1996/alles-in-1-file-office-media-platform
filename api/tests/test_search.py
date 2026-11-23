@@ -18,6 +18,7 @@ from app.models import Node, NodeTag, Tag
 from app.routers import search as search_module
 from app.text import fold
 from tests.factories import message_of
+from tests.search import motoren
 from tests.test_files import mkdir, new_user, put, root
 from tests.test_mime import zip_bytes
 
@@ -40,7 +41,7 @@ def measuring():
             gc.enable()
 
 
-@pytest.fixture(autouse=True, params=["like", "fts"])
+@pytest.fixture(autouse=True, params=motoren.params("like", "fts"))
 def motor(request, settings, monkeypatch) -> str:
     """Elke test met de index uit (LikeFallback: het zoeken van 0.7.0, zoals in het harnas van
     de e2e) en aan (FtsEngine, sinds Z1 de standaard; review golf 1, contract S4). Waar ze

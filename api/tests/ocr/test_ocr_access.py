@@ -17,6 +17,7 @@ import pytest
 from app import analysis
 from app.security import download_token
 from tests.ocr import nep
+from tests.search import motoren
 from tests.search.fixtures import pdf_scan
 from tests.test_files import mkdir, put, root
 from tests.test_public import bearer, new_link, open_link
@@ -64,6 +65,7 @@ async def gedeeld(client, eva, bram_id: str) -> str:
     return folder
 
 
+@motoren.needs_fts
 async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, tmp_path):
     (eva, eva_id), (bram, bram_id) = mensen
     folder = await gedeeld(client, eva, bram_id)
@@ -98,6 +100,7 @@ async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, t
     assert (await words(client, aan, bram_id, kopie["id"])).status_code == 404
 
 
+@motoren.needs_fts
 async def test_brams_ocr_van_zijn_kopie_komt_niet_bij_eva(client, mensen, aan, tmp_path):
     """Bram vraagt OCR van zijn kopie (en heeft "Tekst in foto's herkennen" aan): de tekst komt
     alleen bij zijn node. Eva vroeg niets: haar node blijft zonder tekst."""
@@ -164,6 +167,7 @@ async def test_een_publieke_link_toont_nooit_foto_ocr(client, mensen, aan, tmp_p
     assert r.status_code == 401
 
 
+@motoren.needs_fts
 async def test_de_ocr_van_een_pdf_volgt_de_leestoegang(client, mensen, aan, tmp_path):
     (eva, eva_id), (bram, bram_id) = mensen
     eva_root = (await root(client, eva))["folder"]["id"]

@@ -21,6 +21,7 @@ import pytest
 from app.geo import places
 from app.search import filters_photo, limits
 from tests.geo.hulp import AMSTERDAM, map_maken, met_gps, uid, verwerk, zonder_gps
+from tests.search import motoren
 from tests.test_previews import upload
 from tests.test_shares import person, share_with
 
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.anyio
 CAMERA = "fabrikant camera x1"  # camera_jpeg(): "Fabrikant" en "  Camera X1 "
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> str:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")
@@ -114,6 +115,7 @@ async def test_een_plek_en_een_camera_zijn_alleen_van_de_eigenaar(
     assert await zoek(client, h, motor, place=AMSTERDAM, country="BE") == set()
 
 
+@motoren.needs_fts
 async def test_de_plaatsen_in_de_suggesties_en_de_groep(client, admin, settings, plaatsen):
     h, _ = admin
     bram_h = await _wereld(client, h, settings)

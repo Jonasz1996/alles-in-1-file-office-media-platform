@@ -62,6 +62,7 @@ from app.search.filters import DATED
 from app.search.types import SearchRule
 from app.text import fold
 from tests.factories import code_of, create_album, create_file, create_folder, create_user, maker
+from tests.search import motoren
 from tests.search import referentie as R
 from tests.test_photos import login
 
@@ -103,7 +104,7 @@ CAMERAS = {
 }
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> str:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")
@@ -594,16 +595,25 @@ async def test_een_ander_ziet_alleen_het_zijne(client, settings, motor):
 
 async def test_de_filters_vinden_echt_iets(client, settings):
     """Geen lege vergelijking: elk filter alleen geeft op /search en /photos iets, en een
-    persoon of tag van een ander niets."""
+    persoon of tag van een ander niets. Met de motor die de app zonder keuze neemt
+    (motoren.DEFAULT: fts, op PostgreSQL tot golf 3 like)."""
     w = await _bouw(settings)
     eva = await login(client, "eva@example.nl")
     for naam, lijst in waarden(w, "eva").items():
         for f in lijst:
-            gevonden = await zoek(client, eva, "fts", query(f))
+            gevonden = await zoek(client, eva, motoren.DEFAULT, query(f))
             if f.get("person") == [w.ids["carla"]]:
                 assert gevonden == set(), f
             else:
                 assert gevonden, (naam, f)
+
+
+@motoren.needs_fts
+async def test_een_woord_in_de_tekst_met_een_filter(client, settings):
+    """De tekst van een document vinden met een filter erbij: dat kan alleen de FTS-index (de
+    LIKE-motor zoekt alleen in namen)."""
+    w = await _bouw(settings)
+    eva = await login(client, "eva@example.nl")
     feest = await zoek(client, eva, "fts", {"q": "feest", "type": "document"})
     assert w.naam(feest) == ["verslag.docx"]
 
