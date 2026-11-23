@@ -233,6 +233,22 @@ async def copy_photo(
     )
 
 
+async def owner_wants(db: AsyncSession, owner: uuid.UUID, sha: str) -> bool:
+    """Heeft een foto (node) van deze eigenaar met deze inhoud nog geen tekst van OCR (geen rij
+    in photo_ocr, of een verzoek)? Dezelfde regel als wanting_shas, voor één inhoud."""
+    done = (
+        select(PhotoOcr.node_id)
+        .where(PhotoOcr.node_id == Node.id, PhotoOcr.words != PENDING)
+        .exists()
+    )
+    found = await db.scalar(
+        select(Node.id)
+        .where(Node.owner_id == owner, Node.kind == "file", Node.blob_id == sha, ~done)
+        .limit(1)
+    )
+    return found is not None
+
+
 async def wanting_shas(
     db: AsyncSession, owner: uuid.UUID, mimes: Iterable[str], after: str, limit: int
 ) -> list[str]:

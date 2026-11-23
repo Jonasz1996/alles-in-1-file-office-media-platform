@@ -74,7 +74,7 @@ export const routes: readonly RouteDef[] = [
   route("/fotos/kaart", () => import("./photos/map/MapPage"), ["photos_map"], "photos_map.title", "photos", own),
   route("/fotos/personen", () => import("./photos/people/PeoplePage"), people, "photos_people.title", "photos", own),
   route("/fotos/personen/:id", () => import("./photos/people/PersonPage"), people, "photos_people.person", "photos", own),
-  route("/dubbel", () => import("./dupes/DupesPage"), ["dupes"], "dupes.title", "files", own),
+  route("/dubbel", () => import("./dupes/DupesPage"), ["dupes"], "dupes.title", "dupes", own),
   route("/beheer/:tab?", () => import("./Beheer"), ["admin"], "admin.title", "admin", { roles: ["admin"] }),
   // Account linkt naar /over (I2): daarom ook het gebied about (het woordenboek van /over; de link
   // gebruikt er twee zinnen van)

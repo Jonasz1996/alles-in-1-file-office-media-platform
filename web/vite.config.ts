@@ -1,4 +1,5 @@
 /// <reference path="./vite.node-shim.d.ts" />
+/// <reference types="vitest/config" />
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -242,6 +243,12 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    // Vitest maakt van elk .css een lege module; ook "x.css?raw" werd dan "" en een toets op de
+    // tekst van een stylesheet was leeg (0.8.2). Alleen ?raw krijgt de echte tekst; een gewone
+    // import van een stylesheet blijft leeg.
+    css: { include: [/\.css\?raw$/] },
   },
   server: {
     proxy: {

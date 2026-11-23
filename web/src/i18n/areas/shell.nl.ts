@@ -14,6 +14,8 @@ export default {
     // Fase 5 (M0): alleen als media aan staat
     media: "Media",
     music: "Muziek",
+    // Fase 6 (0.8.2): /dubbel, niet voor een gast
+    dupes: "Dubbel",
   },
   // Fase 6 (Z0): het zoekveld in de balk bovenaan, met Ctrl/Cmd+K (Keuze 45). De suggesties en de
   // pagina /zoeken zijn van Z4
