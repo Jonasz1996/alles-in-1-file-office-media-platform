@@ -178,7 +178,9 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
 6. **`like` zonder `mode=image` geeft ook 501 `X3`.** "Meer zoals deze" is altijd zoeken op
    beeld; anders zou `like` stil genegeerd worden.
 7. **`MAX_FACES` staat in het model**: meer dan 200 gezichten geeft de 422 van de validatie, niet
-   een eigen code `faces_too_many`. X2 kan die code nog zetten (Open).
+   een eigen code `faces_too_many`. X2 kan die code nog zetten (Open). [X2b zette de code in de API
+   (`_too_many` in `api/app/routers/people_faces.py`), maar de validatie van `FacesIn`
+   (`max_length`) komt eerst, dus de code komt nooit; zie [z0b.md](z0b.md), Open 2.]
 8. **`register_large(fn)` krijgt `(maker, sha)`** en komt alleen aan de beurt na de ronde
    `preview.large`. Een eerste ronde die alle maten al in één keer maakte, roept alleen de haken
    van `register_ready`. En `announce` (dus `preview.ready` en `register_ready`) draait ook na de
@@ -209,7 +211,8 @@ Erbij of uitgebreid, allemaal in `api/tests/`:
    `e2e/slim.sh` ook (386 groen). Daarom is stap 1 op wip/z0b-api alleen ook rood.~~ Na de
    samenvoeging (4 november 2026) groen, zonder verdere aanpassing: zie [z0b.md](z0b.md).
 3. **`faces_too_many`**: X2 zet de 422 van meer dan 200 gezichten om naar die code, of het
-   ontwerp laat hem vallen (afwijking 7).
+   ontwerp laat hem vallen (afwijking 7). [Stand na I2: de code staat in de API, maar de validatie
+   komt eerst; zie [z0b.md](z0b.md), Open 2.]
 4. **De rest van §3.11** (de container analyse, `compose.analyse.yaml`, de modellen en hun
    instellingen) is van A0.
 
