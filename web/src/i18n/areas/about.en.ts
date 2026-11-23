@@ -34,6 +34,9 @@ const en: Translation<typeof nl> = {
     intro: "Apps to use the platform on your TV and other devices. You sign in with the same account.",
     download: "Download",
     version: "Version {version}",
+    refresh: "Fetch latest apps",
+    refreshHint: "The platform also fetches the apps GitHub builds by itself, every 6 hours.",
+    refreshed: "The latest apps are on the platform.",
     later: "Coming later.",
     webos: {
       name: "LG webOS TV",

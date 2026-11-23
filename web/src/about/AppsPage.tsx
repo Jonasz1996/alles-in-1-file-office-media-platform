@@ -5,6 +5,7 @@
 
 import { type JSX, useEffect, useState } from "react";
 import { api, formatBytes } from "../api";
+import { useCurrentUser } from "../currentUser";
 import { errorText, t } from "../i18n";
 import type { RouteProps } from "../router";
 import { Button } from "../ui/Button";
@@ -53,6 +54,19 @@ export default function AppsPage(_: RouteProps): JSX.Element {
   const [apps, setApps] = useState<ClientApp[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const admin = useCurrentUser()?.role === "admin";
+
+  async function refresh() {
+    setBusy("refresh");
+    try {
+      setApps(await api.request<ClientApp[]>("POST", "/api/v1/apps/refresh"));
+      toast(t("about.apps.refreshed"), { kind: "ok" });
+    } catch (e) {
+      toast(errorText(e), { kind: "error" });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     api
@@ -76,6 +90,14 @@ export default function AppsPage(_: RouteProps): JSX.Element {
     <main className="page about-page" data-apps="">
       <PageTitle>{t("about.apps.title")}</PageTitle>
       <p>{t("about.apps.intro")}</p>
+      {admin && (
+        <p>
+          <Button busy={busy === "refresh"} onClick={() => void refresh()}>
+            {t("about.apps.refresh")}
+          </Button>{" "}
+          <span className="muted">{t("about.apps.refreshHint")}</span>
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
       {apps?.map((app) => (
         <section key={app.id} aria-labelledby={`apps-${app.id}`} data-app={app.id}>

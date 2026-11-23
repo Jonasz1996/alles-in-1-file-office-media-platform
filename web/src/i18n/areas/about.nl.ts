@@ -37,6 +37,9 @@ export default {
     intro: "Apps om het platform te gebruiken op je tv en andere toestellen. Je logt erin in met hetzelfde account.",
     download: "Downloaden",
     version: "Versie {version}",
+    refresh: "Nieuwste apps ophalen",
+    refreshHint: "Het platform haalt de apps die GitHub bouwt ook vanzelf op, elke 6 uur.",
+    refreshed: "De nieuwste apps staan op het platform.",
     later: "Komt later.",
     webos: {
       name: "LG webOS-tv",
