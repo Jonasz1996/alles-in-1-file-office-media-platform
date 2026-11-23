@@ -22,6 +22,7 @@ from app.models import Node
 from app.search import engine as engines
 from app.search import rebuild, weekcheck
 from app.search.query import parse
+from app.text import fold
 from tests.search import wereld as W
 from tests.search.migratie import check_fts, migrate
 from tests.search.test_search_access import kop
@@ -206,3 +207,178 @@ async def test_tekens_buiten_het_latijn_vindt_de_index(settings):
                 {"t": tekst, "q": parse(vraag).tsquery()},
             )
             assert gevonden.scalar() is True, (tekst, vraag)
+
+
+# --- Te grote teksten (review van PR #6, F3, F10 en F14) --------------------------------------
+
+CYRILLISCH = "абвгдежзиклмнопрстуфхцчшщъыьэюяі"  # 32 letters zonder teken, 2 bytes elk
+
+
+def _cyrillisch(n: int) -> list[str]:
+    """n verschillende woorden van 7 letters (2 bytes per letter: veel bytes per teken)."""
+    uit = []
+    for i in range(n):
+        cijfers = []
+        for _ in range(6):
+            i, r = divmod(i, 32)
+            cijfers.append(CYRILLISCH[r])
+        uit.append("ж" + "".join(cijfers))
+    return uit
+
+
+def _latijn(n: int) -> list[str]:
+    """n verschillende woorden van 8 letters."""
+    uit = []
+    for i in range(n):
+        letters = []
+        for _ in range(8):
+            i, r = divmod(i, 26)
+            letters.append(chr(ord("a") + r))
+        uit.append("".join(letters))
+    return uit
+
+
+async def _past(conn, sql: str, **params) -> bool:
+    """Geeft sql een tsvector die past (True), of de fout van de grens van 1 MB (False)?"""
+    try:
+        async with conn.begin_nested():
+            await conn.execute(sa.text(sql), params)
+        return True
+    except sa.exc.DBAPIError as exc:
+        assert "too long for tsvector" in str(exc.orig), exc
+        return False
+
+
+async def _grootste(conn, woorden: list[str], sql: str) -> int:
+    """Het grootste k waarvoor sql met :t = de eerste k woorden nog past (0 past altijd)."""
+    lo, hi = 0, len(woorden)
+    assert not await _past(conn, sql, t=" ".join(woorden))
+    while hi - lo > 1:
+        m = (lo + hi) // 2
+        if await _past(conn, sql, t=" ".join(woorden[:m])):
+            lo = m
+        else:
+            hi = m
+    return lo
+
+
+async def _brief(settings, w) -> tuple[int, str]:
+    async with get_engine(settings).connect() as conn:
+        found = await conn.execute(
+            sa.text("SELECT num, blob_id FROM node WHERE id = :i"), {"i": w.ids["brief"]}
+        )
+        num, blob = found.one()
+    return num, blob
+
+
+async def _naam(settings, w, naam: str) -> None:
+    async with get_engine(settings).begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE node SET name = :n, search_name = :s WHERE id = :i"),
+            {"n": naam, "s": fold(naam), "i": w.ids["brief"]},
+        )
+
+
+async def _tekst(settings, blob: str, body: str) -> None:
+    async with get_engine(settings).begin() as conn:
+        await conn.execute(
+            sa.text("UPDATE blob_text SET body = :b, ocr = '', meta = '' WHERE blob_sha = :s"),
+            {"b": body, "s": blob},
+        )
+
+
+async def test_de_naam_en_een_tekst_net_onder_de_grens_samen(client, settings):
+    """De tekst alleen past net in een tsvector, met de naam erbij niet: het schrijven van de
+    tekst lukt toch (de rij is ingekort, capped), en een andere naam ook (F3). Een lange naam:
+    zo is hij zeker groter dan wat er onder de grens over is (minder dan één woord)."""
+    w = await W.bouw_async(settings)
+    num, blob = await _brief(settings, w)
+    await _naam(settings, w, "Lijst met alle woorden van het boek deel een.txt")
+    woorden = _cyrillisch(60_000)
+    async with get_engine(settings).connect() as conn:
+        k = await _grootste(conn, woorden, "SELECT to_tsvector('simple', cf_fold(:t))")
+    body = " ".join(woorden[:k])
+    assert len(body) < 1_048_576  # onder search_max_text
+    await _tekst(settings, blob, body)
+    assert await een(settings, "SELECT capped FROM fts_node WHERE rowid = :n", n=num) is True
+    eva = await kop(client, "eva")
+    assert "Lijst met alle woorden van het boek deel een.txt" in await namen(
+        client, eva, woorden[0]
+    )
+    await _naam(settings, w, "Lijst met alle woorden van het boek deel twee.txt")
+    assert await namen(client, eva, "twee") == {"Lijst met alle woorden van het boek deel twee.txt"}
+    async with get_engine(settings).connect() as conn:
+        await conn.run_sync(check_fts)
+    r = await client.get("/api/v1/admin/search", headers=await kop(client, "ada"))
+    assert r.status_code == 200, r.text
+    assert r.json()["index"]["capped"] == 1
+
+
+async def test_een_te_grote_tekst_houdt_zoveel_woorden_als_past(client, settings):
+    """Van een te grote tekst blijft de langste reeks woorden vooraan die past: het woord erna
+    past niet meer (F10; eerst halveerde cf_tsv, en viel tot de helft weg)."""
+    w = await W.bouw_async(settings)
+    num, blob = await _brief(settings, w)
+    woorden = _latijn(116_508)
+    body = " ".join(woorden)[:1_048_571]
+    woorden = body.split(" ")
+    await _tekst(settings, blob, body)
+    async with get_engine(settings).connect() as conn:
+        found = await conn.execute(
+            sa.text(
+                "SELECT capped, (SELECT count(*) FROM unnest(tsv) AS u WHERE u.weights = '{C}') "
+                "FROM fts_node WHERE rowid = :n"
+            ),
+            {"n": num},
+        )
+        capped, k = found.one()
+        assert capped is True
+        assert 80_000 < k < len(woorden)  # halveren hield er 58.254
+        naam = "cf_tsv('brief.txt', 'A')"
+        assert await _past(conn, f"SELECT {naam} || cf_tsv(:t, 'C')", t=" ".join(woorden[:k]))
+        assert not await _past(
+            conn, f"SELECT {naam} || cf_tsv(:t, 'C')", t=" ".join(woorden[: k + 1])
+        )
+        for i, verwacht in ((0, True), (60_000, True), (k - 1, True), (k, False)):
+            gevonden = await conn.execute(
+                sa.text("SELECT tsv @@ to_tsquery('simple', :w) FROM fts_node WHERE rowid = :n"),
+                {"w": woorden[i], "n": num},
+            )
+            assert gevonden.scalar() is verwacht, i
+
+
+async def test_de_functies_van_de_index_in_een_parallel_plan(settings):
+    """Een functie met een EXCEPTION-blok start een subtransactie; dat mag nergens in een
+    parallel plan, ook niet in de leider (dus ook niet PARALLEL RESTRICTED). Zo'n functie is
+    PARALLEL UNSAFE, en cf_tsv heeft geen blok meer (F14)."""
+    await W.bouw_async(settings)
+    async with get_engine(settings).connect() as conn:
+        for zet in (
+            "max_parallel_workers_per_gather = 2",
+            "parallel_setup_cost = 0",
+            "parallel_tuple_cost = 0",
+            "min_parallel_table_scan_size = 0",
+        ):
+            await conn.exec_driver_sql(f"SET LOCAL {zet}")
+        plan = await conn.exec_driver_sql(
+            "EXPLAIN SELECT count(*) FROM node WHERE search_name LIKE '%x%'"
+        )
+        assert "Gather" in "\n".join(r[0] for r in plan.all())  # er komt een parallel plan
+        for sql in (
+            "SELECT count(*) FROM node WHERE cf_tsv(search_name, 'C') @@ to_tsquery('simple', 'x')",
+            "SELECT count(*) FROM node p JOIN node q ON p.num = q.num "
+            "WHERE cf_tsv(p.search_name, 'C') @@ to_tsquery('simple', 'x')",
+            "SELECT count(*) FROM node "
+            "WHERE (fts_doc(search_name, '', '', '', NULL)).tsv @@ to_tsquery('simple', 'x')",
+        ):
+            assert (await conn.exec_driver_sql(sql)).scalar() is not None
+        found = await conn.execute(
+            sa.text(
+                "SELECT p.proname, p.proparallel::text FROM pg_proc p "
+                "WHERE p.proname IN ('cf_fold', 'cf_tsv', 'cf_add', 'fts_doc', 'fts_rows', "
+                "'fts_refresh') AND p.prosrc ILIKE '%exception%'"
+            )
+        )
+        blokken = dict(found.all())
+        assert set(blokken) == {"cf_add", "fts_doc"}
+        assert set(blokken.values()) == {"u"}

@@ -330,6 +330,11 @@ function Index({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
         <Row label={t("admin.search.index.failed")} testid="failed">
           {t("admin.search.index.failedValue", { n: s.index.failed })}
         </Row>
+        {s.index.capped > 0 && (
+          <Row label={t("admin.search.index.capped")} testid="capped">
+            {t("admin.search.index.cappedValue", { n: s.index.capped })}
+          </Row>
+        )}
         <Row label={t("admin.search.index.check")} testid="check">
           {off ? (
             t("admin.search.index.checkOff")

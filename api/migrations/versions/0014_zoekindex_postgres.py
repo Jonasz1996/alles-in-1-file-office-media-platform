@@ -15,12 +15,16 @@ Op PostgreSQL:
   letters van Cherokee als hoofdletters, ...). Alles wat geen letter of cijfer is, wordt een
   spatie. De tabellen zijn bevroren (Python 3.13, Unicode 15.1, tegen lower() van PostgreSQL 16
   met C.UTF-8): elke letter en elk cijfer geeft dan hetzelfde als fold() (review van PR #6, F2).
-- cf_tsv(text, "char"): to_tsvector('simple', cf_fold(t)) met dat gewicht. Een tekst die te
-  groot is voor een tsvector (1 MB aan woorden en plekken) wordt ingekort tot hij past.
-- fts_node(rowid, tsv, otsv): rowid is node.num (dezelfde naam als in FTS5, zodat de vragen van
-  app/search/engine.py dezelfde vorm houden). tsv: naam (A), titel uit de mediabibliotheek (B),
-  tekst en OCR van de inhoud (C), meta (D). otsv: tsv met de OCR van een foto (C) erbij, alleen
-  als die er is; die is alleen van de eigenaar (Keuze 16 en 25a). GIN op tsv en otsv.
+- cf_tsv(text, "char"): to_tsvector('simple', cf_fold(t)) met dat gewicht.
+- cf_add(tsvector, text, "char") en fts_doc(...): de tsvector van een node. Past die niet in een
+  tsvector (1 MB aan woorden en plekken), dan houdt hij de langste reeks woorden vooraan die
+  nog past, en is de rij capped (plan 0.8.2, vraag 8; review van PR #6, F3 en F10).
+- fts_node(rowid, tsv, otsv, capped): rowid is node.num (dezelfde naam als in FTS5, zodat de
+  vragen van app/search/engine.py dezelfde vorm houden). tsv: naam (A), titel uit de
+  mediabibliotheek (B), tekst en OCR van de inhoud (C), meta (D). otsv: tsv met de OCR van een
+  foto (C) erbij, alleen als die er is; die is alleen van de eigenaar (Keuze 16 en 25a). GIN op
+  tsv en otsv. capped: de tekst was te groot en is ingekort (/admin/search telt ze).
+- fts_rows(nums, cur): de rijen zoals ze uit de bron volgen, zonder te schrijven.
 - fts_name: een view (rowid, search_name) op node; de stukken van namen zoeken met LIKE, zonder
   index. Geen extensie zoals pg_trgm: alleen wat PostgreSQL zelf heeft (plan 0.8.2, vraag 1).
 - fts_refresh(nums, force): de rijen van die nums opnieuw uit de bron, alleen buiten een herbouw
@@ -57,26 +61,108 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     '[^[:alnum:]]+', ' ', 'g')
 $$
 """,
+    # Geen EXCEPTION meer: dan mag hij ook in een parallel plan (review van PR #6, F14)
     "cf_tsv": """
 CREATE OR REPLACE FUNCTION cf_tsv(t text, w "char") RETURNS tsvector
-LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT setweight(to_tsvector('simple', cf_fold(t)), w)
+$$
+""",
+    # v met de woorden van t erachter; past dat niet in een tsvector (1 MB), dan de langste reeks
+    # woorden vooraan die nog past (gezocht op woorden, niet gehalveerd; F10), en capped.
+    # PARALLEL UNSAFE: een EXCEPTION-blok is een subtransactie, en die mag in geen enkel deel
+    # van een parallel plan, ook niet in de leider (dus ook niet RESTRICTED; F14).
+    "cf_add": """
+CREATE OR REPLACE FUNCTION cf_add(v tsvector, t text, w "char",
+                                  OUT tsv tsvector, OUT capped boolean)
+LANGUAGE plpgsql IMMUTABLE PARALLEL UNSAFE AS $$
 DECLARE
-  n int := length(coalesce(t, ''));
+  words text[];
+  lo int := 0;
+  hi int;
+  m int;
 BEGIN
-  IF n = 0 THEN
-    RETURN ''::tsvector;
-  END IF;
-  LOOP
+  capped := false;
+  BEGIN
+    tsv := v || cf_tsv(t, w);
+    RETURN;
+  EXCEPTION WHEN program_limit_exceeded THEN
+    capped := true;
+  END;
+  -- Alle woorden passen niet, geen woord wel (v is al een tsvector)
+  words := regexp_split_to_array(btrim(cf_fold(t)), ' ');
+  hi := cardinality(words);
+  WHILE hi - lo > 1 LOOP
+    m := (lo + hi) / 2;
     BEGIN
-      RETURN setweight(to_tsvector('simple', cf_fold(left(t, n))), w);
+      PERFORM v || setweight(to_tsvector('simple', array_to_string(words[1:m], ' ')), w);
+      lo := m;
     EXCEPTION WHEN program_limit_exceeded THEN
-      n := n / 2;
-      IF n < 1000 THEN
-        RETURN ''::tsvector;
-      END IF;
+      hi := m;
     END;
   END LOOP;
+  tsv := v || setweight(to_tsvector('simple', array_to_string(words[1:lo], ' ')), w);
 END $$
+""",
+    # De rij van fts_node voor één node. Meestal past alles in één keer. Anders deel voor deel
+    # in dezelfde volgorde (naam, titel, tekst, meta, dan de OCR van de foto in otsv), elk met
+    # cf_add: wat na de grens komt, is niet vindbaar (plan 0.8.2, vraag 8), en capped telt in
+    # /admin/search. Ook de som van de delen is begrensd, niet elk deel apart (F3).
+    "fts_doc": """
+CREATE OR REPLACE FUNCTION fts_doc(name_t text, title_t text, body_t text, meta_t text,
+                                   pocr_t text, OUT tsv tsvector, OUT otsv tsvector,
+                                   OUT capped boolean)
+LANGUAGE plpgsql IMMUTABLE PARALLEL UNSAFE AS $$
+DECLARE
+  r record;
+  v tsvector := ''::tsvector;
+  c boolean := false;
+BEGIN
+  capped := false;
+  BEGIN
+    tsv := cf_tsv(name_t, 'A') || cf_tsv(title_t, 'B') || cf_tsv(body_t, 'C')
+           || cf_tsv(meta_t, 'D');
+    otsv := CASE WHEN pocr_t IS NOT NULL THEN tsv || cf_tsv(pocr_t, 'C') END;
+    RETURN;
+  EXCEPTION WHEN program_limit_exceeded THEN
+    NULL;
+  END;
+  SELECT * INTO r FROM cf_add(v, name_t, 'A');
+  v := r.tsv; c := c OR r.capped;
+  SELECT * INTO r FROM cf_add(v, title_t, 'B');
+  v := r.tsv; c := c OR r.capped;
+  SELECT * INTO r FROM cf_add(v, body_t, 'C');
+  v := r.tsv; c := c OR r.capped;
+  SELECT * INTO r FROM cf_add(v, meta_t, 'D');
+  v := r.tsv; c := c OR r.capped;
+  tsv := v;
+  otsv := NULL;
+  IF pocr_t IS NOT NULL THEN
+    SELECT * INTO r FROM cf_add(v, pocr_t, 'C');
+    otsv := r.tsv; c := c OR r.capped;
+  END IF;
+  capped := c;
+END $$
+""",
+    # De rijen van fts_node zoals ze uit de bron volgen, voor de nums tot en met cur (NULL: alle),
+    # zonder te schrijven; fts_refresh schrijft ze
+    "fts_rows": """
+CREATE OR REPLACE FUNCTION fts_rows(nums bigint[], cur bigint DEFAULT NULL)
+RETURNS TABLE (rowid bigint, tsv tsvector, otsv tsvector, capped boolean)
+LANGUAGE sql STABLE PARALLEL UNSAFE AS $$
+  SELECT n.num, d.tsv, d.otsv, d.capped
+  FROM node n
+  LEFT JOIN blob_text t ON t.blob_sha = n.blob_id
+  LEFT JOIN photo_ocr po ON po.node_id = n.id
+  CROSS JOIN LATERAL fts_doc(
+    n.search_name,
+    (SELECT string_agg(m.title, ' ') FROM media_item m WHERE m.node_id = n.id),
+    coalesce(t.body, '') || ' ' || coalesce(t.ocr, ''),
+    t.meta,
+    CASE WHEN po.node_id IS NOT NULL THEN coalesce(po.text, '') END
+  ) AS d
+  WHERE n.num = ANY(nums) AND (cur IS NULL OR n.num <= cur)
+$$
 """,
     "fts_refresh": """
 CREATE OR REPLACE FUNCTION fts_refresh(nums bigint[], force boolean DEFAULT false)
@@ -91,21 +177,7 @@ BEGIN
     SELECT cursor INTO cur FROM search_state WHERE id = 1;
   END IF;
   DELETE FROM fts_node WHERE rowid = ANY(nums) AND (cur IS NULL OR rowid <= cur);
-  INSERT INTO fts_node (rowid, tsv, otsv)
-  SELECT s.num, s.tsv, CASE WHEN s.pocr IS NOT NULL THEN s.tsv || s.pocr END
-  FROM (
-    SELECT n.num,
-           cf_tsv(n.search_name, 'A')
-           || cf_tsv((SELECT string_agg(m.title, ' ') FROM media_item m WHERE m.node_id = n.id),
-                     'B')
-           || cf_tsv(coalesce(t.body, '') || ' ' || coalesce(t.ocr, ''), 'C')
-           || cf_tsv(t.meta, 'D') AS tsv,
-           CASE WHEN po.node_id IS NOT NULL THEN cf_tsv(po.text, 'C') END AS pocr
-    FROM node n
-    LEFT JOIN blob_text t ON t.blob_sha = n.blob_id
-    LEFT JOIN photo_ocr po ON po.node_id = n.id
-    WHERE n.num = ANY(nums) AND (cur IS NULL OR n.num <= cur)
-  ) s;
+  INSERT INTO fts_node (rowid, tsv, otsv, capped) SELECT * FROM fts_rows(nums, cur);
 END $$
 """,
     "fts_node_trg": """
@@ -204,10 +276,13 @@ def upgrade() -> None:
         "SELECT 1, NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM search_state WHERE id = 1)"
     )
     op.execute(
-        "CREATE TABLE fts_node (rowid bigint PRIMARY KEY, tsv tsvector NOT NULL, otsv tsvector)"
+        "CREATE TABLE fts_node (rowid bigint PRIMARY KEY, tsv tsvector NOT NULL, otsv tsvector, "
+        "capped boolean NOT NULL DEFAULT false)"
     )
     op.execute("CREATE INDEX ix_fts_node_tsv ON fts_node USING gin (tsv)")
     op.execute("CREATE INDEX ix_fts_node_otsv ON fts_node USING gin (otsv)")
+    # Voor de telling in /admin/search: meestal geen enkele rij
+    op.execute("CREATE INDEX ix_fts_node_capped ON fts_node (rowid) WHERE capped")
     op.execute("CREATE VIEW fts_name AS SELECT num AS rowid, search_name FROM node")
     for sql in FUNCTION_SQL.values():
         op.execute(sql)
@@ -232,6 +307,9 @@ def downgrade() -> None:
     for name in ("fts_by_node_trg", "fts_blob_trg", "fts_node_trg"):
         op.execute(f"DROP FUNCTION IF EXISTS {name}()")
     op.execute("DROP FUNCTION IF EXISTS fts_refresh(bigint[], boolean)")
+    op.execute("DROP FUNCTION IF EXISTS fts_rows(bigint[], bigint)")
+    op.execute("DROP FUNCTION IF EXISTS fts_doc(text, text, text, text, text)")
+    op.execute('DROP FUNCTION IF EXISTS cf_add(tsvector, text, "char")')
     op.execute('DROP FUNCTION IF EXISTS cf_tsv(text, "char")')
     op.execute("DROP FUNCTION IF EXISTS cf_fold(text)")
     op.execute("DROP VIEW IF EXISTS fts_name")

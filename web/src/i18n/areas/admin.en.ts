@@ -735,6 +735,11 @@ const en: Translation<typeof nl> = {
       textProgress: "Text read from files",
       failed: "Failed",
       failedValue: { one: "{n} content", other: "{n} contents" },
+      capped: "Shortened",
+      cappedValue: {
+        one: "{n} file: too large for the index, the end is not searchable",
+        other: "{n} files: too large for the index, the end is not searchable",
+      },
       rebuild: "Rebuild index",
       rebuildTitle: "Rebuild the index?",
       rebuildText:

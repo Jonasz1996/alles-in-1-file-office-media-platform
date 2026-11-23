@@ -746,6 +746,11 @@ export default {
       textProgress: "Tekst uit bestanden gelezen",
       failed: "Mislukt",
       failedValue: { one: "{n} inhoud", other: "{n} inhouden" },
+      capped: "Ingekort",
+      cappedValue: {
+        one: "{n} bestand: te groot voor de index, het eind is niet vindbaar",
+        other: "{n} bestanden: te groot voor de index, het eind is niet vindbaar",
+      },
       rebuild: "Index herbouwen",
       rebuildTitle: "De index herbouwen?",
       rebuildText:

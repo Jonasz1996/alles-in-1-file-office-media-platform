@@ -62,7 +62,7 @@ function state(over: Partial<AdminSearch> = {}): AdminSearch {
   return {
     engine: "fts",
     paused: false,
-    index: { names_done: true, text_done: 3, text_total: 4, failed: 2 },
+    index: { names_done: true, text_done: 3, text_total: 4, failed: 2, capped: 0 },
     rebuild: null,
     extract_in_sandbox: true,
     per_hour: { deadline_b: 5, deadline_c: 6, busy: 7 },
@@ -208,13 +208,19 @@ describe("de tab Zoeken en foto's (Z7)", () => {
   });
 
   it("zonder bestanden met tekst geen voortgangsbalk; zonder mislukte geen knop en geen lijst", () => {
-    const html = view(state({ index: { names_done: true, text_done: 0, text_total: 0, failed: 0 } }));
+    const html = view(state({ index: { names_done: true, text_done: 0, text_total: 0, failed: 0, capped: 0 } }));
     expect(field(html, "text")).toBe("0 van 0 bestanden");
     expect(html).not.toContain("<progress");
     expect(field(html, "failed")).toBe("0 inhouden");
     expect(html).not.toContain('data-search="retry"');
     expect(html).not.toContain('data-search="failed-toggle"');
     expect(html).toContain("Niets mislukt.");
+    expect(html).not.toContain('data-search="capped"');
+  });
+
+  it("ingekorte documenten (de index op PostgreSQL, 1 MB per document) alleen als er zijn", () => {
+    const html = view(state({ index: { names_done: true, text_done: 4, text_total: 4, failed: 0, capped: 2 } }));
+    expect(field(html, "capped")).toBe("2 bestanden: te groot voor de index, het eind is niet vindbaar");
   });
 
   it("de wekelijkse search-check (I1): geen verschil, of een verschil in rood met wat Jonas doet", () => {
@@ -254,7 +260,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(oud).not.toContain('<dd data-search="check"><span class="badge degraded">');
     expect(oud).not.toContain("Herbouw de index (de knop hierboven).");
     // Tijdens een herbouw zoekt de app ook met LIKE: dan blijft de laatste uitkomst staan
-    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0 };
+    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0, capped: 0 };
     const bezig = view(state({ engine: "like", index, check: { at, sampled: 200, bad: 3 } }));
     expect(field(bezig, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
   });
@@ -271,7 +277,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
 
   it("een herbouw van de index: voortgang, en de knop index herbouwen is weg", () => {
     const rebuild = { what: "text" as const, started_at: "2026-11-09T09:00:00+00:00", done: 0.42 };
-    const html = view(state({ rebuild, index: { names_done: false, text_done: 3, text_total: 4, failed: 0 } }));
+    const html = view(state({ rebuild, index: { names_done: false, text_done: 3, text_total: 4, failed: 0, capped: 0 } }));
     expect(sections(html)).toEqual([
       "admin-search-title",
       "admin-search-engine",
@@ -331,7 +337,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
 
   it("de hulpjes: herbouwen van de index, van de foto's, en het deel tekst", () => {
     expect(indexRebuilding(state())).toBe(false);
-    expect(indexRebuilding(state({ index: { names_done: false, text_done: 0, text_total: 0, failed: 0 } }))).toBe(true);
+    expect(indexRebuilding(state({ index: { names_done: false, text_done: 0, text_total: 0, failed: 0, capped: 0 } }))).toBe(true);
     for (const what of ["names", "text"] as const) {
       expect(indexRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(true);
       expect(photosRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(false);
@@ -340,9 +346,9 @@ describe("de tab Zoeken en foto's (Z7)", () => {
       expect(photosRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(true);
       expect(indexRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(false);
     }
-    expect(textFraction({ names_done: true, text_done: 1, text_total: 4, failed: 0 })).toBe(0.25);
-    expect(textFraction({ names_done: true, text_done: 0, text_total: 0, failed: 0 })).toBeNull();
-    expect(textFraction({ names_done: true, text_done: 9, text_total: 4, failed: 0 })).toBe(1);
+    expect(textFraction({ names_done: true, text_done: 1, text_total: 4, failed: 0, capped: 0 })).toBe(0.25);
+    expect(textFraction({ names_done: true, text_done: 0, text_total: 0, failed: 0, capped: 0 })).toBeNull();
+    expect(textFraction({ names_done: true, text_done: 9, text_total: 4, failed: 0, capped: 0 })).toBe(1);
   });
 
   it("en: de stand in het Engels, zonder sleutel of {naam} in beeld", async () => {
