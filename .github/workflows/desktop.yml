@@ -1,0 +1,60 @@
+name: Desktop-app
+
+# Fase 11, stap 11: de desktop-app (apps/desktop, Tauri 2) bouwen voor Windows (.exe, een
+# installatieprogramma van NSIS) en Linux (.deb). Download ze onder Actions → deze run →
+# Artifacts; een beheerder zet ze op het platform als <data>/apps/platform-windows.exe en
+# <data>/apps/platform-linux.deb (de downloadpagina /apps biedt ze dan aan).
+on:
+  push:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Bouwen (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            bundle: nsis
+          - name: Linux
+            os: ubuntu-22.04
+            bundle: deb
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pakketten voor Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Bouwen
+        run: npx --yes @tauri-apps/cli@2.9.5 build --bundles ${{ matrix.bundle }}
+      - name: Namen voor de downloadpagina
+        run: |
+          mkdir -p out
+          if [ "${{ runner.os }}" = Windows ]; then
+            cp src-tauri/target/release/bundle/nsis/*.exe out/platform-windows.exe
+          else
+            cp src-tauri/target/release/bundle/deb/*.deb out/platform-linux.deb
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-${{ matrix.bundle == 'nsis' && 'windows' || 'linux' }}
+          path: apps/desktop/out/*
+          retention-days: 30

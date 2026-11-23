@@ -45,8 +45,8 @@ class ClientApp(BaseModel):
 # De apps die een beheerder zelf in data_dir/apps legt: (id, platform, bestandsnaam)
 BUILT = (
     ("android", "android", "platform-android.apk"),
-    ("windows", "windows", "platform-windows.msi"),
-    ("linux", "linux", "platform-linux.AppImage"),
+    ("windows", "windows", "platform-windows.exe"),
+    ("linux", "linux", "platform-linux.deb"),
 )
 
 
