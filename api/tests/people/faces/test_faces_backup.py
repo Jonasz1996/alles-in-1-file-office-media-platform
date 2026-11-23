@@ -33,6 +33,9 @@ pytestmark = pytest.mark.anyio
 A = (0.10, 0.10, 0.20, 0.25)
 B = (0.60, 0.20, 0.20, 0.25)
 FACE_TABLES = ("face_person", "face", "face_scan", "face_owner")
+# db-backup en de snippet van install.sh kopiëren het SQLite-bestand; op PostgreSQL maakt de
+# beheerder de kopie zelf, met de lijst van app.cli backup-wipe-tables (test_faces_keys.py)
+SQLITE_FILE = pytest.mark.sqlite_only("db-backup en install.sh kopiëren een SQLite-bestand")
 
 
 def test_wipe_dekt_de_tabellen_van_gezichten():
@@ -97,6 +100,7 @@ def check_copy(target: Path, wanted: list[bytes]) -> None:
     assert sum(target.read_bytes().count(m) for m in wanted) == 0
 
 
+@SQLITE_FILE
 async def test_de_kopie_van_db_backup(client, settings, nep, tmp_path):
     path, wanted, before = await _world(client, settings, nep)
     assert before["face"] == 4 and before["face_person"] == 1 and before["face_owner"] == 1
@@ -121,6 +125,7 @@ def run_snippet(path: Path, folder: Path) -> Path:
     return Path(done.stdout.strip())
 
 
+@SQLITE_FILE
 async def test_de_kopie_van_install_sh(client, settings, nep, tmp_path):
     """Zoals install.sh: de tekst van app/backup.py met python -I -c, zonder iets uit app."""
     path, wanted, before = await _world(client, settings, nep)

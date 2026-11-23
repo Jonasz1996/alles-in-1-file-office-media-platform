@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from app import __version__, client_fetch, errors, events, jobs, photometa, previews
 from app.analyse import monitor as analyse_monitor
+from app.analyse import pgcheck as analyse_pgcheck
 from app.arr import engine as arr_engine
 from app.certs import CertManager
 from app.config import Settings, get_settings
@@ -502,6 +503,9 @@ async def lifespan(app: FastAPI):
         log.warning("Rate limits staan uit (PLATFORM_RATE_LIMITS=false): alleen voor tests")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await upgrade(settings)
+    # Op PostgreSQL: de triggers van 0013 er (Settings.analyse_on), vóór alles wat de analyse
+    # aanmeldt (de backfills, de rijen, de monitor). Op SQLite niets
+    await analyse_pgcheck.check(settings)
     if events.hub.closed:  # een eerdere keer gestopt in hetzelfde proces (tests)
         events.hub = events.Hub()
     certs = CertManager(settings)

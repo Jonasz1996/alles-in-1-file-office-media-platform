@@ -34,7 +34,7 @@ from app.db import get_engine
 from app.models import Node
 from app.search import bench, rebuild, schema
 from tests.factories import maker
-from tests.search import spike
+from tests.search import motoren, spike
 from tests.search import wereld as W
 from tests.search.test_spike_triggers import klopt, pad, sql, vul_veel, zoek_naam
 from tests.test_files import mkdir, put, root
@@ -70,6 +70,7 @@ def frozen_heap():
     gc.unfreeze()
 
 
+@motoren.needs_fts
 async def test_een_upload_wacht_hooguit_1_s_en_de_index_klopt(client, admin, settings, frozen_heap):
     jonas, top, _ = await _vul(client, admin, settings, 6_000)
     await klopt(settings)
@@ -169,6 +170,7 @@ def _vul_groot(settings, owner: str, root_id: str, n: int) -> None:
         con.close()
 
 
+@motoren.needs_fts
 async def test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort(
     client, admin, settings, frozen_heap
 ):
@@ -210,6 +212,7 @@ async def test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort(
     await klopt(settings, termen=False)
 
 
+@motoren.needs_fts
 async def test_een_node_met_meer_tekst_dan_het_budget_is_een_stuk(client, admin, settings):
     """Minstens één node per stuk, ook als die alleen al meer tekst heeft dan het budget; en het
     budget telt de nodes tot en met de laatste die past."""
@@ -246,6 +249,7 @@ class Stop(Exception):
     pass
 
 
+@motoren.needs_fts
 async def test_een_herbouw_die_stopt_gaat_verder(client, admin, settings):
     await _vul(client, admin, settings, 3_000)
     engine = get_engine(settings)
@@ -269,6 +273,7 @@ async def test_een_herbouw_die_stopt_gaat_verder(client, admin, settings):
     await klopt(settings)
 
 
+@motoren.needs_fts
 async def test_twee_tegelijk(client, admin, settings):
     await _vul(client, admin, settings, 2_000)
     engine = get_engine(settings)
@@ -277,6 +282,7 @@ async def test_twee_tegelijk(client, admin, settings):
     await klopt(settings)
 
 
+@motoren.needs_fts
 async def test_de_triggers_terug_en_wat_ze_bijhouden(client, settings):
     """Zonder node_au_text, node_au_move en node_au_owner, en met een andere node_ai: een naam,
     een verplaatsing en een andere eigenaar gaan dan langs de index en de foto-rijen heen.
@@ -335,6 +341,7 @@ async def test_de_triggers_terug_en_wat_ze_bijhouden(client, settings):
     await klopt(settings)
 
 
+@motoren.needs_fts
 async def test_de_controle_vindt_verschillen(client, settings):
     w = await W.bouw_async(settings)
     engine = get_engine(settings)
@@ -367,6 +374,7 @@ async def test_de_controle_vindt_verschillen(client, settings):
         assert isinstance(n, int) and "brief" not in wat.lower() and "ander" not in wat.lower()
 
 
+@motoren.needs_fts
 async def test_de_controle_tijdens_een_herbouw(client, admin, settings):
     await _vul(client, admin, settings, 600)
     engine = get_engine(settings)

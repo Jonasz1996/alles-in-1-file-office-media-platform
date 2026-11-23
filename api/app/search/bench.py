@@ -925,7 +925,9 @@ def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkoms
 
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
-    settings = Settings(data_dir=data_dir)
+    # Altijd het eigen bestand: met PLATFORM_DATABASE_URL (PostgreSQL, het cluster) zou de
+    # migratie hieronder anders de database van de app raken, niet platform.db in data_dir
+    settings = Settings(data_dir=data_dir, database_url="")
 
     async def migreer() -> None:
         await upgrade(settings)

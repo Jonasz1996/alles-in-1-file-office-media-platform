@@ -22,7 +22,7 @@ from sqlalchemy import and_, bindparam, delete, exists, func, insert, or_, selec
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import dbdialect
-from app.models import Face, FaceOwner, FacePerson, FaceScan, PhotoPerson, PhotoPref
+from app.models import Face, FaceOwner, FacePerson, FaceScan, PhotoPerson, PhotoPref, User
 
 CHUNK = 2000  # rijen per transactie bij wissen (zoals Keuze 11)
 
@@ -46,6 +46,59 @@ async def has_rows(db: AsyncSession, owner: uuid.UUID) -> bool:
         if found is not None:
             return True
     return False
+
+
+async def has_sealed(db: AsyncSession, owner: uuid.UUID) -> bool:
+    """Staat er een versleutelde vector van deze eigenaar (face.vec niet NULL), ook van een foto
+    in de prullenbak? Dan hoort daar een sleutel bij: crypto.ensure_key maakt dan geen nieuwe
+    (0.8.2, P4). Een verborgen gezicht heeft geen vec (hidden = 1), dus ix_face_new."""
+    found = await db.scalar(
+        select(Face.id)
+        .where(Face.owner_id == owner, Face.hidden == 0, Face.vec.is_not(None))
+        .limit(1)
+    )
+    return found is not None
+
+
+async def sealed_sample(db: AsyncSession, owner: uuid.UUID) -> tuple[uuid.UUID, bytes] | None:
+    """Eén versleutelde vector van deze eigenaar (de id van het gezicht en vec), of None: dezelfde
+    rijen als has_sealed. Om te zien of een sleutel zijn gezichten opent (crypto.key_opens)."""
+    found = (
+        await db.execute(
+            select(Face.id, Face.vec)
+            .where(Face.owner_id == owner, Face.hidden == 0, Face.vec.is_not(None))
+            .limit(1)
+        )
+    ).first()
+    return None if found is None else (found[0], bytes(found[1]))
+
+
+async def key_owners(db: AsyncSession) -> list[uuid.UUID]:
+    """Wie een sleutel nodig heeft: gezichten aan (photo_pref.faces) en minstens één versleutelde
+    vector. Bij "uit" en een verbod staan gezichten niet aan: de sleutel gaat eerst weg en de
+    wisronde wist de rijen daarna, dus die eigenaren horen er niet bij. Een wisronde "unnamed"
+    laat gezichten aan en de benoemde gezichten met hun vector: die eigenaar hoort er wel bij."""
+    on = await db.scalars(select(PhotoPref.user_id).where(PhotoPref.faces == "aan"))
+    return [o for o in sorted(on) if await has_sealed(db, o)]
+
+
+async def lock_pref(db: AsyncSession, owner: uuid.UUID) -> str | None:
+    """De schakelaar gezichten van owner (photo_pref.faces, None zonder rij), met de rij vast tot
+    de commit: op PostgreSQL het rijslot, op SQLite het schrijfslot (een UPDATE zonder
+    verandering; photo_pref heeft geen triggers). Zo kan niemand gezichten aanzetten terwijl
+    sleutels-check --opruimen de sleutel weghaalt."""
+    found = await db.execute(
+        update(PhotoPref)
+        .where(PhotoPref.user_id == owner)
+        .values(faces=PhotoPref.faces)
+        .returning(PhotoPref.faces)
+    )
+    return found.scalar_one_or_none()
+
+
+async def user_gone(db: AsyncSession, owner: uuid.UUID) -> bool:
+    """Bestaat deze gebruiker niet (meer)? Dan kan niemand zijn gezichten nog aanzetten."""
+    return await db.scalar(select(User.id).where(User.id == owner)) is None
 
 
 async def owners_with_rows(db: AsyncSession) -> list[uuid.UUID]:

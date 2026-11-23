@@ -38,6 +38,9 @@ from tests.factories import create_user
 
 pytestmark = pytest.mark.anyio
 
+# Op een echte engine: alleen SQLite heeft de poort (gate_for geeft op PostgreSQL None)
+POORT = pytest.mark.sqlite_only("de schrijfpoort van SQLite (app/dbgate.py)")
+
 
 def maker(settings):
     return async_sessionmaker(get_engine(settings), expire_on_commit=False)
@@ -247,6 +250,7 @@ async def test_vrijhouden_stopt_na_fg_streak_verzoeken():
     await upload
 
 
+@POORT
 async def test_wie_te_lang_wacht_krijgt_database_is_locked(settings, monkeypatch, caplog):
     """Na TIMEOUT dezelfde fout als na busy_timeout, en de rij is weer leeg. De waarschuwing
     noemt alleen werkwoord, tabel en taak: geen SQL."""
@@ -341,6 +345,7 @@ async def test_teruggeven_vanuit_een_thread_gaat_via_de_loop():
     assert granted_in == [threading.current_thread().name]
 
 
+@POORT
 async def test_twee_databases_hebben_elk_een_eigen_poort(settings, tmp_path):
     """Een taak die de poort van database A heeft en wacht op een schrijver van database B:
     met één poort voor allebei liep dat vast (tot TIMEOUT)."""
@@ -363,6 +368,7 @@ async def test_twee_databases_hebben_elk_een_eigen_poort(settings, tmp_path):
         await engine_b.dispose()
 
 
+@POORT
 async def test_een_tweede_verbinding_van_dezelfde_taak_gaat_zoals_vroeger(settings):
     """Geen plek in de rij (dat liep vast): de busy handler van SQLite, zoals voor de poort.
     De conftest laat zo'n test falen; hier wordt hij verwacht en opgehaald."""
@@ -433,6 +439,7 @@ def test_de_log_krijgt_alleen_werkwoord_en_tabel():
     assert "geheim" not in dbgate.what("UPDATE x SET y = 'geheim'")
 
 
+@POORT
 async def test_de_poort_gaat_terug_op_elk_pad(settings):
     engine = get_engine(settings)
     await kladblok(engine)
@@ -487,6 +494,7 @@ async def test_de_poort_gaat_terug_op_elk_pad(settings):
         assert (await s.execute(text("SELECT n FROM kladblok WHERE id = 1"))).scalar() == 2
 
 
+@POORT
 async def test_de_poort_blijft_tot_de_commit_klaar_is(settings):
     """De poort gaat pas terug als de COMMIT van de driver (met zijn fsync) klaar is: anders
     begint de volgende schrijver terwijl SQLite het slot nog heeft, en wacht hij in de busy
@@ -514,6 +522,7 @@ async def test_de_poort_blijft_tot_de_commit_klaar_is(settings):
     assert seen == [True]
 
 
+@POORT
 async def test_een_commit_wekt_de_checkpointer(settings, monkeypatch):
     """Na elke geslaagde schrijftransactie heeft de checkpointer werk (wal_autocheckpoint=0:
     anders groeit de WAL zonder eind)."""
@@ -534,6 +543,7 @@ async def test_een_commit_wekt_de_checkpointer(settings, monkeypatch):
     assert kicks == [1, 1]
 
 
+@POORT
 async def test_een_mislukte_schrijfactie_buiten_een_transactie_geeft_de_poort_terug(settings):
     """DDL draait in autocommit (pysqlite opent er geen transactie voor). Mislukt hij, dan is er
     geen transactie die hem later teruggeeft: handle_error doet het, ook al blijft de
@@ -549,6 +559,7 @@ async def test_een_mislukte_schrijfactie_buiten_een_transactie_geeft_de_poort_te
             await asyncio.create_task(schrijf_ergens(engine, 2))
 
 
+@POORT
 async def test_een_rollback_op_een_open_verbinding_geeft_de_poort_terug(settings):
     """De rollback van de driver geeft de poort terug, ook als de verbinding nog niet terug in
     de pool is (een sessie doet dat wel; engine.connect() niet)."""
@@ -569,6 +580,7 @@ async def schrijf_ergens(engine, row: int) -> None:
         await c.exec_driver_sql("UPDATE kladblok SET n = n + 1 WHERE id = ?", (row,))
 
 
+@POORT
 async def test_een_taak_die_midden_in_een_transactie_stopt(settings, monkeypatch):
     """De review van de schrijfpoort (HANG-1): een taak schrijft op een sessie en stopt, de
     transactie loopt nog (de aanroeper commit later). SQLite heeft het slot dan nog; gaf de
@@ -662,6 +674,7 @@ async def test_de_checkpointer_maakt_geen_bestand_en_stopt_als_er_niets_meer_is(
     assert not ck.dirty
 
 
+@POORT
 async def test_wie_de_poort_lang_heeft_komt_in_de_log(settings, monkeypatch, caplog):
     """Langer dan SLOW_HOLD: een waarschuwing met werkwoord, tabel en taak, zonder SQL."""
     monkeypatch.setattr(dbgate, "SLOW_HOLD", 0.0)
@@ -678,6 +691,7 @@ async def test_wie_de_poort_lang_heeft_komt_in_de_log(settings, monkeypatch, cap
     assert "SET" not in line and "n + 1" not in line
 
 
+@POORT
 async def test_sqlite_heeft_de_poort_en_geen_autocheckpoint(settings):
     """De WAL krijgt zijn checkpoint niet meer in een COMMIT, terwijl die het slot heeft."""
     engine = get_engine(settings)
@@ -690,6 +704,7 @@ async def test_sqlite_heeft_de_poort_en_geen_autocheckpoint(settings):
         assert (await c.exec_driver_sql("PRAGMA synchronous")).scalar() == 2  # FULL, als altijd
 
 
+@POORT
 async def test_de_checkpointer_doet_het_buiten_de_engine(settings, monkeypatch):
     """Na een commit binnen een paar seconden een PASSIVE checkpoint, op een eigen verbinding:
     niets daarvan komt langs de engine (de poort, de tellers)."""
@@ -810,6 +825,7 @@ class _Commits:
         ]
 
 
+@POORT
 async def test_een_upload_wacht_niet_achter_een_schrijver_die_steeds_terugkomt(
     settings, client, admin, monkeypatch
 ):
@@ -855,6 +871,7 @@ async def test_een_upload_wacht_niet_achter_een_schrijver_die_steeds_terugkomt(
     assert len(holds) >= 3  # de achtergrond kwam ook aan de beurt
 
 
+@POORT
 async def test_uploads_tegelijk_wachten_niet_achter_de_achtergrond(
     settings, client, admin, monkeypatch
 ):
@@ -934,6 +951,7 @@ async def test_uploads_tegelijk_wachten_niet_achter_de_achtergrond(
     assert dbgate.stats(dbgate.gate_for(engine))["hold_expired"] == 0
 
 
+@POORT
 async def test_wat_een_runner_doet_is_achtergrond(settings):
     """Een taak van een Runner, wat die taak zelf start en het opruimwerk schrijven als
     achtergrond; een verzoek (hier de test zelf) als voorgrond."""
@@ -1040,6 +1058,7 @@ async def test_pomp_haalt_een_wachtende_upload_niet_in(settings, client, admin, 
 
 
 @pytest.mark.parametrize("slot", ["blobs", "gebruiker"])
+@POORT
 async def test_blobslot_geeft_voorrang(settings, tmp_path, monkeypatch, slot):
     """Wie BlobStore.lock of het slot van een gebruiker (files.user_lock) heeft, schrijft als
     voorgrond: daar kan een upload op wachten. Hier een achtergrondtaak met het slot, achter een
@@ -1097,6 +1116,7 @@ async def test_blobslot_geeft_voorrang(settings, tmp_path, monkeypatch, slot):
     assert [v[0] for v in dbgate.take_violations()] == ["lock_in_txn"]
 
 
+@POORT
 async def test_herbouw_schrijft_als_achtergrond(settings, client, admin, monkeypatch):
     """De transacties van de herbouw zelf zijn achtergrond, after_chunk (hier een PATCH, als
     in test_search_rebuild.py) niet. En na het begin (delete-all) eerst een pauze, vóór stuk 1."""

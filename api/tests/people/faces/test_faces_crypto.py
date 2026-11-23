@@ -57,14 +57,16 @@ async def test_een_sleutel_per_eigenaar_0600_buiten_de_datamap(settings):
     keys = crypto.keys_dir(settings)
     assert not keys.is_relative_to(settings.data_dir)
     assert crypto.load_key(settings, owner) is None
-    key = crypto.ensure_key(settings, owner)
-    path = crypto.key_path(settings, owner)
-    assert path.parent == keys and path.name == f"{owner.hex}.key"
-    assert len(key) == crypto.KEY_BYTES == 32
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert crypto.ensure_key(settings, owner) == key == crypto.load_key(settings, owner)
-    other = uuid.uuid4()
-    assert crypto.ensure_key(settings, other) != key
+    async with maker(settings)() as db:
+        key = await crypto.ensure_key(settings, db, owner)
+        path = crypto.key_path(settings, owner)
+        assert path.parent == keys and path.name == f"{owner.hex}.key"
+        assert len(key) == crypto.KEY_BYTES == 32
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert await crypto.ensure_key(settings, db, owner) == key
+        assert key == crypto.load_key(settings, owner)
+        other = uuid.uuid4()
+        assert await crypto.ensure_key(settings, db, other) != key
     assert crypto.delete_key(settings, owner) is True
     assert not path.exists()
     assert crypto.delete_key(settings, owner) is False
@@ -74,12 +76,13 @@ async def test_een_sleutel_per_eigenaar_0600_buiten_de_datamap(settings):
 
 async def test_zonder_map_geen_sleutel(settings, tmp_path):
     zonder = settings.model_copy(update={"faces_keys": ""})
-    with pytest.raises(crypto.NoKeys):
-        crypto.ensure_key(zonder, uuid.uuid4())
-    assert crypto.delete_key(zonder, uuid.uuid4()) is False
-    weg = settings.model_copy(update={"faces_keys": str(tmp_path / "bestaat-niet")})
-    with pytest.raises(crypto.NoKeys):
-        crypto.ensure_key(weg, uuid.uuid4())
+    async with maker(settings)() as db:
+        with pytest.raises(crypto.NoKeys):
+            await crypto.ensure_key(zonder, db, uuid.uuid4())
+        assert crypto.delete_key(zonder, uuid.uuid4()) is False
+        weg = settings.model_copy(update={"faces_keys": str(tmp_path / "bestaat-niet")})
+        with pytest.raises(crypto.NoKeys):
+            await crypto.ensure_key(weg, db, uuid.uuid4())
     assert not (tmp_path / "bestaat-niet").exists()
 
 
