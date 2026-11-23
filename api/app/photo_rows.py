@@ -468,8 +468,15 @@ async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
         return
     async with maker() as db:
         if found:
-            result = await db.execute(_FILL, found)
-            rows_done += max(int(result.rowcount or 0), 0)
+            if dbdialect.is_pg(db):
+                # asyncpg geeft bij executemany geen aantal (rowcount -1): per rij, dan klopt
+                # rows= in geo_places_done ook op PostgreSQL
+                for one in found:
+                    result = await db.execute(_FILL, one)
+                    rows_done += max(int(result.rowcount or 0), 0)
+            else:
+                result = await db.execute(_FILL, found)
+                rows_done += max(int(result.rowcount or 0), 0)
         if len(rows) == PLACES_CHUNK:
             nxt = {"after": rows[-1][0].hex, "built": payload.get("built"), "rows": rows_done,
                    "bouw": bouw}  # fmt: skip

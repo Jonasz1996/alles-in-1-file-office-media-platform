@@ -112,8 +112,8 @@ async def test_bench_nooit_in_een_map_met_een_database(client, settings, tmp_pat
         assert not rijen.all()
 
 
-# Op PostgreSQL rood: met PLATFORM_DATABASE_URL migreert bench.maak de database van de app in
-# plaats van zijn eigen platform.db (een fout in de app; docs/fase-6/i3/pg-tests-ci.md, Open)
+# Ook met PLATFORM_DATABASE_URL (PostgreSQL) maakt de bench zijn eigen platform.db en raakt hij
+# de database van de app niet (docs/fase-6/i3/pg-tests-ci.md, Open 2)
 async def test_bench_maakt_de_boom(settings, tmp_path):
     data = tmp_path / "boom"
     uitkomst = tmp_path / "uitkomst.json"
