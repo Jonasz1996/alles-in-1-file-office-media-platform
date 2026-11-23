@@ -30,6 +30,7 @@ from app.search import deadline, engine, filters, hooks, limits, query
 from app.search import types as t
 from app.search.engine import ConnInfo, read_conn_info, select_engine
 from app.search.types import SearchPage, SearchParams, SearchRule, Suggestions
+from tests.search import motoren
 from tests.search.migratie import (
     SHA_TXT,
     check_fts,
@@ -174,6 +175,7 @@ async def test_read_conn_info_ziet_of_er_fts_is(tmp_path, fts5):
     assert info.sqlite_version and info.sqlite_version.count(".") == 2
 
 
+@motoren.needs_fts
 async def test_parse_deadline_en_admit_zijn_gebouwd(settings, client, admin):
     """De stubs van Z0 zijn sinds Z1 gebouwd: parse() geeft een uitdrukking, deadline() een
     grens die niet geraakt is, admit() laat een vraag door."""
@@ -591,9 +593,10 @@ async def test_alleen_faces_en_beeld_melden_zich_aan():
 
 async def test_na_de_migratie_is_de_stand_van_de_database_al_gelezen(settings):
     """app.migrate.upgrade leest na de migratie of er FTS is: de eerste zoekvraag hoeft dat niet
-    te doen (en telt dus net zoveel vragen als de volgende)."""
+    te doen (en telt dus net zoveel vragen als de volgende). Of er FTS is, hangt af van de
+    database: op PostgreSQL tot golf 3 niet (motoren.py)."""
     key = engine._key(settings.db_url)
-    assert engine._info[key].fts is True
+    assert engine._info[key].fts is motoren.FTS
     engine.forget(settings.db_url)
     assert key not in engine._info
 

@@ -29,6 +29,7 @@ from app.models import Node
 from app.search import engine as engines
 from app.security import SecurityConfig, SecurityPolicy, login_limiter
 from tests.conftest import ADMIN
+from tests.search import motoren
 from tests.search.migratie import migrate, settings_at
 from tests.test_files import put, root
 
@@ -44,7 +45,7 @@ async def _vul(client, headers, settings) -> None:
         sha = (
             await conn.execute(select(Node.blob_id).where(Node.id == uuid.UUID(tekst)))
         ).scalar_one()
-        if await conn.run_sync(lambda c: sa.inspect(c).has_table("blob_text")):
+        if await conn.run_sync(lambda sync: sa.inspect(sync).has_table("blob_text")):
             await conn.execute(
                 text(
                     "INSERT INTO blob_text (blob_sha, body, ocr, meta, truncated, updated_at) "
@@ -74,6 +75,7 @@ async def _als_070(client, headers) -> None:
     assert r.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
 
 
+@motoren.needs_fts
 async def test_met_de_index_uit(client, admin, settings, monkeypatch):
     headers, _ = admin
     await _vul(client, headers, settings)
@@ -84,6 +86,7 @@ async def test_met_de_index_uit(client, admin, settings, monkeypatch):
     await _als_070(client, headers)
 
 
+@motoren.needs_fts
 async def test_tijdens_een_herbouw(client, admin, settings):
     headers, _ = admin
     await _vul(client, headers, settings)

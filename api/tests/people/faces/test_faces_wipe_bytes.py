@@ -6,6 +6,9 @@ database staan. Vóór het wissen staan ze in platform.db of -wal (anders zegt d
 het checkpoint van het uur) en "uit" staat geen enkel merkteken meer in platform.db of in -wal.
 Met een open lezer lukt het checkpoint niet: de job probeert het later opnieuw (Defer), /beheer
 zegt "wissen wacht op een lezer", en na het sluiten van de lezer is alles weg.
+
+Dit gaat over de bytes van het SQLite-bestand (secure_delete, wal_checkpoint): op PostgreSQL
+slaan deze tests over (sqlite_only). Daar geldt crypto-shred: test_faces_wipe_shred.py.
 """
 
 from __future__ import annotations
@@ -24,12 +27,12 @@ from tests.factories import create_user, maker
 from tests.people.faces.conftest import aan, draai, foto, lezer
 from tests.test_photos import login
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.sqlite_only(
-        "bytes in platform.db en -wal; PostgreSQL wist door eerst de sleutel weg te halen (P4)"
-    ),
-]
+pytestmark = pytest.mark.anyio
+
+# Op PostgreSQL staan de bytes niet in een bestand van de app (test_faces_wipe_shred.py)
+BYTES = pytest.mark.sqlite_only(
+    "secure_delete en wal_checkpoint: de bytes van platform.db en -wal bestaan alleen op SQLite"
+)
 
 A = (0.10, 0.10, 0.20, 0.25)
 B = (0.60, 0.20, 0.20, 0.25)
@@ -88,6 +91,7 @@ async def before(settings, rows) -> list[bytes]:
     return wanted
 
 
+@BYTES
 async def test_niet_tonen_en_ongedaan_maken(client, settings, eva):
     rows = await faces(settings, eva["id"], Face.node_id == eva["fotos"][0])
     wanted = await before(settings, rows)
@@ -106,6 +110,7 @@ async def test_niet_tonen_en_ongedaan_maken(client, settings, eva):
     assert len(rest) == 4 and found(settings, marks(rest))["db"] > 0
 
 
+@BYTES
 async def test_niet_benoemde_wissen_en_een_persoon_wissen(client, settings, eva):
     h = eva["h"]
     alle = await faces(settings, eva["id"])
@@ -128,6 +133,7 @@ async def test_niet_benoemde_wissen_en_een_persoon_wissen(client, settings, eva)
     assert all(f.vec is None for f in await faces(settings, eva["id"]))
 
 
+@BYTES
 async def test_definitief_wissen_met_het_checkpoint_van_het_uur(client, settings, eva):
     node = eva["fotos"][1]
     wanted = await before(settings, await faces(settings, eva["id"], Face.node_id == node))
@@ -137,6 +143,7 @@ async def test_definitief_wissen_met_het_checkpoint_van_het_uur(client, settings
     assert found(settings, wanted) == {"db": 0, "db-wal": 0}
 
 
+@BYTES
 async def test_uit_met_een_open_lezer(client, settings, eva, monkeypatch):
     h = eva["h"]
     wanted = await before(settings, await faces(settings, eva["id"]))

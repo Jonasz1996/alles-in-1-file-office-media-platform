@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import DateTime, bindparam, delete, text, update
+from sqlalchemy import delete, insert, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -63,6 +63,7 @@ from app.models import (
     Album,
     AlbumItem,
     AlbumRule,
+    Analysis,
     Blob,
     BlobMeta,
     BlobText,
@@ -321,21 +322,22 @@ class _Bouwer:
         die OCR een scan van de wereld wil laten lezen, haalt eerst de rij ocr ervan weg."""
         self.s.flush()
         conn = self.s.connection()
-        rijen = bench.analyse_rijen(conn.execute(text(bench.ANALYSE_BLOBS)).all())
-        if rijen:
-            sleutels = ("sha", "step", "version", "state", "at", "upd")
-            conn.execute(
-                text(
-                    "INSERT INTO analysis (blob_sha, step, version, state, tries, code, "
-                    "owner_id, queued_at, updated_at) VALUES "
-                    "(:sha, :step, :version, :state, 0, NULL, NULL, :at, :upd)"
-                ).bindparams(
-                    bindparam("at", type_=DateTime(timezone=True)),
-                    bindparam("upd", type_=DateTime(timezone=True)),
-                ),
-                # de tijd als datetime: bench schrijft hem als tekst zoals SQLite hem bewaart
-                [dict(zip(sleutels, (*r[:4], DAG, DAG), strict=True)) for r in rijen],
-            )
+        rijen = bench.analyse_rijen(conn.exec_driver_sql(bench.ANALYSE_BLOBS).all())
+        if conn.dialect.name == "sqlite":
+            conn.exec_driver_sql(bench.ANALYSE_SQL, rijen)
+            return
+        # PostgreSQL: ANALYSE_SQL is voor sqlite3 (? en een tijd als tekst); dezelfde rijen
+        # via de ORM-tabel, met de tijd als datetime
+        conn.execute(
+            insert(Analysis),
+            [
+                {"blob_sha": sha, "step": step, "version": versie, "state": staat, "tries": 0,
+                 "code": None, "owner_id": None,
+                 "queued_at": datetime.fromisoformat(wacht).replace(tzinfo=UTC),
+                 "updated_at": datetime.fromisoformat(bij).replace(tzinfo=UTC)}
+                for sha, step, versie, staat, wacht, bij in rijen
+            ],
+        )  # fmt: skip
 
 
 def bouw(conn: Connection, blob_dir: Path | None = None) -> Wereld:

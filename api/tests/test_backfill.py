@@ -32,6 +32,7 @@ from app.models import Analysis, Blob, BlobText
 from app.search import bench, hooks
 from tests import test_files
 from tests.factories import create_user
+from tests.search import motoren
 from tests.search.migratie import fts_column_sql
 
 # zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
@@ -141,6 +142,7 @@ async def run_backfill_with_uploads(
     return waits
 
 
+@motoren.needs_fts
 async def test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill(
     settings, client, admin, monkeypatch
 ):
@@ -309,6 +311,7 @@ async def test_de_rij_van_een_upload_commit_midden_in_een_telling(
     assert set(states) == {"done"}, states
 
 
+@motoren.needs_fts
 async def test_veel_kopieen_houden_de_schrijfactie_klein(settings, client, admin):
     """H1: de triggers schrijven de tekst voor elke node met die sha. Een tekst van 1 MB met 250
     kopieën was 251 MB in fts_node: Bram wachtte seconden, of kreeg "database is locked".
@@ -381,6 +384,7 @@ async def test_veel_kopieen_houden_de_schrijfactie_klein(settings, client, admin
     assert max(waits) < MAX_WAIT_S, f"een upload wachtte {max(waits):.2f} s"
 
 
+@motoren.needs_fts
 async def test_het_deel_per_node_ook_bij_alleen_ocr(settings, client, admin, monkeypatch):
     """De regels van write_text met een klein budget: body eerst, dan ocr met wat over is, nooit
     minder dan TEXT_MIN_SHARE. Komt alleen ocr mee, dan gaat ook een te lange opgeslagen body

@@ -24,6 +24,7 @@ from app.db import get_engine
 from app.people import search as people_search
 from app.search import engine, filters_photo
 from tests.beeld.conftest import beeld, mensen  # noqa: F401 - de fixtures van tests/beeld
+from tests.search import motoren
 from tests.search import wereld as W
 from tests.search.server import App, zonder_2fa
 from tests.search.test_search_access import _doe, kop
@@ -88,6 +89,7 @@ def _alles(caplog) -> str:
     return "\n".join(form.format(r) for r in caplog.records)
 
 
+@motoren.needs_fts
 async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog, mismatch_verwacht):
     w = await W.bouw_async(settings)
     eva, hans = await kop(client, "eva"), await kop(client, "hans")
@@ -116,11 +118,11 @@ async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog,
     assert W.TEKST_WOORD not in _alles(caplog)
     # Een databasefout bij een suggestie (bij zoeken: test_log_hiding.py)
     sync = get_engine(settings).sync_engine
-    driverfout = sync.dialect.loaded_dbapi.OperationalError
+    fout_van_de_driver = sync.dialect.dbapi.OperationalError
 
     def op_slot(cursor, statement, parameters, context):
         if any(WOORD in str(p) for p in parameters or ()):
-            raise driverfout("database is locked")
+            raise fout_van_de_driver("database is locked")
 
     event.listen(sync, "do_execute", op_slot)
     try:

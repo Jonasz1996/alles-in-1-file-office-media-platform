@@ -1,6 +1,7 @@
 """db-copy: SQLite van één node naar PostgreSQL (B12, B15).
 
-Alleen met PLATFORM_TEST_DATABASE_URL."""
+Alleen met PLATFORM_TEST_DATABASE_URL: de marker pg (zonder slaat tests/conftest.py ze over; de
+job api-postgres-15 kiest ze met -m pg)."""
 
 import os
 import uuid
@@ -16,10 +17,7 @@ from app.migrate import upgrade
 from app.models import Blob, Node, User
 
 PG = os.environ.get("PLATFORM_TEST_DATABASE_URL", "")
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(not PG, reason="geen PLATFORM_TEST_DATABASE_URL"),
-]
+pytestmark = [pytest.mark.anyio, pytest.mark.pg]
 
 
 async def _database(name: str, drop: bool = False) -> str:
@@ -155,6 +153,9 @@ async def test_copy_without_superuser(sqlite_with_data):
     admin = await asyncpg.connect(PG.replace("postgresql+asyncpg://", "postgresql://"))
     try:
         await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'pw' NOSUPERUSER")
+        # Zo mag ook een beheerder zonder superuser (job api-postgres-15, zoals op ClusterForge)
+        # de database aan die rol geven en hem daarna weghalen
+        await admin.execute(f"GRANT {role} TO CURRENT_USER")
         await admin.execute(f'CREATE DATABASE "{name}" OWNER {role}')
         base = make_url(PG).set(username=role, password="pw", database=name)
         url = base.render_as_string(hide_password=False)

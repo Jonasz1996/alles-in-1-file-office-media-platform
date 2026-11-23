@@ -8,7 +8,9 @@ wordt opnieuw gemaakt; hoeveel hoger doet er niet toe):
   (node_ad_beeld), en een gebruiker wissen met zijn foto's geeft geen fout;
 - gelijk: prullenbak in en uit, een andere naam of map, een document, een map;
 - BZ8: NEW.ftype in WHEN werkt op deze SQLite (CI: 3.46.1, hier 3.53.1), en een import van 500
-  foto's wordt met de drie triggers hooguit 10% trager dan zonder.
+  foto's wordt met de drie triggers hooguit 10% trager dan zonder. Op PostgreSQL zijn dat
+  node_ai_beeld en node_ad_beeld van 0013 (node_au_beeld zit daar in node_au_content, die een
+  import niet raakt); daar gaan ze uit en aan met ALTER TABLE, zonder de SQL van 0013 te kopiëren.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from tests.test_user_delete import block_and_delete
 pytestmark = pytest.mark.anyio
 
 BEELD_TRIGGERS = ("node_ai_beeld", "node_au_beeld", "node_ad_beeld")
+# Op PostgreSQL (0013): de beeld-triggers die los aan en uit kunnen
+PG_BEELD_TRIGGERS = ("node_ai_beeld", "node_ad_beeld")
 
 
 async def _gen(settings, user_id: str) -> int:
@@ -127,6 +131,11 @@ VOLGORDE = ("met", "zonder", "zonder", "met")  # ABBA
 
 async def _triggers(engine, aan: bool) -> None:
     async with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            for naam in PG_BEELD_TRIGGERS:
+                doe = "ENABLE" if aan else "DISABLE"
+                await conn.exec_driver_sql(f"ALTER TABLE node {doe} TRIGGER {naam}")
+            return
         for naam in BEELD_TRIGGERS:
             await conn.exec_driver_sql(f"DROP TRIGGER IF EXISTS {naam}")
             if aan:
@@ -156,11 +165,10 @@ def frozen_heap():
     gc.unfreeze()
 
 
-@pytest.mark.sqlite_only("BZ8 meet de SQLite-triggers van beeld; op PostgreSQL staan ze in 0013")
 async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, beeld, frozen_heap):
     """Een import van 500 foto's met en zonder de drie triggers van beeld, twee keer per kant,
     in blokken van 25 om de beurt (ABBA); de som per kant telt. Met: hooguit 10% trager. De
-    triggers doen het op deze SQLite (met: gen + 25 per blok, zonder: niets).
+    triggers doen het op deze database (met: gen + 25 per blok, zonder: niets).
 
     Blokken van 25 en niet vier rondes van 500: wat de rest van de machine intussen doet (een
     build, een andere test op dezelfde kernen) duurt seconden en raakt dan beide kanten. Met
@@ -171,13 +179,16 @@ async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, b
     fake, settings = beeld
     engine = get_engine(settings)
     async with engine.connect() as conn:
+        pg = conn.dialect.name == "postgresql"
         found = {
             r[0]
             for r in await conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+                "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgenabled <> 'D'"
+                if pg
+                else "SELECT name FROM sqlite_master WHERE type = 'trigger'"
             )
         }
-    assert set(BEELD_TRIGGERS) <= found
+    assert set(PG_BEELD_TRIGGERS if pg else BEELD_TRIGGERS) <= found
     parent = (await root(client, eva))["folder"]["id"]
     kleuren = list(nep.KLEUREN.values())
     await _import(
@@ -208,7 +219,8 @@ async def test_bz8_where_met_ftype_en_de_kosten_van_een_import(client, mensen, b
     met, zonder = sum(tijden["met"]), sum(tijden["zonder"])
     verhouding = met / zonder
     print(
-        f"BZ8 sqlite {sqlite3.sqlite_version}: {KEER} x {N} foto's per kant in blokken van "
+        f"BZ8 {'postgresql' if pg else f'sqlite {sqlite3.sqlite_version}'}: {KEER} x {N} foto's "
+        f"per kant in blokken van "
         f"{BLOK}, met de triggers {met * 1000:.0f} ms, zonder {zonder * 1000:.0f} ms, "
         f"verhouding {verhouding:.3f}"
     )

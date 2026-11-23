@@ -25,6 +25,7 @@ from sqlalchemy import delete, func, select, update
 from app import jobs, photo_rows, photometa
 from app.geo import load, places
 from app.models import Job, PhotoGeo, PhotoPref
+from tests.conftest import database_env
 from tests.factories import maker
 from tests.geo import bronnen
 from tests.geo.hulp import AMSTERDAM, met_gps, rijen, uid, verwerk
@@ -367,7 +368,8 @@ async def test_geo_load_naast_de_draaiende_app(client, admin, settings):
          b.plaatsen.sha256, str(b.plaatsen.grootte)],
         cwd=API_DIR,
         env={"PATH": "/usr/bin:/bin", "PLATFORM_DATA_DIR": str(settings.data_dir),
-             "PLATFORM_JWT_SECRET": "test" * 8, "PYTHONDONTWRITEBYTECODE": "1"},
+             "PLATFORM_JWT_SECRET": "test" * 8, "PYTHONDONTWRITEBYTECODE": "1",
+             **database_env(settings)},
         check=False,
     )  # fmt: skip
     assert result.returncode == 0, result.stderr.decode()
@@ -498,7 +500,8 @@ async def test_geo_load_force_naast_de_app_zoekt_op_in_de_nieuwe_bouw(
          b.plaatsen.sha256, str(b.plaatsen.grootte)],
         cwd=API_DIR,
         env={"PATH": "/usr/bin:/bin", "PLATFORM_DATA_DIR": str(settings.data_dir),
-             "PLATFORM_JWT_SECRET": "test" * 8, "PYTHONDONTWRITEBYTECODE": "1"},
+             "PLATFORM_JWT_SECRET": "test" * 8, "PYTHONDONTWRITEBYTECODE": "1",
+             **database_env(settings)},
         check=False,
     )  # fmt: skip
     assert result.returncode == 0, result.stderr.decode()

@@ -28,6 +28,7 @@ from app.extract import step as extract_step
 from app.models import Analysis, Blob, Job, Node, User, now
 from app.search import hooks
 from tests import factories
+from tests.search import motoren
 
 # zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
@@ -332,8 +333,9 @@ async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
         assert r.status_code == 422, r.text
         assert r.json()["detail"]["params"] == {"field": "query.limit"}
 
+    # De index aan: FtsEngine, op PostgreSQL tot golf 3 LikeFallback (motoren.DEFAULT)
     page = await zoek()
-    assert page["engine"] == "fts" and page["indexing"] == {"done": 0.0}
+    assert page["engine"] == motoren.DEFAULT and page["indexing"] == {"done": 0.0}
     await oud()
     monkeypatch.setattr(settings, "search_index", "uit")
     page = await zoek()
@@ -348,4 +350,4 @@ async def test_search_geeft_indexing(client, admin, settings, monkeypatch):
     await oud()
     monkeypatch.setattr(settings, "search_index", "aan")
     page = await zoek()
-    assert page["engine"] == "fts" and page["indexing"] is None
+    assert page["engine"] == motoren.DEFAULT and page["indexing"] is None

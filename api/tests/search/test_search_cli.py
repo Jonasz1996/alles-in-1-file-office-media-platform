@@ -13,12 +13,13 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app import cli
 from app.db import get_engine
-from app.models import Node
+from app.models import Node, User
 from app.search import bench, schema
+from tests.search import motoren
 from tests.search import wereld as W
 from tests.search.test_spike_triggers import klopt, pad
 from tests.test_cli_db import run_cli
@@ -37,9 +38,7 @@ def test_van_de_stubs_blijft_niets():
     ]
 
 
-@pytest.mark.sqlite_only(
-    "een trigger van SQLite weghalen en sqlite_master lezen; PostgreSQL: test_zoekindex_pg.py"
-)
+@motoren.needs_fts
 async def test_check_dan_triggers_dan_weer_goed(client, settings):
     w = await W.bouw_async(settings)
     goed = await run_cli(settings, "search-check", "--n", "5000", "--seed", "1", "--volledig")
@@ -74,6 +73,7 @@ async def test_check_dan_triggers_dan_weer_goed(client, settings):
     assert weer.returncode == 0, weer.stdout.decode()
 
 
+@motoren.needs_fts
 async def test_rebuild_in_stukken_met_voortgang(client, settings):
     await W.bouw_async(settings)
     result = await run_cli(settings, "search-rebuild", "--stuk", "10")
@@ -84,7 +84,7 @@ async def test_rebuild_in_stukken_met_voortgang(client, settings):
     await klopt(settings)
 
 
-@pytest.mark.sqlite_only("zet de cursor via sqlite3; PostgreSQL: test_zoekindex_pg.py")
+@motoren.needs_fts
 async def test_check_tijdens_een_herbouw(client, settings):
     await W.bouw_async(settings)
     with sqlite3.connect(pad(settings)) as con:
@@ -107,13 +107,14 @@ async def test_bench_nooit_in_een_map_met_een_database(client, settings, tmp_pat
         result = await run_cli(settings, "search-bench", "--data", str(data), "--n", "300")
         assert result.returncode == 1
         assert "heeft al een database" in result.stderr.decode()
-    with sqlite3.connect(pad(settings)) as con:
-        assert not con.execute(
-            "SELECT 1 FROM user WHERE email LIKE ?", (f"%@{bench.DOMEIN}",)
-        ).fetchall()
+    # Niets van de bench in de database van de app (SQLite of PostgreSQL)
+    async with get_engine(settings).connect() as conn:
+        rijen = await conn.execute(select(User.id).where(User.email.like(f"%@{bench.DOMEIN}")))
+        assert not rijen.all()
 
 
-@pytest.mark.sqlite_only("de bench bouwt een SQLite-database")
+# Ook met PLATFORM_DATABASE_URL (PostgreSQL) maakt de bench zijn eigen platform.db en raakt hij
+# de database van de app niet (docs/fase-6/i3/pg-tests-ci.md, Open 2)
 async def test_bench_maakt_de_boom(settings, tmp_path):
     data = tmp_path / "boom"
     uitkomst = tmp_path / "uitkomst.json"

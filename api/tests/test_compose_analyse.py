@@ -88,6 +88,8 @@ def test_de_worker_start_met_boot(analyse):
     assert platform["PLATFORM_ANALYSE_WORKER"] == SOCK
     assert platform["PLATFORM_ANALYSE_ENABLED"] == "true"
     assert platform["PLATFORM_FACES_KEYS"] == "/keys"
+    # Op PostgreSQL alleen als de beheerder het zegt (0.8.2): standaard uit
+    assert platform["PLATFORM_ANALYSE_POSTGRES"] == "${ANALYSE_POSTGRES:-false}"
 
 
 def test_de_healthcheck_zonder_de_omgeving_van_de_container(analyse):

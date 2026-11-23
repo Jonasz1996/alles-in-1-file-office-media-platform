@@ -29,6 +29,7 @@ function faces(over: Partial<AdminFaces> = {}): AdminFaces {
     eta_s: null,
     wipe_waiting: false,
     quality: null,
+    keys_missing: 0,
     ...over,
   };
 }
@@ -61,8 +62,11 @@ describe("de regel Analyse: de stand van de monitor", () => {
     expect(analyseText({ analyse: "down", reason: "bad_answer" })).toBe(
       "niet bereikbaar: de analyse geeft een antwoord dat niet klopt",
     );
-    expect(analyseText({ analyse: "down", reason: "no_sqlite" })).toBe(
-      "niet bereikbaar: de analyse werkt alleen met SQLite",
+    expect(analyseText({ analyse: "down", reason: "pg_not_enabled" })).toBe(
+      "niet bereikbaar: ANALYSE_POSTGRES staat uit",
+    );
+    expect(analyseText({ analyse: "down", reason: "no_pg_triggers" })).toBe(
+      "niet bereikbaar: een trigger van 0013 ontbreekt",
     );
     expect(analyseText({ analyse: "models_missing", reason: "yunet, sface" })).toBe(
       "een model ontbreekt of klopt niet: yunet, sface",
@@ -118,6 +122,7 @@ describe("het blok met een stand (Keuze 67)", () => {
     expect(row(markup, "total")).toBe("1.234 gezichten, waarvan 56 benoemd; ±964,1 KB in de database");
     expect(row(markup, "quality")).toBe("niet gemeten");
     expect(row(markup, "wipe")).toBeNull();
+    expect(row(markup, "keys")).toBeNull();
     expect(markup).toContain(
       '<label class="check"><input type="checkbox" data-search="faces-allowed" checked=""/>Gezichtsherkenning toestaan</label>',
     );
@@ -145,6 +150,7 @@ describe("het blok met een stand (Keuze 67)", () => {
           { code: "timeout", n: 1 },
         ],
         wipe_waiting: true,
+        keys_missing: 3,
       }),
     );
     expect(row(markup, "analyse")).toBe("een model ontbreekt of klopt niet: sface");
@@ -152,6 +158,7 @@ describe("het blok met een stand (Keuze 67)", () => {
     expect(row(markup, "limits")).toBe("zonder grenzen");
     expect(row(markup, "failed")).toBe("image_bad 2, timeout 1");
     expect(row(markup, "wipe")).toBe("wissen wacht op een lezer");
+    expect(row(markup, "keys")).toBe("sleutel ontbreekt voor 3 eigenaar(s) (app.cli sleutels-check)");
     expect(markup).toContain('<input type="checkbox" data-search="faces-allowed"/>');
   });
 

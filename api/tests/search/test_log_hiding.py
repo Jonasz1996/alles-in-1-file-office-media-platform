@@ -130,13 +130,13 @@ async def test_een_databasefout_bij_zoeken_zet_q_niet_in_de_log(client, admin, s
     engine = get_engine(settings).sync_engine
     # In delen, anders staat de vraag in de broncode die de traceback in de log laat zien
     vraag = "".join(("geheim", "woord7"))
-
-    # de fout van de driver van deze database (sqlite3 of de asyncpg-adapter)
-    driverfout = engine.dialect.loaded_dbapi.OperationalError
+    # De fout van de driver van deze database (sqlite3 of asyncpg), zodat SQLAlchemy hem als
+    # DBAPIError doorgeeft zoals een echte
+    fout_van_de_driver = engine.dialect.dbapi.OperationalError
 
     def op_slot(cursor, statement, parameters, context):
         if any(vraag in str(p) for p in parameters or ()):
-            raise driverfout("database is locked")
+            raise fout_van_de_driver("database is locked")
 
     caplog.set_level(logging.DEBUG)
     event.listen(engine, "do_execute", op_slot)

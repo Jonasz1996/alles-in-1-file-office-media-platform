@@ -74,7 +74,6 @@ PER_OWNER = 4
 MAX_TRIES = 3
 YIELD_S = 30.0  # wijken (Keuze 50)
 BACKFILL_WAIT_S = 60.0  # de index is nog bezig (Keuze 65)
-KEY_WAIT_S = 120.0  # de sleutel ontbreekt nog (keys_lost): de sync loopt elke minuut
 POLL_S = 1.0  # zo vaak kijkt de job tijdens een opdracht of hij moet wijken
 BUSY_STALE = timedelta(minutes=10)  # busy ouder dan dit: terug naar wait (sweep)
 FRONT = "~"  # prio die vóór elke datum komt (de viewer)
@@ -358,6 +357,10 @@ async def _pick(settings: Settings) -> list[Item]:
         for owner in owners:
             if not await state.owner_on(db, owner) or await state.wiping(db, owner):
                 continue
+            if await crypto.key_lost(settings, db, owner):
+                # De sleutel is weg met versleutelde gezichten erbij: niets nieuws versleutelen
+                # (crypto.KeyLost); /beheer en sleutels-check zeggen het
+                continue
             rows = await db.execute(
                 select(FaceScan.node_id, Node.blob_id, FaceScan.tries)
                 .join(Node, Node.id == FaceScan.node_id)
@@ -525,7 +528,10 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
             )
             allowed = await state.allowed(db)
             ok_owner = {
-                o: allowed and await state.owner_on(db, o) and not await state.wiping(db, o)
+                o: allowed
+                and await state.owner_on(db, o)
+                and not await state.wiping(db, o)
+                and not await crypto.key_lost(settings, db, o)
                 for o in owners
             }
             for item in items:
@@ -539,8 +545,9 @@ async def _write(settings: Settings, items: list[Item]) -> dict[uuid.UUID, list[
                 if current is None or current.state != "busy" or current.version != FACES_VERSION:
                     continue
                 if not ok_owner[item.owner] or current.blob_id != item.sha:
-                    # Uit, verboden, een wisronde, of een andere inhoud: niets schrijven; de foto
-                    # weer op wait (een wisronde ruimt hem op, een nieuwe inhoud komt opnieuw)
+                    # Uit, verboden, een wisronde, een sleutel die weg is, of een andere inhoud:
+                    # niets schrijven; de foto weer op wait (een wisronde ruimt hem op, een nieuwe
+                    # inhoud komt opnieuw)
                     await face_rows.set_scan(
                         db, item.node, {"state": "wait", "updated_at": at}, only_busy=True
                     )
@@ -579,7 +586,7 @@ async def _store_faces(
         )
     )
     await db.execute(delete(Face).where(Face.node_id == item.node, Face.hidden == 0))
-    key = crypto.ensure_key(settings, item.owner) if item.photo.n else None
+    key = await crypto.ensure_key(settings, db, item.owner) if item.photo.n else None
     made: list[uuid.UUID] = []
     for box, vec in zip(item.photo.faces, item.vectors, strict=True):
         here = (box.x, box.y, box.w, box.h)
@@ -632,15 +639,6 @@ async def scan_job(settings: Settings, payload: dict[str, Any]) -> None:
     items = await _pick(settings)
     if not items:
         return
-    lost = await keys_lost(settings, {i.owner for i in items})
-    if lost:
-        # Nooit een nieuwe sleutel naast versleutelde gezichten (0.8.2, P4): in het cluster komt
-        # de sleutel per minuut van de andere nodes (sync platform-sleutels); tot dan wachten
-        log.warning("faces.scan: sleutel ontbreekt bij %d eigenaar(s) met gezichten", len(lost))
-        await _restore(settings, [i for i in items if i.owner in lost])
-        items = [i for i in items if i.owner not in lost]
-        if not items:
-            raise jobs.Defer(KEY_WAIT_S)
     try:
         async with _maker(settings)() as db:
             metas = dict(
@@ -686,25 +684,6 @@ async def scan_job(settings: Settings, payload: dict[str, Any]) -> None:
     for owner in {i.owner for i in items}:
         state.changed(owner)
     await _again(settings)
-
-
-async def keys_lost(settings: Settings, owners: set[uuid.UUID]) -> set[uuid.UUID]:
-    """De eigenaren zonder sleutel die nog versleutelde gezichten hebben (face.vec niet NULL).
-    Voor hen maakt ensure_key geen nieuwe sleutel: dan waren al hun gezichten in één klap
-    onleesbaar (ze tellen dan als gewist). Dat gebeurt als de sleutel op deze node nog niet
-    gesynchroniseerd is (cluster, failover) of verloren ging; `app.cli sleutels-check` zegt
-    welke eigenaren het zijn en kan ze bewust wissen (--wissen)."""
-    if not owners:
-        return set()
-    try:
-        crypto.keys_dir(settings)
-    except crypto.NoKeys:
-        return set()
-    without = {o for o in owners if crypto.load_key(settings, o) is None}
-    if not without:
-        return set()
-    async with _maker(settings)() as db:
-        return set(await face_rows.sealed_counts(db, sorted(without)))
 
 
 async def _again(settings: Settings) -> None:

@@ -58,7 +58,9 @@ from tests.test_user_delete import block_and_delete
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.sqlite_only("FTS5 en de triggers van 0010 in SQLite (spike S2)"),
+    # De triggers van 0010 en de FTS5-index in het SQLite-bestand zelf; de triggers van
+    # PostgreSQL (0013) toetst tests/test_pg_triggers.py
+    pytest.mark.sqlite_only("de spike van de triggers van 0010 en FTS5 in SQLite"),
 ]
 
 

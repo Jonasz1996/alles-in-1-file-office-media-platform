@@ -27,7 +27,7 @@ from app.models import Blob, Node, PhotoPref
 from app.people.faces import register, state
 from app.search import hooks as search_hooks
 from app.storage import BlobStore
-from tests.analyse import faces_nep
+from tests.analyse import faces_nep, pgdb
 from tests.analyse.fake_worker import FakeAnalyseWorker
 from tests.factories import create_file, maker
 
@@ -56,14 +56,17 @@ def nep(fake) -> faces_nep.FacesNep:
 
 
 @pytest.fixture
-async def settings(tmp_path, fake, nep, pg_extra):
+async def settings(tmp_path, database_url_head, fake, nep):
     """Settings met ANALYSE aan, de socket van de nep en PLATFORM_FACES_KEYS buiten de datamap.
-    De stand van de monitor is ok (een echte caps bij de nep)."""
+    De database: die van de test (database_url_head: op PostgreSQL een kopie van het sjabloon,
+    met ANALYSE_POSTGRES en de triggers van 0013). De stand van de monitor is ok (een echte caps
+    bij de nep)."""
     keys = tmp_path / "sleutels"
     keys.mkdir()
     (tmp_path / "data").mkdir()
-    s = fake.settings(tmp_path / "data", faces_keys=str(keys), **pg_extra)
+    s = fake.settings(tmp_path / "data", faces_keys=str(keys), **pgdb.on_db(database_url_head))
     await upgrade(s)
+    await pgdb.ready(s)
     state.reset()
     state.configure(s)
     register.register_admin(s)

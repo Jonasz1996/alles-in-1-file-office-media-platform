@@ -22,6 +22,7 @@ from app.people import people as P
 from app.people import search as people_search
 from app.search import hooks, limits
 from tests.factories import code_of, create_file, create_folder, create_user, maker, params_of
+from tests.search import motoren
 from tests.test_photos import login, photo
 
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
@@ -456,7 +457,7 @@ async def test_elke_wijziging_meldt_people_changed(client, huis, monkeypatch):
 # --- Zoeken: het filter person (beide motoren), de groep en de suggesties ---
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> str:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")
@@ -574,6 +575,7 @@ async def test_een_haak_voor_de_groepen_die_faalt(client, huis, motor, monkeypat
     assert "geheimanna" not in caplog.text.lower()
 
 
+@motoren.needs_fts
 async def test_de_suggesties_voor_personen(client, huis):
     eva, bram = huis["h_eva"], huis["h_bram"]
     await op(client, eva, huis["een"], name="Anna")

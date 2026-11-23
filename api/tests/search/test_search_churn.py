@@ -15,6 +15,9 @@ Na elke 100 wijzigingen, en aan het eind:
 - 42 vragen, voor elke gebruiker: FtsEngine geeft precies Referentie.zoek (eerst de hele woorden,
   dan de stukken van namen; niets dubbel, niets gedeeltelijk), en nergens search_access_mismatch.
 
+Op PostgreSQL tot golf 3 (tests/search/motoren.py): de boom zoals hierboven; geen FTS-index om
+te vergelijken, en de vragen gaan naar LikeFallback, die precies Referentie.op_naam moet geven.
+
 Twee wijzigingen hebben geen pad in de app en gaan met de ORM of SQL: OCR in een foto (die
 schrijft X1, golf 4) en een andere eigenaar. Die laatste verplaatst het bestand ook naar de
 hoofdmap van de nieuwe eigenaar (een bestand van B in de boom van A bestaat in de app niet), en
@@ -40,7 +43,7 @@ from dataclasses import dataclass, field
 
 import anyio
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import DateTime, LargeBinary, bindparam, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import analysis, jobs
@@ -51,8 +54,8 @@ from app.search import rebuild
 from app.search.types import SearchParams
 from app.text import fold
 from tests.factories import maker
+from tests.search import motoren, spike
 from tests.search import referentie as R
-from tests.search import spike
 from tests.search.migratie import check_tree
 from tests.search.test_spike_triggers import pad
 from tests.test_files import mkdir, put, root
@@ -71,6 +74,9 @@ HERBOUW = STAPPEN // 2
 WEG = STAPPEN * 3 // 4  # dan wordt een gebruiker gewist
 RUIM_MS = 60_000
 ALLES = 10_000
+# De tijd en de woorden van een OCR-rij met hun type (op PostgreSQL timestamptz en bytea)
+OCR_TIJD = bindparam("u", type_=DateTime(timezone=True))
+OCR_WOORDEN = bindparam("w", type_=LargeBinary)
 
 # Woorden voor namen en tekst: met diakrieten, ß, een hoofdletter, korte woorden en cijfers
 WOORDEN = [
@@ -123,7 +129,8 @@ class Wereld:
             return (await conn.execute(text(sql), args)).all()
 
     async def ids(self, sql: str, **args) -> list[str]:
-        return [str(uuid.UUID(hex=r[0])) for r in await self.rijen(sql, **args)]
+        # aiosqlite geeft de hex-tekst, asyncpg een uuid: str() en dan UUID kan allebei
+        return [str(uuid.UUID(str(r[0]))) for r in await self.rijen(sql, **args)]
 
     def kies(self, lijst):
         return self.rng.choice(lijst) if lijst else None
@@ -359,9 +366,9 @@ async def ocr(w: Wereld) -> None:
             await conn.execute(
                 text(
                     "INSERT INTO photo_ocr (node_id, owner_id, text, words, angle, updated_at) "
-                    "VALUES (:n, :o, :t, x'00', 0, :u)"
-                ),
-                {"n": foto[0], "o": foto[1], "t": w.zin(), "u": spike.NU.isoformat()},
+                    "VALUES (:n, :o, :t, :w, 0, :u)"
+                ).bindparams(OCR_WOORDEN, OCR_TIJD),
+                {"n": foto[0], "o": foto[1], "t": w.zin(), "w": b"\x00", "u": spike.NU},
             )
         elif (kans := w.rng.random()) < 0.5:
             await conn.execute(text("UPDATE photo_ocr SET text = :t WHERE node_id = :n"),
@@ -369,8 +376,10 @@ async def ocr(w: Wereld) -> None:
         elif kans < 0.7:
             # Herhaald: dezelfde tekst nog eens (de triggers gaan toch af)
             await conn.execute(
-                text("UPDATE photo_ocr SET text = text, updated_at = :u WHERE node_id = :n"),
-                {"u": spike.NU.isoformat(), "n": foto[0]},
+                text(
+                    "UPDATE photo_ocr SET text = text, updated_at = :u WHERE node_id = :n"
+                ).bindparams(OCR_TIJD),
+                {"u": spike.NU, "n": foto[0]},
             )
             w.tellingen["ocr herhaald"] = w.tellingen.get("ocr herhaald", 0) + 1
         else:
@@ -429,12 +438,17 @@ async def een_wijziging(w: Wereld) -> None:
 async def de_index_klopt(w: Wereld, waar: str) -> None:
     async with get_engine(w.settings).connect() as conn:
         await conn.run_sync(check_tree)
+    if not motoren.FTS:
+        return  # geen FTS-index om met een herbouw te vergelijken (motoren.REASON)
     verschil = await anyio.to_thread.run_sync(lambda: spike.herbouw_verschil(pad(w.settings)))
     assert verschil == {}, (waar, verschil, w.log[-20:])
 
 
 async def de_referentie_klopt(w: Wereld, waar: str) -> int:
-    """Elke gebruiker, elke vraag: FtsEngine geeft precies wat de referentie zegt."""
+    """Elke gebruiker, elke vraag: FtsEngine geeft precies wat de referentie zegt. Zonder
+    FTS-index (PostgreSQL tot golf 3): LikeFallback precies Referentie.op_naam."""
+    if not motoren.FTS:
+        return await _op_naam_klopt(w, waar)
     treffers = 0
     async with AsyncSession(get_engine(w.settings), expire_on_commit=False) as db:
         ref = await (await db.connection()).run_sync(R.Referentie.lees)
@@ -452,6 +466,25 @@ async def de_referentie_klopt(w: Wereld, waar: str) -> int:
                 if set(ids) != verwacht.alles or woorden != verwacht.woorden:
                     anders = (set(ids) ^ verwacht.alles) | (woorden ^ verwacht.woorden)
                     raise AssertionError((plek, await _uitleg(db, anders, verwacht)))
+                treffers += len(ids)
+    return treffers
+
+
+async def _op_naam_klopt(w: Wereld, waar: str) -> int:
+    treffers = 0
+    async with AsyncSession(get_engine(w.settings), expire_on_commit=False) as db:
+        ref = await (await db.connection()).run_sync(R.Referentie.lees)
+        for u in w.koppen:
+            user = await db.get(User, u)
+            for q in VRAGEN:
+                verwacht = ref.op_naam(u, q)
+                p = SearchParams.model_construct(q=q, limit=ALLES, offset=0)
+                page = await engines.LikeFallback().search(db, user, p)
+                ids = [h.node.id for h in page.results]
+                plek = (waar, user.email, q, w.log[-5:])
+                assert page.engine == "like" and not page.partial and not page.more, plek
+                assert len(ids) == len(set(ids)), plek
+                assert set(ids) == verwacht, (plek, sorted(map(str, set(ids) ^ verwacht)))
                 treffers += len(ids)
     return treffers
 

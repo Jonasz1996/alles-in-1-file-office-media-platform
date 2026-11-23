@@ -22,7 +22,7 @@ from tests.factories import create_user, maker
 from tests.people.faces.conftest import aan, draai, foto, lezer
 from tests.test_photos import login
 
-pytestmark = [pytest.mark.anyio, pytest.mark.sqlite_only("het checkpoint van de WAL van SQLite")]
+pytestmark = pytest.mark.anyio
 
 A = (0.10, 0.10, 0.20, 0.25)
 B = (0.60, 0.20, 0.20, 0.25)
@@ -52,6 +52,7 @@ async def uploads(client, h, parent, prefix: str) -> list[float]:
     return took
 
 
+@pytest.mark.sqlite_only("wal_checkpoint(TRUNCATE) met een open lezer bestaat alleen op SQLite")
 async def test_een_upload_tijdens_het_wissen_met_een_open_lezer(
     client, settings, nep, monkeypatch, capsys
 ):

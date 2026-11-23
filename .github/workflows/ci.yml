@@ -41,15 +41,16 @@ jobs:
       - name: pytest -m geo (grenzen, zee, de plaats tegen brute kracht, 180°)
         run: PLATFORM_GEO_TEST_SRC="$RUNNER_TEMP/geo" uv run pytest -q -m geo tests/geo
 
-  # Het cluster (B12, B15) draait op PostgreSQL. Deze job draait alle tests op PostgreSQL
-  # (PLATFORM_TEST_DATABASE_URL, tests/conftest.py: per testproces één gemigreerde
-  # sjabloondatabase, per test een kopie). Sinds 0.8.2 blokkeert hij: tests die echt alleen over
-  # SQLite gaan, hebben de marker sqlite_only. Vier processen (pytest-xdist); test_office_stream
-  # apart, want zijn ids zijn per proces anders.
+  # Het cluster (B12, B15) draait op PostgreSQL. Deze job draait alle tests elk op een eigen
+  # PostgreSQL-database (PLATFORM_TEST_DATABASE_URL, tests/conftest.py; een kopie van één
+  # gemigreerde sjabloondatabase per run). Hij blokkeert (release 0.8.2, P3): wat op PostgreSQL
+  # niet draait, staat met naam en reden in docs/fase-6/i3/pg-tests-ci.md.
   api-postgres:
     name: API op PostgreSQL (cluster)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # De hele suite: lokaal 42,6 min (4 cores), in CI geschat ±30 min (docs/fase-6/i3/w2.md).
+    # Het doel blijft < 45 min; 60 is de grens van de job zelf, met marge (geen poort voor tests)
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17-alpine
@@ -59,7 +60,7 @@ jobs:
           POSTGRES_DB: postgres
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 5s
+          --health-cmd "pg_isready -U platform -d postgres" --health-interval 5s --health-timeout 5s
           --health-retries 10
     defaults:
       run:
@@ -73,10 +74,88 @@ jobs:
           python-version: "3.12"
       - name: ffmpeg voor de previews van video's
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Dezelfde suite als de job api, dus ook de scans van OCR (tests/ocr/scans.py) in DejaVu Sans
+      - name: DejaVu Sans voor de scans van OCR (X1)
+        run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - run: uv sync --frozen
-      - run: uv run pytest -q -rf tests/test_dbcopy.py
-      - run: uv run --with pytest-xdist pytest -q -rf -n 4 --ignore=tests/test_office_stream.py
-      - run: uv run pytest -q -rf tests/test_office_stream.py
+      # faulthandler_timeout: een test die vastloopt, laat na 10 minuten zijn stacks zien (geen
+      # plugin voor een tijdslimiet; de job zelf stopt na 60 minuten)
+      - run: >-
+          uv run pytest -q -rf -o faulthandler_timeout=600
+          --junitxml="$RUNNER_TEMP/api-postgres.xml"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: api-postgres-junit
+          path: ${{ runner.temp }}/api-postgres.xml
+          if-no-files-found: ignore
+
+  # PostgreSQL 15 met een gebruiker zoals op ClusterForge: eigenaar van zijn databases, geen
+  # superuser (NOSUPERUSER CREATEDB; CREATEROLE alleen voor de rol die test_dbcopy.py zelf maakt).
+  # De tests voor alleen PostgreSQL (-m pg, met test_dbcopy.py), test_pg_dialect.py en de
+  # migraties (release 0.8.2, P3).
+  api-postgres-15:
+    name: API op PostgreSQL 15 (eigenaar, geen superuser)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform -d postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: api
+    env:
+      PLATFORM_TEST_DATABASE_URL: postgresql+asyncpg://eigenaar:eigenaar@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: De rol eigenaar (geen superuser)
+        run: |
+          uv run python - <<'EOF'
+          import asyncio
+
+          import asyncpg
+
+
+          async def main():
+              conn = await asyncpg.connect("postgresql://platform:platform@127.0.0.1:5432/postgres")
+              try:
+                  await conn.execute(
+                      "CREATE ROLE eigenaar LOGIN PASSWORD 'eigenaar' NOSUPERUSER CREATEDB CREATEROLE"
+                  )
+                  print(await conn.fetchval("SELECT version()"))
+              finally:
+                  await conn.close()
+
+
+          asyncio.run(main())
+          EOF
+      - name: De tests voor alleen PostgreSQL (-m pg)
+        run: >-
+          uv run pytest -q -rf -o faulthandler_timeout=600 -m pg
+          --junitxml="$RUNNER_TEMP/pg15-pg.xml"
+      - name: test_pg_dialect.py en de migraties
+        run: >-
+          uv run pytest -q -rf -o faulthandler_timeout=600 -m "not pg"
+          --junitxml="$RUNNER_TEMP/pg15-rest.xml"
+          tests/test_pg_dialect.py tests/test_migration_0*.py tests/search/test_migration_0*.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: api-postgres-15-junit
+          path: ${{ runner.temp }}/pg15-*.xml
+          if-no-files-found: ignore
 
   # Fase 5 (§4.8): de tests met de marker media, met de lokale worker en echte ffmpeg (6.1 van
   # Ubuntu), naast de rest. Alles onder taskset -c 0-2: de tests, de worker en elke ffmpeg op 3

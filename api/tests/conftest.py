@@ -85,21 +85,82 @@ def mismatch_verwacht():
 # Met PLATFORM_TEST_DATABASE_URL (postgresql+asyncpg://…/postgres) draait elke test op een eigen,
 # nieuwe PostgreSQL-database in plaats van SQLite: zo houdt CI het cluster (B12, B15) eerlijk.
 PG_URL = os.environ.get("PLATFORM_TEST_DATABASE_URL", "")
+# Eén keer per run migreren, in een sjabloon; elke test krijgt dan een kopie met
+# CREATE DATABASE ... TEMPLATE (0,02 s in plaats van een hele migratie). Uit met
+# PLATFORM_TEST_PG_TEMPLATE=0: dan migreert elke test zijn eigen lege database.
+PG_TEMPLATE_ON = os.environ.get("PLATFORM_TEST_PG_TEMPLATE", "1") != "0"
+_PG_TEMPLATE: list[str] = []
 
 
-async def _pg_database(name: str, drop: bool = False) -> str:
+def _pg_url(name: str) -> str:
+    return PG_URL.rsplit("/", 1)[0] + "/" + name
+
+
+async def _pg_exec(sql: str) -> None:
     import asyncpg
 
-    base = PG_URL.replace("postgresql+asyncpg://", "postgresql://")
-    conn = await asyncpg.connect(base)
+    conn = await asyncpg.connect(PG_URL.replace("postgresql+asyncpg://", "postgresql://"))
     try:
-        if drop:
-            await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        else:
-            await conn.execute(f'CREATE DATABASE "{name}"')
+        await conn.execute(sql)
     finally:
         await conn.close()
-    return PG_URL.rsplit("/", 1)[0] + "/" + name
+
+
+async def _pg_make_template(name: str) -> None:
+    """Het sjabloon: een eigen database, gemigreerd tot de nieuwste revisie, zonder verbinding
+    erop (CREATE DATABASE ... TEMPLATE weigert een sjabloon met een open verbinding)."""
+    import shutil
+    import tempfile
+
+    await _pg_exec(f'CREATE DATABASE "{name}"')
+    tmp = Path(tempfile.mkdtemp(prefix="pgsjabloon"))
+    try:
+        s = Settings(data_dir=tmp, web_dist=tmp / "web", jwt_secret="test" * 8,
+                     database_url=_pg_url(name))  # fmt: skip
+        await upgrade(s)
+        await db.get_engine(s).dispose()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _pg_template() -> str:
+    """De naam van het sjabloon van deze run; de eerste keer gemaakt. In een eigen draad met een
+    eigen lus: zo raakt het de engines van de lopende test niet (db._engine blijft gelijk; de
+    engine van het sjabloon is dicht)."""
+    import asyncio
+
+    if not _PG_TEMPLATE:
+        name = "tpl_" + uuid.uuid4().hex
+        await asyncio.to_thread(asyncio.run, _pg_make_template(name))
+        _PG_TEMPLATE.append(name)
+    return _PG_TEMPLATE[0]
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Het sjabloon weg aan het eind van de run."""
+    if _PG_TEMPLATE:
+        import asyncio
+
+        asyncio.run(_pg_exec(f'DROP DATABASE IF EXISTS "{_PG_TEMPLATE.pop()}" WITH (FORCE)'))
+
+
+async def _pg_database(name: str, drop: bool = False, migrated: bool = False) -> str:
+    """Maak (of met drop: wis) de database name. migrated: als kopie van het sjabloon, dus al
+    op de nieuwste revisie (zonder sjabloon gewoon leeg; de fixture settings migreert dan)."""
+    if drop:
+        await _pg_exec(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    elif migrated and PG_TEMPLATE_ON:
+        await _pg_exec(f'CREATE DATABASE "{name}" TEMPLATE "{await _pg_template()}"')
+    else:
+        await _pg_exec(f'CREATE DATABASE "{name}"')
+    return _pg_url(name)
+
+
+def database_env(settings: Settings) -> dict[str, str]:
+    """De database van settings voor een kindproces van de app (python -m app.cli, een server):
+    op PostgreSQL PLATFORM_DATABASE_URL, op SQLite niets (dan platform.db in PLATFORM_DATA_DIR,
+    zoals altijd)."""
+    return {"PLATFORM_DATABASE_URL": settings.database_url} if settings.database_url else {}
 
 
 def pytest_collection_modifyitems(config, items):
@@ -120,9 +181,9 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 async def database_url(tmp_path):
     """De database van deze test als URL: zonder PLATFORM_TEST_DATABASE_URL het SQLite-bestand
-    platform.db in tmp_path (gelijk aan Settings.db_url), anders een eigen, nieuwe
+    platform.db in tmp_path (gelijk aan Settings.db_url), anders een eigen, nieuwe en lege
     PostgreSQL-database die na de test weer weg is. Voor tests en sub-conftests die zelf
-    Settings maken."""
+    Settings maken en zelf migreren (ook naar een oudere revisie)."""
     if not PG_URL:
         yield f"sqlite+aiosqlite:///{tmp_path / 'platform.db'}"
         return
@@ -131,81 +192,22 @@ async def database_url(tmp_path):
     await _pg_database(name, drop=True)
 
 
-# Op PostgreSQL migreert elke test anders zijn eigen lege database tot de head: dat kost per test
-# een paar seconden en liet de job api-postgres over zijn uur lopen. Nu migreert elk testproces
-# één sjabloondatabase, en krijgt elke test met `settings` een kopie (CREATE DATABASE … TEMPLATE,
-# een kopie van bestanden). Tests die een lege database willen (migratietests), vragen zelf
-# `database_url`.
-_PG_TEMPLATE: list[str] = []
-
-
-async def _pg_template(tmp_path_factory) -> str:
-    if _PG_TEMPLATE:
-        return _PG_TEMPLATE[0]
-    name = f"tmpl_{os.getpid()}_{uuid.uuid4().hex[:8]}"
-    url = await _pg_database(name)
-    s = Settings(
-        data_dir=tmp_path_factory.mktemp("sjabloon"),
-        web_dist=Path("/nonexistent"),
-        jwt_secret="test" * 8,
-        database_url=url,
-    )
-    await upgrade(s)
-    await db.get_engine(s).dispose()
-    db._engine.cache_clear()
-    _PG_TEMPLATE.append(name)
-    return name
-
-
-async def _pg_drop_template() -> None:
-    if _PG_TEMPLATE:
-        await _pg_database(_PG_TEMPLATE.pop(), drop=True)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    if PG_URL and _PG_TEMPLATE:
-        import asyncio
-
-        try:
-            asyncio.run(_pg_drop_template())
-        except Exception:  # opruimen mag een run nooit laten falen
-            pass
-
-
-async def _pg_copy(template: str) -> str:
-    import asyncpg
-
-    name = "t_" + uuid.uuid4().hex
-    base = PG_URL.replace("postgresql+asyncpg://", "postgresql://")
-    conn = await asyncpg.connect(base)
-    try:
-        await conn.execute(f'CREATE DATABASE "{name}" TEMPLATE "{template}"')
-    finally:
-        await conn.close()
-    return PG_URL.rsplit("/", 1)[0] + "/" + name
-
-
 @pytest.fixture
-async def pg_extra(tmp_path_factory):
-    """Voor fixtures die zelf Settings maken (gezichten, beeld): op PostgreSQL de velden voor een
-    eigen kopie van het sjabloon (database_url, en analyse_postgres zodat gezichten en beeld daar
-    aan kunnen, P4); op SQLite niets."""
+async def database_url_head(tmp_path):
+    """Als database_url, maar op PostgreSQL al op de nieuwste revisie: een kopie van het sjabloon
+    van deze run (zie _pg_template). Op SQLite hetzelfde bestand als database_url; daar migreert
+    wie het gebruikt zelf (upgrade is dan nodig, op PostgreSQL een no-op)."""
     if not PG_URL:
-        yield {}
+        yield f"sqlite+aiosqlite:///{tmp_path / 'platform.db'}"
         return
-    url = await _pg_copy(await _pg_template(tmp_path_factory))
-    yield {"database_url": url, "analyse_postgres": True}
-    await _pg_database(url.rsplit("/", 1)[1], drop=True)
+    name = "t_" + uuid.uuid4().hex
+    yield await _pg_database(name, migrated=True)
+    await _pg_database(name, drop=True)
 
 
 @pytest.fixture
-async def settings(tmp_path, tmp_path_factory):
-    extra: dict = {}
-    name = None
-    if PG_URL:
-        url = await _pg_copy(await _pg_template(tmp_path_factory))
-        name = url.rsplit("/", 1)[1]
-        extra = {"database_url": url}
+async def settings(tmp_path, database_url_head):
+    extra = {"database_url": database_url_head} if PG_URL else {}
     s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8, **extra)
     await upgrade(s)
     yield s
@@ -214,8 +216,6 @@ async def settings(tmp_path, tmp_path_factory):
     # snelheidstests) trager naarmate de run langer is
     await db.get_engine(s).dispose()
     db._engine.cache_clear()
-    if name is not None:
-        await _pg_database(name, drop=True)
 
 
 @pytest.fixture

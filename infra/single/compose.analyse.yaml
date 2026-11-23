@@ -22,6 +22,10 @@ services:
   platform:
     environment:
       PLATFORM_ANALYSE_ENABLED: "true"
+      # Alleen op PostgreSQL (het cluster, 0.8.2): de analyse draait daar alleen met true, als de
+      # sleutels van gezichten op elke node gelijk zijn en met de eigenaar weggaan. Op SQLite
+      # verandert het niets (app/config.py, analyse_postgres)
+      PLATFORM_ANALYSE_POSTGRES: ${ANALYSE_POSTGRES:-false}
       PLATFORM_ANALYSE_WORKER: /run/analyse/worker.sock
       PLATFORM_ANALYSE_WORKER_KEY: ${ANALYSE_WORKER_KEY:-}
       PLATFORM_FACES_KEYS: /keys

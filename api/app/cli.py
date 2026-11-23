@@ -112,6 +112,20 @@ gemeten is.
 
 beeld-status, beeld-bench en beeld-kwaliteit (X3) staan in app/beeld/cli.py; met de analyse uit
 doen ze niets (exitcode 1).
+
+Op PostgreSQL staat de analyse alleen aan met PLATFORM_ANALYSE_POSTGRES=true en de triggers van
+migratie 0013 (app/analyse/pgcheck.py; 0.8.2, P4). De sleutels van gezichten (app/people/faces/
+keycheck.py):
+
+    python -m app.cli sleutels-check [--opruimen]
+    python -m app.cli backup-wipe-tables
+
+sleutels-check zegt of elke eigenaar met versleutelde gezichten (en gezichten aan) een sleutel
+heeft: een gewoon bestand van 32 bytes, 0600, van gebruiker 10001, in een sleutelmap die geen
+symlink is. Exitcode 0 alleen als dat zo is, anders 1. --opruimen haalt de sleutels weg van wie
+geen rijen van gezichten meer heeft en gezichten niet aan heeft (of niet meer bestaat).
+backup-wipe-tables zegt welke tabellen een kopie van de database leeg moet maken, één per regel.
+Allebei: alleen aantallen of namen van tabellen, nooit een sleutel of een pad.
 """
 
 import argparse
@@ -133,6 +147,7 @@ from sqlalchemy import delete, func, make_url, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
+from app.analyse import pgcheck
 from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
@@ -140,6 +155,7 @@ from app.geo import load as geo_load
 from app.migrate import alembic_config
 from app.migrate import checkpoint as wal_checkpoint
 from app.models import AlbumItem, User
+from app.people.faces import keycheck
 from app.routers.auth import being_deleted, reset_totp
 from app.search import bench as search_bench
 from app.search import benchlos
@@ -582,21 +598,8 @@ def _stub(name: str) -> int:
 
 
 FACES_COMMANDS = ("analyse-bench", "analyse-kwaliteit")
-
-
-def _keys_check(settings: Settings, wipe: bool) -> int:
-    """sleutels-check (app/people/faces/keycheck.py, 0.8.2 P4)."""
-    from app.people.faces import keycheck
-
-    async def run() -> keycheck.KeyCheck:
-        try:
-            return await keycheck.check(settings, wipe=wipe)
-        finally:
-            await get_engine(settings).dispose()
-
-    code, lines = keycheck.report(asyncio.run(run()))
-    print("\n".join(lines), file=sys.stdout if code == 0 else sys.stderr)
-    return code
+# De commando's die Settings.analyse_on lezen (de beeld-commando's: beeld_cli.COMMANDS)
+ANALYSE_COMMANDS = ("analyse-status", *FACES_COMMANDS)
 
 
 def _faces_measure(settings: Settings, args: argparse.Namespace) -> int:
@@ -611,7 +614,13 @@ def _analyse_status(settings: Settings, wait: float) -> int:
     zoveel seconden opnieuw kijken (elke seconde) tot de stand ok is."""
     from app.analyse import status
 
-    lines, code = asyncio.run(status.collect(settings, wait))
+    async def run() -> tuple[list[str], int]:
+        try:
+            return await status.collect(settings, wait)
+        finally:
+            await get_engine(settings).dispose()
+
+    lines, code = asyncio.run(run())
     print("\n".join(lines))
     return code
 
@@ -790,13 +799,15 @@ def main(argv: list[str] | None = None) -> int:
         "analyse-kwaliteit", help="de kwaliteit van de voorstellen meten tegen de eigen ja en nee"
     )
     keys = commands.add_parser(
-        "sleutels-check",
-        help="welke eigenaren versleutelde gezichten hebben zonder sleutel (cluster)",
+        keycheck.COMMAND, help="de sleutels van gezichten nalopen (exitcode 1 als er een mist)"
     )
     keys.add_argument(
-        "--wissen",
+        "--opruimen",
         action="store_true",
-        help="hun gezichten bewust wissen, zodat de app ze met een nieuwe sleutel opnieuw zoekt",
+        help="sleutels weghalen van wie geen gezichten meer heeft en ze niet aan heeft",
+    )
+    commands.add_parser(
+        keycheck.WIPE_COMMAND, help="de tabellen die een kopie van de database leeg moet maken"
     )
     search_bench.parsers(commands)
     benchlos.parsers(commands)
@@ -807,6 +818,9 @@ def main(argv: list[str] | None = None) -> int:
     _media_parsers(commands)
     args = parser.parse_args(argv)
     settings = get_settings()
+    if args.command in ANALYSE_COMMANDS or args.command in beeld_cli.COMMANDS:
+        # Op PostgreSQL de triggers van 0013 (Settings.analyse_on); op SQLite niets
+        pgcheck.check_cli(settings)
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
     if args.command in search_bench.COMMANDS:
@@ -819,6 +833,10 @@ def main(argv: list[str] | None = None) -> int:
         return beeld_cli.run(settings, args)
     if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
+    if args.command == keycheck.COMMAND:
+        return keycheck.run(settings, args.opruimen)
+    if args.command == keycheck.WIPE_COMMAND:
+        return keycheck.wipe_tables()
     if args.command == "db-backup":
         return _backup(settings)
     if args.command == "db-copy":
@@ -835,8 +853,6 @@ def main(argv: list[str] | None = None) -> int:
         return _analyse_status(settings, args.wait)
     if args.command in FACES_COMMANDS:
         return _faces_measure(settings, args)
-    if args.command == "sleutels-check":
-        return _keys_check(settings, args.wissen)
     action = make_admin if args.command == "make-admin" else reset_2fa
 
     async def run() -> bool:
