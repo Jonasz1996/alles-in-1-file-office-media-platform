@@ -238,7 +238,7 @@ async def test_iris_wissen_laat_geen_personen_achter(settings):
         assert (await conn.exec_driver_sql("SELECT count(*) FROM person")).scalar() == 1
 
 
-@motoren.needs_fts
+@motoren.fts5
 async def test_de_fts_index_van_de_wereld_is_heel(settings):
     """De FTS-tabellen van de wereld zijn heel en gelijk aan hun inhoud (search_src): na het
     bouwen, na intrekken en verhuizen, en na het wissen van Iris. Dit stond in de drie tests

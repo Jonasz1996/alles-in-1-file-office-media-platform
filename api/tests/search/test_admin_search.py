@@ -331,6 +331,33 @@ def lezende_wekkers(settings, monkeypatch) -> list[tuple[str, datetime]]:
     rondje (jobs.POLL, 5 s) op. Geeft de lijst (rij, run_after) die bij elk seintje groeit."""
     gewekt: list[tuple[str, datetime]] = []
 
+    def lees_pg(soort: str) -> list[tuple]:
+        """PostgreSQL: een eigen verbinding in een eigen draad (de wekker is synchroon en de
+        lus van de test draait al), zoals sqlite3.connect hieronder."""
+        import threading
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        uit: list[tuple] = []
+
+        async def lees() -> None:
+            engine = create_async_engine(settings.db_url, poolclass=NullPool)
+            try:
+                async with engine.connect() as conn:
+                    rijen = await conn.execute(
+                        sa.text("SELECT run_after FROM job WHERE type = :t AND status = 'queued'"),
+                        {"t": soort},
+                    )
+                    uit.extend(tuple(r) for r in rijen)
+            finally:
+                await engine.dispose()
+
+        draad = threading.Thread(target=lambda: asyncio.run(lees()))
+        draad.start()
+        draad.join()
+        return uit
+
     def waker(lane: str):
         def wake() -> None:
             for (at,) in _klaarstaand(settings, analysis.pump_type(lane)):

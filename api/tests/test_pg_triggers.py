@@ -46,7 +46,7 @@ from app.models import (
 )
 from app.search import purge, rebuild, schema, weekcheck
 from tests.conftest import PG_URL
-from tests.factories import code_of, create_file, create_folder, create_user, maker
+from tests.factories import create_file, create_folder, create_user, maker
 from tests.pgboom import ZERO, boom, dsn, fill, nalopen, rows, run
 
 pytestmark = pytest.mark.anyio
@@ -56,6 +56,16 @@ DOC = API.parent / "docs" / "fase-6" / "i3" / "pg-0013.md"
 FTS = "FTS -> 0014"
 DAG = datetime(2026, 7, 14, 15, 30, tzinfo=UTC)
 NU = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+
+def _migration_0014():
+    spec = importlib.util.spec_from_file_location(
+        "m0014", API / "migrations/versions/0014_zoekindex_postgres.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _migration():
@@ -105,7 +115,9 @@ async def test_de_triggers_functies_en_kolommen_staan_er(settings):
     m = _migration()
     found = await rows(settings, "SELECT tgname, tgrelid::regclass::text FROM pg_trigger "
                                  "WHERE NOT tgisinternal")  # fmt: skip
-    assert set(found) == set(m.TRIGGERS)
+    # Met de triggers van de zoekindex (0014)
+    zoek = {(name, table) for name, table, _when, _func in _migration_0014().TRIGGERS}
+    assert set(found) == set(m.TRIGGERS) | zoek
     for signature in m.FUNCTIONS:
         [(ok,)] = await rows(settings, "SELECT to_regprocedure(:s) IS NOT NULL", s=signature)
         assert ok, signature
@@ -860,8 +872,8 @@ async def test_search_triggers_herstelt_op_postgresql(settings):
 
 
 @pytest.mark.pg
-async def test_index_herbouwen_kan_nog_niet_op_postgresql(client, admin):
+async def test_index_herbouwen_kan_op_postgresql(client, admin):
+    """Sinds 0014 heeft PostgreSQL een eigen zoekindex: beheer kan hem herbouwen."""
     headers, _tokens = admin
     r = await client.post("/api/v1/admin/search/rebuild", json={"what": "text"}, headers=headers)
-    assert r.status_code == 409, r.text
-    assert code_of(r) == "not_built"
+    assert r.status_code == 202, r.text

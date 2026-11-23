@@ -307,3 +307,57 @@ def test_run_meta_met_een_werkmap_waar_niets_in_mag(tmp_path, werkmap):
 def render_meta_child() -> str:
     root = str(Path(render.__file__).resolve().parent.parent)
     return f"import sys; sys.path.insert(0, {root!r}); from app.render import main; main()"
+
+
+def gps_jpeg(lat: tuple, lon: tuple = (4.0, 53.0, 2.0)) -> bytes:
+    """Een JPEG met alleen een GPS-IFD (noord en oost)."""
+    exif = Image.Exif()
+    info = exif.get_ifd(GPS_IFD)
+    info.update({1: "N", 2: lat, 3: "E", 4: lon})
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 16), "blue").save(buf, "JPEG", exif=exif)
+    return buf.getvalue()
+
+
+def gps_plek(data: bytes):
+    with Image.open(io.BytesIO(data)) as img:
+        return render_meta.image_location(img)
+
+
+R = TiffImagePlugin.IFDRational
+
+
+@pytest.mark.parametrize(
+    ("seconden", "breedte"),
+    [
+        # Precies 60,0 seconden is de volgende minuut: 54° 47' 60" = 54° 48' (M9, metingen.md
+        # Bevinding 5); ook als rational zoals een camera hem schrijft
+        (60.0, 54 + 48 / 60),
+        (R(60, 1), 54 + 48 / 60),
+        (R(600, 10), 54 + 48 / 60),
+        # Net onder 60 blijft gewoon in de minuut
+        (59.999, 54 + 47 / 60 + 59.999 / 3600),
+    ],
+)
+def test_gps_seconden_tot_en_met_60(seconden, breedte):
+    plek = gps_plek(gps_jpeg((54.0, 47.0, seconden)))
+    assert plek is not None, seconden
+    assert plek["lat"] == round(breedte, 7)
+    assert plek["lon"] == round(4 + 53 / 60 + 2 / 3600, 7)
+    assert render_meta._degrees((54.0, 47.0, seconden)) == pytest.approx(breedte, abs=1e-12)
+
+
+def test_gps_60_seconden_aan_het_eind_van_een_graad():
+    """59' 60" schuift door tot de volgende graad: 54° 59' 60" = 55°."""
+    assert gps_plek(gps_jpeg((54.0, 59.0, 60.0)))["lat"] == 55.0
+
+
+@pytest.mark.parametrize("seconden", [60.5, R(601, 10), 61.0, 3600.0])
+def test_gps_seconden_boven_60_geven_geen_plek(seconden):
+    assert gps_plek(gps_jpeg((54.0, 47.0, seconden))) is None
+    assert render_meta._degrees((54.0, 47.0, seconden)) is None
+
+
+def test_gps_minuten_60_blijven_fout():
+    """Alleen de seconden schuiven door; 60 minuten is geen afronding van een camera."""
+    assert gps_plek(gps_jpeg((54.0, 60.0, 0.0))) is None

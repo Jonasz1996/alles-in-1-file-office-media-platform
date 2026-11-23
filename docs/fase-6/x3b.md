@@ -26,7 +26,8 @@ rij `analyse`, geen bestand onder `DATA_ROOT`, geen nieuwe regel in `.env`. Elke
 geeft `501 not_built` zoals in 0.8.0, een vraag zonder `mode` geeft wat hij in 0.8.0 gaf, en de
 web toont wat 0.8.0 toonde. Zie "Met de analyse uit" hieronder voor de tests die dat bewijzen.
 [I2 (0.8.1): de install zet de analyse nu standaard aan; wie `ANALYSE=uit` vroeg, houdt hem uit.
-Zoeken op beeld staat per gebruiker standaard uit (Keuze 85); Vraag 11 blijft open. Met de analyse
+Zoeken op beeld staat per gebruiker standaard uit (Keuze 85); Vraag 11 ~~blijft open~~ is
+besloten: standaard, Jonas 2026-11-17 (uit). Met de analyse
 uit zegt 0.8.1 op `/zoeken` en `/beheer` dat het uitstaat, en staat op `/account` de link naar
 `/over`; de rest is zoals hierboven. Zie "Met de analyse uit" en
 [integratie-2.md](integratie-2.md).]
@@ -105,9 +106,10 @@ BZ4 met de pins en de set houdt X3b tegen. Dat is hier niet anders gemaakt. Niet
 of als beslist gemarkeerd. [Na golf 6, 2026-11-16: Jonas besliste deel 3 in Keuze 85
 ([bouwontwerp.md](bouwontwerp.md), Keuze 85; x3a.md, "Keuze 85"), niet deze tak. BZ4 blijft de
 poort van X3b, nu met de ondergrenzen van Keuze 85: een rode BZ4 met de pins en `beeld.tsv` houdt
-X3b nog steeds tegen. Keuze 85 beantwoordt Vraag 11 (standaard aan of uit) niet; die blijft open,
-net als B49–B70, Vraag 4 en Vraag 8–14.] [I2: met de pins en `beeld.tsv` was BZ4 groen op
-`dc5dfe5` en op `e535332`; BZ4 houdt X3b niet tegen.]
+X3b nog steeds tegen. Keuze 85 beantwoordt Vraag 11 (standaard aan of uit) niet; ~~die blijft open,
+net als B49–B70, Vraag 4 en Vraag 8–14~~.] [17 november 2026: Vraag 11 (uit), B49–B71,
+Vraag 4 en Vraag 8–14 zijn besloten: standaard, Jonas 2026-11-17.] [I2: met de pins en
+`beeld.tsv` was BZ4 groen op `dc5dfe5` en op `e535332`; BZ4 houdt X3b niet tegen.]
 
 ## Metingen
 
@@ -287,12 +289,14 @@ Geen contract van A0 of Z0b is veranderd (`app/search/types.py`, `web/src/search
    aanzet; die zin is van de analyse als geheel (X2), dus voor de samenvoeging of I2.~~ [I2: de
    zin is weg; het deel heet nu "Gezichten en zoeken op beeld: de container analyse" en zegt wat
    0.8.1 doet (`e4c9f42`).]
-8. Niet gedaan en niet van X3b: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Vraag 11 is "uit",
-   Vraag 14 is 250 ms, zoals in het ontwerp).
+8. ~~Niet gedaan en niet van X3b: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Vraag 11 is "uit",
+   Vraag 14 is 250 ms, zoals in het ontwerp).~~ [17 november 2026: B49–B71, Vraag 4 en Vraag 8–14
+   zijn besloten: standaard, Jonas 2026-11-17 (Vraag 11 uit, Vraag 14 250 ms).]
 9. [I2] **Zoeken op beeld naast de gezichtenscan.** In M13 was de poort van stap 2 191,8 ms, met
    de scan wachtend op de index (Keuze 65). In stap 3, een rapport, liep de scan van 5.000 foto's
    op dezelfde core als `zoeken`, en was het p95 290,4 ms (9 van 103 boven 250 ms). Een vraag
    voor Jonas, standaard (a) zo laten ([integratie-2.md](integratie-2.md#vragen-voor-jonas)).
+   [17 november 2026: zo laten, besloten: standaard, Jonas 2026-11-17.]
 
 ## Klaar als
 
@@ -783,7 +787,8 @@ Wat dit document daarna zegt: de go/no-go (deel 3 en de alinea eronder), Open 1,
 Klaar als (de go/no-go, BZ2, BZ4 en de tijden), Bewijs BZ1–BZ10 (BZ2, BZ4, BZ6), "Open na de
 samenvoeging", G6-2 in De review, "Klaar als, nagelopen" en "Open na de nacontrole" hebben een
 noot [Na golf 6, …] of een doorgehaalde zin. Keuze 85 beantwoordt Vraag 11 (standaard aan of uit)
-niet; B49–B70, Vraag 4 en Vraag 8–14 blijven open.
+niet; ~~B49–B70, Vraag 4 en Vraag 8–14 blijven open~~. [17 november 2026: Vraag 11, B49–B71,
+Vraag 4 en Vraag 8–14 zijn besloten: standaard, Jonas 2026-11-17.]
 
 ### De review van golf 6 afronden
 
@@ -856,9 +861,13 @@ Xeon 6975P-C met VNNI.
 
 - **BZ5 en BZ6 als geheel met de echte vorm**: M11 en M12 in [metingen.md](metingen.md) (Open 3
   en 4). Met de echte gewichten zegt pas de LXC het.
-- **De eerste beeldvraag na de start van de worker** valt terug op gewoon zoeken: het laden van de
+- ~~**De eerste beeldvraag na de start van de worker** valt terug op gewoon zoeken: het laden van de
   tokenizer en het tekstmodel duurde in de sandbox 1,65 s, de klok is 800 ms (Open 4). De vraag
-  daarna is wel zoeken op beeld. Niet veranderd in I2.
+  daarna is wel zoeken op beeld. Niet veranderd in I2.~~ [Klopt niet meer: I2 veranderde het wel
+  (U1, `4aa42e1`). Het opwarmen laadt nu ook de tokenizer en het tekstmodel, onder de deadline van
+  `rank` (30 s); de eerste zoekvraag valt daardoor niet meer terug. Na een herstart betaalt het
+  opwarmen één keer ±1,7 s ([integratie-2.md](integratie-2.md), de review en Bekende grenzen).]
 - **BZ9 en BZ10** op de LXC (Open 4 en 5).
 - **`memory.peak` van de cgroup** op de LXC.
-- Niet van X3b en niet beslist: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Open 8).
+- ~~Niet van X3b en niet beslist: B49–B70, Vraag 4 en Vraag 8–14 blijven open (Open 8).~~
+  [17 november 2026: B49–B71, Vraag 4 en Vraag 8–14 zijn besloten: standaard, Jonas 2026-11-17.]

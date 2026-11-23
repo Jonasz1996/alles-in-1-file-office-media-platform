@@ -170,8 +170,9 @@ def test_foto_met_gps():
 
 
 def test_elke_plek_leest_render_meta_terug():
-    """Minuten en seconden altijd onder 60 (render_meta._degrees wijst 60 af): 54,8 en 6,1 gaven
-    (…, 60.0), zodat de foto bij Doggersbank en Herzogenrath geen GPS had (gevonden in I1, M9).
+    """Minuten en seconden altijd onder 60 (render_meta._degrees wees 60,0 af tot 0.8.2): 54,8
+    en 6,1 gaven (…, 60.0), zodat de foto bij Doggersbank en Herzogenrath geen GPS had (gevonden
+    in I1, M9).
     Elke vaste plek van dit bestand, ook de grensparen en de Noordzee, leest terug tot op ±1 m."""
     plekken = [F.UTRECHT, (54.8, 6.1), (66.6, -22.4), (-8.45, 179.95), (0.0, -0.05)]
     plekken += [(lat, lon) for paar in F.GRENSPAREN for (_n, lat, lon, _cc) in paar]

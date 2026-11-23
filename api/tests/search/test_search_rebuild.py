@@ -39,7 +39,12 @@ from tests.search import wereld as W
 from tests.search.test_spike_triggers import klopt, pad, sql, vul_veel, zoek_naam
 from tests.test_files import mkdir, put, root
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.sqlite_only(
+        "de herbouw van FTS5 met search_seq en docsize; PostgreSQL: test_zoekindex_pg.py"
+    ),
+]
 
 
 async def _vul(client, admin, settings, n: int) -> tuple[dict, str, str]:

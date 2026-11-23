@@ -30,10 +30,14 @@ nep-worker (nergens een klik): de schakelaar aan en uit (met beide dialogen); op
 `/fotos/personen` "Is dit Anna?" met J, J, N, Ctrl+Z, N en Esc, en "Wie is dit?" met het veld
 Naam en Bevestigen; in de viewer het kader van Z6 dat de rij Gezichten van "?" naar Anna zet;
 zoeken op Anna; en op `/beheer` het vinkje "Gezichtsherkenning toestaan" (Esc in het dialoog,
-verbieden, weer toestaan). De rest van deze lijst (V, Spatie om te deselecteren, Home en End,
-"Meer laden", "Niet benoemde gezichten wissen", "Misschien ook Anna", "?" met Ja, Nee en Niet
-tonen in de viewer, "Opnieuw zoeken", "Mislukte opnieuw") staat niet in een e2e: welke toets wat
-doet, toetst `web/src/photos/faces/faces.test.ts`, de API erachter `api/tests/people/faces/`
+verbieden, weer toestaan). Sinds 0.8.2 doet
+`test_wie_is_dit_met_v_spatie_home_end_meer_laden_en_wissen` de rest van het raster "Wie is
+dit?": End en Home, "Meer laden", Spatie om te deselecteren, V, en "Niet benoemde gezichten
+wissen" (Esc in het dialoog, dan Wissen). De server geeft een groep in pagina's van 60; de test
+knipt zijn echte antwoord in pagina's van 2, 1 en 1, zodat "Meer laden" komt zonder 61 foto's
+([fase6-rest.md](i3/fase6-rest.md)). Nog niet in een e2e: "Misschien ook Anna", "?" met Ja, Nee
+en Niet tonen in de viewer, "Opnieuw zoeken" en "Mislukte opnieuw". Welke toets wat doet, toetst
+`web/src/photos/faces/faces.test.ts`, de API erachter `api/tests/people/faces/`
 ([x2b.md](x2b.md), Open). *Mod* is Ctrl, op een Mac ⌘.
 
 ## De schakelaar (Account, blok Foto's)
@@ -97,6 +101,8 @@ Boven het raster staat de hulp met de toetsen (`aria-describedby` van het raster
   gaan naar `confirm`; nooit "de hele groep" (Keuze 66). Esc in het veld sluit het raster.
 - Zijn er bij het openen geen gezichten (meer), dan staat de focus op Sluiten.
 - "Meer laden" (Enter) haalt de volgende pagina (60 bij voorstellen); de focus blijft op de knop.
+  Was dat de laatste pagina, dan is de knop weg; de focus staat dan op het eerste nieuwe gezicht
+  (sinds 0.8.2; eerder viel hij op de pagina).
 
 ## Op de pagina van een persoon: "Misschien ook Anna"
 

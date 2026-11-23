@@ -1008,9 +1008,8 @@ def run(settings: Settings, args: argparse.Namespace) -> int:
     """Een van COMMANDS; daarna de database dicht, zoals de andere commando's van app.cli."""
     if args.command == "search-bench":
         return _bench(settings, args)
-    if settings.database_url and not settings.database_url.startswith("sqlite"):
-        print("Alleen voor SQLite: op PostgreSQL zoekt de app met LIKE.", file=sys.stderr)
-        return 1
+    # Ook op PostgreSQL (0.8.2): de index van 0014 (fts_node met tsvector), dezelfde herbouw in
+    # stukken, en check() vergelijkt met wat fts_refresh opnieuw zou schrijven
     import asyncio
 
     from app.db import get_engine
@@ -1042,7 +1041,7 @@ def run(settings: Settings, args: argparse.Namespace) -> int:
                 args.stuk = rebuild.CHUNK
             tijden = await herbouw()
             if not tijden:
-                print("Deze database heeft geen FTS5: niets te herbouwen.")
+                print("Deze database heeft geen FTS-index: niets te herbouwen.")
                 return 0
             print(
                 f"De index is herbouwd in {len(tijden)} stuk(ken); het langste duurde "

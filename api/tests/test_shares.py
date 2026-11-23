@@ -731,7 +731,12 @@ async def test_lijst_van_een_gedeelde_map_zonder_query_per_bestand(client, setup
     with count_queries(settings) as seen:
         r = await client.get("/api/v1/search", params={"q": "bestand", "limit": 50}, headers=anna)
     assert (len(r.json()["results"]), r.json()["more"]) == (27, False)
-    assert len(seen) < 15, seen
+    # Zonder de tijdslimiet van PostgreSQL rond elke vraag (deadline: SAVEPOINT, SET LOCAL en
+    # RELEASE): die komen per vraag, niet per bestand
+    vragen = [q for q in seen if not q.startswith(("SAVEPOINT", "RELEASE", "SET LOCAL"))]
+    # Minder dan 15, zoals op SQLite (daar zijn die drie er niet), hoeveel bestanden er ook zijn;
+    # per bestand een vraag zou 27 meer zijn
+    assert len(vragen) < 15, "\n----\n".join(vragen)
 
 
 @pytest.mark.anyio

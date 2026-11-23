@@ -38,7 +38,7 @@ def test_van_de_stubs_blijft_niets():
     ]
 
 
-@motoren.needs_fts
+@motoren.fts5
 async def test_check_dan_triggers_dan_weer_goed(client, settings):
     w = await W.bouw_async(settings)
     goed = await run_cli(settings, "search-check", "--n", "5000", "--seed", "1", "--volledig")
@@ -84,7 +84,7 @@ async def test_rebuild_in_stukken_met_voortgang(client, settings):
     await klopt(settings)
 
 
-@motoren.needs_fts
+@motoren.fts5
 async def test_check_tijdens_een_herbouw(client, settings):
     await W.bouw_async(settings)
     with sqlite3.connect(pad(settings)) as con:
@@ -97,6 +97,7 @@ async def test_check_tijdens_een_herbouw(client, settings):
     assert (await run_cli(settings, "search-check")).returncode == 0
 
 
+@pytest.mark.sqlite_only("de bench bouwt een SQLite-database")
 async def test_bench_nooit_in_een_map_met_een_database(client, settings, tmp_path):
     await W.bouw_async(settings)
     for data in (settings.data_dir, tmp_path / "anders"):

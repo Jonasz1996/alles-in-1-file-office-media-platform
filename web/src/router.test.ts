@@ -13,6 +13,7 @@ import {
   watchPath,
 } from "./media";
 import { allowed, isPublicPath, publicRoutes, resolve, routes } from "./routes";
+import app from "./App.tsx?raw";
 
 describe("match", () => {
   it("vaste paden en parameters", () => {
@@ -130,7 +131,8 @@ describe("de routetabel", () => {
       ["/fotos/kaart", "/fotos/kaart", {}, ["photos_map"], "photos_map.title", "photos"],
       ["/fotos/personen", "/fotos/personen", {}, ["photos_people"], "photos_people.title", "photos"],
       ["/fotos/personen/p%201", "/fotos/personen/:id", { id: "p 1" }, ["photos_people"], "photos_people.person", "photos"],
-      ["/dubbel", "/dubbel", {}, ["dupes"], "dupes.title", "files"],
+      // 0.8.2: /dubbel heeft een eigen link in het hoofdmenu (Dubbel), dus een eigen sectie
+      ["/dubbel", "/dubbel", {}, ["dupes"], "dupes.title", "dupes"],
     ];
     for (const [href, pattern, params, areas, title, section] of cases) {
       const r = resolve(href);
@@ -152,6 +154,15 @@ describe("de routetabel", () => {
     expect(typeof (await resolve("/zoeken").def.load()).default).toBe("function");
     expect(resolve("/fotos/kaart/x").def.pattern).toBe("*");
     expect(resolve("/dubbel/x").def.pattern).toBe("*");
+  });
+
+  it("0.8.2: het hoofdmenu heeft Dubbel (/dubbel), direct na Prullenbak en net als die niet voor een gast", () => {
+    const nav = app.slice(app.indexOf('<nav aria-label={t("shell.nav.label")}>'), app.indexOf("</nav>"));
+    const regels = nav.split("\n").map((r) => r.trim());
+    const prullenbak = regels.indexOf('{!guest && link("/prullenbak", t("shell.nav.trash"), "trash")}');
+    expect(prullenbak).toBeGreaterThan(0);
+    expect(regels[prullenbak + 1]).toBe('{!guest && link("/dubbel", t("shell.nav.dupes"), "dupes")}');
+    expect(nav.match(/\/dubbel/g)).toHaveLength(1);
   });
 
   it("publieke links staan buiten de login", () => {

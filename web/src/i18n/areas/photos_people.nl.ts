@@ -74,6 +74,13 @@ export default {
     hide: "Deze dag verbergen",
     hidden: "Deze dag komt niet meer in je herinneringen.",
     undo: "Ongedaan maken",
+    // 0.8.2 (z6.md Open): een hele map verbergen, met de mappenkiezer van Bestanden
+    hideFolder: "Een map verbergen…",
+    pickFolder: "Welke map komt niet meer in je herinneringen?",
+    pickFolderAction: "Deze map verbergen",
+    folderHidden: "Foto's uit {name} komen niet meer in je herinneringen.",
+    folderNotOwn: "Alleen een eigen map kan uit je herinneringen.",
+    folderRoot: "Kies een map. Alles verbergen doe je met Herinneringen tonen op Foto's, onder Account.",
   },
   filters: {
     title: "Filters",

@@ -465,6 +465,8 @@ PG_REVISION = "0013"
 ARR_REVISION = "0016"
 # De revisie van account resetten (tijdelijk wachtwoord en het logboek van de resets)
 RESET_REVISION = "0018"
+# De zoekindex op PostgreSQL (0.8.2, P5): op SQLite doet hij niets
+PG_SEARCH_REVISION = "0014"
 
 
 def removed_revisions(current: str, revision: str) -> list[str]:
@@ -573,14 +575,23 @@ PG_LOST = (
 )
 
 
+# Wat een downgrade die 0014 weghaalt op PostgreSQL kwijtmaakt: de index zelf; de bron blijft
+PG_SEARCH_LOST = (
+    "De zoekindex gaat weg: zoeken vindt daarna alleen nog namen. Met een nieuwe update naar "
+    "0.8.2 bouwt de app hem opnieuw op."
+)
+
+
 def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
-    de database is PostgreSQL (0013 doet alleen daar iets)."""
+    de database is PostgreSQL (0013 en 0014 doen alleen daar iets)."""
     lines = []
     if RESET_REVISION in removed:
         lines.append(RESET_LOST)
     if ARR_REVISION in removed:
         lines.append(ARR_LOST)
+    if postgres and PG_SEARCH_REVISION in removed:
+        lines.append(PG_SEARCH_LOST)
     if postgres and PG_REVISION in removed:
         lines.append(PG_LOST)
     if BEELD_REVISION in removed:
