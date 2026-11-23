@@ -233,4 +233,5 @@ zonder melding.
    Personen laden ook bij een gedeelde foto en vragen dan de API (die `404` of `[]` geeft). Wil
    Z5 of Z6 dat verzoek sparen, dan is een teken van de eigenaar in `ViewerItem` nodig (een
    kleine wijziging in de viewer, niet in Z0).
-9. **Besluiten B49–B60** blijven "voorstel"; Z0-web nam er geen.
+9. **Besluiten B49–B60**: Z0-web nam er geen. ~~Ze blijven "voorstel".~~ [17 november 2026:
+   B49–B60 (B53 en B57 waren al besloten) zijn besloten: standaard, Jonas 2026-11-17.]
