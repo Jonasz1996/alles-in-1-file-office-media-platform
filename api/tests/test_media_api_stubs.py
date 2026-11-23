@@ -54,6 +54,15 @@ ENDPOINTS = [
     ("GET", "/api/v1/media/home", None, "user", None, t.MediaHome, None),
     ("GET", "/api/v1/media/libraries/{library_id}/items", None, "user", None, t.CardPage, None),
     ("GET", "/api/v1/media/items/{node_id}", None, "user", None, t.Item, None),
+    (
+        "GET",
+        "/api/v1/media/items/{node_id}/collection",
+        None,
+        "user",
+        None,
+        t.Collection | None,
+        None,
+    ),
     ("GET", "/api/v1/media/shows/{show_id}", None, "user", None, t.ShowDetail, None),
     # M3: afspelen
     ("GET", "/api/v1/media/{node_id}/codecs", None, "user", None, t.CodecsOut, None),
@@ -379,6 +388,7 @@ BUILT = {
     ("GET", "/api/v1/media/home"),
     ("GET", "/api/v1/media/libraries/{library_id}/items"),
     ("GET", "/api/v1/media/items/{node_id}"),
+    ("GET", "/api/v1/media/items/{node_id}/collection"),
     ("GET", "/api/v1/media/shows/{show_id}"),
     # M7 (M0-hotfix, alleen deze test; de eigen tests in test_media_progress_api.py)
     ("PUT", "/api/v1/media/progress/{node_id}"),

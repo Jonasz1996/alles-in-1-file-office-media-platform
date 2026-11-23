@@ -107,6 +107,8 @@ export default {
     episode: "{code} · {title}",
   },
   itemPage: {
+    collection: "Ook in deze collectie",
+    collectionNamed: "Ook in {name}",
     play: "Afspelen",
     resume: "Verder op {time}",
     toShow: "Naar de serie",

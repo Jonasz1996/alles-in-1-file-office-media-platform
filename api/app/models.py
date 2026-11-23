@@ -810,6 +810,23 @@ class SubOffset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class MediaFacts(Base):
+    """Fase 11, stap 7: wat TMDB over een film of serie weet en de bibliotheek niet bewaart: de
+    collectie (alle delen van een filmreeks) en de kijkwijzer (age: de minimumleeftijd, 0 =
+    alle leeftijden; NULL = onbekend). Per TMDB-id, zodat twee kopieën het één keer vragen.
+    kind: movie | tv. fetched_at: na 30 dagen opnieuw."""
+
+    __tablename__ = "media_facts"
+    __table_args__ = (Index("ix_media_facts_collection", "collection_id"),)
+
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    tmdb_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    collection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    collection_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class MediaItem(Base):
     """Eén bestand in een bibliotheek (per node). kind: movie | episode | track | video |
     extra; extra: trailer | featurette | deleted | behind | sample | other, met parent_id de

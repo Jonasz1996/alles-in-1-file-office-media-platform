@@ -14,17 +14,39 @@ import NotFound from "../shellPages";
 import { Icon } from "../ui/Icon";
 import { PageTitle } from "../ui/PageTitle";
 import { Skeleton } from "../ui/Spinner";
-import { getItem } from "./api";
+import { getCollection, getItem } from "./api";
 import { MediaGate } from "./Gate";
 import { episodeCode, progressFraction, resumeAt } from "./grid";
 import { libraryPath, showPath, watchPath } from "./index";
 import { affectsItem, analysisRows, extraKey, streamText } from "./library";
 import { ItemMatchActions } from "./match/Actions";
+import { CardRow } from "./rows/CardRow";
 import { UpscaleButton } from "./UpscaleButton";
 import { TmdbAttribution } from "./match/Attribution";
 import { fromTmdb } from "./match/match";
-import type { Item } from "./types";
+import type { Collection, Item } from "./types";
 import "./media.css";
+
+/** Fase 11, stap 7: "Ook in deze collectie" (de andere delen van een filmreeks, uit TMDB). */
+function CollectionRow({ nodeId }: { nodeId: string }): JSX.Element | null {
+  const [found, setFound] = useState<Collection | null>(null);
+  useEffect(() => {
+    let live = true;
+    setFound(null);
+    getCollection(nodeId).then(
+      (c) => live && setFound(c),
+      () => undefined, // zonder collectie of bij een fout: geen rij
+    );
+    return () => {
+      live = false;
+    };
+  }, [nodeId]);
+  if (!found || found.cards.length === 0) return null;
+  const title = found.name
+    ? t("media.itemPage.collectionNamed", { name: found.name })
+    : t("media.itemPage.collection");
+  return <CardRow id="collection" title={title} cards={found.cards} />;
+}
 
 function ItemView({ item, reload }: { item: Item; reload(): void }): JSX.Element {
   const at = resumeAt(item);
@@ -88,6 +110,8 @@ function ItemView({ item, reload }: { item: Item; reload(): void }): JSX.Element
           {item.overview && <p className="media-overview">{item.overview}</p>}
         </div>
       </div>
+
+      {item.kind === "movie" && !item.extra && <CollectionRow nodeId={item.node_id} />}
 
       {item.parts.length > 1 && (
         <section className="media-section" aria-labelledby="media-parts">

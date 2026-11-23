@@ -7,7 +7,7 @@
 // laden pas bij de klik. Zonder bibliotheken: uitleg en een link naar Bestanden (daar kan het
 // ook, via het menu van een map).
 
-import { type JSX, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type JSX, useCallback, useEffect, useRef, useState } from "react";
 import { isGuest, useCurrentUser } from "../currentUser";
 import { useReloadOn } from "../events";
 import { errorText, loadAreas, t } from "../i18n";
@@ -16,58 +16,18 @@ import { type RouteProps, useRestoreScroll } from "../router";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
-import { keyToMove } from "../ui/keys";
 import { PageTitle } from "../ui/PageTitle";
 import { Skeleton } from "../ui/Spinner";
 import { toast } from "../ui/toast";
 import { getHome } from "./api";
 import { MediaGate } from "./Gate";
+import { CardRow } from "./rows/CardRow";
 import { ContinueRow } from "./rows/ContinueRow";
 import { NextUpRow } from "./rows/NextUpRow";
-import { cardKey } from "./grid";
 import { libraryPath } from "./index";
-import { MediaCard } from "./Library";
 import { affectsHome, kindIcon } from "./library";
-import type { Card, Library, MediaHome } from "./types";
+import type { Library, MediaHome } from "./types";
 import "./media.css";
-
-/** Een rij kaarten (Net toegevoegd). */
-function CardRow({ id, title, cards }: { id: string; title: string; cards: Card[] }): JSX.Element {
-  const list = useRef<HTMLUListElement>(null);
-  const [focus, setFocus] = useState(0);
-  const current = Math.min(focus, Math.max(0, cards.length - 1));
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLElement>) => {
-      const move = keyToMove(e);
-      if (!move || e.ctrlKey || e.metaKey) return;
-      let next = current;
-      if (move === "left") next = current - 1;
-      else if (move === "right") next = current + 1;
-      else if (move === "home") next = 0;
-      else if (move === "end") next = cards.length - 1;
-      else return;
-      if (next < 0 || next >= cards.length || next === current) return;
-      e.preventDefault();
-      setFocus(next);
-      const el = list.current?.querySelector<HTMLElement>(`[data-index="${next}"]`);
-      el?.focus();
-      el?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    },
-    [current, cards.length],
-  );
-  return (
-    <section className="media-section" aria-labelledby={`media-row-${id}`}>
-      <h2 id={`media-row-${id}`}>{title}</h2>
-      <ul ref={list} className="media-row" onKeyDown={onKeyDown}>
-        {cards.map((c, i) => (
-          <li key={cardKey(c)}>
-            <MediaCard card={c} index={i} tabbable={i === current} onFocusCard={setFocus} />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
 
 function LibraryList({ libraries }: { libraries: Library[] }): JSX.Element {
   return (

@@ -531,6 +531,14 @@ class LibraryRow(BaseModel):
     cards: list[Card] = Field(default_factory=list)
 
 
+class Collection(BaseModel):
+    """GET /api/v1/media/items/{node_id}/collection (fase 11, stap 7): de andere delen."""
+
+    id: int
+    name: str
+    cards: list[Card] = Field(default_factory=list)
+
+
 class MediaHome(BaseModel):
     """GET /api/v1/media/home. continue is een sleutelwoord in Python: het veld heet
     continue_ en gaat als "continue" over de API."""

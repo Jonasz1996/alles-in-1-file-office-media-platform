@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.config import Settings
@@ -197,6 +198,67 @@ def details_of(data: dict[str, Any], kind: str) -> Details:
     )
 
 
+# --- collectie en kijkwijzer (fase 11, stap 7) ----------------------------------------------
+
+# De kijkwijzer: NL eerst; zonder NL de Amerikaanse (MPAA en TV Parental Guidelines) of de
+# Duitse (FSK), omgezet naar de leeftijd die er het dichtst bij ligt
+AGES: dict[str, dict[str, int]] = {
+    "NL": {"AL": 0, "6": 6, "9": 9, "12": 12, "14": 14, "16": 16, "18": 18},
+    "US": {
+        "G": 0, "PG": 9, "PG-13": 12, "R": 16, "NC-17": 18,
+        "TV-Y": 0, "TV-Y7": 6, "TV-G": 0, "TV-PG": 9, "TV-14": 14, "TV-MA": 16,
+    },
+    "DE": {"0": 0, "6": 6, "12": 12, "16": 16, "18": 18},
+}  # fmt: skip
+
+
+@dataclass
+class Facts:
+    collection_id: int | None = None
+    collection_name: str | None = None
+    age: int | None = None
+
+
+def _ratings(data: dict[str, Any], kind: str) -> dict[str, list[str]]:
+    """Per land de certificeringen (film: release_dates, serie: content_ratings)."""
+    out: dict[str, list[str]] = {}
+    if kind == "movie":
+        for country in _list(_dict(data.get("release_dates")).get("results"))[:300]:
+            country = _dict(country)
+            code = str(country.get("iso_3166_1") or "")
+            for release in _list(country.get("release_dates"))[:50]:
+                value = _text(_dict(release).get("certification"), 16)
+                if value:
+                    out.setdefault(code, []).append(value)
+    else:
+        for row in _list(_dict(data.get("content_ratings")).get("results"))[:300]:
+            row = _dict(row)
+            value = _text(row.get("rating"), 16)
+            if value:
+                out.setdefault(str(row.get("iso_3166_1") or ""), []).append(value)
+    return out
+
+
+def age_of(data: dict[str, Any], kind: str) -> int | None:
+    """De minimumleeftijd uit de kijkwijzer, of None als TMDB het niet weet. Bij meer
+    uitgaven in één land telt de strengste."""
+    ratings = _ratings(data, kind)
+    for country, table in AGES.items():
+        ages = [table[v.upper()] for v in ratings.get(country, []) if v.upper() in table]
+        if ages:
+            return max(ages)
+    return None
+
+
+def facts_of(data: dict[str, Any], kind: str) -> Facts:
+    collection = _dict(data.get("belongs_to_collection")) if kind == "movie" else {}
+    return Facts(
+        collection_id=_int(collection.get("id"), 1),
+        collection_name=_text(collection.get("name"), 255),
+        age=age_of(data, kind),
+    )
+
+
 def episodes_of(data: dict[str, Any], show_id: str, n: int) -> list[EpisodeDetails]:
     out = []
     seen: set[int] = set()
@@ -303,6 +365,12 @@ class Tmdb:
             fallback = await self._get(f"/{tmdb_kind}/{number}", {"language": FALLBACK_LANG})
             result.overview = _overview(fallback.get("overview"))
         return result
+
+    async def facts(self, kind: str, number: int, lang: str = "nl-NL") -> Facts:
+        """Collectie en kijkwijzer van een film (kind movie) of serie (kind tv)."""
+        extra = "release_dates" if kind == "movie" else "content_ratings"
+        params = {"language": self._lang(lang), "append_to_response": extra}
+        return facts_of(await self._get(f"/{kind}/{number}", params), kind)
 
     async def season(self, show_id: str, n: int, lang: str) -> list[EpisodeDetails]:
         tmdb_kind, number = parse_id(show_id)

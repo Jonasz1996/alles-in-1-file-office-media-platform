@@ -108,6 +108,8 @@ const en: Translation<typeof nl> = {
     episode: "{code} · {title}",
   },
   itemPage: {
+    collection: "Also in this collection",
+    collectionNamed: "Also in {name}",
     play: "Play",
     resume: "Resume at {time}",
     toShow: "Go to the show",

@@ -14,6 +14,7 @@ import type {
   AlbumCard,
   AlbumsQuery,
   Artist,
+  Collection,
   ArtistDetail,
   CacheClearIn,
   CodecsOut,
@@ -103,6 +104,11 @@ export function listItems(libraryId: string, q: ItemsQuery = {}): Promise<Page<C
 /** GET /media/items/{node_id} */
 export function getItem(nodeId: string): Promise<Item> {
   return api.request<Item>("GET", `${MEDIA}/items/${seg(nodeId)}`);
+}
+
+/** GET /media/items/{node_id}/collection: de andere delen van de filmreeks (fase 11) */
+export function getCollection(nodeId: string): Promise<Collection | null> {
+  return api.request<Collection | null>("GET", `${MEDIA}/items/${seg(nodeId)}/collection`);
 }
 
 /** GET /media/shows/{show_id} */

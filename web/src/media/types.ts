@@ -250,6 +250,13 @@ export interface MediaHome {
   library_rows: LibraryRow[];
 }
 
+/** De collectie van een film uit TMDB (fase 11, stap 7) */
+export interface Collection {
+  id: number;
+  name: string;
+  cards: Card[];
+}
+
 export interface LibraryRow {
   library_id: string;
   name: string;

@@ -35,11 +35,13 @@ from app.config import Settings
 from app.media import analysis, names, subtitles
 from app.media import chapters as media_chapters
 from app.media.library import Seen, get_seen
+from app.media.library import seen as seen_libraries
 from app.media.providers.http import printable
 from app.media.types import (
     Card,
     CardPage,
     CardProgress,
+    Collection,
     Item,
     ItemPart,
     Probe,
@@ -52,6 +54,7 @@ from app.media.types import (
 from app.models import (
     Blob,
     Job,
+    MediaFacts,
     MediaItem,
     MediaLibrary,
     MediaProbe,
@@ -705,6 +708,45 @@ async def library_rows(
         if cards:
             out.append((library, cards))
     return out
+
+
+async def collection(reader: Reader, node_id: uuid.UUID) -> Collection | None:
+    """De collectie van een film (uit TMDB, via media_facts) met de andere delen die de vrager
+    ziet, op jaar; None zonder collectie of zonder andere delen."""
+    from app.arr.facts import tmdb_number
+
+    item, _, _ = await visible_item(reader, node_id)
+    number = tmdb_number(item.ids) if item.kind == "movie" else None
+    if number is None:
+        return None
+    facts = await reader.session.get(MediaFacts, ("movie", number))
+    if facts is None or facts.collection_id is None:
+        return None
+    members = list(
+        await reader.session.scalars(
+            select(MediaFacts.tmdb_id).where(
+                MediaFacts.kind == "movie", MediaFacts.collection_id == facts.collection_id
+            )
+        )
+    )
+    libraries = [s.library.id for s in await seen_libraries(reader.session, reader.user)]
+    rows = await reader.session.scalars(
+        select(MediaItem)
+        .where(
+            MediaItem.library_id.in_(libraries),
+            MediaItem.kind == "movie",
+            MediaItem.present.is_(True),
+            MediaItem.extra.is_(None),
+            MediaItem.node_id != item.node_id,
+            MediaItem.ids["tmdb"].as_string().in_(members),
+        )
+        .order_by(func.coalesce(MediaItem.year, 9999), MediaItem.sort_title, MediaItem.node_id)
+        .limit(RECENT)
+    )
+    cards = await reader.cards(await reader.visible(list(rows.all())))
+    if not cards:
+        return None
+    return Collection(id=facts.collection_id, name=facts.collection_name or "", cards=cards)
 
 
 async def can_write(session: AsyncSession, user: User, node: Node) -> bool:

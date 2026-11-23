@@ -50,7 +50,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.arr import prowlarr, qbit, score, subs, torznab
+from app.arr import facts, prowlarr, qbit, score, subs, torznab
 from app.arr import settings as arr_settings
 from app.arr.release import parse_release
 from app.config import Settings
@@ -681,6 +681,12 @@ async def loop(settings: Settings) -> None:
             raise
         except Exception:  # noqa: BLE001 - de volgende ronde probeert het opnieuw
             log.exception("arr: een ronde mislukte")
+        try:
+            await facts.tick(settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("arr: een ronde collecties en kijkwijzer mislukte")
         try:
             await subs.tick(settings)
         except asyncio.CancelledError:

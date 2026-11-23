@@ -11,6 +11,7 @@ POST   /api/v1/media/libraries/{id}/scan       → 202
 GET    /api/v1/media/home                      → MediaHome
 GET    /api/v1/media/libraries/{id}/items      ?type=&sort=&cursor=&limit=60 → CardPage
 GET    /api/v1/media/items/{node_id}           → Item
+GET    /api/v1/media/items/{node_id}/collection → Collection | null (fase 11)
 GET    /api/v1/media/shows/{show_id}           → ShowDetail
 """
 
@@ -34,6 +35,7 @@ from app.media import library as media_library
 from app.media.types import (
     ITEMS_PAGE,
     CardPage,
+    Collection,
     Item,
     Library,
     LibraryIn,
@@ -148,6 +150,15 @@ async def item(
 ):
     runtime.require(request)
     return await media_items.detail(media_items.Reader(session, settings, user), node_id)
+
+
+@router.get("/items/{node_id}/collection", response_model=Collection | None)
+async def item_collection(
+    node_id: uuid.UUID, user: CurrentUser, request: Request, session: Session, settings: Config
+):
+    """De andere delen van de filmreeks (fase 11, stap 7), of null."""
+    runtime.require(request)
+    return await media_items.collection(media_items.Reader(session, settings, user), node_id)
 
 
 @router.get("/shows/{show_id}", response_model=ShowDetail)
