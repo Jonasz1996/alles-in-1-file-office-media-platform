@@ -48,6 +48,8 @@ import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
 import ArrBlock from "./ArrBlock";
+import KidsLockBlock from "./KidsLockBlock";
+import StatsBlock from "./StatsBlock";
 import RequestsSettings from "./RequestsSettings";
 import SubsBlock from "./SubsBlock";
 import UpscaleBlock from "./UpscaleBlock";
@@ -256,6 +258,8 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <SubsBlock />
       <RequestsSettings libraries={a.libraries} />
       <UpscaleBlock />
+      <KidsLockBlock />
+      <StatsBlock />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />

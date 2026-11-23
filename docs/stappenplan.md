@@ -764,19 +764,21 @@ en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stap
 
 Deel A: de Plex- of Jellyfin-ervaring (bovenop fase 5)
 
-- [ ] Home met rijen: Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
+- [x] Home met rijen (klaar 23-11-2026, de cast op de titelpagina nog niet): Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
   verschenen, en per bibliotheek; titelpagina's met samenvatting, cast, seizoenen en
   "ook in deze collectie"; collecties (bijv. alle delen van een filmreeks) uit TMDB
 
-- [ ] Profielen per account en kinderslot: wie kijkt (eigen voortgang en "gezien"),
+- [x] Profielen per account en kinderslot (klaar 23-11-2026; pincode per profiel, grens per
+  account op `/beheer`): wie kijkt (eigen voortgang en "gezien"),
   leeftijdsgrens per profiel op de kijkwijzer uit TMDB. De kolom `profile` staat al klaar
   sinds fase 5 (B45, Vraag 6)
 
-- [ ] Intro en aftiteling overslaan: zelf herkennen door de audio-vingerafdruk van
+- [x] Intro en aftiteling overslaan (klaar 23-11-2026; nog te testen op echte series): zelf herkennen door de audio-vingerafdruk van
   afleveringen in hetzelfde seizoen te vergelijken (ffmpeg in de mediaworker), met de
   knop "Intro overslaan" in de speler; volgende aflevering automatisch na de aftiteling
 
-- [ ] Activiteit en statistieken (wat Tautulli doet): nu bezig met wie, welk apparaat,
+- [x] Activiteit en statistieken (klaar 23-11-2026, uit de kijkvoortgang; het apparaat alleen
+  bij wie nu kijkt) (wat Tautulli doet): nu bezig met wie, welk apparaat,
   direct play of transcode; geschiedenis per gebruiker; meest bekeken; op `/beheer` →
   Media. Bouwt op de afspeelsessies uit fase 5
 

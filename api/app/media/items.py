@@ -356,10 +356,24 @@ class Reader:
     bibliotheek via een deling ziet (review golf 3, S4). De bibliotheek zelf ziet de vrager al
     (get_seen); wat eronder ligt en niet in de prullenbak, mag hij dus ook zien."""
 
-    def __init__(self, session: AsyncSession, settings: Settings, user: User):
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        user: User,
+        *,
+        profile: str | None = None,
+        max_age: int | None = None,
+    ):
+        from app.media import viewer as media_viewer
+
         self.session = session
         self.settings = settings
         self.user = user
+        # Fase 11, stap 7: wie kijkt (het profiel van deze vraag, uit viewer.resolve)
+        now = media_viewer.current()
+        self.profile = profile if profile is not None else now.profile
+        self.max_age = max_age if profile is not None else now.max_age
         self.secret = previews.url_key(settings)
         self.exp = previews.expiry(period=previews.url_period(settings))
         self._roots: dict[uuid.UUID, uuid.UUID] = {}
@@ -399,7 +413,54 @@ class Reader:
             return []
         roots = await self.roots_of(i.library_id for i in items)
         ok = await self.inside({i.node_id: roots.get(i.library_id) for i in items})
-        return [i for i in items if i.node_id in ok]
+        found = [i for i in items if i.node_id in ok]
+        if self.max_age is not None:
+            found = await self.allowed(found)
+        return found
+
+    # Fase 11, stap 7: het kinderslot. Met een grens (max_age) alleen films en afleveringen met
+    # een kijkwijzer uit TMDB (media_facts) die er niet boven ligt; zonder bekende kijkwijzer
+    # niet (veilig). Muziek en eigen video's (kind video) tellen niet; extra's niet met een grens.
+    RATED = frozenset({"movie", "episode", "extra"})
+
+    async def _ages(self, keys: set[tuple[str, str]]) -> dict[tuple[str, str], int | None]:
+        if not keys:
+            return {}
+        numbers = {n for _, n in keys}
+        rows = await self.session.scalars(select(MediaFacts).where(MediaFacts.tmdb_id.in_(numbers)))
+        return {(f.kind, f.tmdb_id): f.age for f in rows if (f.kind, f.tmdb_id) in keys}
+
+    def _fits(self, age: int | None) -> bool:
+        return age is not None and self.max_age is not None and age <= self.max_age
+
+    async def allowed(self, items: list[MediaItem]) -> list[MediaItem]:
+        from app.arr.facts import tmdb_number
+
+        rated = [i for i in items if i.kind in self.RATED]
+        if not rated:
+            return items
+        show_ids = {i.show_id for i in rated if i.kind == "episode" and i.show_id}
+        shows: dict[uuid.UUID, MediaShow] = {}
+        if show_ids:
+            rows = await self.session.scalars(select(MediaShow).where(MediaShow.id.in_(show_ids)))
+            shows = {s.id: s for s in rows}
+        key: dict[uuid.UUID, tuple[str, str] | None] = {}
+        for i in rated:
+            if i.kind == "movie":
+                n = tmdb_number(i.ids)
+                key[i.node_id] = ("movie", n) if n else None
+            elif i.kind == "episode" and i.show_id in shows:
+                n = tmdb_number(shows[i.show_id].ids)
+                key[i.node_id] = ("tv", n) if n else None
+            else:
+                key[i.node_id] = None
+        ages = await self._ages({k for k in key.values() if k is not None})
+        return [
+            i
+            for i in items
+            if i.kind not in self.RATED
+            or ((k := key.get(i.node_id)) is not None and self._fits(ages.get(k)))
+        ]
 
     async def art_nodes(
         self, wanted: dict[uuid.UUID, tuple[uuid.UUID | None, uuid.UUID]]
@@ -452,7 +513,7 @@ class Reader:
         rows = await self.session.scalars(
             select(PlaybackState).where(
                 PlaybackState.user_id == self.user.id,
-                PlaybackState.profile == "",
+                PlaybackState.profile == self.profile,
                 PlaybackState.node_id.in_(node_ids),
             )
         )
@@ -485,7 +546,7 @@ class Reader:
         # geïmporteerd: progress importeert deze module
         from app.media import progress as media_progress
 
-        return media_progress.overlay(self.user.id, out)
+        return media_progress.overlay(media_progress.Who(self.user.id, self.profile), out)
 
     @staticmethod
     def card(item: MediaItem, poster: str | None, state: PlaybackState | None) -> Card:
@@ -511,7 +572,14 @@ class Reader:
         zonder map staat er zolang ze afleveringen heeft)."""
         roots = await self.roots_of(s.library_id for s in shows)
         ok = await self.inside({s.folder_id: roots.get(s.library_id) for s in shows if s.folder_id})
-        return [s for s in shows if s.folder_id is None or s.folder_id in ok]
+        found = [s for s in shows if s.folder_id is None or s.folder_id in ok]
+        if self.max_age is not None and found:
+            from app.arr.facts import tmdb_number
+
+            keys = {s.id: ("tv", n) for s in found if (n := tmdb_number(s.ids))}
+            ages = await self._ages(set(keys.values()))
+            found = [s for s in found if s.id in keys and self._fits(ages.get(keys[s.id]))]
+        return found
 
     async def show_cards(self, shows: list[MediaShow]) -> list[Card]:
         arts = await self.art_nodes({s.id: (self.art_node(s.art, "poster"), s.library_id)

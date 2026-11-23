@@ -87,6 +87,7 @@ const en: Translation<typeof nl> = {
     download: "Download",
     hdrRaw: "Play HDR anyway (colours may be off)",
   },
+  skipIntro: "Skip intro",
   next: {
     title: "Next episode",
     part: "Next part",

@@ -810,6 +810,36 @@ class SubOffset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class MediaProfile(Base):
+    """Fase 11, stap 7: een profiel binnen een account (wie kijkt: eigen voortgang en gezien).
+    id "" is het account zelf (alleen een rij als er een pincode of leeftijdsgrens op staat);
+    een ander profiel heeft een uuid als tekst (playback_state.profile). max_age: het
+    kinderslot (de hoogste kijkwijzer die mag; NULL = alles). pin_hash: argon2 van de pincode."""
+
+    __tablename__ = "media_profile"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(40))
+    max_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaIntro(Base):
+    """Fase 11, stap 7: de intro van een aflevering (app.media.intro), per inhoud (blob): een
+    ander bestand wordt opnieuw bekeken. start_ms/end_ms NULL: geen intro gevonden."""
+
+    __tablename__ = "media_intro"
+
+    blob_sha: Mapped[str] = mapped_column(String(64), primary_key=True)
+    start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class MediaFacts(Base):
     """Fase 11, stap 7: wat TMDB over een film of serie weet en de bibliotheek niet bewaart: de
     collectie (alle delen van een filmreeks) en de kijkwijzer (age: de minimumleeftijd, 0 =

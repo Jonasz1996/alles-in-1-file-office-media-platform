@@ -55,6 +55,7 @@ from app.arr import settings as arr_settings
 from app.arr.release import parse_release
 from app.config import Settings
 from app.db import get_engine
+from app.media import intro as media_intro
 from app.models import ArrGrab, ArrWanted, MediaItem, MediaLibrary, MediaShow
 
 log = logging.getLogger("platform.arr")
@@ -687,6 +688,12 @@ async def loop(settings: Settings) -> None:
             raise
         except Exception:  # noqa: BLE001
             log.exception("arr: een ronde collecties en kijkwijzer mislukte")
+        try:
+            await media_intro.tick(settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("arr: een ronde intro's mislukte")
         try:
             await subs.tick(settings)
         except asyncio.CancelledError:

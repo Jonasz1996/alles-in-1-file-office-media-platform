@@ -10,6 +10,7 @@ import {
   ORIGIN,
   onProgress,
   progressOf,
+  setActiveProfile,
 } from "./progressSync";
 import type { Card, PlaybackProgressEvent } from "./types";
 
@@ -59,6 +60,17 @@ describe("progressOf", () => {
   it("geeft de stand van een ander tabblad of apparaat", () => {
     const e = stand();
     expect(progressOf(event({ ...e }), "mij")).toEqual(e);
+  });
+
+  it("negeert een stand van een ander profiel (fase 11)", () => {
+    const kids = { ...stand(), profile: "kids" };
+    expect(progressOf(event(kids), "mij")).not.toBeNull(); // profiel nog onbekend
+    setActiveProfile("self");
+    expect(progressOf(event(kids), "mij")).toBeNull();
+    expect(progressOf(event({ ...stand(), profile: "" }), "mij")).not.toBeNull();
+    setActiveProfile("kids");
+    expect(progressOf(event(kids), "mij")).not.toBeNull();
+    setActiveProfile(null);
   });
 
   it("negeert de eigen origin", () => {

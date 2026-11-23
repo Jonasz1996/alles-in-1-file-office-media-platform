@@ -21,6 +21,7 @@ import { Skeleton } from "../ui/Spinner";
 import { toast } from "../ui/toast";
 import { getHome } from "./api";
 import { MediaGate } from "./Gate";
+import { ProfilePicker } from "./ProfilePicker";
 import { CardRow } from "./rows/CardRow";
 import { ContinueRow } from "./rows/ContinueRow";
 import { NextUpRow } from "./rows/NextUpRow";
@@ -103,14 +104,24 @@ function Home(): JSX.Element {
     void load();
   }, [load]);
 
-  const newButton = guest ? null : (
+  const newButton = (
     <>
-      <Link to="/media/verzoeken" className="btn" data-requests="">
-        {t("media.requests.title")}
-      </Link>
-      <Button onClick={() => void openPicker()} busy={opening} data-new-library="">
-        {t("media.newLibrary.new")}
-      </Button>
+      <ProfilePicker
+        onSwitch={() => {
+          setHome(null);
+          void load();
+        }}
+      />
+      {!guest && (
+        <>
+          <Link to="/media/verzoeken" className="btn" data-requests="">
+            {t("media.requests.title")}
+          </Link>
+          <Button onClick={() => void openPicker()} busy={opening} data-new-library="">
+            {t("media.newLibrary.new")}
+          </Button>
+        </>
+      )}
     </>
   );
   const Picker = picker;

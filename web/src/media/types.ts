@@ -121,6 +121,23 @@ export interface PlaybackProgressEvent {
   /** Het tabblad of apparaat dat de stand gaf: een speler negeert zijn eigen origin */
   origin: string;
   updated_at: string;
+  /** Het profiel van de stand ("" = het account zelf; fase 11, stap 7) */
+  profile?: string;
+}
+
+/** Een mediaprofiel (fase 11, stap 7); id "self" is het account zelf. */
+export interface MediaProfile {
+  id: string;
+  name: string;
+  max_age: number | null;
+  has_pin: boolean;
+}
+
+export interface MediaProfiles {
+  current: string;
+  max_age: number | null;
+  can_manage: boolean;
+  profiles: MediaProfile[];
 }
 
 /** media.library, naar wie de bibliotheek ziet. */
@@ -519,6 +536,8 @@ export interface PlayOut {
   chapters: Chapter[];
   /** Het begin van de aftiteling (Keuze 30) */
   credits_ms?: number | null;
+  /** De intro [begin, eind] in ms (fase 11, stap 7) */
+  intro_ms?: number[] | null;
   trick?: TrickInfo | null;
   /** "e<i>": een geforceerd beeldspoor dat niet vanzelf aangaat (Keuze 29) */
   forced_available?: string | null;

@@ -67,7 +67,9 @@ from app.routers import (
     media_match,
     media_music,
     media_play,
+    media_profiles,
     media_progress,
+    media_stats,
     media_suboffset,
     media_subs,
     memories,
@@ -634,6 +636,9 @@ app.include_router(arr_upscale.router)
 app.include_router(arr_upscale.admin_router)
 app.include_router(arr_upscale.worker_router)
 app.include_router(media_suboffset.router)
+app.include_router(media_profiles.router)
+app.include_router(media_profiles.admin_router)
+app.include_router(media_stats.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)

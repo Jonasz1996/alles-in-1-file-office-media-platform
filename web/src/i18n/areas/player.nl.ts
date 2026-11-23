@@ -86,6 +86,7 @@ export default {
     download: "Downloaden",
     hdrRaw: "HDR toch afspelen (kleuren kunnen afwijken)",
   },
+  skipIntro: "Intro overslaan",
   next: {
     title: "Volgende aflevering",
     part: "Volgend deel",

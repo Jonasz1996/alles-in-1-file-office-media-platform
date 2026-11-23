@@ -28,6 +28,7 @@ import {
   type Where,
 } from "../keys";
 import { spans } from "../mse";
+import { introSkip } from "../intro";
 import { COUNTDOWN_S, cardTime, clock } from "../next";
 import { loadProgress, Reporter, type ProgressSink } from "../playback";
 import { failureOffer, type Notice, type StopReason } from "../session";
@@ -626,6 +627,8 @@ export default function Player(props: PlayerProps): JSX.Element {
   const v0 = video.current;
   const duration = out ? out.duration_ms / 1000 : v0 && Number.isFinite(v0.duration) ? v0.duration : 0;
   const cardAt = next && !next.part ? cardTime(duration, out?.credits_ms) : null;
+  // Fase 11, stap 7: intro overslaan
+  const skipTo = introSkip(time, out?.intro_ms);
 
   useEffect(() => {
     if (cardAt === null) return;
@@ -1184,6 +1187,12 @@ export default function Player(props: PlayerProps): JSX.Element {
         <p className="player-notice" role="status">
           {noticeText}
         </p>
+      )}
+
+      {skipTo !== null && (
+        <button type="button" className="btn player-skip-intro" data-skip-intro="" onClick={() => seek(skipTo)}>
+          {t("player.skipIntro")}
+        </button>
       )}
 
       {card === "shown" && next && (

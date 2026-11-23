@@ -744,6 +744,7 @@ class PlayOut(BaseModel):
     tracks: PlayTracks = Field(default_factory=PlayTracks)
     chapters: list[Chapter] = Field(default_factory=list)
     credits_ms: int | None = None
+    intro_ms: list[int] | None = None  # fase 11, stap 7: [begin, eind] van de intro
     trick: TrickInfo | None = None
     forced_available: str | None = None
     quality: QualityInfo
@@ -809,6 +810,7 @@ class PlaybackProgressEvent(BaseModel):
     watched: bool
     origin: str
     updated_at: datetime
+    profile: str = ""  # fase 11, stap 7: van welk profiel (een ander profiel negeert hem)
 
 
 # M8: metadata online

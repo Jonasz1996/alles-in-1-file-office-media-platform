@@ -15,6 +15,7 @@ from sqlalchemy import update
 
 from app import events
 from app.media import analysis, progress
+from app.media.progress import Who
 from app.media.types import Probe
 from app.models import PlaybackState
 from tests.test_files import mkdir, put, root
@@ -564,12 +565,12 @@ async def test_een_stand_die_niet_te_bewaren_is_blokkeert_de_rest_niet(w, client
     user_id = uuid.UUID((await client.get("/api/v1/auth/me", headers=headers)).json()["id"])
     live = progress.current()
     assert live is not None
-    entry = live.entries[user_id][uuid.UUID(een)]
+    entry = live.entries[Who(user_id)][uuid.UUID(een)]
     entry.seq, entry.dirty = 2**70, True  # zoals een PUT van vóór de grens
     caplog.clear()
     assert (await save(client, headers, twee, 120, seq=1)).status_code == 204
     assert (await rows_of(settings)) == {uuid.UUID(een): 90_000, uuid.UUID(twee): 120_000}
-    assert uuid.UUID(een) not in live.entries[user_id]
+    assert uuid.UUID(een) not in live.entries[Who(user_id)]
     errors = [r for r in caplog.records if r.levelname == "ERROR"]
     assert len(errors) <= 1
     caplog.clear()

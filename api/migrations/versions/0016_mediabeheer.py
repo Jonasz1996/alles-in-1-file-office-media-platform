@@ -4,13 +4,14 @@ Revision ID: 0016
 Revises: 0013
 Create Date: 2026-11-22 12:00:00.000000
 
-Zeven nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
+Negen nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
 app volgt), arr_grab (app.models.ArrGrab, wat hij aan qBittorrent gaf, met de zwarte lijst) en
 arr_subtitle (app.models.ArrSubtitle, wat OpenSubtitles per video en taal opleverde) en
 media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand verschoof) en
 arr_request (app.models.ArrRequest, de verzoeken van gezinsleden) en arr_upscale
 (app.models.ArrUpscale, de rij van de AI-upscaling) en media_facts (app.models.MediaFacts,
-collectie en kijkwijzer uit TMDB).
+collectie en kijkwijzer uit TMDB) en media_profile (app.models.MediaProfile, profielen en
+kinderslot) en media_intro (app.models.MediaIntro, intro overslaan).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
@@ -200,9 +201,33 @@ def upgrade() -> None:
         sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.create_index("ix_media_facts_collection", "media_facts", ["collection_id"])
+    op.create_table(
+        "media_profile",
+        sa.Column(
+            "user_id",
+            sa.Uuid(),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column("id", sa.String(length=36), primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=40), nullable=False),
+        sa.Column("max_age", sa.Integer(), nullable=True),
+        sa.Column("pin_hash", sa.String(length=255), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_table(
+        "media_intro",
+        sa.Column("blob_sha", sa.String(length=64), primary_key=True, nullable=False),
+        sa.Column("start_ms", sa.Integer(), nullable=True),
+        sa.Column("end_ms", sa.Integer(), nullable=True),
+        sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False),
+    )
 
 
 def downgrade() -> None:
+    op.drop_table("media_intro")
+    op.drop_table("media_profile")
     op.drop_index("ix_media_facts_collection", table_name="media_facts")
     op.drop_table("media_facts")
     op.drop_table("media_sub_offset")

@@ -520,3 +520,15 @@ main.watch {
 .player-idle .player-cues {
   bottom: 4%;
 }
+
+/* Fase 11, stap 7: intro overslaan, rechtsonder boven de balk */
+.player-skip-intro {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 6rem;
+  z-index: 3;
+  background: rgb(0 0 0 / 0.7);
+  color: #fff;
+  border: 1px solid rgb(255 255 255 / 0.6);
+  font-weight: 600;
+}

@@ -69,4 +69,6 @@ def test_de_kaart_heeft_de_vorm_van_paragraaf_2():
         "continue",
         "next_up",
         "recent",
+        "released",  # fase 11, stap 7
+        "library_rows",
     }
