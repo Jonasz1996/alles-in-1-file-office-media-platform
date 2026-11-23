@@ -29,6 +29,7 @@ from app.models import Face, FacePerson, Person
 from app.search.types import AnalyseQuality, BeeldBench
 from tests.beeld import nep
 from tests.beeld.nep import foto
+from tests.conftest import database_env
 
 pytestmark = pytest.mark.anyio
 
@@ -37,13 +38,17 @@ API_DIR = Path(__file__).resolve().parents[2]
 
 async def _cli(settings, *args: str, analyse: bool) -> tuple[int, str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PLATFORM_ANALYSE")}
-    env.update(PLATFORM_DATA_DIR=str(settings.data_dir), PYTHONDONTWRITEBYTECODE="1")
+    # Op PostgreSQL de database van deze test, en de analyse daar aan (ANALYSE_POSTGRES)
+    pg = database_env(settings)
+    env.update(PLATFORM_DATA_DIR=str(settings.data_dir), PYTHONDONTWRITEBYTECODE="1", **pg)
     if analyse:
         env.update(
             PLATFORM_ANALYSE_ENABLED="true",
             PLATFORM_ANALYSE_WORKER=str(settings.data_dir / "geen" / "worker.sock"),
             PLATFORM_ANALYSE_WORKER_KEY=secrets.token_hex(32),
         )
+        if pg:
+            env.update(PLATFORM_ANALYSE_POSTGRES="true")
     result = await anyio.run_process(
         [sys.executable, "-m", "app.cli", *args], cwd=API_DIR, env=env, check=False
     )

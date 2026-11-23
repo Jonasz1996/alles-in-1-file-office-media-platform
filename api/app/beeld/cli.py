@@ -77,7 +77,10 @@ def parsers(commands: Any) -> None:
 
 def run(settings: Settings, args: argparse.Namespace) -> int:
     if not settings.analyse_on:
-        print("Zoeken op beeld staat uit: de analyse staat uit (ANALYSE).", file=sys.stderr)
+        # Op PostgreSQL zonder ANALYSE_POSTGRES of de triggers: die reden (monitor.blocked)
+        block = monitor.blocked(settings) if settings.analyse_enabled else None
+        why = "de analyse staat uit (ANALYSE)" if block is None else monitor.analyse_problem(block)
+        print(f"Zoeken op beeld staat uit: {why}.", file=sys.stderr)
         return 1
 
     async def go() -> int:

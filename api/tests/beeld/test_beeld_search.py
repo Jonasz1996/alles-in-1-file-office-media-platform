@@ -189,17 +189,56 @@ async def test_12_tegelijk_geeft_429(client, admin, beeld):
     assert nep.code(druk) == "search_busy" and druk.headers["retry-after"] == "1"
 
 
+# 5000 foto's van Eva zonder inhoud (alleen voor het plan van stap 5 op PostgreSQL)
+VEEL_FOTOS = sa.text(
+    "INSERT INTO node (id, parent_id, owner_id, name, kind, mime, size, created_at, "
+    "modified_at, search_name) "
+    "SELECT gen_random_uuid(), :parent, :owner, 'veel' || g || '.jpg', 'file', 'image/jpeg', "
+    "0, now(), now(), 'veel' || g || '.jpg' FROM generate_series(1, 5000) AS g"
+)
+
+# 5000 klare beelden van Eva (alleen voor het plan van de voortgang op PostgreSQL); weer weg
+# voor de rest van die test, die telt
+VEEL_SHA = "md5('veel' || g) || md5('blob' || g)"
+VEEL_KLAAR = (
+    sa.text(
+        f"INSERT INTO blob (sha256, size, ref_count, created_at) SELECT {VEEL_SHA}, 0, 0, now() "
+        "FROM generate_series(1, 5000) AS g"
+    ),
+    sa.text(
+        "INSERT INTO analysis (blob_sha, step, version, state, owner_id, queued_at, updated_at) "
+        f"SELECT {VEEL_SHA}, 'embed', 1, 'done', :owner, now(), now() "
+        "FROM generate_series(1, 5000) AS g"
+    ),
+)
+VEEL_WEG = (
+    sa.text(
+        f"DELETE FROM blob WHERE sha256 IN (SELECT {VEEL_SHA} FROM generate_series(1, 5000) AS g)"
+    ),
+    sa.text(
+        "DELETE FROM analysis WHERE blob_sha IN "
+        f"(SELECT {VEEL_SHA} FROM generate_series(1, 5000) AS g)"
+    ),
+)
+
+
 async def test_het_plan_van_stap_5(client, mensen, beeld):
     """De SQL van stap 5 begint bij json_each en zoekt de node op met ix_node_num (Keuze 14);
-    geen AUTOMATIC index."""
-    (eva, _), _ = mensen
+    geen AUTOMATIC index. Op PostgreSQL begint hij bij unnest, met een gewone JOIN (de CROSS
+    JOIN is een hint voor SQLite). Daar is bij vier foto's een scan over de foto's van Eva
+    terecht goedkoper; dus zoals het echt is: veel foto's van Eva en de statistiek van ANALYZE
+    (autovacuum doet dat vanzelf, sqlite_stat1 niet), en dan neemt de join ix_node_num (geen
+    cast of ander type dat de index uitzet)."""
+    (eva, eva_id), _ = mensen
     fake, settings = beeld
     await _wereld(client, settings, eva)
     engine = get_engine(settings)
+    pg = engine.dialect.name == "postgresql"
+    merk = "unnest" if pg else "json_each"
     gezien: list[tuple[str, object]] = []
 
     def kijk(conn, cursor, statement, parameters, context, executemany):
-        if "json_each" in statement:
+        if merk in statement:
             gezien.append((statement, parameters))
 
     event.listen(engine.sync_engine, "before_cursor_execute", kijk)
@@ -209,6 +248,17 @@ async def test_het_plan_van_stap_5(client, mensen, beeld):
         event.remove(engine.sync_engine, "before_cursor_execute", kijk)
     assert gezien
     sql, args = gezien[-1]
+    if pg:
+        eva_root = (await root(client, eva))["folder"]["id"]
+        async with engine.begin() as conn:
+            await conn.execute(
+                VEEL_FOTOS, {"parent": uuid.UUID(eva_root), "owner": uuid.UUID(eva_id)}
+            )
+            await conn.exec_driver_sql("ANALYZE node")
+            rows = await conn.exec_driver_sql("EXPLAIN " + sql, args)
+            plan = "\n".join(r[0] for r in rows)
+        assert "ix_node_num" in plan, plan
+        return
     async with engine.connect() as conn:
         for analyze in (False, True):
             if analyze:
@@ -223,11 +273,13 @@ async def test_de_voortgang_telt_alleen_als_er_iets_open_staat(client, mensen, b
     """indexing bij zoeken op beeld (admin.progress): staat er niets meer open, dan None zonder
     te tellen, met één zoekstap in ix_analysis_todo (de GROUP BY over alle foto's van de eigenaar
     kostte bij elke vraag ±9 ms bij 100.000 foto's, test_beeld_perf). Staat er wel iets open, dan
-    het deel dat klaar is, zoals eerst."""
-    (eva, _), _ = mensen
+    het deel dat klaar is, zoals eerst. Op PostgreSQL het plan met veel klare foto's van Eva en
+    ANALYZE, zoals bij test_het_plan_van_stap_5."""
+    (eva, eva_id), _ = mensen
     fake, settings = beeld
     rood, *_ = await _wereld(client, settings, eva)
     engine = get_engine(settings)
+    pg = engine.dialect.name == "postgresql"
     gezien: list[tuple[str, object]] = []
 
     def kijk(conn, cursor, statement, parameters, context, executemany):
@@ -243,8 +295,19 @@ async def test_de_voortgang_telt_alleen_als_er_iets_open_staat(client, mensen, b
     assert len(gezien) == 1, [sql for sql, _ in gezien]
     sql, args = gezien[0]
     assert "GROUP BY" not in sql and "LIMIT" in sql, sql
-    async with engine.connect() as conn:
-        await conn.run_sync(lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",)))
+    if pg:
+        async with engine.begin() as conn:
+            for vraag in VEEL_KLAAR:
+                await conn.execute(vraag, {"owner": uuid.UUID(eva_id)})
+            await conn.exec_driver_sql("ANALYZE analysis")
+            rows = await conn.exec_driver_sql("EXPLAIN " + sql, args)
+            plan = "\n".join(r[0] for r in rows)
+            for vraag in reversed(VEEL_WEG):
+                await conn.execute(vraag)
+        assert "ix_analysis_todo" in plan and "Seq Scan" not in plan, plan
+    else:
+        async with engine.connect() as conn:
+            await conn.run_sync(lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",)))
     # één van de vier weer open: dan telt hij wel, en 3 van de 4 zijn klaar
     sha = await nep.sha_of(settings, rood["id"])
     async with engine.begin() as conn:

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.search import schema
+from tests.search import motoren
 from tests.search.migratie import check_fts
 
 VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "versions"
@@ -46,11 +47,13 @@ async def master(settings, kind: str) -> dict[str, str]:
 
 
 @pytest.mark.anyio
+@motoren.needs_fts
 async def test_triggers_in_de_database_zijn_schema_triggers(settings):
     assert await master(settings, "trigger") == schema.TRIGGERS
 
 
 @pytest.mark.anyio
+@motoren.needs_fts
 async def test_view_en_fts_tabellen_in_de_database(settings):
     assert await master(settings, "view") == {"search_src": schema.VIEW_SQL}
     tables = await master(settings, "table")
@@ -127,12 +130,39 @@ def test_de_plek_voor_de_triggers_van_0011_en_0012():
     assert m.TRIGGERS_NO_FTS == schema.TRIGGERS_NO_FTS_0010
 
 
+def _vorm(sql: str) -> str:
+    """De SQL van een index zonder wat PostgreSQL er zelf bij zet: het schema public, USING
+    btree, de cast ::text bij een vergelijking met een varchar, haakjes en spaties. Wat
+    overblijft, is wat de test wil zien: de kolommen, DESC, UNIQUE en de WHERE."""
+    for los in ("public.", " USING btree", "::text", "(", ")"):
+        sql = sql.replace(los, "")
+    return " ".join(sql.split())
+
+
+async def pg_indexes(settings) -> dict[str, str]:
+    from app.db import get_engine
+
+    async with get_engine(settings).connect() as conn:
+        rows = await conn.exec_driver_sql(
+            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public'"
+        )
+        return {r[0]: r[1] for r in rows.all()}
+
+
 @pytest.mark.anyio
 async def test_indexen_van_0011_en_0012_in_de_database(settings):
     """De SQL zoals sqlite_master hem bewaart: gedeeltelijk en met DESC (dat ziet
-    compare_metadata niet)."""
+    compare_metadata niet). Op PostgreSQL de SQL uit pg_indexes, in dezelfde vorm (_vorm)."""
+    from app.db import get_engine
+
+    verwacht = {**schema.INDEXES_0011, **schema.INDEXES_0012}
+    if get_engine(settings).dialect.name == "postgresql":
+        indexes = await pg_indexes(settings)
+        for name, sql in verwacht.items():
+            assert _vorm(indexes[name]) == _vorm(sql), name
+        return
     indexes = await master(settings, "index")
-    for name, sql in {**schema.INDEXES_0011, **schema.INDEXES_0012}.items():
+    for name, sql in verwacht.items():
         assert indexes[name] == sql, name
 
 
@@ -186,6 +216,7 @@ def test_elke_trigger_op_een_bekende_tabel():
 
 
 @pytest.mark.anyio
+@motoren.needs_fts
 async def test_ocr_van_een_foto_staat_alleen_in_pocr(settings):
     """Review Z0, veilig F3: OCR van een foto is alleen van de eigenaar (Keuze 16, 23, 25a).
     In fts_node heeft hij een eigen kolom pocr, los van de OCR van een PDF in ocr. Een vraag van

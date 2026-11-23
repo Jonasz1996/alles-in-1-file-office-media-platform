@@ -9,7 +9,10 @@
   ook niet na een fout; een symlink als map wordt geweigerd; het opruimwerk haalt een oud
   tijdelijk bestand van een gestopte build weg;
 - hooguit eens per PLATFORM_BEELD_REBUILD_S (5 minuten), en al na SOON_S (10 s) als de eigenaar
-  net zocht en het bestand ouder is dan FRESH_S (30 s).
+  net zocht en het bestand ouder is dan FRESH_S (30 s);
+- 0.8.2 (P4): een bestand met een andere gen in de kop dan built_gen (een andere node maakte het,
+  of de database kwam uit een kopie) is niet bij: een vraag, de job en het opruimwerk maken het
+  opnieuw.
 """
 
 from __future__ import annotations
@@ -22,7 +25,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import beeld_rows
 from app.analysis import VERSIONS, Step
 from app.beeld import jobs as bjobs
 from app.beeld import types as vt
@@ -303,6 +308,110 @@ async def test_is_current(client, mensen, beeld, monkeypatch):
     assert vecfile.is_current(settings.beeld_dir, user)
     monkeypatch.setitem(VERSIONS, Step.EMBED, VERSIONS[Step.EMBED] + 1)
     assert not vecfile.is_current(settings.beeld_dir, user)
+
+
+async def test_een_andere_gen_in_de_kop_maakt_het_bestand_opnieuw(client, mensen, beeld):
+    (eva, eva_id), _ = mensen
+    fake, settings = beeld
+    user = uuid.UUID(eva_id)
+    await nep.beeld_aan(client, eva)
+    await nep.run_jobs(settings)
+    await foto(client, eva, settings, "rood.jpg", "rood")
+    await nep.embed_all(settings)
+    stand = await nep.owner(settings, eva_id)
+    assert stand is not None and stand.built_gen == stand.gen and stand.built_at is not None
+    path = vecfile.path_for(settings.beeld_dir, user)
+    assert lees(path)[0].gen == stand.built_gen
+    assert vecfile.is_current(settings.beeld_dir, user, stand.built_gen)
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
+
+    # De database noemt een later bestand dan dit (gen en built_gen gelijk, dus zonder de kop
+    # zou niets het opnieuw maken)
+    later = stand.gen + 3
+    async with nep.maker(settings)() as db:
+        await db.execute(
+            sa.update(BeeldOwner)
+            .where(BeeldOwner.user_id == user)
+            .values(gen=later, built_gen=later)
+        )
+        await db.execute(sa.delete(Job).where(Job.type == bjobs.VEC))
+        await db.commit()
+    assert vecfile.is_current(settings.beeld_dir, user)  # model en versie kloppen wel
+    assert not vecfile.is_current(settings.beeld_dir, user, later)
+    async with nep.maker(settings)() as db:
+        assert await bjobs._behind(db, user, settings)
+
+    # Een vraag zet de job klaar (en zoekt intussen in het bestand dat er is)
+    r = await nep.zoek(client, eva, "rood")
+    assert r.status_code == 200, r.text
+    async with nep.maker(settings)() as db:
+        assert await db.scalar(sa.select(Job.id).where(Job.type == bjobs.VEC)) is not None
+
+    # De job maakt het opnieuw, met de gen van nu in de kop
+    await bjobs.vec_job(settings, {"user": user.hex})
+    na = await nep.owner(settings, eva_id)
+    assert na is not None and na.built_gen == later
+    assert lees(path)[0].gen == later
+    assert vecfile.is_current(settings.beeld_dir, user, later)
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
+
+
+@pytest.mark.pg
+async def test_een_vector_tijdens_de_bouw_maakt_het_bestand_niet_bij(
+    client, mensen, beeld, monkeypatch
+):
+    """Op PostgreSQL leest build aantal, gen en rijen uit één momentopname (REPEATABLE READ).
+    Komt er tijdens de bouw een vector bij (in een andere transactie, met een hogere gen), dan
+    staat die niet in het bestand en ook niet in de gen van de kop: het bestand loopt dan achter
+    en de job maakt het opnieuw. Eerder las build de nieuwe gen na het aantal, en heette een
+    bestand zonder de nieuwe foto bij (review van golf 2, pg-analyse F5). Alleen PostgreSQL: op
+    SQLite leest build zonder transactie (pysqlite), en daar staat dit nog open (w2.md)."""
+    (eva, eva_id), _ = mensen
+    fake, settings = beeld
+    user = uuid.UUID(eva_id)
+    await nep.beeld_aan(client, eva)
+    await nep.run_jobs(settings)
+    for i, kleur in enumerate(("rood", "groen")):
+        await foto(client, eva, settings, f"{kleur}.jpg", kleur, seed=i)
+    await nep.embed_all(settings)
+    blauw = await foto(client, eva, settings, "blauw.jpg", "blauw", seed=2)
+    async with nep.maker(settings)() as db:
+        num = await db.scalar(sa.select(Node.num).where(Node.id == uuid.UUID(blauw["id"])))
+
+    echt = AsyncSession.scalar
+    tussendoor: list[str] = []
+
+    async def scalar(self, statement, *args, **kwargs):
+        found = await echt(self, statement, *args, **kwargs)
+        if not tussendoor and str(statement).lstrip().startswith("SELECT count(*)"):
+            tussendoor.append("embed")  # één keer: direct na het aantal van build
+            async with nep.maker(settings)() as other:
+                vec = nep.pack(nep.vector(nep.KLEUREN["blauw"]))
+                await beeld_rows.write_embed(other, blauw["sha"], vec)
+                await other.commit()
+        return found
+
+    monkeypatch.setattr(AsyncSession, "scalar", scalar)
+    built = await _bouw(settings, eva_id)
+    monkeypatch.setattr(AsyncSession, "scalar", echt)
+    assert tussendoor == ["embed"]
+    head, nums, _vecs, _shas = lees(built.path)
+    stand = await nep.owner(settings, eva_id)
+    assert stand is not None and stand.built_gen == head.gen
+    async with nep.maker(settings)() as db:
+        behind = await bjobs._behind(db, user, settings)
+    # Wat het bestand ook mist, het mag niet bij heten: de nieuwe foto staat erin, of het loopt
+    # achter
+    assert num in nums or behind, (head, nums, num, stand.gen, stand.built_gen)
+    assert num not in nums and head.count == 2 and stand.gen > stand.built_gen
+    # De job maakt het opnieuw, nu met de nieuwe foto
+    await bjobs.vec_job(settings, {"user": user.hex})
+    head, nums, _vecs, _shas = lees(built.path)
+    assert num in nums and head.count == 3
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
 
 
 # --- hoe vaak (Keuze 76) -----------------------------------------------------------------------

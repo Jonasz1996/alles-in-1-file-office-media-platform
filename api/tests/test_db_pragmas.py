@@ -31,6 +31,8 @@ from tests import test_files
 
 pytestmark = pytest.mark.anyio
 
+PRAGMAS = pytest.mark.sqlite_only("secure_delete en temp_store zijn PRAGMA's van SQLite")
+
 WANT = (1, 2)  # secure_delete aan, temp_store MEMORY
 
 
@@ -63,6 +65,7 @@ def seen(monkeypatch) -> list[tuple[int, int]]:
     return found
 
 
+@PRAGMAS
 async def test_elke_verbinding_uit_de_pool(settings):
     engine = get_engine(settings)
     await engine.dispose()  # alles nieuw, ook de verbindingen van de migratie bij het starten
@@ -79,6 +82,7 @@ async def test_elke_verbinding_uit_de_pool(settings):
             await conn.close()
 
 
+@PRAGMAS
 async def test_elke_checkout_tijdens_echte_verzoeken(client, admin, settings):
     """Elke keer dat de app een verbinding uit de pool haalt (inloggen, een map, uploads, een
     lijst), staan ze aan."""
@@ -104,6 +108,7 @@ async def test_elke_checkout_tijdens_echte_verzoeken(client, admin, settings):
     assert set(found) == {WANT}
 
 
+@PRAGMAS
 async def test_de_verbinding_van_een_migratie_en_van_db_downgrade(settings, monkeypatch):
     found: dict[str, tuple[int, int]] = {}
     up, down = command.upgrade, command.downgrade
@@ -142,6 +147,7 @@ async def test_alembic_zelf(tmp_path, seen):
     assert seen and set(seen) == {WANT}
 
 
+@PRAGMAS
 async def test_de_checkpoints_en_de_controle_van_de_week(settings, seen):
     path = sqlite_path(settings.db_url)
     assert path is not None
@@ -156,6 +162,7 @@ async def test_de_checkpoints_en_de_controle_van_de_week(settings, seen):
     assert len(seen) >= 3 and set(seen) == {WANT}
 
 
+@PRAGMAS
 async def test_ook_na_een_herstart_van_de_pool(settings):
     """dispose() en weer verbinden: de nieuwe verbindingen hebben ze ook."""
     engine = get_engine(settings)

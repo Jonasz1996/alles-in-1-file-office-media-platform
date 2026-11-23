@@ -8,7 +8,9 @@
 - /admin/search precies als 0.8.0: geen blok, faces_allowed en "opnieuw" 501 not_built vóór er
   iets verandert (ook niet de pauze uit dezelfde PATCH);
 - geen haak (grote preview, kopie, personen, de start, het uur) zet een job klaar, niets in de
-  rij analyse, geen bestand onder DATA_ROOT en geen people.changed die 0.8.0 niet gaf.
+  rij analyse, geen bestand onder DATA_ROOT en geen people.changed die 0.8.0 niet gaf;
+- maar niet uit door de URL van de database: de haken zonder Settings (state.settings_for)
+  vinden die van configure ook met een wachtwoord in de URL, zoals op het cluster.
 
 Deze module zet de fixture settings van de conftest terug naar die van 0.8.0 (geen analyse).
 """
@@ -289,3 +291,28 @@ async def test_analyse_aan_zonder_sleutelmap_is_ook_uit(client, tmp_path, fake):
             db._engine.cache_clear()
     assert "faces" not in search_hooks._admin
     assert not (tmp_path / "bestaat-niet").exists()
+
+
+async def test_met_een_wachtwoord_in_de_url_vinden_de_haken_de_settings(tmp_path):
+    """configure onthoudt settings.db_url (een str, met het wachtwoord); settings_for zoekt via de
+    URL van de engine van de sessie. str() van die URL verbergt het wachtwoord (***): zo vond
+    geen haak de Settings, en stond gezichten op PostgreSQL met een wachtwoord (CI, het cluster)
+    stil uit. Geen verbinding nodig: een engine maakt die pas bij het eerste gebruik."""
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import Session
+
+    url = "postgresql+asyncpg://platform:geheim@127.0.0.1:5432/gezichten"
+    s = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8,
+                 database_url=url)  # fmt: skip
+    engine = create_async_engine(url)
+    ander = create_async_engine(url.replace("geheim", "anders"))
+    state.reset()
+    state.configure(s)
+    try:
+        assert state.settings_for(AsyncSession(engine)) is s
+        assert state.settings_for(Session(engine.sync_engine)) is s  # de haak na een flush
+        assert state.settings_for(AsyncSession(ander)) is None
+    finally:
+        state.reset()
+        await engine.dispose()
+        await ander.dispose()

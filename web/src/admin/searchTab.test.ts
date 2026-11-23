@@ -92,6 +92,7 @@ const FACES: AdminFaces = {
   eta_s: null,
   wipe_waiting: false,
   quality: null,
+  keys_missing: 0,
 };
 
 const BEELD: AdminBeeld = {

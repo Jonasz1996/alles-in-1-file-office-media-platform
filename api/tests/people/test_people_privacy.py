@@ -12,6 +12,7 @@ import pytest
 from app.main import app
 from app.people import search as people_search
 from app.search import limits
+from tests.search import motoren
 from tests.search import wereld as W
 
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
@@ -25,7 +26,7 @@ def _aangemeld(monkeypatch):
     monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> str:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")

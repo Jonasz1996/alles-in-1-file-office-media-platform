@@ -32,6 +32,7 @@ from app.search.types import AdminOcr
 from app.security import download_token
 from tests.media import fake_worker
 from tests.ocr import nep
+from tests.search import motoren
 from tests.search.fixtures import pdf_scan
 from tests.test_files import put, root
 
@@ -71,6 +72,7 @@ def test_ocr_staat_standaard_aan(tmp_path):
     assert not ocr_step.runs(uit) and "ocr" not in jobs.active_lanes(uit)
 
 
+@motoren.needs_fts
 async def test_alleen_de_gescande_pagina_s_van_een_pdf(client, admin, aan, tmp_path):
     headers, _ = admin
     data = pdf_scan(WORD)
@@ -277,6 +279,7 @@ async def test_zonder_tesseract_zegt_ook_een_foto_ocr_missing(client, mensen, aa
     assert await ocr_of(other) == ("skip", None)
 
 
+@motoren.needs_fts
 async def test_een_foto_alleen_op_verzoek(client, mensen, aan, tmp_path):
     """Zonder verzoek en zonder "Tekst in foto's herkennen" leest de rij geen foto (skip). Na
     "Tekst herkennen" (POST): de tekst in photo_ocr bij die node, in de index (pocr), en via
@@ -356,6 +359,7 @@ async def test_tekst_in_foto_s_herkennen(client, mensen, aan, tmp_path):
         assert await nep.row(aan, nep.sha(derde)) is None
 
 
+@motoren.needs_fts
 async def test_een_kopie_door_dezelfde_eigenaar_houdt_de_tekst(client, mensen, aan, tmp_path):
     (eva, _), _bram = mensen
     data = nep.photo("kopie")
@@ -425,6 +429,7 @@ async def test_uit_op_beheer_en_alles_opnieuw(client, admin, aan, tmp_path, monk
     monkeypatch.delitem(hooks._admin, "ocr")
 
 
+@motoren.needs_fts
 async def test_een_foto_van_een_ander_krijgt_niets_van_de_pomp(client, mensen, aan, tmp_path):
     """Dezelfde inhoud bij Eva en Bram (elk een eigen upload): Eva vraagt OCR; alleen haar node
     krijgt de tekst (photo_targets), Brams node niets."""

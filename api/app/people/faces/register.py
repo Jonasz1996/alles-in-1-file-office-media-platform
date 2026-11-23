@@ -114,6 +114,7 @@ async def admin_block(db: AsyncSession) -> AdminFaces | None:
         eta_s=meten.eta_s(found_bench, counts["waiting"]),
         wipe_waiting=bool(wipe.WAITING),
         quality=_quality(await meten.stored(db, meten.QUALITY)),
+        keys_missing=len(await crypto.missing_owners(settings, db)),
     )
 
 

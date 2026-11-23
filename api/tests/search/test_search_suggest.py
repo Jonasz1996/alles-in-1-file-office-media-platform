@@ -29,6 +29,7 @@ from app.search import engine as engines
 from app.search import filters, hooks, limits, suggest
 from app.search.query import parse
 from app.search.types import PersonRef, PlaceRef, Suggestions
+from tests.search import motoren
 from tests.search import wereld as W
 from tests.search.test_search_access import _doe, kop
 
@@ -57,6 +58,7 @@ def _namen(found: dict) -> list[str]:
     return [n["name"] for n in found["names"]]
 
 
+@motoren.needs_fts
 async def test_namen_die_je_mag_zien_het_voorvoegsel_eerst(client, settings):
     w = await W.bouw_async(settings)
     eva, bram, dirk = [await kop(client, naam) for naam in ("eva", "bram", "dirk")]
@@ -90,6 +92,7 @@ async def test_namen_die_je_mag_zien_het_voorvoegsel_eerst(client, settings):
     assert len((await _suggest(client, eva, "jpg"))["names"]) == 5
 
 
+@motoren.needs_fts
 async def test_kort_geen_namen_wel_tags(client, settings):
     """Bij één of twee tekens geen namen (geen trigram), wel tags."""
     await W.bouw_async(settings)
@@ -101,6 +104,7 @@ async def test_kort_geen_namen_wel_tags(client, settings):
     assert [t["name"] for t in found["tags"]] == ["Ab-tag"]
 
 
+@motoren.needs_fts
 async def test_de_tweede_controle(client, settings, monkeypatch, caplog, mismatch_verwacht):
     """De deling met Hans verdwijnt nadat de bereiken gemaakt zijn: de naam valt weg, met één
     logregel met alleen het node-id."""
@@ -121,6 +125,7 @@ async def test_de_tweede_controle(client, settings, monkeypatch, caplog, mismatc
     assert regels == [f"search_access_mismatch {w.ids['doc']}"]
 
 
+@motoren.needs_fts
 async def test_de_namen_krijgen_wat_er_van_het_verzoek_over_is(client, settings, monkeypatch):
     """Zonder begin hooguit NAMES_MS; begon suggest() 25 ms eerder, dan nog 40 - 10 - 25 = 5 ms
     (en minder naarmate de stappen ervoor langer duurden)."""
@@ -148,6 +153,7 @@ async def test_de_namen_krijgen_wat_er_van_het_verzoek_over_is(client, settings,
         assert grenzen and grenzen[0] <= 5.0
 
 
+@motoren.needs_fts
 async def test_tags_alleen_de_eigen(client, settings):
     await W.bouw_async(settings)
     eva, bram = await kop(client, "eva"), await kop(client, "bram")
@@ -167,6 +173,7 @@ async def test_tags_alleen_de_eigen(client, settings):
     assert (await _suggest(client, bram, "vakantie"))["tags"] == []
 
 
+@motoren.needs_fts
 async def test_albums_eigen_en_gedeeld(client, settings):
     w = await W.bouw_async(settings)
     album = [{"id": str(w.ids["album"]), "name": "Utrecht"}]
@@ -176,6 +183,7 @@ async def test_albums_eigen_en_gedeeld(client, settings):
         assert (await _suggest(client, await kop(client, naam), "utrecht"))["albums"] == [], naam
 
 
+@motoren.needs_fts
 async def test_personen_en_plaatsen_via_de_haken(client, settings, monkeypatch, caplog):
     await W.bouw_async(settings)
     eva = await kop(client, "eva")
@@ -206,6 +214,7 @@ async def test_personen_en_plaatsen_via_de_haken(client, settings, monkeypatch, 
     assert not any("geheimwoord" in r for r in regels)
 
 
+@motoren.needs_fts
 async def test_te_lang_en_leeg(client, settings):
     await W.bouw_async(settings)
     eva = await kop(client, "eva")

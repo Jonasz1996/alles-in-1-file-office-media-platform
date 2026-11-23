@@ -12,7 +12,10 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
 - photo_geo, per node van de eigenaar: write() schrijft voor elk bestand met deze inhoud, met
   in dezelfde statement de controle van Keuze 25a en 28: een bestand (kind file), van de eigenaar
   van de node, en die eigenaar heeft locatie niet op "uit". dead en taken_at zet de trigger
-  geo_ai van 0010; die schrijven we nooit zelf.
+  geo_ai van 0010; die schrijven we nooit zelf. Op PostgreSQL nemen write() en clear() eerst het
+  slot van de boom (db.lock_tree): per inhoud een statement zet nodes vast (geo_biu, FOR SHARE)
+  of rijen van photo_geo, in een andere volgorde dan een verplaatsing of prullenbak erboven, en
+  dan brak PostgreSQL er een af (40P01; tests/test_pg_photo_rows.py).
 - De job "geo.off" (key per eigenaar): na locatie "uit" alle rijen van die eigenaar weg, in
   stukken van CHUNK (één transactie per stuk: het schrijfslot van SQLite blijft kort). Staat de
   schakelaar intussen weer op "mij", dan stopt hij: dan is wat er staat weer goed, en leest
@@ -64,7 +67,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import dbdialect, jobs
-from app.db import get_engine
+from app.db import get_engine, lock_tree
 from app.geo import tiles
 from app.models import BlobMeta, Job, Node, PhotoGeo, PhotoPref, Setting
 
@@ -208,7 +211,8 @@ async def write(
     """De plek voor elk bestand met deze inhoud (sha, plek, plaats), per node van zijn
     eigenaar, als die eigenaar locatie niet op "uit" heeft (in dezelfde statement, Keuze 28).
     replace: een rij die er al is, krijgt de nieuwe waarden (de inhoud is opnieuw gelezen);
-    anders alleen wat ontbreekt. Eén statement voor alles samen."""
+    anders alleen wat ontbreekt. Eén statement voor alles samen (executemany). Op PostgreSQL
+    eerst het slot van de boom (db.lock_tree), vóór de eerste node van de transactie."""
     params = []
     for sha, spot, place in found:
         x16, y16 = tiles.tile16(spot.lat, spot.lon)
@@ -227,13 +231,16 @@ async def write(
             }
         )
     if params:
+        await lock_tree(db)
         await db.execute(_insert(dbdialect.of(db), replace), params)
 
 
 async def clear(db: AsyncSession, shas: Sequence[str]) -> None:
-    """Geen plek (meer) in deze inhoud: de rijen van elk bestand ermee weg (één statement)."""
+    """Geen plek (meer) in deze inhoud: de rijen van elk bestand ermee weg (één statement,
+    executemany). Op PostgreSQL eerst het slot van de boom, zoals write()."""
     if not shas:
         return
+    await lock_tree(db)
     await db.execute(
         delete(_GEO).where(
             _GEO.c.node_id.in_(select(_NODE.c.id).where(_NODE.c.blob_id == bindparam("g_sha")))
@@ -461,8 +468,15 @@ async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
         return
     async with maker() as db:
         if found:
-            result = await db.execute(_FILL, found)
-            rows_done += max(int(result.rowcount or 0), 0)
+            if dbdialect.is_pg(db):
+                # asyncpg geeft bij executemany geen aantal (rowcount -1): per rij, dan klopt
+                # rows= in geo_places_done ook op PostgreSQL
+                for one in found:
+                    result = await db.execute(_FILL, one)
+                    rows_done += max(int(result.rowcount or 0), 0)
+            else:
+                result = await db.execute(_FILL, found)
+                rows_done += max(int(result.rowcount or 0), 0)
         if len(rows) == PLACES_CHUNK:
             nxt = {"after": rows[-1][0].hex, "built": payload.get("built"), "rows": rows_done,
                    "bouw": bouw}  # fmt: skip

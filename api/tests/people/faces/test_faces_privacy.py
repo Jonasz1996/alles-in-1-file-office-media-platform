@@ -174,6 +174,7 @@ async def test_de_beheerder_ziet_alleen_aantallen(client, settings, wereld):
         "eta_s",
         "faces",
         "failed_by_code",
+        "keys_missing",
         "limits",
         "models",
         "named",
@@ -186,6 +187,7 @@ async def test_de_beheerder_ziet_alleen_aantallen(client, settings, wereld):
     # Eva: 2 + 1 + 1 (de upload van Bram), Bram: 1
     assert (block["users_on"], block["faces"], block["named"]) == (2, 5, 0)
     assert block["queue"]["waiting"] == 0
+    assert block["keys_missing"] == 0  # een aantal eigenaren, nooit wie
     text = json.dumps(block)
     assert not UUID.search(text), text
     assert "@" not in text and "eva" not in text.lower() and "bram" not in text.lower()

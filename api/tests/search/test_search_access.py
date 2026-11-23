@@ -28,6 +28,7 @@ from app.db import get_engine
 from app.models import Node, Share, User
 from app.search import access, engine, limits
 from app.search.access import MAX_OR, ranges_sql, search_ranges
+from tests.search import motoren
 from tests.search import wereld as W
 from tests.search.referentie import Referentie
 from tests.test_files import mkdir, put, root
@@ -113,6 +114,7 @@ def _ids(w: W.Wereld, *sleutels: str) -> set[uuid.UUID]:
     return {w.ids[s] for s in sleutels}
 
 
+@motoren.needs_fts
 async def test_wat_ziet_wie_volgt_de_referentie(client, settings):
     w = await W.bouw_async(settings)
     ref = await _lees(settings)
@@ -130,6 +132,7 @@ async def test_wat_ziet_wie_volgt_de_referentie(client, settings):
             assert gevonden == ref.zoek(w.users["bram"], q, in_=w.ids[map_]).alles, (map_, q)
 
 
+@motoren.needs_fts
 async def test_de_ocr_van_een_foto_is_alleen_van_de_eigenaar(client, settings):
     """Bram, Cas en Gijs zien de foto, maar vinden hem niet op bonwoordy; Eva wel. Brams eigen
     kopie heeft geen OCR-tekst."""
@@ -146,6 +149,7 @@ async def test_de_ocr_van_een_foto_is_alleen_van_de_eigenaar(client, settings):
         assert await alles(client, headers, q=f'"{W.FOTO_OCR_WOORD}"') == [], naam
 
 
+@motoren.needs_fts
 async def test_de_cellen_van_de_matrix(client, settings):
     w = await W.bouw_async(settings)
     zebra = {
@@ -169,6 +173,7 @@ async def test_de_cellen_van_de_matrix(client, settings):
         assert w.ids["album"] not in await alles(client, headers, q="utrecht"), naam
 
 
+@motoren.needs_fts
 async def test_intrekken_en_verhuizen_tellen_meteen(client, settings):
     """De eerstvolgende vraag na het intrekken van de deling met Hans, en na het verplaatsen
     van de map uit Werk: geen treffers meer (de bereiken worden per verzoek gemaakt)."""
@@ -185,6 +190,7 @@ async def test_intrekken_en_verhuizen_tellen_meteen(client, settings):
     assert await alles(client, eva, q=W.VERHUIS_WOORD, **werk) == []
 
 
+@motoren.needs_fts
 async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(
     client, settings, monkeypatch, caplog, mismatch_verwacht
 ):
@@ -211,6 +217,7 @@ async def test_een_deling_ingetrokken_in_hetzelfde_verzoek(
     assert all(W.TEKST_WOORD not in m and "Verslag" not in m for m in caplog.messages)
 
 
+@motoren.needs_fts
 async def test_een_eigen_map_in_de_prullenbak_in_hetzelfde_verzoek(
     client, admin, settings, monkeypatch, caplog, mismatch_verwacht
 ):
@@ -246,6 +253,7 @@ async def test_een_eigen_map_in_de_prullenbak_in_hetzelfde_verzoek(
     assert all("kastpapier" not in m for m in caplog.messages)
 
 
+@motoren.needs_fts
 async def test_de_controle_en_het_pad_in_een_query(client, admin, settings):
     """Review golf 1, H2: voor eigen treffers komen de tweede controle en het pad uit één
     recursieve query (de keten omhoog), niet uit twee; het pad loopt van de hoofdmap tot de map
@@ -349,6 +357,7 @@ def _binnen(conn, map_id: uuid.UUID) -> uuid.UUID:
 
 
 @pytest.mark.parametrize("wortels", [64, 65, 1000])
+@motoren.needs_fts
 async def test_veel_wortels(client, settings, wortels):
     """Bram: zijn eigen hoofdmap, Werk en n - 2 losse mappen van Eva. Tot en met 64 een OR,
     daarboven json_each; hij vindt precies de gedeelde mappen. Met 1.000 wortels en 1.000
@@ -380,6 +389,7 @@ async def test_veel_wortels(client, settings, wortels):
     assert [h["node"]["id"] for h in r.json()["results"]] == [str(binnen)]
 
 
+@motoren.needs_fts
 async def test_fien_ziet_niets_na_het_verlopen(client, settings):
     """De deling met Fien verliep gisteren (DAG - 1 dag): zoeken telt hem niet."""
     w = await W.bouw_async(settings)
