@@ -28,7 +28,4 @@ export default {
   media_provider_unavailable: { en: "The provider cannot be reached" },
   media_provider_rate: { en: "The provider is slowing down requests; try again soon" },
   media_playlist_full: { en: "A playlist has at most {max} tracks" },
-  media_profile_locked: { en: "Profiles cannot be managed from this profile" },
-  media_profile_limit: { en: "At most 8 profiles per account" },
-  media_profile_pin: { en: "The PIN is not correct" },
 } satisfies Record<string, { en: string }>;
