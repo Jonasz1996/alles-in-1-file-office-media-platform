@@ -1502,8 +1502,8 @@ Van buiten bereikbaar maken:
      poort 80, en http stuurt door naar https zonder poortnummer (dus 443).
   2. Vul op /beheer bij HTTPS je domein in; het certificaat komt vanzelf.
 
-Wachtwoord of 2FA kwijt (ook de enige beheerder): tijdelijk wachtwoord, 1 uur geldig:
-  cd $SRC/infra/single && docker compose --env-file $ENV_FILE exec platform python -m app.cli reset-account <e-mailadres>
+2FA kwijt en je bent de enige beheerder:
+  cd $SRC/infra/single && docker compose --env-file $ENV_FILE exec platform python -m app.cli reset-2fa <e-mailadres>
 
 KLAAR
   if [ "$OFFICE_ON" = 1 ]; then
