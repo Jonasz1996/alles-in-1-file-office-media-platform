@@ -27,7 +27,8 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
       - name: Debug-APK
-        run: ./gradlew --no-daemon assembleDebug
+        # Maven Central geeft soms 429 (te veel verzoeken): dan na een minuut nog eens
+        run: ./gradlew --no-daemon assembleDebug || (sleep 60 && ./gradlew --no-daemon assembleDebug)
       - name: Release-APK (alleen met de sleutel in de geheimen van het repo)
         if: ${{ env.KEYSTORE_B64 != '' }}
         env:
