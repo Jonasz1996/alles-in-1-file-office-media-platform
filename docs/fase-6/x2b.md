@@ -226,6 +226,8 @@ onder het slot).
 3. **Laag 4 is niet gebouwd** (`test_faces_quality.py`, `fotos.lock`, `maak_set.py`): Vraag 8
    staat op nee. De kwaliteit meet `app.cli analyse-kwaliteit` op de LXC, tegen de eigen ja en nee;
    tot dan staat in de README en op `/beheer` "niet gemeten", en zijn 0,50 en 0,45 voorlopig.
+   [17 november 2026: Vraag 8 is nee (besloten: standaard, Jonas 2026-11-17), dus laag 4 komt niet; de twee eisen
+   zonder gereedschap blijven bij besluit niet gemeten.]
 4. **"Wat schuift" 3 en 4 zijn niet gebouwd**: voorstellen om personen samen te voegen, en een
    uitsnede van een gezicht als omslag van een persoon. 1 (de groepen "Wie is dit?") en 2 (de knop
    "Niet benoemde gezichten wissen") zijn er wel.
@@ -286,16 +288,20 @@ onder het slot).
    naar voor gezichten (±0,8 kB per gezicht; `/beheer` toont de ruimte). X3b zet die controle
    voor beeld neer; gezichten kunnen er bij I2 een regel bij krijgen.~~ [I2: gedaan in P1
    (`e0a271e`): `gezichten_ruimte` waarschuwt onder 105 MB vrij op `DATA_ROOT`, nooit fataal.]
-8. **Niet in een e2e** (toetsenbord-x2.md): V, Spatie om te deselecteren, Home en End, "Meer
-   laden", "Niet benoemde gezichten wissen", "Misschien ook Anna", "?" met Ja, Nee en Niet tonen
+8. **Niet in een e2e** (toetsenbord-x2.md): ~~V, Spatie om te deselecteren, Home en End, "Meer
+   laden", "Niet benoemde gezichten wissen",~~ "Misschien ook Anna", "?" met Ja, Nee en Niet tonen
    in de viewer, "Opnieuw zoeken" en "Mislukte opnieuw". De toetsen toetst `faces.test.ts`, de API
-   erachter `tests/people/faces/`.
-9. **Samenvoegen met X3b**: allebei veranderen `ci.yml` (dezelfde regel `ANALYSE_TESTS` rond
+   erachter `tests/people/faces/`. [0.8.2: de doorgehaalde staan in
+   `test_wie_is_dit_met_v_spatie_home_end_meer_laden_en_wissen`; zie
+   [i3/fase6-rest.md](i3/fase6-rest.md).]
+9. ~~**Samenvoegen met X3b**: allebei veranderen `ci.yml` (dezelfde regel `ANALYSE_TESTS` rond
    regel 128: de som van beide), `docs/runbooks/analyse.md` ("Wat er nog niet is": naast elkaar)
-   en `infra/single/README.md`; en `server.BUILT`/`child.handlers()` (G5-C4: X3b eerst, dan X2b).
-10. **`node_modules` is gedeeld** (een symlink naar de hoofdrepo, ook voor X3b): het budget leest
+   en `infra/single/README.md`; en `server.BUILT`/`child.handlers()` (G5-C4: X3b eerst, dan X2b).~~
+   Gedaan in golf 6 (`aa21e37` X3b, dan `dcafcea` X2b); zie "De samenvoeging (golf 6)".
+10. ~~**`node_modules` is gedeeld** (een symlink naar de hoofdrepo, ook voor X3b): het budget leest
     `.tmp/platform-chunks.json` van de laatste build; draai `npm run budget` direct na de eigen
-    build.
+    build.~~ Voorbij met golf 6: de worktrees van X2b en X3b zijn samengevoegd (punt 9). De regel
+    zelf geldt nog voor elke worktree met een gedeelde `node_modules`.
 
 ## Klaar als
 

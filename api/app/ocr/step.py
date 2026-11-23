@@ -33,8 +33,10 @@ PLATFORM_OCR_ENABLED (jobs.active_lanes), één opdracht tegelijk, om de beurt p
   de index wacht zo hooguit de pagina die OCR nog leest.
 - **"Tekst in foto's herkennen" aan** (prefs.register_ocr_photos): de job ocr.photos zet de foto's
   van die eigenaar zonder tekst in de rij, per PHOTOS_CHUNK. Bij het starten ook, voor iedereen met
-  het aan (een foto met een inhoud die er al was, meldt files.add_ref niet). Uit: de rij leest
-  geen foto meer die niemand anders vroeg; de tekst die er is, blijft bij de eigen node.
+  het aan. Een nieuwe foto (search.hooks.blob_added) gaat meteen in de rij, en sinds 0.8.2 ook
+  een upload van een inhoud die er al was (search.hooks.blob_reused, X1 Open 4), maar alleen als
+  een foto van die eigenaar met die inhoud nog geen tekst heeft (store.owner_wants). Uit: de rij
+  leest geen foto meer die niemand anders vroeg; de tekst die er is, blijft bij de eigen node.
 
 Wat er nooit in een log of fout komt: de tekst van een pagina of foto, en de naam van een bestand
 (alleen de eerste 12 tekens van de sha).
@@ -536,17 +538,32 @@ async def photos_job(settings: Settings, payload: dict[str, Any]) -> None:
 def on_blob_added(sha: str, owner: uuid.UUID | None) -> None:
     """search.hooks.blob_added: een nieuwe foto van een eigenaar met "Tekst in foto's
     herkennen" aan gaat in de rij (een PDF zet analysis.on_blob_added al klaar)."""
+    _photo_task(sha, owner, reused=False)
+
+
+def on_blob_reused(sha: str, owner: uuid.UUID | None) -> None:
+    """search.hooks.blob_reused: een upload van een inhoud die er al was. Een foto gaat in de rij
+    als de eigenaar "Tekst in foto's herkennen" aan heeft en een foto van hem met deze inhoud nog
+    geen tekst heeft (X1 Open 4). Een PDF heeft zijn tekst al (ocr_page hoort bij de inhoud)."""
+    _photo_task(sha, owner, reused=True)
+
+
+def _photo_task(sha: str, owner: uuid.UUID | None, *, reused: bool) -> None:
     if owner is None:
         return
     settings = analysis._live_settings()
     if settings is None:
         return
-    task = asyncio.get_running_loop().create_task(_new_photo(settings, sha, owner), name="ocr")
+    task = asyncio.get_running_loop().create_task(
+        _new_photo(settings, sha, owner, reused=reused), name="ocr"
+    )
     analysis._tasks.add(task)
     task.add_done_callback(analysis._tasks.discard)
 
 
-async def _new_photo(settings: Settings, sha: str, owner: uuid.UUID) -> None:
+async def _new_photo(
+    settings: Settings, sha: str, owner: uuid.UUID, *, reused: bool = False
+) -> None:
     try:
         async with _maker(settings)() as db:
             mime = await db.scalar(select(Blob.mime).where(Blob.sha256 == sha))
@@ -554,6 +571,8 @@ async def _new_photo(settings: Settings, sha: str, owner: uuid.UUID) -> None:
                 return
             on = await db.scalar(select(PhotoPref.ocr_photos).where(PhotoPref.user_id == owner))
             if not on:
+                return
+            if reused and not await store.owner_wants(db, owner, sha):
                 return
             for attempt in (1, 2):
                 try:
@@ -696,6 +715,7 @@ def register() -> None:
     jobs.register(PHOTOS, photos_job, lane=LANE, timeout=600.0)
     search_hooks.register_blob_added(analysis.on_blob_added)
     search_hooks.register_blob_added(on_blob_added)
+    search_hooks.register_blob_reused(on_blob_reused)
     search_hooks.register_photo_copy(on_photo_copy)
     search_hooks.register_backfill(analysis.start_backfill)
     search_hooks.register_backfill(on_start)

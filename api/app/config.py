@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # met Pebble: eigen directory-URL en het CA-bestand om die te vertrouwen.
     acme_directory: str = ""
     acme_ca_file: str = ""
+    # Een reverse proxy ervoor (bijv. Nginx Proxy Manager die het certificaat doet): de adressen
+    # of netwerken waarvan de app X-Forwarded-For en -Proto gelooft, komma-gescheiden
+    # (192.168.102.244,192.168.102.0/24). Leeg = geen proxy: die koppen nooit geloven.
+    trusted_proxies: str = ""
 
     # Tokens
     jwt_secret: str = ""

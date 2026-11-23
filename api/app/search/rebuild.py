@@ -63,7 +63,9 @@ BATCH = 100
 
 async def _has_fts(conn: AsyncConnection) -> bool:
     if conn.dialect.name != "sqlite":
-        return False  # PostgreSQL heeft (nog) geen FTS-index: die komt met 0014 (P5)
+        # PostgreSQL: de tabel fts_node van 0014 (P5)
+        found = await conn.exec_driver_sql("SELECT to_regclass('fts_node') IS NOT NULL")
+        return bool(found.scalar())
     found = await conn.exec_driver_sql(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'fts_node'"
     )
@@ -81,6 +83,10 @@ async def _start(conn: AsyncConnection, what: str) -> None:
         {"at": datetime.now(UTC).isoformat(), "what": what},
     )
     if started.first() is not None:
+        if conn.dialect.name != "sqlite":
+            # PostgreSQL: fts_name is een view op node; alleen fts_node leeg
+            await conn.exec_driver_sql("DELETE FROM fts_node")
+            return
         await conn.exec_driver_sql("INSERT INTO fts_node(fts_node) VALUES ('delete-all')")
         await conn.exec_driver_sql("INSERT INTO fts_name(fts_name) VALUES ('delete-all')")
 
@@ -108,6 +114,8 @@ _NEXT = (
 
 
 async def _length(conn: AsyncConnection) -> str:
+    if conn.dialect.name != "sqlite":
+        return "octet_length"
     version = (await conn.exec_driver_sql("SELECT sqlite_version()")).scalar() or "0"
     parts = tuple(int(p) for p in version.split(".")[:2])
     return "octet_length" if parts >= (3, 43) else "length"
@@ -123,10 +131,18 @@ async def _chunk(conn: AsyncConnection, chunk: int, budget: int = CHUNK_TEXT) ->
     ).scalar()
     if cur is None:  # een andere herbouw maakte hem af
         return 0, True
-    last = (await conn.exec_driver_sql("SELECT next - 1 FROM search_seq WHERE id = 1")).scalar()
-    fit, first, top, n = (
+    pg = conn.dialect.name != "sqlite"
+    last = (
         await conn.exec_driver_sql(
-            _NEXT.format(n=await _length(conn)), {"cur": cur, "chunk": chunk, "budget": budget}
+            "SELECT coalesce(max(num), 0) FROM node"
+            if pg
+            else "SELECT next - 1 FROM search_seq WHERE id = 1"
+        )
+    ).scalar()
+    fit, first, top, n = (
+        await conn.execute(
+            text(_NEXT.format(n=await _length(conn))),
+            {"cur": cur, "chunk": chunk, "budget": budget},
         )
     ).one()
     if n and (fit is None or fit < top):  # de tekst begrenst dit stuk
@@ -138,6 +154,19 @@ async def _chunk(conn: AsyncConnection, chunk: int, budget: int = CHUNK_TEXT) ->
     done = hi is None or hi >= last
     if done:
         hi = last
+    if pg:
+        # fts_refresh met force: deze nums staan nog boven de cursor
+        await conn.execute(
+            text(
+                "SELECT fts_refresh(ARRAY(SELECT num FROM node WHERE num > :lo AND num <= :hi), "
+                "true)"
+            ),
+            {"lo": cur, "hi": hi},
+        )
+        await conn.execute(
+            text("UPDATE search_state SET cursor = :c WHERE id = 1"), {"c": None if done else hi}
+        )
+        return hi, done
     await conn.exec_driver_sql(
         "INSERT INTO fts_node(rowid, name, extra, body, ocr, meta, pocr) "
         "SELECT num, name, extra, body, ocr, meta, pocr FROM search_src "
@@ -256,12 +285,16 @@ class Restored:
 async def restore_triggers(engine: AsyncEngine) -> Restored:
     """De triggers zoals schema.py, wat ze bijhouden opnieuw, en het begin van een herbouw; alles
     in één transactie. Daarna rebuild(). Op PostgreSQL: wat de triggers van 0013 bijhouden
-    opnieuw, met fase6_fill()."""
+    opnieuw, met fase6_fill(), en met de index van 0014 een herbouw."""
     out = Restored()
     async with engine.begin() as conn:
         if conn.dialect.name != "sqlite":
             found = json.loads((await conn.exec_driver_sql("SELECT fase6_fill()::text")).scalar())
             out.numbered, out.tree, out.photo_rows = found["num"], found["tree"], found["photo_geo"]
+            if await _has_fts(conn):
+                # De index van 0014 ook opnieuw, zoals op SQLite
+                await conn.exec_driver_sql("UPDATE search_state SET cursor = NULL WHERE id = 1")
+                await _start(conn, "triggers")
             return out
         fts = await _has_fts(conn)
         want = schema.TRIGGERS if fts else schema.TRIGGERS_NO_FTS
@@ -360,6 +393,55 @@ def _memory_sizes(
         con.close()
 
 
+async def _check_pg(
+    conn: AsyncConnection, out: Checked, rng: random.Random, sample: int, full: bool
+) -> Checked:
+    """check() op PostgreSQL (0014): een steekproef van nums opnieuw met fts_refresh in een
+    transactie die terugrolt, en vergelijken met wat er stond. fts_name is daar een view op
+    node: niets te controleren. Geen integrity-check van FTS5; de spoken (rijen zonder node)
+    wel."""
+    nums = [row[0] for row in await conn.exec_driver_sql("SELECT num FROM node")]
+    if None in nums:
+        out.bad.append((0, f"{nums.count(None)} node(s) zonder num"))
+        nums = [n for n in nums if n is not None]
+    picked = sorted(nums) if full else sorted(rng.sample(nums, min(sample, len(nums))))
+    out.sampled = len(picked)
+    ghosts = await conn.exec_driver_sql(
+        "SELECT f.rowid FROM fts_node f LEFT JOIN node n ON n.num = f.rowid "
+        "WHERE n.id IS NULL LIMIT 100"
+    )
+    out.bad += [(row[0], "fts_node: geen node") for row in ghosts]
+    trans = await conn.begin_nested() if conn.in_transaction() else await conn.begin()
+    try:
+        for start in range(0, len(picked), BATCH):
+            part = picked[start : start + BATCH]
+            was = {
+                row[0]: (row[1], row[2])
+                for row in await conn.execute(
+                    text(
+                        "SELECT rowid, tsv::text, otsv::text FROM fts_node WHERE rowid = ANY(:nums)"
+                    ),
+                    {"nums": part},
+                )
+            }
+            await conn.execute(text("SELECT fts_refresh(:nums, true)"), {"nums": part})
+            now_ = {
+                row[0]: (row[1], row[2])
+                for row in await conn.execute(
+                    text(
+                        "SELECT rowid, tsv::text, otsv::text FROM fts_node WHERE rowid = ANY(:nums)"
+                    ),
+                    {"nums": part},
+                )
+            }
+            for num in part:
+                if was.get(num) != now_.get(num):
+                    out.bad.append((num, "fts_node"))
+    finally:
+        await trans.rollback()
+    return out
+
+
 async def check(
     engine: AsyncEngine, *, sample: int = 1000, full: bool = False, seed: int | None = None
 ) -> Checked:
@@ -373,6 +455,8 @@ async def check(
         ).scalar() is not None:
             out.rebuilding = True
             return out
+        if conn.dialect.name != "sqlite":
+            return await _check_pg(conn, out, rng, sample, full)
         nums = [row[0] for row in await conn.exec_driver_sql("SELECT num FROM node")]
         if None in nums:
             out.bad.append((0, f"{nums.count(None)} node(s) zonder num"))

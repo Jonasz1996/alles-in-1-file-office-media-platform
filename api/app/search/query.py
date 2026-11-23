@@ -59,9 +59,32 @@ class Parsed:
     terms: tuple[tuple[str, ...], ...] = ()
     prefix: bool = False
 
+    def tsquery(self) -> str:
+        """Dezelfde vraag voor PostgreSQL (to_tsquery('simple', …), 0.8.2 P5): elke term als
+        woord of frase (<->), met AND (&) aan elkaar, het laatste woord als voorvoegsel (:*). De
+        woorden zijn de naam-vorm (fold()), zoals cf_fold() de index vult; elk woord tussen
+        enkele aanhalingstekens (het zijn alleen letters en cijfers)."""
+        out = []
+        last = len(self.terms) - 1
+        for i, term in enumerate(self.terms):
+            words = [_tsword(w) for w in term if _tsword(w)]
+            if not words:
+                continue
+            if self.prefix and i == last:
+                words[-1] += ":*"
+            out.append(words[0] if len(words) == 1 else "(" + " <-> ".join(words) + ")")
+        return " & ".join(out)
+
     def match_not_pocr(self) -> str:
         """Dezelfde uitdrukking, zonder de kolom pocr: voor nodes van een ander."""
         return COLUMNS_NOT_POCR + " : (" + self.match + ")"
+
+
+def _tsword(word: str) -> str:
+    """Een woord voor to_tsquery: tussen enkele aanhalingstekens; wat geen letter of cijfer is
+    (kan niet uit parse() komen) eruit."""
+    clean = "".join(c for c in word if c.isalnum())
+    return "'" + clean + "'" if clean else ""
 
 
 def _text_form(word: str) -> str:

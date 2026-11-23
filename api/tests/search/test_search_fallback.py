@@ -13,6 +13,7 @@ suggesties leeg en geen fout. En LikeFallback bladert met offset.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy as sa
@@ -48,9 +49,9 @@ async def _vul(client, headers, settings) -> None:
             await conn.execute(
                 text(
                     "INSERT INTO blob_text (blob_sha, body, ocr, meta, truncated, updated_at) "
-                    "VALUES (:sha, 'de kwartaalcijfers van maart', '', '', 0, '2026-11-03')"
-                ),
-                {"sha": sha},
+                    "VALUES (:sha, 'de kwartaalcijfers van maart', '', '', 0, :at)"
+                ).bindparams(sa.bindparam("at", type_=sa.DateTime(timezone=True))),
+                {"sha": sha, "at": datetime(2026, 11, 3, tzinfo=UTC)},
             )
 
 

@@ -15,14 +15,14 @@ Fase 11 staat nu op `claude/project-thread-cp46r0`, fase 6 (cluster) op de clust
 de update:
 
 1. Fase 11 samenvoegen met de branch van 0.8.2.
-2. Migraties in één lijn zetten: `0016_mediabeheer` krijgt als `down_revision` de laatste head
-   (0014 of 0015, wat er dan het laatst is). Tests die de head bij naam noemen, mee aanpassen.
+2. Migraties in één lijn: gedaan voor 0014 (23-11, `0016_mediabeheer` volgt op
+   `0014_zoekindex_postgres`). Komt 0015 (Nextcloud) erbij, dan gaat `down_revision` daarnaar.
 3. Versie ophogen (0.9.0: mediabeheer) en de CI groen, ook de tests op PostgreSQL.
 
 Migratie 0016 maakt tien nieuwe tabellen (arr_wanted, arr_grab, arr_subtitle,
 media_sub_offset, arr_request, arr_upscale, media_facts, media_profile, media_intro,
 arr_cleanup). Ze draait vanzelf bij de start van de app, ook op PostgreSQL. Ze raakt geen
-bestaande tabel, dus "Platform terug" naar 0.8.2 werkt na een downgrade naar de vorige head.
+bestaande tabel, dus "Platform terug" naar 0.8.2 werkt na een downgrade naar 0014.
 
 ## 2. Eerst: een dump van de database
 

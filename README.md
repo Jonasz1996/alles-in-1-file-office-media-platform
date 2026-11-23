@@ -98,12 +98,12 @@ Dit is niet door een jurist nagekeken. Meer, ook over wat er bewaard en gewist w
 Alles staat in [docs/fase-6/README.md](docs/fase-6/README.md); de belangrijkste:
 
 - **Hoe goed gezichten herkend worden, is niet gemeten.** De tests hebben geen set met echte
-  gezichten (Vraag 8 staat op nee), dus de drempels zijn voorlopig. Meten doe je op je eigen
-  server, met je eigen ja en nee (`analyse-kwaliteit`, in
+  gezichten (Vraag 8 is nee, besloten: standaard, Jonas 2026-11-17), dus de drempels zijn voorlopig. Meten
+  doe je op je eigen server, met je eigen ja en nee (`analyse-kwaliteit`, in
   [docs/runbooks/gezichten.md](docs/runbooks/gezichten.md)). Twee eisen uit het ontwerp hebben
   geen gereedschap: "op ≥ 95% van de portretten het goede gezicht gevonden" en "de gekozen
-  kleurvolgorde ≥ 0,05 beter dan de andere". Die staan op "niet gemeten, geen gereedschap" tot er
-  een antwoord is op Vraag 8.
+  kleurvolgorde ≥ 0,05 beter dan de andere". Die blijven bij besluit "niet gemeten, geen
+  gereedschap".
 - **Zoeken op beeld vindt bij een paar woorden weinig:** 'bergen' en 'boot' (de woorden 'berg' en
   'bootje' wel). **Meer zoals deze** haalde in CI 0,475, waar het ontwerp 0,7 wilde. Je koos op
   16 november 2026 om het toch uit te brengen (Keuze 85). De uitleg bij de schakelaar zegt wat je
@@ -121,8 +121,8 @@ Alles staat in [docs/fase-6/README.md](docs/fase-6/README.md); de belangrijkste:
   er was niets te herkennen of te groeperen; hoe dat onder belasting gaat, zie je pas op je eigen
   foto's.
 - **Zoeken op beeld terwijl de gezichtenscan loopt** kan trager zijn dan de grens: in de test
-  was een vraag dan p95 290 ms (de grens van 250 ms geldt zonder de scan ernaast). Een vraag aan
-  jou in [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#vragen-voor-jonas).
+  was een vraag dan p95 290 ms (de grens van 250 ms geldt zonder de scan ernaast). Zo blijft het
+  (besloten: standaard, Jonas 2026-11-17; [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#vragen-voor-jonas)).
 - **Na een herstart van de container** laadt zoeken op beeld zijn model één keer opnieuw
   (±1,7 s), bij het opwarmen: zodra iemand op `/zoeken` zoeken op beeld kiest of het infopaneel
   van een eigen foto opent, of na het bouwen van de beeldindex. Dat gebeurt dus niet bij je eerste
@@ -132,8 +132,9 @@ Alles staat in [docs/fase-6/README.md](docs/fase-6/README.md); de belangrijkste:
 - **In Office kan de knop Sluiten even verspringen** als een andere bewerker weggaat (±80 px);
   klik je precies dan, dan mis je de knop. De app is daarvoor niet veranderd.
 - **Voor wie verder bouwt:** het stuk web-app van gezichten heeft nog 36 B ruimte in zijn
-  budget (11.964 van 12.000 B), en waarom de test met 10.000 namen in de volle suite soms net
-  boven 0,5 s kwam, is niet bewezen (de grens bleef 0,5 s). Beide staan in
+  budget (11.964 van 12.000 B; de grens blijft, besloten: standaard, Jonas 2026-11-17), en waarom de test met
+  10.000 namen in de volle suite soms net boven 0,5 s kwam, is niet bewezen (de grens bleef
+  0,5 s). Beide staan in
   [docs/fase-6/integratie-2.md](docs/fase-6/integratie-2.md#bekende-grenzen).
 - **Reservekopieën van het platform bevatten geen gezichten.** Na het terugzetten van zo'n kopie
   begint de scan opnieuw. De sleutels van de gezichten staan in `/opt/platform/sleutels/gezichten`,
@@ -188,15 +189,17 @@ Deze gelden ook nog in 0.8.1. Alles staat in [docs/fase-6/README.md](docs/fase-6
 belangrijkste:
 
 - **"Niet gelijk" op `/dubbel` kan niet ongedaan:** die groep komt niet meer terug.
-- **Herinneringen per map verbergen** kan in de web-app nog niet; per dag en per persoon wel.
+- ~~**Herinneringen per map verbergen** kan in de web-app nog niet; per dag en per persoon wel.~~
+  Sinds 0.8.2 kan het: **Een map verbergen…** boven de herinneringen op `/fotos`.
 - **Land en Plaats in de filters op `/fotos`** kennen hooguit 500 plaatsen (die met de meeste
   foto's eerst); wie meer plaatsen heeft, mist de kleinste plaatsen en soms een land. **Camera**
   is een tekstveld.
 - **OCR:** gescande PDF's leest het vanzelf, foto's alleen met **Tekst herkennen** of als je onder
   Account → Foto's "Tekst in foto's herkennen" aanzet. Een volle liggende scan kost ±160 minuten
-  per 1.000 pagina's (rechte scans ±60). Upload je een foto die er al was (dezelfde inhoud), dan
+  per 1.000 pagina's (rechte scans ±60). ~~Upload je een foto die er al was (dezelfde inhoud), dan
   leest het die pas na de volgende start. Wie een PDF alleen mag lezen, ziet niet of OCR klaar is;
-  de tekst vindt hij wel. OCR werkt alleen met media aan (de standaard).
+  de tekst vindt hij wel.~~ Sinds 0.8.2 leest het zo'n foto meteen, en ziet wie een PDF alleen mag
+  lezen de stand van OCR (zonder knop). OCR werkt alleen met media aan (de standaard).
 - **De kaart van de hele wereld met een filter op soort, map, camera, persoon of tag** kan tot een
   halve seconde duren; met alleen datum, plaats of land blijft hij onder 150 ms.
 - **Meer dan 64 gedeelde mappen, of een filter op foto's met alleen een datum,** kan een half
@@ -316,7 +319,7 @@ analyse uit.
 | 3 | Web-app | klaar (versie 0.5.0): bestandsbrowser voor grote mappen, mapuploads, viewers, fototijdlijn en albums, beheer, account, delen, prullenbak en versies, Nederlands en Engels, PWA, zie [docs/fase-3](docs/fase-3/README.md) |
 | 4 | Office | klaar (versie 0.6.0): docx, xlsx en pptx samen bewerken in de browser met OnlyOffice als tweede container (standaard aan, `OFFICE=uit` zet het uit), opslaan als nieuwe versie, PDF-voorbeelden en Downloaden als PDF, Nieuw document en het tabblad Office op `/beheer`, zie [docs/fase-4](docs/fase-4/README.md) |
 | 5 | Media en streaming | klaar in de sandbox (versie 0.7.0); het laatste bewijs is de meting op de LXC: bibliotheken met scanner en import, direct play, remux en omzetten in een afgeschermde worker (alleen de CPU), ondertitels, sprites en hoofdstukken, een eigen speler, kijkvoortgang tussen apparaten, muziek met gapless, metadata van TMDB en MusicBrainz (uit tot je een sleutel geeft) en het tabblad Media op `/beheer`, zie [docs/fase-5](docs/fase-5/README.md) |
-| 6 | Zoeken en foto's | gebouwd (versie 0.8.1); het laatste bewijs is de lijst op de LXC: zoeken in de inhoud van documenten en scans (OCR), plaatsnamen en een kaart zonder kaartdienst van buiten, duplicaten, personen, herinneringen, slimme albums en filters, gezichten vanzelf en zoeken op beeld met **Meer zoals deze** (per gebruiker aan te zetten, in een afgeschermde container), `/over` met de bronnen, en het tabblad Zoeken en foto's op `/beheer`, zie [docs/fase-6](docs/fase-6/README.md) |
+| 6 | Zoeken en foto's | gebouwd (versie 0.8.1); alle keuzes besloten: standaard, Jonas 2026-11-17; het laatste bewijs is de lijst op de LXC: zoeken in de inhoud van documenten en scans (OCR), plaatsnamen en een kaart zonder kaartdienst van buiten, duplicaten, personen, herinneringen, slimme albums en filters, gezichten vanzelf en zoeken op beeld met **Meer zoals deze** (per gebruiker aan te zetten, in een afgeschermde container), `/over` met de bronnen, en het tabblad Zoeken en foto's op `/beheer`, zie [docs/fase-6](docs/fase-6/README.md) |
 | 7 | Sync, delen en integraties | |
 | 8 | Hardening en productie | |
 | 9 | Apps (LG TV, Windows, Android) | |

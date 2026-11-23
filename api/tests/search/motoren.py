@@ -29,12 +29,15 @@ from tests.search.migratie import check_fts
 
 PG = bool(os.environ.get("PLATFORM_TEST_DATABASE_URL"))
 # Golf 3 (P5): True zodra PostgreSQL een eigen zoekindex heeft (0014)
-PG_FTS = False
+PG_FTS = True
 FTS = not PG or PG_FTS
 REASON = "de FTS-index; die heeft PostgreSQL pas met golf 3 (P5, migratie 0014)"
 DEFAULT = "fts" if FTS else "like"
 
 needs_fts = pytest.mark.skipif(not FTS, reason=REASON)
+# Een test van de FTS5-index van SQLite zelf (sqlite_master, FTS5-SQL, de controle in een eigen
+# draad met query_only). Wat die op PostgreSQL (0014) vastlegt: tests/search/test_zoekindex_pg.py
+fts5 = pytest.mark.sqlite_only("de FTS5-index van SQLite; PostgreSQL: test_zoekindex_pg.py")
 
 
 def params(*names: str) -> list[str]:

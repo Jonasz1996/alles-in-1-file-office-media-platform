@@ -342,8 +342,8 @@ binnen ±0,2 s zijn: de speler telt het haperen pas bij zijn tweede tik. Dat is 
 
 Een browser telt dit niet: `web/src/player/mse.ts` telt een wachten binnen 2 s na `seeked` niet als
 haperen. De virtuele speler is strenger, zoals fase 5 bedoelt ("zonder haperen is hier strenger dan
-in een browser", [bouwontwerp](../fase-5/bouwontwerp.md) §4.7). Wat de poort telt, blijft zo tot
-Jonas kiest.
+in een browser", [bouwontwerp](../fase-5/bouwontwerp.md) §4.7). Wat de poort telt, blijft zo
+(besloten: standaard, Jonas 2026-11-17: tellen zoals nu).
 
 Voor M7d betekent dit: er is één sprong per speler per stap, dus hooguit 7 van de 26 keer haperen
 kunnen zo komen. De rest (minstens 19 keer, minstens 9,5 van de 16,3 s) is te weinig productie na de
@@ -387,8 +387,9 @@ opnieuw, en ±1 op 4 sprongen landt in het laatste stukje van een segment. In ee
 runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %, zonder dat de
 server iets fout doet; dat M7e drie keer goed ging, is dus deels geluk. CI merkt het niet: daar
 draait `zoek_samen --kort` alleen fase b (geen sprong), en de test van de belastingtest springt
-nooit zo dicht bij het eind van een segment. Wat de meting hier telt, is een vraag aan Jonas
-(kaartje van 11 november 2026); tot Jonas kiest, blijft het zoals het is.
+nooit zo dicht bij het eind van een segment. Wat de meting hier telt, lag als vraag bij Jonas
+(kaartje van 11 november 2026). Op 17 november 2026 koos hij de standaard: het blijft zoals het is
+(besloten: standaard, Jonas 2026-11-17).
 
 ## M8: rapporten
 
@@ -488,12 +489,13 @@ kwaliteit komt alleen uit BZ4 in CI (het echte SigLIP 2) en, voor gezichten, uit
 | §4.5 stap 2: zoeken op beeld met `werk` vol | p95 ≤ 250 ms; de terugval is een rapport | p95 191,8 ms (106 vragen), 0 % terugval, 0 mislukt, de index vol | M13 | gehaald |
 | §4.5 stap 2: de container `analyse` | geen `OOMKilled`; de som van VmHWM ≤ 2,5 GB | de som van VmHWM 1,51 GB (pid 1 37, `werk` 525, `zoeken` 881 MiB); geen OOM-kill, pid 1 dezelfde; `zoeken` 1 keer en `werk` 40 keer gestart | M13 | gehaald |
 | §4.5 stap 2: de poorten van 0.8.0 (media, OnlyOffice, zoeken, de app, `MemAvailable`, het achtergrondwerk) met de analyse aan | zoals M7e | media: elke start ≤ 2,46 s, 0 keer haperen; zoeken p95 53,4 ms; `/files/root` 80,5 ms; `/health` 5,0 ms; `MemAvailable` minstens 11.268 MiB; DS niet `OOMKilled`; de app en de worker dezelfde processen; de index leest weer na 14,7 s; OnlyOffice opslaan 8,3 s (grens 8,9 s), 0 van 354 woorden verloren | M13 | gehaald, alle 10 |
-| gezichten: ≥ 95% van de portretten precies het goede gezicht gevonden | ≥ 95% | niet gemeten, geen gereedschap | — (Vraag 8) | open |
-| gezichten: de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere | ≥ 0,05 | niet gemeten, geen gereedschap | — (Vraag 8) | open |
+| gezichten: ≥ 95% van de portretten precies het goede gezicht gevonden | ≥ 95% | niet gemeten, geen gereedschap | — (Vraag 8) | niet gemeten, bij besluit |
+| gezichten: de gekozen kleurvolgorde ≥ 0,05 hoger dan de andere | ≥ 0,05 | niet gemeten, geen gereedschap | — (Vraag 8) | niet gemeten, bij besluit |
 
-De twee laatste rijen hebben geen gereedschap zolang Vraag 8 op "nee" staat: `analyse-kwaliteit`
-meet alleen de precisie van voorstellen, de zuiverheid en de vangst, tegen de eigen ja en nee op de
-LXC (runbook [gezichten.md](../runbooks/gezichten.md)).
+De twee laatste rijen hebben geen gereedschap, en dat blijft zo: Vraag 8 is "nee"
+(besloten: standaard, Jonas 2026-11-17). `analyse-kwaliteit` meet alleen de precisie van voorstellen, de
+zuiverheid en de vangst, tegen de eigen ja en nee op de LXC (runbook
+[gezichten.md](../runbooks/gezichten.md)); dat meet alleen Jonas.
 
 ### M10: SigLIP 2 op ware grootte, omgezet
 
@@ -641,7 +643,7 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    dat staat bij de open punten in [integratie.md](integratie.md).
 2. **Een speler hapert na een sprong als de stroom opnieuw start** (fase 5 Bevinding 3; deels
    aangepakt). M7c haperde 2 / 2 / 2 en M7d 3 / 2 / 0 keer in fase a van `achtergrond`, M7e 0 keer.
-   Tussen M7d en M7e kwamen de herstartvoorrang (B71, een voorstel) en photometa op nice 19. Of het
+   Tussen M7d en M7e kwamen de herstartvoorrang (B71) en photometa op nice 19. Of het
    verschil daardoor komt, is niet bewezen (zie M7e).
 3. **Een sprong die in het laatste stukje van een segment landt, hapert als het volgende segment van
    een herstart komt** (de server doet niets fout; in de server is het alleen te verhelpen door bij
@@ -649,14 +651,18 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
    sprong met een herstart 0,6–1 s langer). De speler heeft dan bijna geen voorraad, en
    2 s media binnen ±0,2 s haalt geen herstart. ±1 op 4 sprongen landt zo; in een ronde van drie
    runs is de kans op minstens één keer haperen in `achtergrond` daarom ±40–60 %. Een browser telt
-   dit niet (`mse.ts`). Wat de poort hier telt, is een vraag aan Jonas.
+   dit niet (`mse.ts`). Wat de poort hier telt, lag als vraag bij Jonas; de standaard geldt: tellen
+   zoals nu (besloten: standaard, Jonas 2026-11-17).
 4. **Photometa wijkt niet voor live transcoderen** (open). Nice 19 weegt alleen binnen één sessie of
    cpu-cgroup, en het renderkind, ffmpeg en de worker in zijn eigen container zitten elk apart
    (gemeten: 50 / 50 in twee sessies). Of photometa tijdens een herstart moet wachten (Defer), is
    open.
 5. **Een GPS-waarde met 60,0 seconden geeft geen plek** (de testfoto's gerepareerd in `d5624b5`; de
    app is een open punt voor I2). M9 vond het: `_dms` in de testfoto's gaf (54, 47, 60.0), en
-   `render_meta` leest seconden alleen onder 60. Bij een camera is het niet gezien.
+   `render_meta` leest seconden alleen onder 60. Bij een camera is het niet gezien. [0.8.2:
+   precies 60,0 s telt nu als de volgende minuut (`45f80aa3`); boven 60 blijft het geen plek. Geen
+   nieuwe versie van photometa: alleen nieuwe of opnieuw gelezen foto's krijgen de plek
+   ([i3/fase6-rest.md](i3/fase6-rest.md)).]
 6. **Een pagina op zijn kant kost OCR ±3× zo veel** (M5, een rapport). Elke pagina van 90° gaat door
    OSD; over de mix haalt OCR de poort ruim (23,2 tegen 8 pagina's per minuut). De trage brieven
    van 0° in run 2 zijn niet verklaard.
@@ -679,10 +685,10 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
     minstens 13 GiB vrij op de schijf van de tijdelijke map.
 12. **Zoeken op beeld naast de gezichtenscan** (M13, stap `zonder_defer`, een rapport): p95
     290,4 ms, 9 van 103 vragen boven 250 ms. De poort van stap 2 (191,8 ms) meet zonder de scan
-    ernaast, omdat `faces.plan` wacht tot de index bij is (Keuze 65). Een vraag aan Jonas, met als
-    standaard (a): (a) zo laten, BZ6 is de poort van stap 2 en stap 3 een rapport; (b) een aparte
-    meting of rapportregel terwijl de scan loopt; (c) de scan laten wijken voor een beeldvraag
-    (een codewijziging, met een nieuwe test).
+    ernaast, omdat `faces.plan` wacht tot de index bij is (Keuze 65). Dit lag als vraag bij Jonas,
+    met als standaard (a): (a) zo laten, BZ6 is de poort van stap 2 en stap 3 een rapport; (b) een
+    aparte meting of rapportregel terwijl de scan loopt; (c) de scan laten wijken voor een
+    beeldvraag (een codewijziging, met een nieuwe test). Het werd (a) (besloten: standaard, Jonas 2026-11-17).
 13. **OnlyOffice opslaan had weinig marge in M13:** 8,3 s tegen 8,9 s (6,5 %). In de afgebroken
     eerste run was de nulmeting 7,8 s.
 
@@ -696,15 +702,17 @@ als het een fout in onze code is. Getallen zijn nergens bijgesteld om te slagen.
 - De kwaliteit van gezichten en beeld op echte foto's (0.8.1). Voor gezichten:
   `analyse-kwaliteit` (precisie, zuiverheid en vangst tegen de eigen ja en nee) en `analyse-bench`
   (de snelheid) uit het runbook [gezichten.md](../runbooks/gezichten.md); de twee eisen zonder
-  gereedschap blijven "niet gemeten, geen gereedschap". Voor beeld: BZ9 (`beeld-bench`, p95 ≤ 250 ms
+  gereedschap blijven "niet gemeten, geen gereedschap" (Vraag 8 nee, besloten: standaard, Jonas 2026-11-17). Voor beeld: BZ9 (`beeld-bench`, p95 ≤ 250 ms
   en ≥ 500 foto's per minuut op de CPU van de LXC) en BZ10 (`beeld-kwaliteit --personen`, na
   bevestigde personen) uit het runbook [analyse.md](../runbooks/analyse.md).
 - `memory.peak` en `OOMKilled` van `platform-analyse-1` onder de echte cgroup (`mem_limit: 3g`), na
   een paar dagen met de backfill.
 - De jobs met het image: de grootte (`images`) en `--stappen` (`media-image`).
 - SFace en het groeperen onder belasting: de testfoto's van M13 hebben geen gezichten.
-- BZ7 met de echte tokenizer: de job `beeld-model` op de commit van 0.8.1. P3 verwacht ±29 MB
-  (gemeten met een `tokenizer.bin` op ware grootte: 29.028.352 B erbij, VmHWM 45,7 MB).
+- ~~BZ7 met de echte tokenizer: de job `beeld-model` op de commit van 0.8.1. P3 verwacht ±29 MB
+  (gemeten met een `tokenizer.bin` op ware grootte: 29.028.352 B erbij, VmHWM 45,7 MB).~~ Gedaan:
+  `beeld-model` in run 43981579405 op `ae163ac` (de commit van 0.8.1) gaf BZ7 0,107 s en 32,4 MB
+  erbij (zie Omstandigheden hierboven, en [integratie-2.md](integratie-2.md), "De controles").
 
 ## Opnieuw meten
 

@@ -1,7 +1,11 @@
 /* De viewer (P4): het hele venster, met de weergaven per soort. Alleen kleuren uit tokens.css. */
 
 .viewer {
-  width: 100vw;
+  /* 100% en niet 100vw (0.8.2, z4.md Open): een modale <dialog> is position: fixed, dus 100% is
+     het venster zonder de schuifbalk. base.css houdt die ruimte altijd vrij (scrollbar-gutter);
+     een browser die dat niet van 100vw aftrekt, zette de laatste pixels rechts van de viewer
+     onder de schuifbalk (niet te zien of te klikken). */
+  width: 100%;
   height: 100vh;
   height: 100dvh;
   max-width: none;

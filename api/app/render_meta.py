@@ -207,7 +207,8 @@ def location(
 
 def _degrees(value: Any) -> float | None:
     """Graden uit de GPS-IFD: (graden, minuten, seconden) of één getal; elk deel eindig en niet
-    negatief, minuten en seconden onder 60."""
+    negatief, minuten onder 60 en seconden tot en met 60. Precies 60,0 seconden is de volgende
+    minuut (een afgeronde waarde als (54, 47, 60.0)); boven 60 klopt het niet."""
     if isinstance(value, tuple | list):
         parts = list(value)
     else:
@@ -224,7 +225,7 @@ def _degrees(value: Any) -> float | None:
         numbers.append(number)
     numbers += [0.0] * (3 - len(numbers))
     d, m, sec = numbers
-    if m >= 60 or sec >= 60:
+    if m >= 60 or sec > 60:
         return None
     return d + m / 60 + sec / 3600
 

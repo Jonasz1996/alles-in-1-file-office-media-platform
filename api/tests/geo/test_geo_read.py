@@ -74,7 +74,7 @@ def test_de_gps_ifd_heen_en_terug():
         ("zonder LongitudeRef", gps(lon_ref=None)),
         ("een Ref die niet bestaat", gps(lat_ref="X")),
         ("minuten 60", gps(lat=(52.0, 60.0, 0.0))),
-        ("seconden 60", gps(lat=(52.0, 1.0, 60.0))),
+        ("seconden boven 60", gps(lat=(52.0, 1.0, 60.5))),
         ("vier delen", gps(lat=(52.0, 1.0, 1.0, 1.0))),
         ("zonder breedte", gps(lat=None)),
     ],

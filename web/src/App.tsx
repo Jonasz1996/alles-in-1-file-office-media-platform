@@ -5,6 +5,7 @@
 // staat (media/index.ts). Zonder media is de schil die van fase 4.
 //
 // Fase 6 (Z0): het zoekveld in de balk bovenaan, met Ctrl/Cmd+K (search/AppBarSearch.tsx).
+// 0.8.2: Dubbel (/dubbel) in het menu, net als Prullenbak niet voor een gast.
 
 import {
   Component,
@@ -588,6 +589,7 @@ function TopBar({
           {media && link(MUSIC_HOME, t("shell.nav.music"), "music")}
           {link("/gedeeld", t("shell.nav.shared"), "shared")}
           {!guest && link("/prullenbak", t("shell.nav.trash"), "trash")}
+          {!guest && link("/dubbel", t("shell.nav.dupes"), "dupes")}
           {user.role === "admin" && link("/beheer", t("shell.nav.admin"), "admin")}
         </nav>
       )}

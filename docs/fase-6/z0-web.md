@@ -223,14 +223,17 @@ zonder melding.
    namen en vormen; geen code luistert er nog naar. Gedaan voor `search.ready` en
    `people.changed`: naar `search.ready` luisteren `viewer/TextLayer.tsx`, `ocr/OcrRow.tsx` en
    `ocr/PhotoWords.tsx`; naar `people.changed` luisteren `viewer/PeopleRow.tsx`,
-   `photos/PhotosPage.tsx` en de pagina's van personen. Open blijft `search.progress`: in de web
+   `photos/PhotosPage.tsx` en de pagina's van personen. ~~Open blijft `search.progress`: in de web
    staat alleen de naam (`SEARCH_PROGRESS` in `search/types.ts`), en geen code luistert ernaar.
    Het tabblad Zoeken in Beheer vraagt elke 5 s (`POLL_MS` in `admin/SearchTab.tsx`). Zie de
-   afwijking in [z7.md](z7.md).
+   afwijking in [z7.md](z7.md).~~ Gedaan in 0.8.2 (`3abfd3bc`): de tab Zoeken in Beheer luistert
+   naar `search.progress` en zet de voortgang van het herbouwen meteen bij; hij vraagt daarnaast
+   nog elke 5 s.
 7. ~~**`e2e/slim.sh`** (§3.5) is niet van Z0-web; hij staat er niet in deze tak.~~ Hij is van
    Z0-e2e ([z0-e2e.md](z0-e2e.md)) en staat er sinds de samenvoeging.
 8. **De plekken bij de foto van een ander.** De viewer weet niet wie de eigenaar is, dus Plek en
    Personen laden ook bij een gedeelde foto en vragen dan de API (die `404` of `[]` geeft). Wil
    Z5 of Z6 dat verzoek sparen, dan is een teken van de eigenaar in `ViewerItem` nodig (een
    kleine wijziging in de viewer, niet in Z0).
-9. **Besluiten B49–B60** blijven "voorstel"; Z0-web nam er geen.
+9. **Besluiten B49–B60**: Z0-web nam er geen. ~~Ze blijven "voorstel".~~ [17 november 2026:
+   B49–B60 (B53 en B57 waren al besloten) zijn besloten: standaard, Jonas 2026-11-17.]

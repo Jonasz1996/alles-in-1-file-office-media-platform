@@ -410,7 +410,7 @@ export function useRestoreScroll(ready: boolean): void {
 // --- welk onderdeel van de navigatie gemarkeerd is ---
 
 // Fase 5 (M0): media en music, de menu-items Media en Muziek
-export type NavSection = "files" | "photos" | "media" | "music" | "shared" | "trash" | "admin" | "account";
+export type NavSection = "files" | "photos" | "media" | "music" | "shared" | "trash" | "dupes" | "admin" | "account";
 
 const sectionListeners = new Set<() => void>();
 let sectionOverride: NavSection | null = null;

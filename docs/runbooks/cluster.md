@@ -143,12 +143,23 @@ het VIP herstart het platform.
    - Kent het vorige image de database niet, dan stopt het op de eerste node met "NIETS GEDAAN:
      het vorige image start niet op deze database" en zegt het wat er zou gebeuren. Er is dan
      op geen enkele node iets veranderd.
-2. Alleen in dat tweede geval, en alleen als je accepteert wat er verloren gaat (zie
-   hieronder): open Platform terug, zet bovenaan `MET_DATABASE=ja`, **Bewaren** en draai het
+2. Alleen in dat tweede geval: open Platform terug, zet bovenaan `MET_DATABASE=downgrade`
+   (vanaf 0.8.2, eerst proberen) of `MET_DATABASE=ja` (zie hieronder), **Bewaren** en draai het
    opnieuw op het hele cluster. Zet het daarna meteen terug op `nee` en **Bewaren**.
 3. Aan het eind drukt Platform terug de commit van het vorige image af. Zet die in ClusterForge
    bij **Versie** en **Toepassen**. Anders bouwt de volgende Platform bijwerken de nieuwe versie
    weer.
+
+Wat `MET_DATABASE=downgrade` doet (vanaf 0.8.2): het **nieuwe** image zet het schema terug met
+`python -m app.cli db-downgrade <revisie van het vorige image> --ja`, in een eigen container
+(`docker run --rm --network host --env-file /etc/clusterforge/platform.env`). Er gaan geen rijen
+verloren: wat na de update geschreven is, blijft. Alleen wat de nieuwere revisies toevoegden,
+gaat weg (van 0.8.2 naar 0.8.1: de zoekindex van 0014; 0.8.1 zoekt op PostgreSQL weer met
+LIKE). Verder gaat het zoals `ja`: eerst wachten tot elke andere node het vorige image heeft,
+markering opzij, stoppen, een dump als `voor-terug.dump`, dan de downgrade, de revisie lezen,
+het vorige image terug en starten. Mislukt de downgrade, dan is de database ongewijzigd (één
+transactie), komt de markering terug en draait het nieuwe image weer; de uitvoer noemt dan
+`MET_DATABASE=ja` als volgende stap. Details in `/var/lib/cf-platform/bijwerken/terug.log`.
 
 Wat `MET_DATABASE=ja` doet op de node met het VIP:
 
@@ -239,6 +250,8 @@ de melding zegt dan hoe je ze weer gelijk zet.
 | `geen back-up van vóór de update` | `voor-update.dump` staat niet op deze node | zie [Bekende grenzen](#bekende-grenzen) |
 | `bouwen mislukt` | `docker build` faalde; het platform is niet geraakt | oorzaak in de uitvoer, oplossen, opnieuw |
 | `database terugzetten mislukt`, `afgebroken`, met `markering teruggezet` | Platform terug met `MET_DATABASE=ja` stopte voordat de database terug was; de database is ongewijzigd en het nieuwe image draait weer | oorzaak in de uitvoer en `terug.log`, dan Platform bijwerken of opnieuw Platform terug |
+| `db-downgrade mislukt` | Platform terug met `MET_DATABASE=downgrade`: het nieuwe image kon het schema niet terugzetten; de database is ongewijzigd en het nieuwe image draait weer | de laatste regels in `terug.log`, dan Platform terug met `MET_DATABASE=ja` |
+| `MET_DATABASE=…: kies nee, ja of downgrade` | een tikfout bovenaan het commando | de waarde verbeteren, **Bewaren** |
 | `De database is al teruggezet` of `is niet te lezen` | Platform terug stopte toen de database (misschien) al terug was; het platform is uit | Platform terug nog een keer (zie [Terugzetten](#terugzetten)) |
 | `de app antwoordt niet` | de nieuwe versie start niet | Platform terug |
 | `... schrijven mislukt` (`.cf-platform-bijwerken`) | de node kan zijn melding niet in `/srv/platform-data` zetten | de mount nakijken, dan opnieuw |

@@ -59,7 +59,7 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
   const [pick, setPick] = useState<ComboOption | null>(null);
   const cells = useRef<(HTMLDivElement | null)[]>([]);
   const closeButton = useRef<HTMLButtonElement | null>(null);
-  const first = useRef(true);
+  const next = useRef(0);
   const last = useRef(new LastChoice());
   useScope("faces");
 
@@ -88,13 +88,16 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
   }, []);
 
   // Na de eerste pagina staat de focus in het raster (de knop van de kaart is dan weg); zonder
-  // gezichten op Sluiten
+  // gezichten op Sluiten. Na "Meer laden" blijft hij op de knop; was dat de laatste pagina (de knop
+  // is weg, en de focus met hem), dan op het eerste nieuwe gezicht. next: de plek van het gezicht
+  // dat de focus krijgt, -1 als er niets te doen is. Zo kort mogelijk: het budget faces (12 kB)
+  // had in 0.8.1 nog 1 byte over
   useEffect(() => {
-    if (!first.current || loading) return;
-    first.current = false;
-    if (faces.length > 0) cells.current[0]?.focus();
-    else closeButton.current?.focus();
-  }, [loading, faces]);
+    const i = next.current;
+    if (i < 0 || loading || (i && cursor)) return;
+    next.current = -1;
+    (cells.current[i] ?? closeButton.current)?.focus();
+  }, [loading, faces, cursor]);
 
   // Gezien: een cel die in beeld kwam. Zonder IntersectionObserver telt elke getoonde cel.
   useEffect(() => {
@@ -157,8 +160,7 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
     try {
       if (v === "hide") await hideFaces([f.id]);
       else if (!who) return;
-      else if (v === "yes") await confirmFaces({ faces: [f.id], person_id: who.id });
-      else await rejectFaces({ faces: [f.id], person_id: who.id });
+      else await (v === "yes" ? confirmFaces : rejectFaces)({ faces: [f.id], person_id: who.id });
     } catch (e) {
       toast(errorText(e), { kind: "error" });
       return;
@@ -187,7 +189,7 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
     }
     const open = faces.filter((f) => !verdicts[f.id]);
     const ids = confirmIds(open, selected, seen);
-    if (ids.length === 0) return;
+    if (!ids.length) return;
     const target = pick.kind === "person" ? { person_id: pick.person.id } : { name: pick.name };
     const name = pick.kind === "person" ? pick.person.name : pick.name;
     try {
@@ -261,7 +263,7 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
         {t("photos_faces.grid.help")}{" "}
         {t(p.mode === "group" ? "photos_faces.grid.helpGroup" : "photos_faces.grid.helpSuggest")}
       </p>
-      {!loading && faces.length === 0 && <p className="muted">{t("photos_faces.grid.empty")}</p>}
+      {!loading && !faces.length && <p className="muted">{t("photos_faces.grid.empty")}</p>}
       <div
         role="grid"
         aria-labelledby={`${id}-kop`}
@@ -312,7 +314,13 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
       </div>
       {cursor && (
         <p>
-          <Button busy={loading} onClick={() => void more(cursor)}>
+          <Button
+            busy={loading}
+            onClick={() => {
+              next.current = faces.length;
+              void more(cursor);
+            }}
+          >
             {t("photos_faces.grid.more")}
           </Button>
         </p>
@@ -337,7 +345,7 @@ export function FaceGrid(p: FaceGridProps): JSX.Element {
               onEscape={p.onClose}
             />
           </Suspense>
-          <Button type="submit" variant="primary" disabled={chosen === 0}>
+          <Button type="submit" variant="primary" disabled={!chosen}>
             {t("photos_faces.group.confirm")}
           </Button>
         </form>

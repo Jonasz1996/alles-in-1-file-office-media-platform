@@ -318,7 +318,9 @@ def test_een_kopie_van_bram_vindt_de_tekst_uit_eva_s_foto_niet(
     foto via de deling en kopieert hem naar zijn eigen map. Hij vindt het woord niet (niet via
     de deling, niet via zijn kopie), en in de viewer heeft zijn kopie geen woorden (404) en geen
     markering; zijn eigen rij zegt "nog niet gelezen". De scan van Eva vindt hij wel: de tekst
-    van een PDF hoort bij de inhoud, en hij mag de PDF lezen."""
+    van een PDF hoort bij de inhoud, en hij mag de PDF lezen. Sinds 0.8.2 (x1.md Open 7) ziet hij
+    in de viewer van die scan ook de rij Tekst in beeld: de stand, zonder knop (vragen mag alleen
+    wie mag schrijven)."""
     from tests.ocr import scans
 
     data, _ = scans.bon(KOPIE_WOORD)
@@ -345,6 +347,17 @@ def test_een_kopie_van_bram_vindt_de_tekst_uit_eva_s_foto_niet(
     page.goto("/")
     expect(page.get_by_role("grid")).to_be_visible()
     assert zoek(page, PDF_WOORD) == [(x1.pdf, "ocr")]
+    tab_to(page, page.locator(f"{ROWS}[tabindex='0']"))
+    with page.expect_response(is_woorden(x1.pdf)):
+        page.keyboard.press("Enter")
+    scan = page.get_by_role("dialog", name=PDF, exact=True)
+    expect(scan.locator(".text-layer mark")).to_have_text([PDF_WOORD])
+    page.keyboard.press("i")
+    scan_tekst = scan.get_by_role("region", name="Tekst in beeld", exact=True)
+    expect(scan_tekst.get_by_role("status")).to_have_text(PDF_GELEZEN)
+    expect(scan_tekst.get_by_role("button")).to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(scan).to_have_count(0)
 
     with page.expect_response(is_woorden(kopie)) as woorden:
         page.goto(f"/?bestand={kopie}&q={KOPIE_WOORD}")

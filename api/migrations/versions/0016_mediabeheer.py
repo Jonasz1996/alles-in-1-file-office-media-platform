@@ -1,7 +1,7 @@
 """mediabeheer: de films en series die de app volgt (fase 11)
 
 Revision ID: 0016
-Revises: 0013
+Revises: 0014
 Create Date: 2026-11-22 12:00:00.000000
 
 Tien nieuwe tabellen, op SQLite en PostgreSQL gelijk: arr_wanted (app.models.ArrWanted, wat de
@@ -16,16 +16,16 @@ kinderslot) en media_intro (app.models.MediaIntro, intro overslaan) en arr_clean
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
-Nummering: 0014 en 0015 zijn gereserveerd voor fase 6 (0014_pg_zoeken) en Nextcloud
-(0015_nextcloud). Zolang die er op deze branch niet zijn, volgt 0016 op 0013; bij het
-samenvoegen gaat down_revision naar de laatste van die twee.
+Nummering: 0014 is de zoekindex op PostgreSQL (fase 6, 0.8.2), 0015 is gereserveerd voor
+Nextcloud (0015_nextcloud). 0016 volgt nu op 0014; komt 0015 erbij, dan gaat down_revision
+daarnaar.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0016"
-down_revision = "0013"
+down_revision = "0014"
 branch_labels = None
 depends_on = None
 

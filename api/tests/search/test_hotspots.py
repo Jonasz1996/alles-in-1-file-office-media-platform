@@ -107,6 +107,32 @@ async def test_een_rollback_meldt_niets(settings):
     assert seen == []
 
 
+async def test_een_inhoud_die_er_al_was_meldt_blob_reused(client, admin, settings):
+    """files.add_ref zonder nieuwe blob: blob_reused(sha, owner) na de commit (0.8.2, X1 Open 4),
+    en blob_added niet. Een rollback meldt niets."""
+    headers, _ = admin
+    root, me = await tree(client, headers)
+    added: list[str] = []
+    reused: list[tuple[str, uuid.UUID | None]] = []
+    hooks.register_blob_added(lambda sha, owner: added.append(sha))
+    hooks.register_blob_reused(lambda sha, owner: reused.append((sha, owner)))
+    body = b"twee keer dezelfde"
+    sha = hashlib.sha256(body).hexdigest()
+    await put(client, headers, root, "een.txt", body)
+    assert (added, reused) == ([sha], [])
+    await put(client, headers, root, "twee.txt", body)
+    assert (added, reused) == ([sha], [(sha, me)])
+
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as session:
+        await session.execute(sa.text("SELECT 1"))
+        hooks.blob_reused_after_commit(session, "b" * 64, None)
+        assert hooks.pending_reused(session) == [("b" * 64, None)]
+        await session.rollback()
+        assert hooks.pending_reused(session) == []
+    assert reused == [(sha, me)]
+
+
 async def test_een_fout_in_de_haak_stopt_de_upload_niet(client, admin, caplog):
     headers, _ = admin
     root, _me = await tree(client, headers)

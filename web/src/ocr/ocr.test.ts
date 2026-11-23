@@ -8,7 +8,8 @@ import infoPanel from "../viewer/InfoPanel.tsx?raw";
 import { showOcrRow } from "../viewer/infoRows";
 import type { ViewKind } from "../viewer/media";
 import zoomView from "../viewer/ZoomView.tsx?raw";
-import { mayAsk, ocrView } from "./ocr";
+import { mayAsk, mayShow, ocrView } from "./ocr";
+import ocrRow from "./OcrRow.tsx?raw";
 
 const KINDS: ViewKind[] = ["image", "pdf", "video", "audio", "text", "office", "archive", "none"];
 
@@ -38,6 +39,30 @@ describe("wie Tekst herkennen mag vragen (Keuze 23, 25a)", () => {
     expect(mayAsk("pdf", "owner")).toBe(true);
     expect(mayAsk("pdf", "write")).toBe(true);
     expect(mayAsk("pdf", "read")).toBe(false);
+  });
+});
+
+describe("wie de rij ziet (0.8.2, x1.md Open 7)", () => {
+  it("een foto: alleen de eigenaar (een ander krijgt van de API toch altijd skip)", () => {
+    expect(mayShow("image", "owner")).toBe(true);
+    expect(mayShow("image", "write")).toBe(false);
+    expect(mayShow("image", "read")).toBe(false);
+  });
+
+  it("een PDF: ook wie hem alleen mag lezen, dan dezelfde zin zonder knop", () => {
+    for (const p of ["owner", "write", "read"] as const) expect(mayShow("pdf", p)).toBe(true);
+    for (const s of ["skip", "queued", "done", "none", "failed"] as const) {
+      const lezer = ocrView("pdf", state(s), mayAsk("pdf", "read"));
+      const schrijver = ocrView("pdf", state(s), mayAsk("pdf", "write"));
+      expect(lezer).toEqual({ text: schrijver.text, button: null, waiting: false });
+    }
+    expect(ocrView("pdf", state("done"), false).text).toBe("ocr.row.donePdf");
+  });
+
+  it("de rij gebruikt beide: zien (mayShow) en de knop (mayAsk)", () => {
+    expect(ocrRow).toContain("show: mayShow(kind, permission), may: mayAsk(kind, permission)");
+    expect(ocrRow).toContain("if (!loaded?.show) return null;");
+    expect(ocrRow).toContain("ocrView(kind, loaded.state, loaded.may)");
   });
 });
 

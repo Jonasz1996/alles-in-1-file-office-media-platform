@@ -35,6 +35,14 @@ Eerst de foto's, dan aanzetten: groeperen (full) gaat zodra de rij van de eigena
 een full binnenkomt, groepeert de ronde van elk uur (docs/fase-6/x2b.md, Vormen), en zo lang wacht
 deze test niet.
 
+Dan de rest van het raster "Wie is dit?" (0.8.2), voor Fien met een eigen groep van vier rode en
+drie blauwe: End en Home, "Meer laden" (de focus blijft op de knop; na de laatste pagina staat hij
+op het eerste nieuwe gezicht), Spatie (deselecteren en weer selecteren), V (niet tonen), en
+Bevestigen stuurt alleen wat geselecteerd en niet verborgen is. Daarna "Niet benoemde gezichten
+wissen": Esc in het dialoog doet niets, Wissen wist de open gezichten. De server geeft een groep
+in pagina's van 60; de test knipt zijn echte antwoord in pagina's van 2, 1 en 1 (Knip), zodat
+"Meer laden" komt zonder 61 foto's.
+
 Daarna **/over** (I2; Keuze 29 en K1-13) met de analyse aan, voor Bram: Account → Tab tot
 "Bronnen en licenties" → Enter. De pagina noemt de bronnen van de kaart en de modellen van de
 analyse (YuNet, SFace, SigLIP 2) en de pakketten in het image, elk met de licentie, en vraagt de
@@ -53,6 +61,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -95,6 +104,13 @@ FOTOS: list[tuple[str, tuple[tuple[int, float, float, float], ...]]] = [
     ("cas-3.jpg", ((2, 0.55, 0.35, 0.09),)),
     ("anna-1.jpg", ((1, 0.50, 0.45, 0.15),)),
 ]
+# Fien (de rest van het raster): vier rode en drie blauwe, elk een andere plek en grootte
+FIEN: list[tuple[str, tuple[tuple[int, float, float, float], ...]]] = [
+    *((f"rood-{i}.jpg", ((1, 0.30 + 0.12 * i, 0.50, 0.09 + 0.01 * i),)) for i in range(4)),
+    *((f"blauw-{i}.jpg", ((2, 0.35 + 0.12 * i, 0.45, 0.10 + 0.01 * i),)) for i in range(3)),
+]
+# GET /people/faces/groups/{key} (niet de lijst /people/faces/groups)
+GROEP = re.compile(r"/api/v1/people/faces/groups/[^/?]+(\?.*)?$")
 
 
 @dataclass
@@ -263,6 +279,36 @@ class Verkeer:
             if not self.open and time.monotonic() - self.laatst >= rust:
                 return
         raise AssertionError(f"de pagina werd niet stil: {sorted(r.url for r in self.open)}")
+
+
+class Knip:
+    """Knipt het echte antwoord van GET /people/faces/groups/{key} in pagina's van 2, 1, 1, … met
+    een eigen cursor ("knip-<begin>"). De server geeft een groep in pagina's van 60 (FACES_PAGE);
+    zo komt "Meer laden" zonder 61 foto's. De server ziet nooit een cursor van de test: elk
+    verzoek haalt de hele groep (zonder cursor) en geeft er een stuk van."""
+
+    def __init__(self) -> None:
+        self.paginas: list[tuple[int, int]] = []  # (begin, aantal) per verzoek
+        self.cursors: list[str | None] = []  # de cursor van de server (None: alles op één pagina)
+        self.ids: list[str] = []  # de gezichten van de groep, in de volgorde van de server
+
+    def __call__(self, route: Any) -> None:
+        url = urlsplit(route.request.url)
+        cursor = parse_qs(url.query).get("cursor", [""])[0]
+        begin = int(cursor.removeprefix("knip-")) if cursor else 0
+        echt = route.fetch(url=urlunsplit(url._replace(query="")))
+        if not echt.ok:
+            route.fulfill(response=echt)
+            return
+        body = echt.json()
+        self.cursors.append(body["cursor"])
+        alle = body["faces"]
+        self.ids = [f["id"] for f in alle]
+        eind = min(len(alle), begin + (2 if begin == 0 else 1))
+        body["faces"] = alle[begin:eind]
+        body["cursor"] = f"knip-{eind}" if eind < len(alle) else None
+        self.paginas.append((begin, eind - begin))
+        route.fulfill(response=echt, json=body)
 
 
 def patch_instellingen(r: Any) -> bool:
@@ -652,6 +698,171 @@ def test_gezichten_met_alleen_het_toetsenbord(wereld: Wereld, aan: Browsers) -> 
     expect(toestaan).to_be_focused()
     eva_stand = server.call(eva, "GET", f"{API}/me/photo-settings", expect=200).json()
     assert (eva_stand["faces"], eva_stand["faces_forbidden"]) == ("uit", False)
+
+
+@pytest.mark.analyse
+def test_wie_is_dit_met_v_spatie_home_end_meer_laden_en_wissen(
+    wereld: Wereld, aan: Browsers
+) -> None:
+    """De rest van het raster "Wie is dit?" (toetsenbord-x2.md), voor Fien met een eigen groep van
+    vier rode en drie blauwe. Na de eerste test: die telt de foto's van de nep vanaf nul."""
+    server = wereld.server
+    fien = create_user(server, wereld.admin, name="Fien Gezichten")
+    ids = [
+        upload(server, fien, naam, schijven.foto(schijf, seed=100 + i))
+        for i, (naam, schijf) in enumerate(FIEN)
+    ]
+    wacht_op_previews(server, fien, ids)
+    # Aanzetten via de API (de schakelaar met zijn dialoog doet de eerste test)
+    gezet = server.call(
+        fien, "PATCH", f"{API}/me/photo-settings", json={"faces": "aan"}, expect=200
+    )
+    assert gezet.json()["faces"] == "aan"
+    stand = wacht(
+        server, fien, "/people/faces/status",
+        lambda s: s["photos"]["waiting"] == 0 and s["faces"]["groups"] == 2,
+        "de scan en de groepen", SCAN_S,
+    )  # fmt: skip
+    assert stand["faces"] == {"found": 7, "named": 0, "open": 7, "groups": 2}
+    lijst = server.call(fien, "GET", f"{API}/people/faces/groups", expect=200).json()["groups"]
+    assert [g["count"] for g in lijst] == [4, 3]
+
+    # page.route met een service worker ziet niet alles (Chrome 156): die staat hier uit
+    context = aan.context_as(fien, service_workers="block")
+    knip = Knip()
+    context.route(GROEP, knip)
+    page = context.new_page()
+    page.goto("/fotos/personen")
+    kaarten = page.get_by_role("button", name="Wie is dit?", exact=True)
+    expect(kaarten).to_have_count(2)
+    rood = kaarten.first  # de grootste groep eerst
+    expect(rood).to_have_accessible_description("4 gezichten")
+    tab_to(page, rood, limit=40)
+    page.keyboard.press("Enter")
+    raster = page.get_by_role("grid", name="Wie is dit?", exact=True)
+    cellen = raster.get_by_role("gridcell")
+    expect(cellen).to_have_count(2)
+    expect(cellen.nth(0)).to_be_focused()
+    geselecteerd = page.get_by_role("status").filter(has_text="geselecteerd")
+    expect(geselecteerd).to_have_text("2 van 2 geselecteerd")
+
+    # --- End en Home ---
+    page.keyboard.press("End")
+    expect(cellen.nth(1)).to_be_focused()
+    page.keyboard.press("Home")
+    expect(cellen.nth(0)).to_be_focused()
+
+    # --- "Meer laden": de focus blijft op de knop, na de laatste pagina op het nieuwe gezicht ---
+    meer = page.get_by_role("button", name="Meer laden", exact=True)
+    tab_to(page, meer, limit=3)
+    page.keyboard.press("Enter")
+    expect(cellen).to_have_count(3)
+    expect(meer).to_be_focused()
+    expect(geselecteerd).to_have_text("3 van 3 geselecteerd")
+    page.keyboard.press("Enter")
+    expect(cellen).to_have_count(4)
+    expect(meer).to_have_count(0)
+    expect(cellen.nth(3)).to_be_focused()
+    expect(geselecteerd).to_have_text("4 van 4 geselecteerd")
+    assert knip.paginas == [(0, 2), (2, 1), (3, 1)]
+    assert knip.cursors == [None, None, None]  # de server gaf de groep steeds op één pagina
+    gezichten = knip.ids
+    assert len(gezichten) == 4
+    for i, face in enumerate(gezichten):
+        expect(cellen.nth(i)).to_have_attribute("data-face", face)
+        expect(cellen.nth(i)).to_have_attribute("aria-label", f"Gezicht {i + 1} van 4")
+    page.keyboard.press("Home")
+    expect(cellen.nth(0)).to_be_focused()
+    page.keyboard.press("End")
+    expect(cellen.nth(3)).to_be_focused()
+
+    # --- Spatie: deselecteren, weer selecteren, en weer deselecteren ---
+    page.keyboard.press("Home")
+    expect(cellen.nth(0)).to_be_focused()
+    page.keyboard.press("Space")
+    expect(cellen.nth(0)).to_have_attribute("aria-selected", "false")
+    expect(geselecteerd).to_have_text("3 van 4 geselecteerd")
+    page.keyboard.press("Space")
+    expect(cellen.nth(0)).to_have_attribute("aria-selected", "true")
+    expect(geselecteerd).to_have_text("4 van 4 geselecteerd")
+    page.keyboard.press("Space")
+    expect(cellen.nth(0)).to_have_attribute("aria-selected", "false")
+    expect(cellen.nth(0)).to_be_focused()
+
+    # --- V: niet tonen; de focus naar het volgende gezicht zonder keuze ---
+    page.keyboard.press("ArrowRight")
+    expect(cellen.nth(1)).to_be_focused()
+    with page.expect_response(post_naar("/people/faces/hide")) as verborgen:
+        page.keyboard.press("v")
+    assert verborgen.value.status == 204, verborgen.value.text()
+    assert verborgen.value.request.post_data_json == {"faces": [gezichten[1]]}
+    expect(cellen.nth(1)).to_have_attribute("aria-label", "Gezicht 2 van 4: niet getoond")
+    expect(cellen.nth(1)).to_have_attribute("aria-selected", "false")
+    expect(cellen.nth(2)).to_be_focused()
+    expect(toast(page, "Wordt niet meer getoond.")).to_be_visible()
+    expect(geselecteerd).to_have_text("2 van 3 geselecteerd")
+
+    # --- Bevestigen: alleen wat geselecteerd en niet verborgen is ---
+    naam = page.get_by_role("combobox", name="Naam", exact=True)
+    tab_to(page, naam, limit=3)
+    page.keyboard.type("Roos", delay=20)
+    expect(page.get_by_role("option", name="Nieuwe persoon: Roos", exact=True)).to_be_visible()
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(naam).to_have_value("Roos")
+    bevestigen = page.get_by_role("button", name="Bevestigen", exact=True)
+    tab_to(page, bevestigen, limit=3)
+    with page.expect_response(post_naar("/people/faces/confirm")) as bevestigd:
+        page.keyboard.press("Enter")
+    assert bevestigd.value.status == 204, bevestigd.value.text()
+    assert bevestigd.value.request.post_data_json == {
+        "faces": [gezichten[2], gezichten[3]], "name": "Roos",
+    }  # fmt: skip
+    expect(toast(page, "2 gezichten bevestigd als Roos.")).to_be_visible()
+    assert personen(server, fien) == {"Roos": 2}
+    sluiten = page.locator(".faces-grid").get_by_role("button", name="Sluiten", exact=True)
+    tab_to(page, sluiten, limit=5)
+    page.keyboard.press("Enter")
+    expect(raster).to_have_count(0)
+    expect(page.locator(".people-faces :focus")).to_have_count(1)
+
+    # --- "Niet benoemde gezichten wissen": Esc doet niets, Wissen wist ---
+    voor = server.call(fien, "GET", f"{API}/people/faces/status", expect=200).json()["faces"]
+    assert voor["named"] == 2 and voor["open"] == voor["found"] - 2 and voor["open"] > 1
+    n = voor["open"]
+    wissen_posts: list[str] = []
+    page.on("request", lambda r: wissen_posts.append(r.url) if "wipe-unnamed" in r.url else None)
+    wis = page.get_by_role("button", name="Niet benoemde gezichten wissen", exact=True)
+    tab_to(page, wis, limit=40)
+    page.keyboard.press("Enter")
+    dialoog = page.get_by_role("dialog", name="Niet benoemde gezichten wissen", exact=True)
+    expect(dialoog).to_be_visible()
+    expect(dialoog).to_contain_text(f"We wissen {n} gezichten die je niet benoemde")
+    expect(dialoog.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialoog).to_have_count(0)
+    expect(wis).to_be_focused()
+    assert wissen_posts == []
+    page.keyboard.press("Enter")
+    expect(dialoog.get_by_role("button", name="Annuleren", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(dialoog.get_by_role("button", name="Wissen", exact=True)).to_be_focused()
+    with page.expect_response(post_naar("/people/faces/wipe-unnamed")) as gewist:
+        page.keyboard.press("Enter")
+    assert gewist.value.status == 202, gewist.value.text()
+    assert gewist.value.json() == {"queued": n}
+    expect(toast(page, f"{n} gezichten worden gewist.")).to_be_visible()
+    stand = wacht(
+        server, fien, "/people/faces/status",
+        lambda s: s["faces"]["open"] == 0 and not s["wiping"],
+        "het wissen van de niet benoemde", WIS_S,
+    )  # fmt: skip
+    assert stand["setting"] == "aan" and stand["faces"]["named"] == 2
+    assert personen(server, fien) == {"Roos": 2}
+    page.goto("/fotos/personen")
+    expect(page.locator('[data-faces="status"]')).to_be_visible()
+    expect(page.get_by_role("button", name="Wie is dit?", exact=True)).to_have_count(0)
+    expect(wis).to_have_count(0)
 
 
 # De regels op /over, in de volgorde van de pagina (web/src/about/sources.ts; about.test.ts legt

@@ -226,13 +226,21 @@ class Server(uvicorn.Server):
         self.started = True
 
 
+def _proxies(settings: Settings) -> list[str] | None:
+    found = [p.strip() for p in settings.trusted_proxies.split(",") if p.strip()]
+    return found or None
+
+
 def _config(settings: Settings, port: int, **extra) -> uvicorn.Config:
     return uvicorn.Config(
         app,
         host=settings.host,
         port=port,
         log_level=settings.log_level,
-        proxy_headers=False,  # er zit geen proxy voor; X-Forwarded-For niet geloven
+        # Alleen met een vertrouwde proxy (PLATFORM_TRUSTED_PROXIES) X-Forwarded-For en -Proto
+        # geloven: dan zijn het IP (limieten, logs) en https (cookies, adressen) die van de client
+        proxy_headers=bool(settings.trusted_proxies.strip()),
+        forwarded_allow_ips=_proxies(settings),
         server_header=False,
         http=GuardedHttp,
         ws=Tunnel,  # alleen de tunnel naar office (Keuze 6); elke andere upgrade: 404

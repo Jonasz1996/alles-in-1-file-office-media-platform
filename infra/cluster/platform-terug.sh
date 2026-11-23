@@ -21,6 +21,13 @@
 # dit commando alleen met MET_DATABASE=ja hieronder; anders zegt het wat er
 # zou gebeuren en verandert het niets, op geen enkele node.
 #
+# MET_DATABASE=downgrade (0.8.2): niet de back-up terugzetten maar het schema
+# terugzetten met het nieuwe image (python -m app.cli db-downgrade naar de
+# revisie van het vorige image). Wat na de update geschreven is, blijft dan;
+# alleen wat de nieuwere revisies toevoegden (bv. de zoekindex van 0014) gaat
+# weg. Kan alleen als het nieuwe image die downgrade kent (dat zegt
+# db-downgrade zelf); anders blijft de database zoals hij was.
+#
 # Stopt het halverwege terwijl de database al (misschien) terug is, dan
 # blijft de markering opzij en het platform uit. Nog een keer draaien kijkt
 # naar de database en maakt het af.
@@ -243,14 +250,21 @@ if [ -z "$db_rev" ]; then
 fi
 note "database: Alembic $db_rev"
 DB_TERUG=nee; [ "$db_rev" != "$doel_head" ] && DB_TERUG=ja
-if [ "$DB_TERUG" = ja ] && [ "$MET_DATABASE" != ja ]; then
+case "$MET_DATABASE" in
+  ja | nee | downgrade) ;;
+  *) fail "MET_DATABASE=$MET_DATABASE: kies nee, ja of downgrade" ;;
+esac
+if [ "$DB_TERUG" = ja ] && [ "$MET_DATABASE" = nee ]; then
   say "NIETS GEDAAN: het vorige image start niet op deze database"
   note "De database staat op revisie $db_rev, het vorige image kent tot $doel_head."
-  note "Platform terug moet dan ook de database terugzetten naar de back-up van vóór de"
-  note "update (op de node met het VIP: $EIGEN/voor-update.dump). Alles wat daarna in de"
-  note "database is geschreven, is dan weg; bestanden die sindsdien zijn geüpload staan"
-  note "nog in $DATA maar de app kent ze niet meer, en wat sindsdien is gewist, mist."
-  note "Wil je dat: zet bovenaan dit commando MET_DATABASE=ja en draai het opnieuw."
+  note "Twee wegen, zet bovenaan dit commando een van beide en draai het opnieuw:"
+  note "- MET_DATABASE=downgrade: het nieuwe image zet het schema terug naar $doel_head"
+  note "  (db-downgrade). Wat na de update geschreven is, blijft; alleen wat de nieuwere"
+  note "  revisies toevoegden gaat weg. Kies dit eerst als de nieuwe versie wel startte."
+  note "- MET_DATABASE=ja: de back-up van vóór de update terugzetten (op de node met het VIP:"
+  note "  $EIGEN/voor-update.dump). Alles wat daarna in de database is geschreven, is dan weg;"
+  note "  bestanden die sindsdien zijn geüpload staan nog in $DATA maar de app kent ze niet"
+  note "  meer, en wat sindsdien is gewist, mist."
   if [ "$HERVAT" = ja ]; then
     note "Let op: de markering staat nog opzij van een eerdere Platform terug, dus het platform is"
     note "uit. Wil je toch door met de nieuwe versie: mv $OPZIJ $ACTIVE (op één node)."
@@ -284,12 +298,17 @@ fi
 # --- database terug (alleen de node met het VIP) ----------------------------
 if [ "$DB_TERUG" = ja ]; then
   for t in pg_dump pg_restore psql; do command -v "$t" >/dev/null || fail "$t ontbreekt (postgresql-client)"; done
-  dump=${DUMP:-$EIGEN/voor-update.dump}
-  [ -s "$dump" ] || fail "geen back-up van vóór de update ($dump)"
-  d_rev=$(dump_revisie "$dump")
-  [ "$d_rev" = "$doel_head" ] ||
-    fail "de back-up $dump staat op revisie ${d_rev:-onbekend}, niet op $doel_head; niets veranderd aan de database"
-  note "back-up: $dump van $(date -r "$dump" '+%Y-%m-%d %H:%M'), revisie $d_rev"
+  if [ "$MET_DATABASE" = downgrade ]; then
+    [ -n "$lokaal" ] || fail "cf-platform:local ontbreekt: zonder het nieuwe image geen downgrade"
+    note "downgrade: het nieuwe image zet het schema terug van $db_rev naar $doel_head"
+  else
+    dump=${DUMP:-$EIGEN/voor-update.dump}
+    [ -s "$dump" ] || fail "geen back-up van vóór de update ($dump)"
+    d_rev=$(dump_revisie "$dump")
+    [ "$d_rev" = "$doel_head" ] ||
+      fail "de back-up $dump staat op revisie ${d_rev:-onbekend}, niet op $doel_head; niets veranderd aan de database"
+    note "back-up: $dump van $(date -r "$dump" '+%Y-%m-%d %H:%M'), revisie $d_rev"
+  fi
   # Pas de database terugzetten als elke andere node het vorige image heeft.
   # Anders kan een node die ClusterForge hierna draait (met het VIP van de
   # database) nog weigeren, en dan draait hier het oude platform op de oude
@@ -325,8 +344,36 @@ if [ "$DB_TERUG" = ja ]; then
   # shellcheck disable=SC2012
   nu=$(ls -1t "$BACKUPS"/platform-*.dump 2>/dev/null | head -n 1)
   [ -n "$nu" ] && { ln -f "$nu" "$EIGEN/voor-terug.dump" 2>/dev/null || cp -f "$nu" "$EIGEN/voor-terug.dump"; }
-  say "Database terugzetten (één transactie: alles of niets)"
   rm -f "$EIGEN/pg_restore.rc"
+  if [ "$MET_DATABASE" = downgrade ]; then
+    say "Schema terugzetten met het nieuwe image (db-downgrade $doel_head)"
+    STAND=bezig
+    # Het nieuwe image kent de downgrade van zijn eigen revisies; host-netwerk voor het VIP van
+    # de database, een lege datamap (op PostgreSQL staat alles in de database)
+    docker run --rm --network host --env-file "$ENV" -e PLATFORM_DATA_DIR=/tmp/cf-terug \
+      cf-platform:local python -m app.cli db-downgrade "$doel_head" --ja >"$EIGEN/terug.log" 2>&1
+    prc=$?
+    STAND=$(db_stand)
+    case "$STAND" in
+      teruggezet) ;;
+      voor)
+        tail -n 3 "$EIGEN/terug.log" | cut -c1-200 >&2
+        fail "db-downgrade mislukt (exit $prc); de database is ongewijzigd (revisie $db_rev). Met de back-up van vóór de update: MET_DATABASE=ja. Details: $EIGEN/terug.log" ;;
+      *)
+        tail -n 3 "$EIGEN/terug.log" | cut -c1-200 >&2
+        fail "db-downgrade: de uitkomst is niet te lezen (exit $prc). Details: $EIGEN/terug.log" ;;
+    esac
+    say "Database staat op revisie $doel_head"
+    image_terug
+    STAND=klaar
+    meld "terug $doel_head $doel_rev" || note "let op: $GEDEELD/node-$NAAM schrijven mislukt"
+    herstel_markering
+    trap - EXIT INT TERM HUP
+    HINT=
+  fi
+fi
+if [ "$DB_TERUG" = ja ] && [ "$MET_DATABASE" != downgrade ]; then
+  say "Database terugzetten (één transactie: alles of niets)"
   # Vanaf hier kan de database terug zijn: alleen wat we daarna lezen telt.
   STAND=bezig
   {
@@ -357,7 +404,7 @@ if [ "$DB_TERUG" = ja ]; then
   herstel_markering
   trap - EXIT INT TERM HUP
   HINT=
-else
+elif [ "$DB_TERUG" = nee ]; then
   HINT=
   rm -f "$GEDEELD/wacht-terug" "$GEDEELD/wacht-bijwerken"
   say "De database hoeft niet terug (revisie $db_rev)"
