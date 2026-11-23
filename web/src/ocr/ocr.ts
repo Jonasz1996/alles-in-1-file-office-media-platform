@@ -3,9 +3,10 @@
 //
 // De stand komt uit GET /files/{id}/analysis (ocr en code). Wie mag vragen (POST /files/{id}/ocr):
 // bij een foto alleen de eigenaar (de tekst hoort bij zijn node), bij een PDF wie mag schrijven.
-// Wie niet mag vragen, krijgt geen rij: de API geeft een ander bij een foto toch altijd skip. Of
-// de rij er komt (een foto of PDF, ingelogd, de huidige versie), zegt showOcrRow in
-// viewer/infoRows.ts, naast de andere plekken.
+// Wie de rij ziet (mayShow): bij een foto ook alleen de eigenaar (de API geeft een ander toch
+// altijd skip); bij een PDF sinds 0.8.2 ook wie hem alleen mag lezen (x1.md Open 7): die ziet de
+// stand, zonder knop. Of de rij er komt (een foto of PDF, ingelogd, de huidige versie), zegt
+// showOcrRow in viewer/infoRows.ts, naast de andere plekken.
 
 import type { Permission } from "../api";
 import type { MessageKey } from "../i18n";
@@ -15,6 +16,12 @@ import type { ViewKind } from "../viewer/media";
 /** Mag deze gebruiker "Tekst herkennen" vragen? Een foto: alleen de eigenaar; een PDF: schrijven. */
 export function mayAsk(kind: ViewKind, permission: Permission): boolean {
   return kind === "image" ? permission === "owner" : permission === "owner" || permission === "write";
+}
+
+/** Ziet deze gebruiker de rij? Een foto: alleen de eigenaar; een PDF: iedereen die hem mag lezen
+ * (de tekst hoort bij de inhoud, en wie mag lezen vindt hem met Zoeken). */
+export function mayShow(kind: ViewKind, permission: Permission): boolean {
+  return kind === "image" ? permission === "owner" : true;
 }
 
 /** Wat de rij toont: de zin bij de stand, welke knop (of geen), en of de knop wacht: hij staat in
@@ -27,8 +34,14 @@ export interface OcrView {
 }
 
 /** De zin en de knop bij de stand van ocr. De code telt alleen als hij van OCR is: analysis geeft
- * de eerste code van text, hash en ocr, en een code van text gaat de rij niet aan. */
-export function ocrView(kind: ViewKind, state: Pick<Analysis, "ocr" | "code">): OcrView {
+ * de eerste code van text, hash en ocr, en een code van text gaat de rij niet aan. may: mag deze
+ * gebruiker vragen (mayAsk); zo niet, dan dezelfde zin zonder knop. */
+export function ocrView(kind: ViewKind, state: Pick<Analysis, "ocr" | "code">, may = true): OcrView {
+  const view = stateView(kind, state);
+  return may ? view : { ...view, button: null, waiting: false };
+}
+
+function stateView(kind: ViewKind, state: Pick<Analysis, "ocr" | "code">): OcrView {
   const photo = kind === "image";
   // Een PDF met al genoeg tekst (C11): de stap zet skip met ocr_has_text, de knop gaf 409
   if (!photo && state.code === "ocr_has_text" && (state.ocr === "skip" || state.ocr === "none")) {
