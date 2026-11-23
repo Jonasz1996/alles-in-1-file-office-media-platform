@@ -168,6 +168,28 @@ def test_wat_een_downgrade_op_postgresql_kwijtmaakt():
     assert "plaatsen" in cli.PG_LOST
 
 
+def _alinea(path: Path, begin: str) -> str:
+    """De alinea van path die met begin start (tot de eerste lege regel)."""
+    text = path.read_text(encoding="utf-8")
+    start = text.index(begin)
+    end = text.find("\n\n", start)
+    return " ".join(text[start : end if end >= 0 else None].split())
+
+
+def test_de_docs_noemen_wat_de_weg_terug_naar_081_kwijtmaakt():
+    """Review van PR #6, F16: terug van 0.8.2 naar 0.8.1 op PostgreSQL haalt 0014 en 0013 weg.
+    db-downgrade noemt dan PG_SEARCH_LOST en PG_LOST; het runbook en de README van fase 6 noemen
+    ze allebei, niet alleen de zoekindex."""
+    docs = API_DIR.parent / "docs"
+    for path, begin in (
+        (docs / "runbooks" / "cluster.md", "Wat `MET_DATABASE=downgrade` doet"),
+        (docs / "fase-6" / "README.md", "Terug naar 0.8.1 op PostgreSQL"),
+    ):
+        part = _alinea(path, begin)
+        assert "zoekindex" in part, path.name
+        assert "plaatsen van foto's" in part, path.name
+
+
 @pytest.mark.parametrize("postgres", [True, False], ids=["postgresql", "sqlite"])
 def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, postgres):
     """_downgrade geeft _confirm de regel van PostgreSQL alleen op PostgreSQL (zonder database:

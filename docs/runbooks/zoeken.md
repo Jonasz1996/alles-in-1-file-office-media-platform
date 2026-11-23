@@ -80,12 +80,13 @@ voor de branch daarna en voor 0.8.1 (met de tabellen voor gezichten en zoeken op
   van de app, en nooit in een log. Bewaar een kopie die je ergens anders neerzet, net zo afgeschermd
   als de `.env`.
 - **Welke blijven.** Per schemaversie de nieuwste. Een tweede run op de branch vervangt dus de
-  vorige kopie van `0012`, maar de laatste kopie van `0009` (van vóór de migratie) en die van
-  `0010` blijven altijd staan. Bestanden in de map die niet zo heten, raakt het script niet aan.
-  Ruimte: per kopie de grootte van `platform.db`, en er staan er hooguit drie (`0009`, `0010` en
-  `0012`). Die kopie van `0009` is van de dag van de update: wat daarna veranderde, staat er niet
+  vorige kopie van `0014`, maar de laatste kopie van `0009` (van vóór de migratie) en die van
+  `0010`, `0012` en `0013` blijven altijd staan. Bestanden in de map die niet zo heten, raakt het
+  script niet aan. Ruimte: per kopie de grootte van `platform.db`, en er staan er hooguit vijf
+  (`0009`, `0010`, `0012`, `0013` en `0014`; `0013` alleen als je de branch draaide toen hij daar
+  stond). Die kopie van `0009` is van de dag van de update: wat daarna veranderde, staat er niet
   in. Wie 0.8.0 vers installeerde, heeft er geen. "Terug naar 0.8.0" en "Terug naar 0.7.1"
-  (hieronder) maken daarom eerst een verse kopie van `0012` (review golf 4, uitrol F5; review A0,
+  (hieronder) maken daarom eerst een verse kopie van `0014` (review golf 4, uitrol F5; review A0,
   uitrol U2).
 - **Mislukt.** Dan is er geen kopie (ook geen `.part`), staat de melding boven de regel "De
   reservekopie van de database lukte niet", en stopt het script. De app draait zoals hij draaide.
@@ -121,8 +122,9 @@ install -m 600 -o 10001 -g 10001 backup/platform-0009-<tijd>.db platform.db
 Kies bij `install` de kopie die je wilt (de tijd staat in de naam). Daarna het script van de versie
 die bij de kopie hoort. Bij een kopie van `0009` is dat het script van 0.7.1: de eerste drie regels
 en de laatste van "Terug naar 0.7.1" (hieronder); `dc stop`, de kopie en de downgrade sla je over,
-want de app staat al stil en de kopie staat al op 0009. Bij een kopie van `0010` of `0012` is het
-het gewone script; dat zet een kopie van `0010` bij de start weer op `0012`.
+want de app staat al stil en de kopie staat al op 0009. Bij een kopie van `0010`, `0012`, `0013`
+of `0014` is het het gewone script; dat zet de kopie bij de start weer op `0014` (0013 en 0014
+doen op SQLite niets).
 Gezichten en beeld rekent de app daarna opnieuw; de index van zoeken staat gewoon in de kopie.
 
 ## Plaatsnamen
@@ -524,7 +526,8 @@ Per stap:
    (`db-backup`, dezelfde kopie als die van het script). Hij zegt
    `De reservekopie staat in /data/backup/platform-0014-<tijd>.db (… MB).` (in de Console is dat
    `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
-   vervangt de vorige kopie van `0014`; die van `0009`, `0010` en `0012` blijven.
+   vervangt de vorige kopie van `0014`; die van `0009`, `0010`, `0012` en `0013` (als die er is)
+   blijven.
 4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0014.
    `db-downgrade` vraagt eerst, als die er zijn, naar album-items die uit een regel van een slim
    album komen en niet gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden
@@ -558,7 +561,7 @@ de kaart, duplicaten, personen en de regels van slimme albums.
 curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/claude/stappenplan-uitwerken-lu4uv3/infra/single/install.sh | PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 bash
 ```
 
-Het maakt eerst een nieuwe kopie van `0009` (die vervangt de vorige), migreert weer naar `0012`,
+Het maakt eerst een nieuwe kopie van `0009` (die vervangt de vorige), migreert weer naar `0014`,
 en de achtergrond vult de index, de plekken en de hashes opnieuw (zie de tabel bij "De stand
 lezen"). Personen die je met de hand benoemde, de regels van slimme albums en wie welk bestand
 uploadde, komen niet terug.

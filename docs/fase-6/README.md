@@ -212,7 +212,9 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
   gemarkeerd. Hoe lang de job duurt, zegt de eerste run in CI ([i3/w2.md](i3/w2.md)).
 
 Terug naar 0.8.1 op PostgreSQL: eerst `python -m app.cli db-downgrade 0012 --ja` met 0.8.2 (of
-Platform terug met `MET_DATABASE=downgrade`). Er gaan geen rijen verloren.
+Platform terug met `MET_DATABASE=downgrade`). Er gaan geen rijen verloren, maar twee dingen wel:
+de zoekindex van 0014 (0.8.1 zoekt weer alleen op naam) en de plaatsen van foto's van 0013 (het
+land en de plek op de kaart blijven). Met een nieuwe update naar 0.8.2 komen ze terug.
 
 ## Wat 0.8.1 brengt
 
