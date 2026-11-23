@@ -154,7 +154,23 @@ case "$1" in
   ps) if [ -e "$N/active" ]; then echo "c0ffee$(basename "$N")"; fi ;;
   inspect) cat "$N/running" ;;
   run)
-    case " $* " in *" --rm --network none "*) ;; *) echo "nep-docker: run zonder --rm --network none" >&2; exit 97 ;; esac
+    case " $* " in
+      *" app.cli db-downgrade "*)
+        # Platform terug met MET_DATABASE=downgrade: het nieuwe image zet het schema terug; de
+        # rijen blijven. Alleen het image dat de huidige revisie van de database kent, kan dat.
+        case " $* " in *" --rm --network host --env-file "*) ;; *) echo "nep-docker: downgrade zonder --rm --network host --env-file" >&2; exit 97 ;; esac
+        for a; do case "$a" in cf-platform:*) img=$a; break ;; esac; done
+        id=$(id_van "$img") || exit 125
+        doel=$(echo " $* " | sed -n 's/.* db-downgrade \([^ ]*\) .*/\1/p')
+        if [ -e "$W/downgrade_breekt" ]; then echo "nep: downgrade mislukt" >&2; exit 1; fi
+        head=$(cat "$W/heads/$(sleutel "$id")"); db=$(cat "$W/db/rev")
+        [ "$db" \> "$head" ] && { echo "Revisie $db onbekend" >&2; exit 1; }
+        echo "$doel" >"$W/db/rev"
+        echo "De database staat nu op revisie $doel."
+        exit 0 ;;
+      *" --rm --network none "*) ;;
+      *) echo "nep-docker: run zonder --rm --network none" >&2; exit 97 ;;
+    esac
     for a; do case "$a" in cf-platform:*|sha256:*) img=$a; break ;; esac; done
     id=$(id_van "$img") || exit 125
     cat "$W/heads/$(sleutel "$id")" ;;
@@ -862,6 +878,34 @@ terug_niets_veranderd() {
     [ ! -e "$W/data/.cf-platform-active.terug" ] && ! grep -q '^pg_restore --no-owner' "$W/pg-args.log"
 }
 
+# MET_DATABASE=downgrade (0.8.2): het nieuwe image zet het schema terug, de rijen blijven
+na_update
+rc=0; draai_cluster platform-terug.sh || rc=$?
+check "terug: zonder MET_DATABASE noemt de weigering ook downgrade" bevat "$LOG" "MET_DATABASE=downgrade"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=downgrade || rc=$?
+check "terug downgrade: gelukt in één run" is "$rc $GEDRAAID" "0  n1:0 n2:0 n3:0"
+check "terug downgrade: 0.8.1 draait op 0012 en de rijen van na de update zijn er nog" \
+  is "$(draait n3) $(db_rev) $(db_rijen)" "$A 0012 voor+na"
+check "terug downgrade: geen pg_restore" bash -c '! grep -q "^pg_restore --no-owner" "$1"' _ "$W/pg-args.log"
+check "terug downgrade: eerst een back-up van de database zoals hij was" bevat "$LOG" "Eerst een back-up van de database"
+check "terug downgrade: de markering staat terug" bash -c '[ -e "$1" ] && [ ! -e "$2" ]' _ \
+  "$W/data/.cf-platform-active" "$W/data/.cf-platform-active.terug"
+
+na_update
+touch "$W/downgrade_breekt"
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=downgrade || rc=$?
+rm -f "$W/downgrade_breekt"
+check "terug downgrade: mislukt, de VIP-node zegt het" \
+  bash -c '[ "$1" != 0 ] && grep -qF "db-downgrade mislukt" "$2" && grep -qF "MET_DATABASE=ja" "$2"' _ "$rc" "$LOG"
+check "terug downgrade: mislukt, de database en de rijen zijn ongewijzigd en het platform draait weer" \
+  is "$(db_rev) $(db_rijen) $(draait n3)" "0014 voor+na $B"
+
+na_update
+rc=0; draai_cluster platform-terug.sh MET_DATABASE=misschien || rc=$?
+check "terug: een onbekende waarde voor MET_DATABASE wordt geweigerd" \
+  bash -c '[ "$1" != 0 ] && grep -qF "kies nee, ja of downgrade" "$2"' _ "$rc" "$LOG"
+check "terug: onbekende MET_DATABASE, niets veranderd" terug_niets_veranderd
+
 na_update
 touch "$W/nodes/n1/mount_down"
 rc=0; draai_cluster platform-terug.sh MET_DATABASE=ja || rc=$?
@@ -912,7 +956,7 @@ na_update
 rm "$W/nodes/n1/bin/psql"
 rc=0; draai_cluster platform-terug.sh || rc=$?
 check "terug: MET_DATABASE=nee terwijl de database terug moet: niets gedaan, op de eerste node" \
-  bash -c '[ "$1" != 0 ] && [ "$2" = " n1:1" ] && grep -qF "NIETS GEDAAN" "$3" && grep -qF "zet bovenaan dit commando MET_DATABASE=ja" "$3"' _ \
+  bash -c '[ "$1" != 0 ] && [ "$2" = " n1:1" ] && grep -qF "NIETS GEDAAN" "$3" && grep -qF "MET_DATABASE=ja: de back-up van vóór de update terugzetten" "$3"' _ \
   "$rc" "$GEDRAAID" "$LOG"
 check "terug: n1 zonder psql neemt de head van cf-platform:local aan" bevat "$LOG" "database niet gelezen (geen psql?); aangenomen: revisie 0014"
 check "terug: MET_DATABASE=nee, niets veranderd" terug_niets_veranderd

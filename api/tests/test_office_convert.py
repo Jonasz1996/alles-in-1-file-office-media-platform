@@ -3040,7 +3040,19 @@ async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, 
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("when", ["al", "tussen"])
+@pytest.mark.parametrize(
+    "when",
+    [
+        "al",
+        pytest.param(
+            "tussen",
+            marks=pytest.mark.sqlite_only(
+                "in PostgreSQL houdt _rows_first de rij vast (FOR UPDATE): een conversie kan "
+                "er niet tussen schrijven"
+            ),
+        ),
+    ],
+)
 async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch, caplog, when):
     """al: de PDF is er (ready, de huidige PDF_VERSION), maar de thumbnails mislukten twee keer
     als poging (zoals een timeout van de taak). on_dead laat ready staan, en meldt niet dat het

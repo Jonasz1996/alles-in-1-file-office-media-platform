@@ -59,7 +59,10 @@ from tests.test_files import mkdir, put, root
 from tests.test_shares import person, share_with
 from tests.test_user_delete import block_and_delete
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.sqlite_only("meet de FTS5-index van SQLite onder schrijfdruk"),
+]
 
 SEED = 2025
 STAPPEN = 2_000

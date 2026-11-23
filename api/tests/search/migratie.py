@@ -241,7 +241,21 @@ def check_tree(conn) -> int:
 
 
 def check_fts(conn) -> None:
-    """De FTS-tabellen zijn heel en gelijk aan hun inhoud (view search_src en node)."""
+    """De FTS-tabellen zijn heel en gelijk aan hun inhoud (view search_src en node). PostgreSQL
+    (0014): fts_node is gelijk aan wat fts_refresh opnieuw zou schrijven (fts_name is daar een
+    view op node)."""
+    if conn.dialect.name != "sqlite":
+        conn.exec_driver_sql("CREATE TEMP TABLE fts_was AS SELECT * FROM fts_node")
+        try:
+            conn.exec_driver_sql("SELECT fts_refresh(ARRAY(SELECT num FROM node), true)")
+            anders = conn.exec_driver_sql(
+                "SELECT count(*) FROM ((SELECT * FROM fts_was EXCEPT SELECT * FROM fts_node) "
+                "UNION ALL (SELECT * FROM fts_node EXCEPT SELECT * FROM fts_was)) AS d"
+            ).scalar()
+        finally:
+            conn.exec_driver_sql("DROP TABLE fts_was")
+        assert anders == 0, f"fts_node wijkt af in {anders} rijen"
+        return
     for table in ("fts_node", "fts_name"):
         conn.exec_driver_sql(f"INSERT INTO {table}({table}, rank) VALUES ('integrity-check', 1)")
 
@@ -262,3 +276,19 @@ def words(conn, query: str) -> set[str]:
         (query,),
     ).all()
     return {r[0] for r in rows}
+
+
+# Een kolom van fts_node van SQLite als gewicht in de tsvector van 0014 (PostgreSQL): name A, extra
+# B, body en ocr C (samen in één veld), meta D; pocr (de OCR van een foto) alleen in otsv
+PG_WEIGHT = {"name": "A", "extra": "B", "body": "C", "ocr": "C", "meta": "D", "pocr": "C"}
+
+
+def fts_column_sql(dialect: str, column: str) -> str:
+    """SQL met :w (één woord) die de nums geeft waar dat woord in deze kolom van fts_node staat,
+    voor SQLite (FTS5, met :q = kolom:"woord") en PostgreSQL (0014)."""
+    if dialect == "sqlite":
+        return "SELECT fts_node.rowid FROM fts_node WHERE fts_node MATCH :q"
+    q = f"to_tsquery('simple', quote_literal(trim(cf_fold(:w))) || ':{PG_WEIGHT[column]}')"
+    if column == "pocr":
+        return f"SELECT rowid FROM fts_node WHERE otsv @@ {q} AND NOT tsv @@ {q}"
+    return f"SELECT rowid FROM fts_node WHERE tsv @@ {q}"

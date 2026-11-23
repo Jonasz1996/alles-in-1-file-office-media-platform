@@ -48,6 +48,18 @@ async def has_rows(db: AsyncSession, owner: uuid.UUID) -> bool:
     return False
 
 
+async def sealed_counts(
+    db: AsyncSession, owners: Sequence[uuid.UUID] | None = None
+) -> dict[uuid.UUID, int]:
+    """Per eigenaar het aantal versleutelde gezichten (face.vec niet NULL), ook die van foto's in
+    de prullenbak: zonder sleutel zijn ook die onleesbaar (sleutels-check, scan.keys_lost).
+    owners: alleen deze eigenaren (None: iedereen)."""
+    q = select(Face.owner_id, func.count()).where(Face.vec.is_not(None))
+    if owners is not None:
+        q = q.where(Face.owner_id.in_(list(owners)))
+    return dict((o, n) for o, n in await db.execute(q.group_by(Face.owner_id)))
+
+
 async def owners_with_rows(db: AsyncSession) -> list[uuid.UUID]:
     """Eigenaren met rijen van gezichten (voor de ronde van elk uur: wie uit staat en nog rijen
     heeft, krijgt een wisronde)."""

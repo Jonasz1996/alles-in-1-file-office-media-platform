@@ -13,8 +13,10 @@ suggesties leeg en geen fout. En LikeFallback bladert met offset.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
@@ -42,15 +44,13 @@ async def _vul(client, headers, settings) -> None:
         sha = (
             await conn.execute(select(Node.blob_id).where(Node.id == uuid.UUID(tekst)))
         ).scalar_one()
-        if (
-            await conn.execute(text("SELECT 1 FROM sqlite_master WHERE name = 'blob_text'"))
-        ).scalar() is not None:
+        if await conn.run_sync(lambda c: sa.inspect(c).has_table("blob_text")):
             await conn.execute(
                 text(
                     "INSERT INTO blob_text (blob_sha, body, ocr, meta, truncated, updated_at) "
-                    "VALUES (:sha, 'de kwartaalcijfers van maart', '', '', 0, '2026-11-03')"
-                ),
-                {"sha": sha},
+                    "VALUES (:sha, 'de kwartaalcijfers van maart', '', '', 0, :at)"
+                ).bindparams(sa.bindparam("at", type_=sa.DateTime(timezone=True))),
+                {"sha": sha, "at": datetime(2026, 11, 3, tzinfo=UTC)},
             )
 
 

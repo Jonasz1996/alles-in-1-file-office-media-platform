@@ -35,7 +35,10 @@ from app.storage import BlobStore
 from tests.search.migratie import NOW, check_fts, check_tree
 from tests.test_files import check_refs, mkdir, put, root
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.sqlite_only("het ene schrijfslot van SQLite tijdens het wissen in stukken"),
+]
 
 MAPPEN = 10
 PER_MAP = 1090

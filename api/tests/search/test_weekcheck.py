@@ -113,6 +113,9 @@ async def test_een_kapotte_uitkomst_is_geen_uitkomst(client, settings):
     assert weekcheck._due(weekcheck._stored({"at": "gisteren", "sampled": 2, "bad": 0}), now())
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_een_verschil_komt_op_beheer_met_alleen_aantallen(client, settings, caplog):
     w = await W.bouw_async(settings)
     async with get_engine(settings).begin() as conn:
@@ -138,6 +141,9 @@ async def test_een_verschil_komt_op_beheer_met_alleen_aantallen(client, settings
     assert "brief" not in tekst and "ander" not in tekst and str(found.bad) in tekst
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_na_een_verschil_het_volgende_uur_opnieuw(client, settings):
     """Na een verschil doet Jonas wat /beheer zegt (de index herbouwen, of de triggers terug).
     Daarna moet de regel binnen een uur kloppen: groen, of het verschil komt terug. Eerst keek
@@ -172,6 +178,9 @@ async def test_na_een_verschil_het_volgende_uur_opnieuw(client, settings):
     assert await weekcheck.run(settings) is None
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_niet_tijdens_de_pauze(client, settings, monkeypatch):
     await W.bouw_async(settings)
     gelopen = bespied(monkeypatch)
@@ -186,6 +195,9 @@ async def test_niet_tijdens_de_pauze(client, settings, monkeypatch):
     assert len(gelopen) == 1
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_niet_tijdens_een_herbouw_zonder_fts5_of_zonder_nodes(client, settings, monkeypatch):
     gelopen = bespied(monkeypatch)
     # Zonder nodes: gekeken, niets vergeleken, dus geen uitkomst (anders telde die week niet)
@@ -222,6 +234,9 @@ async def test_niet_tijdens_een_herbouw_zonder_fts5_of_zonder_nodes(client, sett
     assert len(gelopen) == 2 and await opgeslagen(settings) is None
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_de_controle_leest_alleen_in_een_eigen_draad(client, settings, monkeypatch):
     await W.bouw_async(settings)
     gezien: dict = {}
@@ -245,6 +260,9 @@ async def test_de_controle_leest_alleen_in_een_eigen_draad(client, settings, mon
     assert await opgeslagen(settings) == found.model_dump()
 
 
+@pytest.mark.sqlite_only(
+    "de controle van SQLite in een eigen draad met query_only; PostgreSQL: test_zoekindex_pg.py"
+)
 async def test_wat_de_app_intussen_schrijft_is_geen_verschil(client, settings, monkeypatch):
     """check() leest bron en index in losse SELECTs. Zonder eigen leestransactie ziet elke SELECT
     een andere stand van de WAL (pysqlite opent voor een SELECT geen transactie): een naam die de

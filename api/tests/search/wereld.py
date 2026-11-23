@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import delete, update
+from sqlalchemy import DateTime, bindparam, delete, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -321,8 +321,21 @@ class _Bouwer:
         die OCR een scan van de wereld wil laten lezen, haalt eerst de rij ocr ervan weg."""
         self.s.flush()
         conn = self.s.connection()
-        rijen = bench.analyse_rijen(conn.exec_driver_sql(bench.ANALYSE_BLOBS).all())
-        conn.exec_driver_sql(bench.ANALYSE_SQL, rijen)
+        rijen = bench.analyse_rijen(conn.execute(text(bench.ANALYSE_BLOBS)).all())
+        if rijen:
+            sleutels = ("sha", "step", "version", "state", "at", "upd")
+            conn.execute(
+                text(
+                    "INSERT INTO analysis (blob_sha, step, version, state, tries, code, "
+                    "owner_id, queued_at, updated_at) VALUES "
+                    "(:sha, :step, :version, :state, 0, NULL, NULL, :at, :upd)"
+                ).bindparams(
+                    bindparam("at", type_=DateTime(timezone=True)),
+                    bindparam("upd", type_=DateTime(timezone=True)),
+                ),
+                # de tijd als datetime: bench schrijft hem als tekst zoals SQLite hem bewaart
+                [dict(zip(sleutels, (*r[:4], DAG, DAG), strict=True)) for r in rijen],
+            )
 
 
 def bouw(conn: Connection, blob_dir: Path | None = None) -> Wereld:

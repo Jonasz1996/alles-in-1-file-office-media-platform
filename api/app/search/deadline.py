@@ -41,18 +41,24 @@ grens van die vraag meteen afgaan.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import exc
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+log = logging.getLogger(__name__)
+
 # Hoe vaak de timer na de grens opnieuw interrupt() aanroept, tot het blok klaar is
 HERHAAL_MS = 1.0
+# PostgreSQL: pg_cancel_backend kost een verbinding; minder vaak dan interrupt()
+PG_HERHAAL_MS = 50.0
 # Zo lang wacht de stap in de thread van aiosqlite hooguit op de event loop (stop_after)
 WACHT_S = 1.0
 # Zo vaak kijkt de timer of de taak van het blok geannuleerd wordt (watch)
@@ -223,6 +229,39 @@ async def deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline]:
             timer.stop_after(raw.driver_connection)
 
 
+class _PgCancel:
+    """PostgreSQL: wat Timer voor SQLite is bij Stop (Keuze 13). now() stopt de vraag die op de
+    verbinding loopt met pg_cancel_backend via een andere verbinding uit de pool, en herhaalt dat
+    elke HERHAAL_MS tot het blok klaar is (zoals interrupt(): tussen twee vragen doet een
+    annulering niets)."""
+
+    def __init__(self, engine: Any, pid: int) -> None:
+        self.engine = engine
+        self.pid = pid
+        self._task: asyncio.Task | None = None
+        self._klaar = False
+
+    def now(self) -> None:
+        if self._task is None and not self._klaar:
+            self._task = asyncio.get_running_loop().create_task(self._loop())
+
+    async def _loop(self) -> None:
+        from sqlalchemy import text
+
+        while not self._klaar:
+            try:
+                async with self.engine.connect() as other:
+                    await other.execute(text("SELECT pg_cancel_backend(:pid)"), {"pid": self.pid})
+            except Exception:  # noqa: BLE001 - de grens van statement_timeout blijft
+                log.debug("pg_cancel_backend lukte niet")
+            await asyncio.sleep(PG_HERHAAL_MS / 1000)
+
+    def done(self) -> None:
+        self._klaar = True
+        if self._task is not None:
+            self._task.cancel()
+
+
 @asynccontextmanager
 async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline]:
     from sqlalchemy import text
@@ -234,19 +273,29 @@ async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline
         yield d
         return
     nested = await conn.begin_nested()
+    raw = await conn.get_raw_connection()
+    cancel = _PgCancel(conn.engine, raw.driver_connection.get_server_pid())
+    if stop is not None:
+        stop.add(cancel)  # type: ignore[arg-type]
     try:
-        await conn.execute(text(f"SET LOCAL statement_timeout = {max(1, int(ms))}"))
-        yield d
-    except exc.DBAPIError as e:
-        if getattr(e.orig, "sqlstate", None) != "57014" and "canceling statement" not in str(e):
+        try:
+            await conn.execute(text(f"SET LOCAL statement_timeout = {max(1, int(ms))}"))
+            yield d
+        except exc.DBAPIError as e:
+            if getattr(e.orig, "sqlstate", None) != "57014" and "canceling statement" not in str(e):
+                await nested.rollback()
+                raise
+            d.hit = True
+            await nested.rollback()
+            return
+        except BaseException:
             await nested.rollback()
             raise
-        d.hit = True
-        await nested.rollback()
-        return
-    except BaseException:
-        await nested.rollback()
-        raise
-    # SET LOCAL geldt na de release van het savepoint tot het eind van de transactie: terugzetten
-    await conn.execute(text("SET LOCAL statement_timeout TO DEFAULT"))
-    await nested.commit()
+        cancel.done()  # het blok is klaar: niets meer stoppen
+        # SET LOCAL geldt na de release van het savepoint tot het eind van de transactie
+        await conn.execute(text("SET LOCAL statement_timeout TO DEFAULT"))
+        await nested.commit()
+    finally:
+        cancel.done()
+        if stop is not None:
+            stop.discard(cancel)  # type: ignore[arg-type]

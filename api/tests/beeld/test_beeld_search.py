@@ -246,9 +246,7 @@ async def test_de_voortgang_telt_alleen_als_er_iets_open_staat(client, mensen, b
     assert "GROUP BY" not in sql and "LIMIT" in sql, sql
     if not settings.database_url:  # het plan van SQLite; PostgreSQL kiest zelf
         async with engine.connect() as conn:
-            await conn.run_sync(
-                lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",))
-            )
+            await conn.run_sync(lambda c: assert_plan(c, sql, args, require=("ix_analysis_todo",)))
     # één van de vier weer open: dan telt hij wel, en 3 van de 4 zijn klaar
     sha = await nep.sha_of(settings, rood["id"])
     async with engine.begin() as conn:

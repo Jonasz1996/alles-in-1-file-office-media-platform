@@ -704,12 +704,7 @@ async def keys_lost(settings: Settings, owners: set[uuid.UUID]) -> set[uuid.UUID
     if not without:
         return set()
     async with _maker(settings)() as db:
-        found = await db.scalars(
-            select(Face.owner_id)
-            .where(Face.owner_id.in_(without), Face.vec.is_not(None))
-            .group_by(Face.owner_id)
-        )
-        return set(found)
+        return set(await face_rows.sealed_counts(db, sorted(without)))
 
 
 async def _again(settings: Settings) -> None:

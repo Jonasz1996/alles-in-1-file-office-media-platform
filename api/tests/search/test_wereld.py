@@ -73,8 +73,10 @@ async def test_de_wereld_staat_er(settings):
         assert await een("SELECT count(*) FROM share") == 9
         assert await een("SELECT count(*) FROM share WHERE token IS NOT NULL") == 2
         assert await een("SELECT count(*) FROM album_item WHERE shared = 1") == 1
+        # search_src is de view van SQLite; op PostgreSQL heeft elke node een rij (0014)
+        bron = "search_src" if conn.dialect.name == "sqlite" else "node"
         assert await een("SELECT count(*) FROM fts_node") == await een(
-            "SELECT count(*) FROM search_src"
+            f"SELECT count(*) FROM {bron}"
         )
     # Elk bestand staat in de BlobStore, met de inhoud die bij zijn sha hoort
     for sha in set(w.shas.values()):
@@ -232,11 +234,12 @@ async def test_iris_wissen_laat_geen_personen_achter(settings):
     async with get_engine(settings).connect() as conn:
 
         async def een(sql: str) -> int:
-            return (await conn.exec_driver_sql(sql, (iris.hex,))).scalar()
+            waarde = iris.hex if conn.dialect.name == "sqlite" else iris
+            return (await conn.execute(sa.text(sql), {"i": waarde})).scalar()
 
-        assert await een('SELECT count(*) FROM "user" WHERE id = ?') == 0
+        assert await een('SELECT count(*) FROM "user" WHERE id = :i') == 0
         for tabel in ("person", "photo_person", "photo_geo", "node"):
-            assert await een(f"SELECT count(*) FROM {tabel} WHERE owner_id = ?") == 0, tabel
+            assert await een(f"SELECT count(*) FROM {tabel} WHERE owner_id = :i") == 0, tabel
         await conn.run_sync(check_tree)
         await conn.run_sync(check_fts)
         # Eva's persoon blijft

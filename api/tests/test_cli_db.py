@@ -20,7 +20,7 @@ from app.db import get_engine
 from app.migrate import upgrade
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0013"
+HEAD = "0014"
 
 
 async def run_cli(settings, *args: str, stdin: bytes | None = None):
@@ -159,6 +159,8 @@ def test_wat_een_downgrade_op_postgresql_kwijtmaakt():
         cli.SEARCH_LOST,
     ]
     assert cli.lost_lines(["0012"], postgres=True) == [cli.BEELD_LOST]
+    assert cli.lost_lines(["0014", "0013"], postgres=True) == [cli.PG_SEARCH_LOST, cli.PG_LOST]
+    assert cli.lost_lines(["0014"], postgres=False) == []
     assert "plaatsen" in cli.PG_LOST
 
 
@@ -183,7 +185,7 @@ def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "db_revision", at_head)
     monkeypatch.setattr(cli, "_confirm", confirm)
     assert cli._downgrade(settings, "0012", yes=False) == 1
-    assert seen == [[cli.PG_LOST] if postgres else []]
+    assert seen == [[cli.PG_SEARCH_LOST, cli.PG_LOST] if postgres else []]
 
 
 async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:

@@ -172,13 +172,13 @@ async def photo_text(settings, node_id: str | uuid.UUID) -> tuple[str, bytes] | 
 
 async def fts(settings, column: str, word: str) -> set[str]:
     """De nodes (id) waar dit woord in deze kolom van fts_node staat."""
+    from tests.search.migratie import fts_column_sql
+
     async with maker(settings)() as db:
+        dialect = (await db.connection()).dialect.name
         rows = await db.execute(
-            sa.text(
-                "SELECT n.id FROM fts_node JOIN node n ON n.num = fts_node.rowid "
-                "WHERE fts_node MATCH :q"
-            ),
-            {"q": f'{column}:"{word}"'},
+            sa.text(f"SELECT n.id FROM node n WHERE n.num IN ({fts_column_sql(dialect, column)})"),
+            {"q": f'{column}:"{word}"', "w": word},
         )
         return {str(uuid.UUID(str(r[0]))) for r in rows.all()}
 

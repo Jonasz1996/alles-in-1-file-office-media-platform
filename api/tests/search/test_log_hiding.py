@@ -10,7 +10,6 @@ GET /photos/beeld vallen eronder; dat bewijzen de rijen en de tests hieronder.
 from __future__ import annotations
 
 import logging
-import sqlite3
 
 import pytest
 from sqlalchemy import event
@@ -132,9 +131,12 @@ async def test_een_databasefout_bij_zoeken_zet_q_niet_in_de_log(client, admin, s
     # In delen, anders staat de vraag in de broncode die de traceback in de log laat zien
     vraag = "".join(("geheim", "woord7"))
 
+    # de fout van de driver van deze database (sqlite3 of de asyncpg-adapter)
+    driverfout = engine.dialect.loaded_dbapi.OperationalError
+
     def op_slot(cursor, statement, parameters, context):
         if any(vraag in str(p) for p in parameters or ()):
-            raise sqlite3.OperationalError("database is locked")
+            raise driverfout("database is locked")
 
     caplog.set_level(logging.DEBUG)
     event.listen(engine, "do_execute", op_slot)

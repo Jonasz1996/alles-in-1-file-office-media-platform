@@ -14,12 +14,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
-
-from app import jobs
+from app import face_rows, jobs
 from app.config import Settings
 from app.db import get_engine
-from app.models import Face
 from app.people.faces import crypto
 from app.people.faces.wipe import WIPE
 
@@ -37,13 +34,7 @@ async def check(settings: Settings, wipe: bool = False) -> KeyCheck:
 
     maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
     async with maker() as db:
-        rows = list(
-            await db.execute(
-                select(Face.owner_id, func.count())
-                .where(Face.vec.is_not(None))
-                .group_by(Face.owner_id)
-            )
-        )
+        rows = list((await face_rows.sealed_counts(db)).items())
         try:
             folder = str(crypto.keys_dir(settings))
         except crypto.NoKeys:

@@ -32,6 +32,7 @@ from app.models import Analysis, Blob, BlobText
 from app.search import bench, hooks
 from tests import test_files
 from tests.factories import create_user
+from tests.search.migratie import fts_column_sql
 
 # zoek: ook in e2e/slim.sh op SQLite 3.46.1 (bouwontwerp §4.1)
 pytestmark = [pytest.mark.anyio, pytest.mark.zoek]
@@ -192,9 +193,10 @@ async def test_een_upload_wacht_nooit_langer_dan_1_s_tijdens_de_backfill(
         )
         # De tekst van 1 MB staat bij alle 11 nodes in de index (de triggers van 0010)
         word = groot.split()[5].decode().strip(".").lower()
+        dialect = (await db.connection()).dialect.name
         hits = await db.scalar(
-            sa.text("SELECT count(*) FROM fts_node WHERE fts_node MATCH :q"),
-            {"q": f'body:"{word}"'},
+            sa.text(f"SELECT count(*) FROM ({fts_column_sql(dialect, 'body')}) AS f"),
+            {"q": f'body:"{word}"', "w": word},
         )
     # Een rij voor elke inhoud (de 61 van de backfill en elke upload van Bram), en elke rij done
     assert len(states) == 61 + len(waits), len(states)
@@ -363,9 +365,10 @@ async def test_veel_kopieen_houden_de_schrijfactie_klein(settings, client, admin
             )
         ).one()
         word = text[:share].split()[5].strip(".").lower()
+        dialect = (await db.connection()).dialect.name
         hits = await db.scalar(
-            sa.text("SELECT count(*) FROM fts_node WHERE fts_node MATCH :q"),
-            {"q": f'body:"{word}"'},
+            sa.text(f"SELECT count(*) FROM ({fts_column_sql(dialect, 'body')}) AS f"),
+            {"q": f'body:"{word}"', "w": word},
         )
     assert length == share and truncated == 1
     # Het begin van de tekst staat bij alle 251 nodes in de index

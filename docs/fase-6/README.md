@@ -1,11 +1,12 @@
 # Fase 6 — Zoeken en foto's
 
-Status: **gebouwd, versie 0.8.1 (16 november 2026)**. Fase 6 staat op de
+Status: **gebouwd, versie 0.8.2 (23 november 2026)**. Fase 6 staat op de
 branch `claude/stappenplan-uitwerken-lu4uv3`. De kern kwam met 0.8.0 (11 november 2026): zoeken in
 de inhoud van je bestanden, tekst in scans en foto's, de kaart met plaatsen en landen, dubbele
 bestanden, personen, herinneringen en slimme albums. 0.8.1 maakt de fase af met gezichten
 automatisch herkennen en zoeken op wat er op een foto staat, allebei per gebruiker aan te zetten,
-en de pagina `/over` met de bronnen ([Wat 0.8.1 brengt](#wat-081-brengt)).
+en de pagina `/over` met de bronnen ([Wat 0.8.1 brengt](#wat-081-brengt)). 0.8.2 brengt alles
+naar PostgreSQL, voor het cluster van ClusterForge ([Wat 0.8.2 brengt](#wat-082-brengt)).
 
 Het ontwerp stelt grenzen aan de snelheid en het geheugen (§4.4 en §4.5 van het
 [bouwontwerp](bouwontwerp.md)). Daarvan zijn er in de sandbox (de machine waarop gebouwd is) en in
@@ -178,6 +179,33 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
   index met de database. Een verschil staat in oranje op `/beheer`, met wat je dan doet; daarna
   kijkt de app elk uur opnieuw. Herstellen blijft met de hand (het runbook, "De wekelijkse
   controle").
+
+## Wat 0.8.2 brengt
+
+0.8.2 is de versie voor het cluster (PostgreSQL via Patroni). Op SQLite verandert er niets.
+
+- **Zoeken met een index op PostgreSQL** (migratie 0014). Tot 0.8.1 zocht de app op PostgreSQL
+  met LIKE: alleen op naam en traag. Nu heeft PostgreSQL een eigen index (`fts_node`, een
+  tsvector per bestand met naam, titels, tekst, OCR en meta, met de gewichten van bm25 op SQLite)
+  en zoekt de app ook in de inhoud. De OCR van een foto telt alleen voor de eigenaar (Keuze 16).
+  Triggers houden de index bij; `search-check`, `search-rebuild` en `search-triggers` werken nu
+  ook op PostgreSQL, net als de wekelijkse controle (die zet een afwijking meteen recht). De
+  migratie vult de index meteen: reken op enkele minuten bij een grote bibliotheek.
+- **Gezichten en zoeken op beeld op PostgreSQL**, achter `PLATFORM_ANALYSE_POSTGRES=true`. De
+  template van ClusterForge zet dat aan zodra Analyse aan staat. De sleutels van gezichten staan
+  per node; de app maakt nooit een nieuwe sleutel als er nog versleutelde gezichten zijn (een
+  node waar de sleutel nog niet gesynchroniseerd is, wacht). `python -m app.cli sleutels-check`
+  zegt welke eigenaren hun sleutel kwijt zijn, en kan hun gezichten bewust wissen (`--wissen`).
+- **Een nieuwere vraag stopt de vorige** nu ook op PostgreSQL (`pg_cancel_backend`), zoals
+  `interrupt()` op SQLite.
+- **Platform terug zonder gegevensverlies**: `MET_DATABASE=downgrade` laat het nieuwe image het
+  schema terugzetten (`db-downgrade`), in plaats van de back-up van vóór de update terug te zetten
+  ([runbook](../runbooks/cluster.md#terugzetten)).
+- **Tests op PostgreSQL** in CI: een sjabloondatabase per testproces (de job duurt ±10 minuten in
+  plaats van een uur), en de tests die echt alleen over SQLite gaan, zijn als zodanig gemarkeerd.
+
+Terug naar 0.8.1 op PostgreSQL: eerst `python -m app.cli db-downgrade 0012 --ja` met 0.8.2 (of
+Platform terug met `MET_DATABASE=downgrade`). Er gaan geen rijen verloren.
 
 ## Wat 0.8.1 brengt
 

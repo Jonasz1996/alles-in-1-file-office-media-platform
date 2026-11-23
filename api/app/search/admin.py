@@ -387,7 +387,7 @@ async def start_rebuild(db: AsyncSession, settings: Settings, what: RebuildWhat)
         # LIKE), ook als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor.
         begun = await rebuild.begin(conn, what)
         if not begun and conn.dialect.name != "sqlite":
-            # PostgreSQL heeft nog geen FTS-index (die komt met 0014): niets te herbouwen
+            # PostgreSQL zonder de FTS-index van 0014: niets te herbouwen
             raise errors.fail(409, "not_built", "Geen FTS-index op deze database")
         await db.commit()
         start_fts(settings, what)
@@ -555,8 +555,7 @@ async def on_start(settings: Settings) -> None:
                 await _store(db, rebuild=None)
         await db.commit()
         conn = await db.connection()
-        # Op PostgreSQL is er (nog) geen herbouw van de index om verder te laten gaan
-        building = conn.dialect.name == "sqlite" and await search_engine.rebuilding(conn)
+        building = await search_engine.rebuilding(conn)
     if building and not _fts_running(settings):
         log.info("Zoeken: een onderbroken herbouw van de index gaat verder")
         start_fts(settings, "text")

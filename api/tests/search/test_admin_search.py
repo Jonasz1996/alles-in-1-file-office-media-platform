@@ -297,20 +297,51 @@ def lezende_wekkers(settings, monkeypatch) -> list[tuple[str, datetime]]:
     seintje vóór de commit ziet nog de oude run_after; dan pakt de Runner de pomp pas bij zijn
     rondje (jobs.POLL, 5 s) op. Geeft de lijst (rij, run_after) die bij elk seintje groeit."""
     bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
+    pg = not settings.db_url.startswith("sqlite")
     gewekt: list[tuple[str, datetime]] = []
+
+    def lees_pg(soort: str) -> list[tuple]:
+        """PostgreSQL: een eigen verbinding in een eigen draad (de wekker is synchroon en de
+        lus van de test draait al), zoals sqlite3.connect hieronder."""
+        import threading
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        uit: list[tuple] = []
+
+        async def lees() -> None:
+            engine = create_async_engine(settings.db_url, poolclass=NullPool)
+            try:
+                async with engine.connect() as conn:
+                    rijen = await conn.execute(
+                        sa.text("SELECT run_after FROM job WHERE type = :t AND status = 'queued'"),
+                        {"t": soort},
+                    )
+                    uit.extend(tuple(r) for r in rijen)
+            finally:
+                await engine.dispose()
+
+        draad = threading.Thread(target=lambda: asyncio.run(lees()))
+        draad.start()
+        draad.join()
+        return uit
 
     def waker(lane: str):
         def wake() -> None:
-            con = sqlite3.connect(bestand)
-            try:
-                rows = con.execute(
-                    "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
-                    (analysis.pump_type(lane),),
-                ).fetchall()
-            finally:
-                con.close()
+            if pg:
+                rows = lees_pg(analysis.pump_type(lane))
+            else:
+                con = sqlite3.connect(bestand)
+                try:
+                    rows = con.execute(
+                        "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
+                        (analysis.pump_type(lane),),
+                    ).fetchall()
+                finally:
+                    con.close()
             for (at,) in rows:
-                found = datetime.fromisoformat(at)
+                found = at if isinstance(at, datetime) else datetime.fromisoformat(at)
                 gewekt.append((lane, found if found.tzinfo else found.replace(tzinfo=UTC)))
 
         return wake

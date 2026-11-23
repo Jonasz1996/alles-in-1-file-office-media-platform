@@ -13,7 +13,6 @@ hide_parameters op de engine. Dit is het geheel.
 from __future__ import annotations
 
 import logging
-import sqlite3
 import uuid
 
 import httpx
@@ -117,10 +116,11 @@ async def test_niets_in_de_log_van_de_app(client, settings, monkeypatch, caplog,
     assert W.TEKST_WOORD not in _alles(caplog)
     # Een databasefout bij een suggestie (bij zoeken: test_log_hiding.py)
     sync = get_engine(settings).sync_engine
+    driverfout = sync.dialect.loaded_dbapi.OperationalError
 
     def op_slot(cursor, statement, parameters, context):
         if any(WOORD in str(p) for p in parameters or ()):
-            raise sqlite3.OperationalError("database is locked")
+            raise driverfout("database is locked")
 
     event.listen(sync, "do_execute", op_slot)
     try:
