@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resetCommand } from "./Login";
+import { resetCommand } from "./CantLogIn";
 
 describe("resetCommand", () => {
   it("geeft het commando voor de beheerder, met het adres in kleine letters", () => {

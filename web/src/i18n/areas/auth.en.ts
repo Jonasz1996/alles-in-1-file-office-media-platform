@@ -18,16 +18,6 @@ const en: Translation<typeof nl> = {
   createAccount: "Create account",
   back: "Back",
   cantLogIn: "Can't log in?",
-  cantLogInTitle: "Recover access",
-  cantLogInIntro:
-    "Lost your password or 2FA? Enter the email address of your account to get the command for your system administrator.",
-  cantLogInShow: "Show the command",
-  cantLogInAsk:
-    "Ask your system administrator to reset your account with this command, on the server that runs the platform:",
-  cantLogInAfter:
-    "You then get a temporary password to recover access to your account. It works for one hour. After logging in you choose your own password and turn on 2FA again. Your files stay as they are.",
-  copy: "Copy",
-  copied: "Copied",
   locked: "Too many wrong codes. Try again {when}.",
   lockedOver: "You can try again now.",
   offlineTitle: "No connection to the server",
