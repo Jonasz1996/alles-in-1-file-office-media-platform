@@ -1,7 +1,8 @@
 """De database van een test voor Settings met de analyse aan (0.8.2, P4).
 
 Met PLATFORM_TEST_DATABASE_URL draait elke test op een eigen PostgreSQL-database (de fixture
-database_url in tests/conftest.py). Settings van de analyse (FakeAnalyseWorker.settings) moeten
+database_url_head in tests/conftest.py: een kopie van het gemigreerde sjabloon van de run, dezelfde
+database als van de fixture settings). Settings van de analyse (FakeAnalyseWorker.settings) moeten
 dan die database krijgen, en PLATFORM_ANALYSE_POSTGRES aan; daarna zegt pgcheck.check of de
 triggers van 0013 er zijn (Settings.analyse_on). Op SQLite verandert er niets: de database blijft
 platform.db in data_dir.

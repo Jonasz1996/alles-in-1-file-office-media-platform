@@ -28,6 +28,7 @@ from app import backup
 from app.analyse import status
 from app.models import Face, FaceScan, PhotoPref
 from app.people.faces import crypto, keycheck, scan
+from tests.conftest import database_env
 from tests.factories import create_user, maker
 from tests.people.faces.conftest import aan, draai, foto
 
@@ -238,9 +239,8 @@ def _cli(settings, *args: str) -> subprocess.CompletedProcess:
         PLATFORM_DATA_DIR=str(settings.data_dir),
         PLATFORM_FACES_KEYS=settings.faces_keys,
         PYTHONDONTWRITEBYTECODE="1",
+        **database_env(settings),
     )
-    if not settings.db_url.startswith("sqlite"):
-        env["PLATFORM_DATABASE_URL"] = settings.database_url
     return subprocess.run(
         [sys.executable, "-m", "app.cli", *args],
         cwd=API_DIR,
