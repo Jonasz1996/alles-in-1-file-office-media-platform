@@ -5,6 +5,10 @@ const en: Translation<typeof nl> = {
   title: "Account",
   required2fa: "2FA is required on this platform.",
   required2faText: "Turn it on below; after that you can get to your files.",
+  tempPassword: "Your account has been reset.",
+  tempPasswordText:
+    "First choose your own password. Then turn on 2FA again, and you can get to your files again.",
+  tempPasswordCurrent: "Temporary password",
   storage: {
     title: "Storage",
     label: "Used",

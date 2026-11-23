@@ -15,8 +15,8 @@ from conftest import enable_2fa, totp_code
 
 pytestmark = pytest.mark.p1
 
-FORGOT_NL = "Wachtwoord vergeten? Vraag je beheerder om een nieuw wachtwoord."
-FORGOT_EN = "Forgot your password? Ask your administrator for a new one."
+FORGOT_NL = "Kan niet inloggen?"
+FORGOT_EN = "Can't log in?"
 LOCKED_NL = re.compile(r"^Te veel foute codes\. Probeer het over \d+ \w+ opnieuw\.$")
 
 
@@ -56,7 +56,7 @@ def test_inloggen_met_code_en_terug(server, user_factory, page):
     assert password.get_attribute("type") == "text"
     password.press("Alt+Shift+P")
     assert password.get_attribute("type") == "password"
-    expect(page.get_by_text(FORGOT_NL)).to_be_visible()
+    expect(page.get_by_role("button", name=FORGOT_NL, exact=True)).to_be_visible()
 
     page.get_by_label("E-mailadres", exact=True).fill(account.email)
     page.get_by_role("button", name="Inloggen", exact=True).click()
@@ -170,7 +170,7 @@ def test_engels(new_context, user_factory):
     assert page.evaluate("document.documentElement.lang") == "en"
     page.get_by_label("Email address", exact=True).fill(account.email)
     page.get_by_label("Password", exact=True).fill("helemaal-fout-123")
-    expect(page.get_by_text(FORGOT_EN)).to_be_visible()
+    expect(page.get_by_role("button", name=FORGOT_EN, exact=True)).to_be_visible()
     page.get_by_role("button", name="Log in", exact=True).click()
     # De fout op code vertaald (de server stuurt Nederlands)
     expect(page.get_by_role("alert")).to_have_text("Email address or password is incorrect")

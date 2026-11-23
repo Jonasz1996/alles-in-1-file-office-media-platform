@@ -263,6 +263,11 @@ async def active_user(session: AsyncSession, user_id: uuid.UUID) -> User:
 
 
 async def current_user(user: Annotated[User, Depends(logged_in_user)], policy: Policy) -> User:
+    # Tijdelijk wachtwoord van reset-account: eerst een eigen wachtwoord (POST /auth/password)
+    if user.password_temp_until is not None:
+        raise errors.fail(
+            403, "password_change_required", "Kies eerst een eigen wachtwoord voor je account."
+        )
     if policy.require_2fa and user.totp_secret is None:
         raise errors.fail(403, "totp_setup_required", "Zet eerst 2FA aan voor je account.")
     return user

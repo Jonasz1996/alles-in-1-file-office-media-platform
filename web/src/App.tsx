@@ -245,6 +245,12 @@ const officeEvents = officeListener(() =>
 
 // --- de app ---
 
+
+/** Het account moet eerst af: een eigen wachtwoord na reset-account, of verplichte 2FA. */
+function accountUnfinished(user: User): boolean {
+  return user.totp_setup_required || user.password_change_required === true;
+}
+
 export function App(): JSX.Element {
   const { path } = useLocation();
   // Een publieke link werkt zonder in te loggen: dan niets van de login (geen refresh, geen
@@ -332,7 +338,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
   }, [reloadUser, check]);
 
   // Live gebeurtenissen zolang er iemand ingelogd is (en niet eerst 2FA moet aanzetten)
-  const live = user !== null && !user.totp_setup_required;
+  const live = user !== null && !accountUnfinished(user);
   useEffect(() => {
     if (!live) return;
     const stopOffice = liveEvents.subscribe(officeEvents);
@@ -358,7 +364,7 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
 
   const guest = user?.role === "guest";
   // Gasten hebben geen eigen bestanden: op / zien ze wat met hen gedeeld is
-  const redirect = user !== null && guest && path === "/" && !user.totp_setup_required;
+  const redirect = user !== null && guest && path === "/" && !accountUnfinished(user);
   useLayoutEffect(() => {
     if (redirect) navigate("/gedeeld", { replace: true });
   }, [redirect]);
@@ -392,8 +398,9 @@ function LoggedIn({ path }: { path: string }): JSX.Element {
     navigate("/");
   }
 
-  // 2FA verplicht en nog niet aan: alleen 2FA aanzetten en uitloggen.
-  const setupRequired = user.totp_setup_required;
+  // 2FA verplicht en nog niet aan, of een tijdelijk wachtwoord (reset-account): alleen /account
+  // (eigen wachtwoord kiezen, 2FA aanzetten) en uitloggen.
+  const setupRequired = accountUnfinished(user);
   const route = setupRequired ? resolve("/account") : resolve(path);
 
   function codesDone() {

@@ -6,6 +6,9 @@
 // - Geen verbinding: een eigen scherm dat het opnieuw probeert zodra de browser online is.
 // - Bij 2FA een tweede stap met "Terug"; een blokkade na te veel foute codes toont wanneer het
 //   weer kan (params.until van totp_locked).
+// - "Kan niet inloggen?": het commando voor de systeembeheerder (app.cli reset-account). Het wordt
+//   hier in de browser gemaakt, zonder de server te vragen: de tekst is dus altijd dezelfde, of er
+//   nu een account met dat adres is of niet.
 
 import { type FormEvent, type JSX, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type User } from "./api";
@@ -20,6 +23,90 @@ import { Spinner } from "./ui/Spinner";
 import "./login.css";
 
 const MIN_PASSWORD = 10;
+
+/** Tussen enkele aanhalingstekens voor de shell; een ' erin wordt '\''. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** Het commando voor de systeembeheerder. Het vindt de container van het platform zelf (op de
+ * single en in het cluster op de node met het platform), via het label van Docker Compose. */
+export function resetCommand(email: string): string {
+  return (
+    "docker exec -it $(docker ps -qf label=com.docker.compose.service=platform) " +
+    `python -m app.cli reset-account ${shellQuote(email.trim().toLowerCase())}`
+  );
+}
+
+/** "Kan niet inloggen?": e-mailadres in, commando uit. Vraagt niets aan de server. */
+function CantLogIn({ email: initial, onClose }: { email: string; onClose: () => void }): JSX.Element {
+  const [email, setEmail] = useState(initial);
+  const [shown, setShown] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function show(e: FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setShown(email);
+    setCopied(false);
+  }
+
+  async function copy(command: string) {
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard");
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+    } catch {
+      setCopied(false); // dan selecteert de gebruiker het zelf
+    }
+  }
+
+  const command = shown === null ? null : resetCommand(shown);
+  return (
+    <form className="card login-card" onSubmit={show}>
+      <img className="login-logo" src="/icons/icon.svg" alt="" width="48" height="48" />
+      <PageTitle>{t("auth.cantLogInTitle")}</PageTitle>
+      <p className="muted">{t("auth.cantLogInIntro")}</p>
+      <Field label={t("auth.email")}>
+        {(c) => (
+          <input
+            {...c}
+            type="email"
+            autoComplete="username"
+            autoFocus
+            required
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setShown(null);
+            }}
+          />
+        )}
+      </Field>
+      {command !== null && (
+        <div className="login-reset" aria-live="polite">
+          <p>{t("auth.cantLogInAsk")}</p>
+          <pre className="login-command">
+            <code>{command}</code>
+          </pre>
+          <p className="muted">{t("auth.cantLogInAfter")}</p>
+        </div>
+      )}
+      <div className="login-actions">
+        <Button onClick={onClose}>{t("auth.back")}</Button>
+        {command === null ? (
+          <Button type="submit" variant="primary">
+            {t("auth.cantLogInShow")}
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={() => void copy(command)}>
+            {copied ? t("auth.copied") : t("auth.copy")}
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}
 
 type Step = "login" | "code";
 
@@ -61,6 +148,7 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
   const [error, setError] = useState<string | null>(message ?? null);
   const [lock, setLock] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const checkStatus = useCallback(() => {
@@ -177,6 +265,14 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
     );
   }
 
+  if (help) {
+    return (
+      <main className="center login">
+        <CantLogIn email={email} onClose={() => setHelp(false)} />
+      </main>
+    );
+  }
+
   const title = setup ? t("auth.setupTitle") : step === "code" ? t("auth.codeTitle") : t("auth.title");
 
   return (
@@ -254,7 +350,13 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
             {setup ? t("auth.createAccount") : t("auth.submit")}
           </Button>
         </div>
-        {!setup && step === "login" && <p className="login-forgot muted">{t("auth.forgot")}</p>}
+        {!setup && (
+          <p className="login-forgot">
+            <button type="button" className="link" onClick={() => setHelp(true)}>
+              {t("auth.cantLogIn")}
+            </button>
+          </p>
+        )}
       </form>
     </main>
   );

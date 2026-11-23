@@ -595,18 +595,34 @@ aan: het script van 0.8.0 haalt de container weg, en de modellen, de sleutels en
 weer vooruit wordt er niets opnieuw gehaald. Meer, ook wat elke melding betekent:
 `docs/runbooks/analyse.md`.
 
-## 2FA kwijt
+## Kan niet inloggen (wachtwoord of 2FA kwijt)
 
-Ben je je telefoon én je herstelcodes kwijt, dan kan een andere beheerder je 2FA uitzetten
-op `/beheer`. Ben je de enige beheerder, doe het dan in de console van de container:
+Wie zijn wachtwoord, zijn telefoon met de authenticator-app of zijn herstelcodes kwijt is, klikt op
+de inlogpagina op **Kan niet inloggen?**. Die toont het commando voor de systeembeheerder; de tekst
+is altijd dezelfde, ook voor een adres zonder account. De beheerder draait het in de console van
+de container:
 
 ```bash
-cd /opt/platform/src/infra/single
-docker compose --env-file /opt/platform/.env exec platform python -m app.cli reset-2fa jij@voorbeeld.nl
+docker exec -it $(docker ps -qf label=com.docker.compose.service=platform) python -m app.cli reset-account jij@voorbeeld.nl
 ```
 
-Daarna log je in met alleen je wachtwoord en zet je 2FA opnieuw aan. Hetzelfde helpt als je
-2FA geblokkeerd is na te veel foute codes.
+Dat zet 2FA uit (met de herstelcodes en een blokkade na foute codes), meldt het account overal af
+en toont een **tijdelijk wachtwoord** dat één uur werkt (`--minuten 30` voor korter, hoogstens
+1440). Bij het inloggen kiest de gebruiker eerst een eigen wachtwoord en zet daarna 2FA opnieuw
+aan; tot dan kan het account niets anders. Bestanden, mappen, versies, delingen en instellingen
+blijven zoals ze waren. Elke reset komt in het logboek: `python -m app.cli reset-log` toont de
+laatste 50, met wanneer het tijdelijke wachtwoord gebruikt en vervangen werd. Is het verlopen, dan
+zegt de inlogpagina dat, en draait de beheerder het commando opnieuw.
+
+Is alleen 2FA weg en weet je je wachtwoord nog, dan kan het ook met `reset-2fa` (zonder tijdelijk
+wachtwoord), of door een andere beheerder op `/beheer`. Hetzelfde helpt als je 2FA geblokkeerd is
+na te veel foute codes.
+
+In het cluster (ClusterForge) is het hetzelfde commando, op de node waar het platform draait
+(alleen daar geeft `docker ps -qf label=com.docker.compose.service=platform` een id). Draai het in
+de Proxmox-console van die node, niet als ClusterForge-commando: dan komt het tijdelijke
+wachtwoord in het logboek van ClusterForge. Draait het cluster een versie zonder `reset-account`,
+gebruik dan `infra/cluster/noodreset.py` (de uitleg staat bovenaan dat script).
 
 ## Back-up
 
