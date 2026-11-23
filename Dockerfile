@@ -66,6 +66,8 @@ COPY api/migrations ./migrations
 # de standaardbibliotheek; hij maakt zijn boom in /data/cache en ruimt hem weer op
 COPY tools/zoekbench/bench.py ./tools/zoekbench/bench.py
 COPY --from=web /src/dist ./web
+# De app voor de LG webOS-tv (fase 11, stap 9): de downloadpagina maakt er het .ipk van
+COPY apps/webos ./clients/webos
 
 RUN useradd --system --uid 10001 platform && install -d -o platform -g platform /data
 

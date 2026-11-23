@@ -30,6 +30,35 @@ export default {
       "De analyse rekent met onnxruntime. Dat pakket en de pakketten die ermee meekomen, zitten in het image van het platform:",
     item: "{name} {version}: {license}",
   },
+  // /apps (fase 11, stap 9): de downloadpagina voor de client-apps
+  apps: {
+    title: "Apps",
+    link: "Apps voor je tv en telefoon",
+    intro: "Apps om het platform te gebruiken op je tv en andere toestellen. Je logt erin in met hetzelfde account.",
+    download: "Downloaden",
+    version: "Versie {version}",
+    later: "Komt later.",
+    webos: {
+      name: "LG webOS-tv",
+      text: "Kijk films, series en muziek van het platform op je LG-tv, met de afstandsbediening. Ondertitels en het scherper maken in de speler werken ook op de tv. Het .ipk kent het adres van dit platform al.",
+      step1: "Maak een gratis account op webostv.developer.lge.com, installeer op de tv de app Developer Mode uit de LG Content Store, log daarin in en zet Dev Mode Status aan.",
+      step2: "Download het .ipk hierboven op je computer.",
+      step3: "Installeer het met webOS Dev Manager of met ares-install (zie apps/webos/README.md), met het IP-adres en de Passphrase uit de Developer Mode-app.",
+      step4: "Start Platform op de tv en log in. Een ander adres kiezen: houd bij het starten de rode knop ingedrukt.",
+    },
+    android: {
+      name: "Android",
+      text: "Media kijken zoals in Plex of Jellyfin, en je bestanden synchroniseren zoals met de Nextcloud-app.",
+    },
+    windows: {
+      name: "Windows",
+      text: "Media en het synchroniseren van je bestanden op je Windows-computer.",
+    },
+    linux: {
+      name: "Linux",
+      text: "Media en het synchroniseren van je bestanden op je Linux-computer.",
+    },
+  },
   // Op /account: de weg naar deze pagina, voor iedereen die is ingelogd
   account: {
     title: "Over dit platform",

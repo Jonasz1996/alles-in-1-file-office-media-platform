@@ -58,6 +58,7 @@ from app.routers import (
     auth,
     batch,
     beeld,
+    client_apps,
     duplicates,
     files,
     folder_tree,
@@ -634,6 +635,7 @@ app.include_router(arr_wanted.router)
 app.include_router(arr_requests.router)
 app.include_router(arr_requests.admin_router)
 app.include_router(arr_cleanup.router)
+app.include_router(client_apps.router)
 app.include_router(arr_upscale.router)
 app.include_router(arr_upscale.admin_router)
 app.include_router(arr_upscale.worker_router)
@@ -683,7 +685,10 @@ async def health() -> Status:
 
 
 @app.get("/api/v1/info", tags=["systeem"])
-async def info(settings: Annotated[Settings, Depends(get_settings)]) -> Info:
+async def info(settings: Annotated[Settings, Depends(get_settings)], response: Response) -> Info:
+    # Openbaar en zonder geheimen: de tv-app (een lokale pagina op de tv, fase 11 stap 9)
+    # kijkt hiermee of er op een adres een platform draait
+    response.headers["Access-Control-Allow-Origin"] = "*"
     return Info(
         name=settings.app_name,
         version=__version__,

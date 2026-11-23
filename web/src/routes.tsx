@@ -82,6 +82,8 @@ export const routes: readonly RouteDef[] = [
   // Fase 6 (I2, Keuze 29 en K1-13): de bronnen en licenties. Voor iedereen die is ingelogd, ook een
   // gast, en met de analyse aan of uit; een eigen chunk zonder aanroepen (about/AboutPage.tsx)
   route("/over", () => import("./about/AboutPage"), ["about"], "about.title", null),
+  // Fase 11, stap 9: de downloadpagina voor de client-apps (about/AppsPage.tsx)
+  route("/apps", () => import("./about/AppsPage"), ["about"], "about.apps.title", "account"),
   // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office
   // is hij er niet (de pagina zegt dan "niet gevonden", zoals in fase 3)
   route("/bewerken/:id", () => import("./office/EditorPage"), ["office"], "office.title", null),

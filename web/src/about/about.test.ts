@@ -179,6 +179,9 @@ describe("de link op /account", () => {
         "            <p>\n" +
         '              <Link to="/over">{t("about.account.link")}</Link>\n' +
         "            </p>\n" +
+        "            <p>\n" +
+        '              <Link to="/apps">{t("about.apps.link")}</Link>\n' +
+        "            </p>\n" +
         "          </section>",
     );
     // Na Apparaten en sessies, binnen {!user.totp_setup_required && ( … )}: zolang 2FA nog aan moet,

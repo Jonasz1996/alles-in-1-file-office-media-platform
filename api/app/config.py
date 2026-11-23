@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     database_url: str = ""
     # Gebouwde web-app die de API zelf serveert (leeg of niet aanwezig = alleen API)
     web_dist: Path = Path("web")
+    # De client-apps die de downloadpagina aanbiedt (fase 11, stap 9): de bron van de webOS-app
+    # (apps/webos in het repo); een gebouwde app (bijv. android.apk) in data_dir/apps
+    clients_dir: Path = Path("clients")
 
     # Poorten in de container. https start pas zodra er een certificaat is; het domein
     # stel je in op /beheer.
