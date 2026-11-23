@@ -221,17 +221,20 @@ async fn sync_loop(handle: AppHandle, app: Shared) {
             }
         };
         let result = sync::run(&app.api, &progress).await;
-        let mut cfg = config::load();
         match result {
             Ok(Some(c)) => {
-                cfg.last_run = Some(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
-                cfg.last_error = None;
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let _ = config::update(|cfg| {
+                    cfg.last_run = Some(now);
+                    cfg.last_error = None;
+                });
                 *app.last.lock().await = Some(c);
             }
             Ok(None) => {}
-            Err(e) => cfg.last_error = Some(e.to_string()),
+            Err(e) => {
+                let _ = config::update(|cfg| cfg.last_error = Some(e.to_string()));
+            }
         }
-        let _ = config::save(&cfg);
         *app.running.lock().await = false;
         app.now.lock().await.clear();
         let _ = handle.emit("sync", "done");

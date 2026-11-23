@@ -57,3 +57,13 @@ pub fn save(cfg: &Config) -> anyhow::Result<()> {
     std::fs::rename(tmp, path())?;
     Ok(())
 }
+
+/// Lezen, aanpassen en meteen bewaren: altijd op de nieuwste stand van het bestand. Nooit een
+/// eerder geladen Config bewaren: het refresh-token kan intussen vervangen zijn (dan zou het
+/// oude, al gebruikte token terugkomen en trekt het platform de hele login in).
+pub fn update(change: impl FnOnce(&mut Config)) -> anyhow::Result<Config> {
+    let mut cfg = load();
+    change(&mut cfg);
+    save(&cfg)?;
+    Ok(cfg)
+}

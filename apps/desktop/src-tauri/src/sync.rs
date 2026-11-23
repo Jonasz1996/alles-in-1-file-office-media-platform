@@ -80,19 +80,53 @@ fn same(path: &Path, seen: &Seen) -> bool {
         .unwrap_or(false)
 }
 
+/// "2026-11-23 1910" (UTC) uit de seconden sinds 1970, zonder extra crate.
+fn stamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rest = secs % 86_400;
+    // De kalender van Howard Hinnant (civil_from_days)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02} {:02}{:02}", rest / 3600, rest % 3600 / 60)
+}
+
+fn host() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|h| h.trim().to_owned()))
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "computer".into())
+}
+
 fn conflict_name(name: &str) -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let host = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "computer".into());
-    let stamp = format!("{secs}");
+    let tag = format!("conflict {} {}", stamp(secs), host());
     match name.rfind('.') {
-        Some(dot) if dot > 0 => format!("{} (conflict {stamp} {host}){}", &name[..dot], &name[dot..]),
-        _ => format!("{name} (conflict {stamp} {host})"),
+        Some(dot) if dot > 0 => format!("{} ({tag}){}", &name[..dot], &name[dot..]),
+        _ => format!("{name} ({tag})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stamp() {
+        assert_eq!(super::stamp(0), "1970-01-01 0000");
+        assert_eq!(super::stamp(1_795_457_440), "2026-11-23 1810");
+        assert_eq!(super::stamp(951_782_400), "2000-02-29 0000");
     }
 }
 
 /// Eén ronde. `progress`: het pad dat nu aan de beurt is.
 pub async fn run(api: &Api, progress: &(dyn Fn(&str) + Sync)) -> Result<Option<Counts>> {
-    let mut cfg = config::load();
+    let cfg = config::load();
     let Some(folder) = cfg.folder.clone() else { return Ok(None) };
     if cfg.refresh_token.is_none() {
         return Ok(None);
@@ -104,8 +138,8 @@ pub async fn run(api: &Api, progress: &(dyn Fn(&str) + Sync)) -> Result<Option<C
             let name = folder.file_name().and_then(|n| n.to_str()).unwrap_or("Computer").to_owned();
             let root = api.root().await?;
             let id = api.folder(&root.folder.id, &name).await?.id;
-            cfg.remote_folder = Some(id.clone());
-            config::save(&cfg)?;
+            let keep = id.clone();
+            config::update(|c| c.remote_folder = Some(keep))?;
             id
         }
     };

@@ -135,10 +135,10 @@ impl Api {
     }
 
     fn keep(&self, t: &Tokens) -> Result<()> {
-        let mut cfg = config::load();
-        cfg.refresh_token = Some(t.refresh_token.clone());
-        cfg.user = Some(t.user.display_name.clone());
-        config::save(&cfg)?;
+        config::update(|c| {
+            c.refresh_token = Some(t.refresh_token.clone());
+            c.user = Some(t.user.display_name.clone());
+        })?;
         if let Ok(mut a) = self.access.try_lock() {
             *a = Some(t.access_token.clone());
         }
@@ -146,7 +146,7 @@ impl Api {
     }
 
     pub async fn logout(&self) -> Result<()> {
-        let mut cfg = config::load();
+        let cfg = config::load();
         if let (Some(server), Some(rt)) = (cfg.server.clone(), cfg.refresh_token.clone()) {
             let _ = self
                 .http
@@ -155,9 +155,10 @@ impl Api {
                 .send()
                 .await;
         }
-        cfg.refresh_token = None;
-        cfg.user = None;
-        config::save(&cfg)?;
+        config::update(|c| {
+            c.refresh_token = None;
+            c.user = None;
+        })?;
         *self.access.lock().await = None;
         Ok(())
     }
@@ -177,18 +178,14 @@ impl Api {
             .send()
             .await?;
         if res.status() == StatusCode::UNAUTHORIZED || res.status() == StatusCode::FORBIDDEN {
-            let mut cfg = config::load();
-            cfg.refresh_token = None;
-            config::save(&cfg)?;
+            config::update(|c| c.refresh_token = None)?;
             return Err(error_of(res).await);
         }
         if !res.status().is_success() {
             return Err(error_of(res).await);
         }
         let t: Tokens = res.json().await?;
-        let mut cfg = config::load();
-        cfg.refresh_token = Some(t.refresh_token.clone());
-        config::save(&cfg)?;
+        config::update(|c| c.refresh_token = Some(t.refresh_token.clone()))?;
         *access = Some(t.access_token);
         Ok(())
     }
