@@ -11,8 +11,8 @@ media_sub_offset (app.models.SubOffset, de timing van een ondertitel die iemand 
 arr_request (app.models.ArrRequest, de verzoeken van gezinsleden) en arr_upscale
 (app.models.ArrUpscale, de rij van de AI-upscaling) en media_facts (app.models.MediaFacts,
 collectie en kijkwijzer uit TMDB) en media_profile (app.models.MediaProfile, profielen en
-kinderslot) en media_intro (app.models.MediaIntro, intro overslaan) en arr_cleanup (app.models.ArrCleanup,
-de opruimregels).
+kinderslot) en media_intro (app.models.MediaIntro, intro overslaan) en arr_cleanup
+(app.models.ArrCleanup, de opruimregels).
 Niets bestaands verandert. De downgrade haalt ze weg: de lijst van gevolgde titels en de
 geschiedenis zijn dan weg, de bibliotheken en de bestanden blijven.
 
