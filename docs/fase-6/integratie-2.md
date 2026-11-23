@@ -186,7 +186,7 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
 - **Na een herstart warmt zoeken op beeld één keer op**, ±1,7 s (U1 hierboven). Dat betaalt het
   opwarmen, niet de eerste zoekvraag.
 - **De chunk van gezichten heeft 36 B ruimte.** 11.964 van 12.000 B op `e41b724`. Elke volgende
-  regel in de schermen van gezichten gaat over het budget (een vraag hieronder).
+  regel in de schermen van gezichten gaat over het budget (een vraag hieronder; de grens blijft, besloten: standaard, Jonas 2026-11-17).
 - **Office: de knop Sluiten schuift.** Gaat een andere bewerker weg, dan verliest de statusregel
   "met 1 ander" en schuift Sluiten in de kopbalk ±80 px. Wie precies dan klikt, kan naast de knop
   loslaten. De test in `e2e/test_office_o2.py` wacht er nu op (`919d7f8`); de app is niet
@@ -200,7 +200,7 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
   ingelogd, ook een gast, maar niet voor een bezoeker zonder account.
 - **BZ6 meet zoeken op beeld zonder de gezichtenscan ernaast.** In stap 2 van M13 wachtte de scan
   op de index (Keuze 65). In stap 3, een rapport, liep de scan van 5.000 foto's op dezelfde core,
-  en daar was beeld p95 290,4 ms (9 van 103 vragen boven 250 ms). Een vraag hieronder.
+  en daar was beeld p95 290,4 ms (9 van 103 vragen boven 250 ms). Een vraag hieronder; het blijft zo (besloten: standaard, Jonas 2026-11-17).
 - **`test_install_update.sh` is niet gedraaid**, net als bij 0.8.0 (hierboven).
 
 ## Niet gedaan in I2, met de reden
@@ -210,7 +210,7 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
 | `test_install_update.sh` (±17 min, fase 4) | weigert zolang `python:3.12-slim` er is, en draait niet in CI; net als bij 0.8.0 niet gedraaid | [integratie.md](integratie.md), De controles |
 | Een `--stappen` met echte docker en de analyse standaard aan (modellen die niet te halen zijn, de container met `models_missing`) | vandaag alleen met de nep van docker in de installatietests | P1 |
 | `ROLLBACK_SHA` in `test_install_search.sh` van 0.7.1 naar de commit van 0.8.0 | hoort bij een volgende versie | [a0.md](a0.md) |
-| Gereedschap voor de kleurvolgorde en voor "≥ 95% van de portretten" | er is geen set met echte gezichten zolang Vraag 8 op nee staat | [README](README.md), Vragen voor Jonas |
+| Gereedschap voor de kleurvolgorde en voor "≥ 95% van de portretten" | er is geen set met echte gezichten: Vraag 8 is nee (besloten: standaard, Jonas 2026-11-17), dus de twee eisen blijven niet gemeten | [README](README.md), Vragen voor Jonas |
 | Een GPS-waarde met 60,0 seconden | een herstel vraagt een nieuwe versie van photometa, en dan leest de update van Jonas elke foto opnieuw | [integratie.md](integratie.md), Niet gedaan; [metingen.md](metingen.md), Bevindingen 5 |
 | De koude eerste weergave van ±8 s | geen meting draait `run_all.py` met een trace | [z5.md](z5.md), Open |
 | Een e2e voor "Meer laden" op `/beheer`, en de gaten in de e2e met het toetsenbord van X2b | staan op de lijst voor de hand-test van Jonas | [z7.md](z7.md), Open; [toetsenbord-x2.md](toetsenbord-x2.md) |
@@ -222,8 +222,9 @@ Wat 0.8.1 niet goed doet of niet liet zien, zonder mooier te maken:
 
 ## Vragen voor Jonas
 
-Elke vraag heeft een standaard, en 0.8.1 draait erop tot Jonas iets anders zegt (kort ook in de
-[README](README.md#vragen-voor-jonas)):
+**Besloten op 17 november 2026.** Jonas koos "Standaard vastzetten": elke vraag hieronder staat op
+haar standaard, met de status **besloten: standaard, Jonas 2026-11-17** (kort ook in de
+[README](README.md#vragen-voor-jonas)). 0.8.1 draaide al zo; er verandert niets.
 
 1. **Waar staat 0.8.1?** Standaard: op de branch `claude/stappenplan-uitwerken-lu4uv3`, net als
    0.8.0. Anders: naar `main`.
@@ -231,13 +232,15 @@ Elke vraag heeft een standaard, en 0.8.1 draait erop tot Jonas iets anders zegt 
    weg terug voor de volgende versie.
 3. **De twee eisen voor gezichten zonder gereedschap** ("≥ 95% van de portretten" en
    "kleurvolgorde ≥ 0,05 hoger", [bouwontwerp.md](bouwontwerp.md)). Standaard: **niet gemeten,
-   geen gereedschap**; Vraag 8 blijft open.
+   geen gereedschap**. Vraag 8 is nee (besloten: standaard, Jonas 2026-11-17): de twee
+   eisen blijven bij besluit niet gemeten; de kwaliteit meet alleen Jonas, met `analyse-kwaliteit`
+   op de LXC.
 4. **`BEELD=uit` samen met `ANALYSE=uit` (U4).** Nu schrijft `install.sh` de regel `BEELD` alleen
    als hij al in `.env` staat of als de analyse aangaat. Wie beide uit vraagt en later
    `ANALYSE=aan` zet, krijgt zoeken op beeld erbij en de download van 1,55 GB. (a) `BEELD` ook
    schrijven met de analyse uit, zodat de keuze blijft (wat de review aanraadt); (b) de regel
-   houden en in de eindtekst zeggen dat `BEELD` alleen telt met `ANALYSE=aan`. Tot Jonas kiest,
-   blijft het zoals het is.
+   houden en in de eindtekst zeggen dat `BEELD` alleen telt met `ANALYSE=aan`. Standaard: zo
+   laten; `install.sh` verandert niet (besloten: standaard, Jonas 2026-11-17).
 5. **Het kind na een afgebroken vraag (`Kid._stop`).** De worker wacht 5 s (`KILL_GRACE_S`) voor hij
    een kind dat nog bezig is stopt. Een antwoord "afgebroken" zou `zoeken` eerder vrijmaken, maar
    raakt elke opdracht en beide kinderen. (a) zo laten (standaard); (b) een eigen pakket met tests
@@ -257,8 +260,9 @@ Elke vraag heeft een standaard, en 0.8.1 draait erop tot Jonas iets anders zegt 
    3 is een rapport; (b) een aparte meting of rapportregel voor zoeken op beeld terwijl de scan
    loopt; (c) de scan laten wijken voor een beeldvraag (een codewijziging, met een nieuwe test).
 
-I2 beslist niets: van B49–B70 blijven alle punten behalve B53 en B57 (al eerder besloten) een
-voorstel, B71 blijft een voorstel, en Vraag 4 en Vraag 8–14 blijven open.
+I2 besliste zelf niets. Op 17 november 2026 zette Jonas alles op de standaard: B49–B71 (B53 en
+B57 waren al besloten), Vraag 4 en Vraag 8–14, en de negen vragen hierboven zijn
+besloten: standaard, Jonas 2026-11-17.
 
 ## Alleen op de LXC
 
@@ -286,3 +290,14 @@ Wat de sandbox en CI niet kunnen laten zien; de lijst voor Jonas staat in de
 | Versie 0.8.1 op de zes regels | de commit van de versie | `ba7cf9d` (`api/app/__init__.py`, `api/pyproject.toml`, `api/uv.lock`, `web/package.json` en twee regels in `web/package-lock.json`); `uv lock --check` en `uv sync --frozen` goed |
 | CI groen op de commit van 0.8.1 | GitHub Actions | run 43981579405 op `ae163ac`: alle 19 jobs groen |
 | De volledige hash van 0.8.1 in de docs, als weg terug voor de volgende versie | de commit erna | `ae163ac69470343de7bc8d876db1a48e7da9331e`; de commit direct na `ae163ac` zet hem in de docs en verandert alleen docs |
+
+## Na I2: PR #2 en de besluiten (17 november 2026)
+
+- **PR #2 is samengevoegd** in `claude/stappenplan-uitwerken-lu4uv3` (fast-forward naar `aa6fa8b`).
+  Daarmee kwamen `app.cli db-copy` (de SQLite van één node naar PostgreSQL, voor het cluster), de
+  tests op PostgreSQL met `PLATFORM_TEST_DATABASE_URL`, en de CI-job `api-postgres` (toen nog niet
+  blokkerend). De app van 0.8.1 voor één node verandert er niet door. Het vervolg op PostgreSQL
+  staat in [i3/w1.md](i3/w1.md).
+- **Alle keuzes van fase 6 zijn besloten.** Jonas koos "Standaard vastzetten" voor B49–B71, Vraag 4
+  en Vraag 8–14, de vragen van I1 en de negen vragen hierboven:
+  besloten: standaard, Jonas 2026-11-17. Zie [beslissingen.md](../fase-0/beslissingen.md).
