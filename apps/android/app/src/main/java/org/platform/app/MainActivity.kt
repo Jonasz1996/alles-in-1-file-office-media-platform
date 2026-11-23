@@ -33,6 +33,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import org.platform.app.media.LibraryScreen
 import org.platform.app.media.MediaHomeScreen
+import org.platform.app.media.OfflinePlayer
+import org.platform.app.media.OfflineScreen
 import org.platform.app.media.PlayerScreen
 import org.platform.app.media.ShowScreen
 import org.platform.app.sync.SyncScreen
@@ -82,7 +84,7 @@ private fun Main(app: PlatformApp, onLoggedOut: () -> Unit) {
     val route = entry?.destination?.route ?: "media"
     Scaffold(
         bottomBar = {
-            if (!route.startsWith("play")) {
+            if (!route.startsWith("play") && !route.startsWith("offline/")) {
                 NavigationBar {
                     TABS.forEach { tab ->
                         NavigationBarItem(
@@ -128,6 +130,10 @@ private fun Main(app: PlatformApp, onLoggedOut: () -> Unit) {
             }
             composable("media/show/{id}") { e ->
                 ShowScreen(app, e.arguments?.getString("id").orEmpty(), open = { nav.navigate(it) })
+            }
+            composable("media/offline") { OfflineScreen(open = { nav.navigate(it) }) }
+            composable("offline/{name}") { e ->
+                OfflinePlayer(android.net.Uri.decode(e.arguments?.getString("name").orEmpty()))
             }
             composable("play/{node}") { e ->
                 PlayerScreen(app, e.arguments?.getString("node").orEmpty(), onDone = { nav.popBackStack() })

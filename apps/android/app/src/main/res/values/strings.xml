@@ -44,4 +44,13 @@
     <string name="sync_running">Bezig met synchroniseren</string>
     <string name="sync_channel">Synchroniseren</string>
     <string name="player_skip_intro">Intro overslaan</string>
+    <string name="profiles_title">Wie kijkt er?</string>
+    <string name="profiles_locked">Met pincode</string>
+    <string name="profiles_pin_for">Pincode voor %1$s</string>
+    <string name="profiles_choose">Kiezen</string>
+    <string name="cancel">Annuleren</string>
+    <string name="offline">Offline</string>
+    <string name="offline_started">Downloaden voor offline gestart</string>
+    <string name="offline_empty">Nog niets offline. Houd een film of aflevering lang ingedrukt om hem te downloaden.</string>
+    <string name="offline_delete">Verwijderen</string>
 </resources>

@@ -1,6 +1,8 @@
 package org.platform.app.media
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,14 +57,23 @@ import org.platform.app.ui.Loaded
 /** Waar een kaart heen gaat: een serie naar haar pagina, de rest meteen afspelen. */
 fun target(card: Card): String? = when {
     card.kind == "show" && card.show_id != null -> "media/show/${card.show_id}"
-    card.kind == "track" -> null // muziek: later
     card.node_id != null -> "play/${card.node_id}"
     else -> null
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Poster(app: PlatformApp, card: Card, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Column(modifier.clickable(onClick = onClick)) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Lang drukken: downloaden om offline te kijken (films, afleveringen, video's)
+    val offline = card.node_id != null && card.kind in setOf("movie", "episode", "video", "extra")
+    Column(
+        modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = if (offline) ({ scope.launch { Offline.download(app, context, card) }; Unit }) else null,
+        ),
+    ) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp))) {
             Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxSize()) {}
             card.poster?.let {
@@ -113,11 +125,15 @@ private fun CardRow(app: PlatformApp, title: String, cards: List<Card>, open: (S
 @Composable
 fun MediaHomeScreen(app: PlatformApp, open: (String) -> Unit, onLoggedOut: () -> Unit) {
     val scope = rememberCoroutineScope()
-    Loaded(Unit, { app.api.get("/api/v1/media/home", MediaHome.serializer()) }) { home, _ ->
+    var round by remember { mutableStateOf(0) }
+    val reloadHome = { round++ }
+    Loaded(round, { app.api.get("/api/v1/media/home", MediaHome.serializer()) }) { home, _ ->
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.media), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                    ProfileButton(app) { reloadHome() }
+                    TextButton(onClick = { open("media/offline") }) { Text(stringResource(R.string.offline)) }
                     TextButton(onClick = { scope.launch { app.api.logout(); onLoggedOut() } }) {
                         Text(stringResource(R.string.logout))
                     }

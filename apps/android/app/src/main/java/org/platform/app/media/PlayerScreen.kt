@@ -26,6 +26,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
@@ -76,7 +78,16 @@ fun PlayerScreen(app: PlatformApp, node: String, onDone: () -> Unit) {
             val out = app.api.send("POST", "/api/v1/media/$node/play", PlayIn.serializer(), PlayIn(), PlayOut.serializer())!!
             play = out
             val url = out.urls.master ?: out.urls.file ?: out.urls.audio ?: error("Geen adres om af te spelen")
-            val item = MediaItem.Builder().setUri(app.api.url(url)).apply {
+            // Ondertitels als aparte WebVTT (subs/{id}.vtt); de knop CC van de speler kiest
+            val subs = out.tracks.subtitles.filter { it.state == "ready" || it.state == "pending" }.map { t ->
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(app.api.url("/api/v1/stream/${out.sid}/subs/${t.id}.vtt")))
+                    .setMimeType(MimeTypes.TEXT_VTT)
+                    .setLanguage(t.lang)
+                    .setLabel(t.label)
+                    .setSelectionFlags(if (t.default || t.forced) C.SELECTION_FLAG_DEFAULT else 0)
+                    .build()
+            }
+            val item = MediaItem.Builder().setUri(app.api.url(url)).setSubtitleConfigurations(subs).apply {
                 if (out.urls.master != null) setMimeType(MimeTypes.APPLICATION_M3U8)
             }.build()
             player.setMediaItem(item, out.start_ms)
@@ -134,7 +145,7 @@ fun PlayerScreen(app: PlatformApp, node: String, onDone: () -> Unit) {
             err != null -> Text(errorText(err), color = Color.White, modifier = Modifier.align(Alignment.Center).padding(24.dp))
             play == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> AndroidView(
-                factory = { ctx -> PlayerView(ctx).apply { this.player = player } },
+                factory = { ctx -> PlayerView(ctx).apply { this.player = player; setShowSubtitleButton(true) } },
                 modifier = Modifier.fillMaxSize(),
             )
         }

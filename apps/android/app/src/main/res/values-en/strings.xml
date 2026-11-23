@@ -43,4 +43,13 @@
     <string name="sync_running">Syncing</string>
     <string name="sync_channel">Sync</string>
     <string name="player_skip_intro">Skip intro</string>
+    <string name="profiles_title">Who is watching?</string>
+    <string name="profiles_locked">With PIN</string>
+    <string name="profiles_pin_for">PIN for %1$s</string>
+    <string name="profiles_choose">Choose</string>
+    <string name="cancel">Cancel</string>
+    <string name="offline">Offline</string>
+    <string name="offline_started">Offline download started</string>
+    <string name="offline_empty">Nothing offline yet. Long-press a movie or episode to download it.</string>
+    <string name="offline_delete">Delete</string>
 </resources>

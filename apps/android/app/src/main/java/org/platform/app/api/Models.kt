@@ -108,7 +108,14 @@ data class PlayIn(
 data class PlayUrls(val file: String? = null, val map: String? = null, val master: String? = null, val audio: String? = null)
 
 @Serializable
-data class SubtitleTrack(val id: String, val language: String? = null, val label: String? = null, val url: String? = null)
+data class SubtitleTrack(
+    val id: String,
+    val lang: String? = null,
+    val label: String = "",
+    val forced: Boolean = false,
+    val default: Boolean = false,
+    val state: String = "ready",
+)
 
 @Serializable
 data class PlayTracks(val subtitles: List<SubtitleTrack> = emptyList())
@@ -166,3 +173,17 @@ data class DownloadLink(val url: String)
 
 @Serializable
 data class NewFolder(val name: String)
+
+// --- profielen (fase 11, stap 7) ---
+
+@Serializable
+data class MediaProfile(val id: String, val name: String, val max_age: Int? = null, val has_pin: Boolean = false)
+
+@Serializable
+data class MediaProfiles(val current: String, val max_age: Int? = null, val can_manage: Boolean = false, val profiles: List<MediaProfile> = emptyList())
+
+@Serializable
+data class SelectIn(val pin: String? = null)
+
+@Serializable
+data class SelectOut(val token: String)
