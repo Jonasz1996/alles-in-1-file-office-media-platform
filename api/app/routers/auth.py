@@ -15,11 +15,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session as OrmSession
 
-from app import errors, jobs, totp, userdelete
+from app import errors, jobs, resetcode, totp, userdelete
 from app.config import Settings, get_settings
 from app.db import Session
 from app.media import sessions as media_sessions
-from app.models import AccountReset, Job, Node, RecoveryCode, RefreshToken, User, Version
+from app.models import (
+    AccountReset,
+    Job,
+    Node,
+    RecoveryCode,
+    RefreshToken,
+    ResetRequest,
+    User,
+    Version,
+)
 from app.office import gate as office_gate
 from app.office import runtime as office_runtime
 from app.office import tunnel as office_tunnel
@@ -29,6 +38,7 @@ from app.security import (
     CurrentUser,
     LoggedInUser,
     Policy,
+    RateLimiter,
     SecurityConfig,
     TokenFamily,
     access_token,
@@ -141,6 +151,16 @@ class Login(BaseModel):
     # Code uit de authenticator-app of een herstelcode, als 2FA aan staat
     code: str | None = Field(default=None, max_length=32)
     device: str = Field(default="", max_length=200)
+
+
+class ResetAsk(BaseModel):
+    # Wat de gebruiker invult als login (het e-mailadres); niet gecontroleerd, zie reset_request
+    login: str = Field(min_length=1, max_length=320)
+
+
+class ResetCode(BaseModel):
+    code: str
+    expires_at: datetime
 
 
 class TotpSetup(BaseModel):
@@ -596,6 +616,48 @@ async def login(
     # Zonder naam van de app: een label als "Firefox op Windows" voor het sessie-overzicht
     device = body.device.strip() or device_label(request.headers.get("user-agent"))
     return await issue_tokens(session, settings, request, response, user, device, verified=verified)
+
+
+# "Wachtwoord vergeten of kan niet inloggen?": per IP 5 verzoeken per kwartier, en hoogstens
+# zoveel openstaande verzoeken samen (de oudste gaan eerst weg)
+reset_request_limiter = RateLimiter(limit=5, window_seconds=900)
+RESET_REQUESTS_MAX = 1000
+
+
+@router.post("/auth/reset-request")
+async def reset_request(body: ResetAsk, request: Request, session: Session) -> ResetCode:
+    """Een code voor de beheerder, die er met `app.cli reset-account <code>` een tijdelijk
+    wachtwoord mee maakt. Voor elke login hetzelfde antwoord en hetzelfde werk: of het account
+    bestaat, kijkt pas de CLI na. Zo verraadt dit niet welke e-mailadressen er zijn."""
+    ip = client_ip(request)
+    reset_request_limiter.check(ip)
+    now = datetime.now(UTC)
+    await session.execute(
+        delete(ResetRequest).where(
+            or_(ResetRequest.expires_at <= now, ResetRequest.used_at.is_not(None))
+        )
+    )
+    open_requests = await session.scalar(select(func.count()).select_from(ResetRequest)) or 0
+    if open_requests >= RESET_REQUESTS_MAX:
+        oldest = (
+            select(ResetRequest.id)
+            .order_by(ResetRequest.created_at)
+            .limit(open_requests - RESET_REQUESTS_MAX + 1)
+        )
+        await session.execute(delete(ResetRequest).where(ResetRequest.id.in_(oldest)))
+    code = resetcode.new_code()
+    expires_at = now + timedelta(hours=resetcode.VALID_HOURS)
+    session.add(
+        ResetRequest(
+            token_hash=resetcode.code_hash(code),
+            login=body.login.strip().lower()[:320],
+            ip=ip[:45],
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+    log.info("reset-verzoek aangemaakt vanaf %s (geldig tot %s)", ip, expires_at.isoformat())
+    return ResetCode(code=code, expires_at=expires_at)
 
 
 @router.post("/auth/refresh")

@@ -6,7 +6,7 @@
 // - Geen verbinding: een eigen scherm dat het opnieuw probeert zodra de browser online is.
 // - Bij 2FA een tweede stap met "Terug"; een blokkade na te veel foute codes toont wanneer het
 //   weer kan (params.until van totp_locked).
-// - "Kan niet inloggen?": het commando voor de systeembeheerder (CantLogIn.tsx, apart geladen).
+// - "Wachtwoord vergeten of kan niet inloggen?": een code voor de systeembeheerder (CantLogIn.tsx, apart geladen).
 
 import { type FormEvent, type JSX, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type User } from "./api";
@@ -20,7 +20,7 @@ import { PageTitle } from "./ui/PageTitle";
 import { Spinner } from "./ui/Spinner";
 import "./login.css";
 
-// "Kan niet inloggen?" in een eigen chunk (met het gebied reset): niet in de eerste lading
+// "Wachtwoord vergeten of kan niet inloggen?" in een eigen chunk (met het gebied reset): niet in de eerste lading
 const CantLogIn = lazyWithAreas(() => import("./CantLogIn"), ["reset"]);
 
 const MIN_PASSWORD = 10;

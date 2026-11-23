@@ -15,7 +15,7 @@ export default {
   submit: "Inloggen",
   createAccount: "Account aanmaken",
   back: "Terug",
-  cantLogIn: "Kan niet inloggen?",
+  cantLogIn: "Wachtwoord vergeten of kan niet inloggen?",
   locked: "Te veel foute codes. Probeer het {when} opnieuw.",
   lockedOver: "Je kunt het nu opnieuw proberen.",
   offlineTitle: "Geen verbinding met de server",

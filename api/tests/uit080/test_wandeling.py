@@ -41,6 +41,7 @@ NIEUW = {
     "media_sub_offset": 0,
     # Het logboek van account resetten (0018): de wandeling reset niemand
     "account_reset": 0,
+    "reset_request": 0,
 }
 
 
@@ -58,6 +59,8 @@ FASE11 = (
     "/api/v1/admin/media/profiles",
     "/api/v1/media/sub-offset/",
     "/api/v1/media/items/{node_id}/collection",
+    # Account resetten: de code van "Wachtwoord vergeten of kan niet inloggen?"
+    "/api/v1/auth/reset-request",
 )
 
 

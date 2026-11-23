@@ -17,7 +17,7 @@ const en: Translation<typeof nl> = {
   submit: "Log in",
   createAccount: "Create account",
   back: "Back",
-  cantLogIn: "Can't log in?",
+  cantLogIn: "Forgot your password or can't log in?",
   locked: "Too many wrong codes. Try again {when}.",
   lockedOver: "You can try again now.",
   offlineTitle: "No connection to the server",

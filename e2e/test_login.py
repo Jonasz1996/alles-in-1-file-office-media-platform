@@ -15,8 +15,8 @@ from conftest import enable_2fa, totp_code
 
 pytestmark = pytest.mark.p1
 
-FORGOT_NL = "Kan niet inloggen?"
-FORGOT_EN = "Can't log in?"
+FORGOT_NL = "Wachtwoord vergeten of kan niet inloggen?"
+FORGOT_EN = "Forgot your password or can't log in?"
 LOCKED_NL = re.compile(r"^Te veel foute codes\. Probeer het over \d+ \w+ opnieuw\.$")
 
 

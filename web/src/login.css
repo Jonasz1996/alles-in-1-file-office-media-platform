@@ -57,3 +57,11 @@
   border-radius: var(--radius-s, 6px);
   user-select: all;
 }
+
+/* De code voor de systeembeheerder: groot, in één stuk te selecteren */
+.login-code {
+  margin: var(--space-2) 0;
+  font-size: var(--text-l, 1.25rem);
+  letter-spacing: 0.05em;
+  user-select: all;
+}

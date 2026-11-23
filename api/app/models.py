@@ -107,6 +107,24 @@ class AccountReset(Base):
     changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ResetRequest(Base):
+    """Een openstaand verzoek van "Wachtwoord vergeten of kan niet inloggen?": de inlogpagina
+    geeft een willekeurige code en bewaart hier alleen de sha256 ervan, met de ingevulde login.
+    De beheerder geeft de code aan `app.cli reset-account`. Of het account bestaat, kijkt pas de
+    CLI na: zo is het antwoord voor elke login hetzelfde, en kan niemand een code voor een
+    willekeurige naam verzinnen."""
+
+    __tablename__ = "reset_request"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    login: Mapped[str] = mapped_column(String(320))
+    ip: Mapped[str] = mapped_column(String(45), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class RecoveryCode(Base):
     """Eenmalige herstelcodes voor als de telefoon met de authenticator-app kwijt is."""
 

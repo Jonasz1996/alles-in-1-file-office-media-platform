@@ -5,6 +5,10 @@
 # heeft (ook in de prullenbak), plus het totaal aan opgeslagen inhoud. Draai het voor en na de reset:
 # de cijfers moeten gelijk blijven. Met EMAIL wijzigt het alleen de aanmelding van dat ene account
 # (wachtwoord, 2FA, herstelcodes, logins); bestanden, mappen, versies en de opslag raakt het niet.
+# Alleen voor een versie zonder `app.cli reset-account` (tot en met 0.8.2 in het cluster). Vanaf die
+# versie vraagt de gebruiker op de inlogpagina ("Wachtwoord vergeten of kan niet inloggen?") een
+# code, en plakt de beheerder die in `python -m app.cli reset-account <code>`: zie
+# infra/single/README.md, "Kan niet inloggen".
 import asyncio
 import os
 import secrets

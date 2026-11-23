@@ -598,13 +598,20 @@ weer vooruit wordt er niets opnieuw gehaald. Meer, ook wat elke melding betekent
 ## Kan niet inloggen (wachtwoord of 2FA kwijt)
 
 Wie zijn wachtwoord, zijn telefoon met de authenticator-app of zijn herstelcodes kwijt is, klikt op
-de inlogpagina op **Kan niet inloggen?**. Die toont het commando voor de systeembeheerder; de tekst
-is altijd dezelfde, ook voor een adres zonder account. De beheerder draait het in de console van
-de container:
+de inlogpagina op **Wachtwoord vergeten of kan niet inloggen?** en vult zijn login (het
+e-mailadres) in. De server geeft dan een **code** zoals `RESET-7KQ2-M9XD-4TNB-H3VA`, 24 uur
+geldig. Die code is willekeurig en hoort bij een openstaand reset-verzoek in de database (alleen
+de hash staat er): niemand kan zelf een code voor een naam verzinnen. Het antwoord is voor elke
+login hetzelfde, ook zonder account; dat ziet pas de beheerder. De gebruiker geeft de code aan de
+beheerder, die hem in één commando plakt, in de console van de container:
 
 ```bash
-docker exec -it $(docker ps -qf label=com.docker.compose.service=platform) python -m app.cli reset-account jij@voorbeeld.nl
+docker exec -it $(docker ps -qf label=com.docker.compose.service=platform) python -m app.cli reset-account RESET-7KQ2-M9XD-4TNB-H3VA
 ```
+
+De CLI zoekt het verzoek op, toont voor welk account het is en meteen het tijdelijke wachtwoord.
+Een onbekende, verlopen of al gebruikte code, of een login zonder account, meldt hij zonder iets
+te veranderen. Een beheerder kan in plaats van de code ook het e-mailadres geven.
 
 Dat zet 2FA uit (met de herstelcodes en een blokkade na foute codes), meldt het account overal af
 en toont een **tijdelijk wachtwoord** dat één uur werkt (`--minuten 30` voor korter, hoogstens
@@ -612,7 +619,7 @@ en toont een **tijdelijk wachtwoord** dat één uur werkt (`--minuten 30` voor k
 aan; tot dan kan het account niets anders. Bestanden, mappen, versies, delingen en instellingen
 blijven zoals ze waren. Elke reset komt in het logboek: `python -m app.cli reset-log` toont de
 laatste 50, met wanneer het tijdelijke wachtwoord gebruikt en vervangen werd. Is het verlopen, dan
-zegt de inlogpagina dat, en draait de beheerder het commando opnieuw.
+zegt de inlogpagina dat, en vraagt de gebruiker een nieuwe code.
 
 Is alleen 2FA weg en weet je je wachtwoord nog, dan kan het ook met `reset-2fa` (zonder tijdelijk
 wachtwoord), of door een andere beheerder op `/beheer`. Hetzelfde helpt als je 2FA geblokkeerd is
