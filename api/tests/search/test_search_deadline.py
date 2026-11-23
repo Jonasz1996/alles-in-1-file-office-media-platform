@@ -35,6 +35,7 @@ from app.search import deadline as dl
 from app.search import engine as engines
 from app.search.deadline import STOP, Stop, deadline
 from tests.factories import create_user, maker
+from tests.search import motoren
 from tests.test_files import put, root
 
 pytestmark = pytest.mark.anyio
@@ -360,6 +361,7 @@ async def _zoek(client, headers, q: str) -> dict:
     return r.json()
 
 
+@motoren.needs_fts
 async def test_ronde_b_geeft_de_zichtbare_treffer(client, met_een_ander, settings, monkeypatch):
     monkeypatch.setattr(settings, "search_deadline_ms", 50)
     monkeypatch.setattr(engines, "ranked_select", _eindeloos)
@@ -373,6 +375,7 @@ async def test_ronde_b_geeft_de_zichtbare_treffer(client, met_een_ander, setting
 
 
 @pytest.mark.parametrize("q", ["jaarv", "ja"], ids=["trigram", "kort"])
+@motoren.needs_fts
 async def test_ronde_c_geeft_de_zichtbare_naam(client, met_een_ander, settings, monkeypatch, q):
     """A en B raken de grens: dan de namen, binnen de toegang. "ja" heeft geen woord van ≥ 3
     tekens: dan zonder trigram, langs de paden (Keuze 6)."""

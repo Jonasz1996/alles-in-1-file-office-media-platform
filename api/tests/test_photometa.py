@@ -174,7 +174,9 @@ async def test_een_stuk_schrijft_kort(settings):
     engine = get_engine(settings).sync_engine
 
     def on_execute(_conn, _cursor, statement, _params, _context, executemany):
-        seen.append(("many " if executemany else "") + statement.split()[0].upper())
+        # Het slot van de boom op PostgreSQL (db.lock_tree) onder zijn eigen naam
+        word = "node_lock_tree" if "node_lock_tree()" in statement else statement.split()[0]
+        seen.append(("many " if executemany else "") + word.upper())
 
     def on_commit(_conn):
         seen.append("COMMIT")
@@ -194,14 +196,21 @@ async def test_een_stuk_schrijft_kort(settings):
     # (Z3 stap 2) ook blob_hash (één executemany) en de oude paren van dit stuk weg (één DELETE;
     # een stuk van 200 past in één IN). Deze egale foto's zijn vlak: geen paren (die zouden nog
     # één executemany zijn). Hoe groot het stuk ook is, zes statements
-    assert burst == [
+    expected = [
         "many UPDATE",
         "many UPDATE",
         "many INSERT",
         "many INSERT",
         "many INSERT",
         "DELETE",
-    ], seen
+    ]
+    if engine.dialect.name == "postgresql":
+        # Daar eerst het slot van de boom, vóór de UPDATE van node (db.lock_tree, review PG13-1):
+        # één statement, hoe groot het stuk ook is. photo_rows.write vraagt het slot zelf nog
+        # eens, voor elke aanroeper (0.8.2, P4), maar deze transactie heeft het al: lock_tree
+        # stuurt dan geen tweede statement (0.8.2, P5)
+        expected.insert(1, "NODE_LOCK_TREE")
+    assert burst == expected, seen
     async with maker(settings)() as session:
         for d, node_id in enumerate(ids, start=1):
             node = await session.get(Node, node_id)

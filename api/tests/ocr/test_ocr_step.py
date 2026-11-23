@@ -32,6 +32,7 @@ from app.search.types import AdminOcr
 from app.security import download_token
 from tests.media import fake_worker
 from tests.ocr import nep
+from tests.search import motoren
 from tests.search.fixtures import pdf_scan
 from tests.test_files import put, root
 
@@ -71,6 +72,7 @@ def test_ocr_staat_standaard_aan(tmp_path):
     assert not ocr_step.runs(uit) and "ocr" not in jobs.active_lanes(uit)
 
 
+@motoren.needs_fts
 async def test_alleen_de_gescande_pagina_s_van_een_pdf(client, admin, aan, tmp_path):
     headers, _ = admin
     data = pdf_scan(WORD)
@@ -277,6 +279,7 @@ async def test_zonder_tesseract_zegt_ook_een_foto_ocr_missing(client, mensen, aa
     assert await ocr_of(other) == ("skip", None)
 
 
+@motoren.needs_fts
 async def test_een_foto_alleen_op_verzoek(client, mensen, aan, tmp_path):
     """Zonder verzoek en zonder "Tekst in foto's herkennen" leest de rij geen foto (skip). Na
     "Tekst herkennen" (POST): de tekst in photo_ocr bij die node, in de index (pocr), en via
@@ -356,6 +359,52 @@ async def test_tekst_in_foto_s_herkennen(client, mensen, aan, tmp_path):
         assert await nep.row(aan, nep.sha(derde)) is None
 
 
+async def test_een_inhoud_die_er_al_was_leest_ocr_voor_de_nieuwe_eigenaar(
+    client, mensen, aan, tmp_path
+):
+    """X1 Open 4 (0.8.2): een upload van een inhoud die er al was (files.add_ref zonder nieuwe
+    blob) meldt search.hooks.blob_reused na de commit; met "Tekst in foto's herkennen" aan gaat
+    de foto dan in de rij voor de nieuwe eigenaar, alleen zolang een foto van hem met die inhoud
+    nog geen tekst heeft. Bram (uit) krijgt niets van de pomp."""
+    (eva, eva_id), (bram, bram_id) = mensen
+    assert ocr_step.on_blob_reused in hooks._blob_reused
+    seen: list[tuple[str, uuid.UUID | None]] = []
+    hooks.register_blob_reused(lambda sha, owner: seen.append((sha, owner)))
+    added: list[str] = []
+    hooks.register_blob_added(lambda sha, owner: added.append(sha))
+    data = nep.photo("al er")
+    sha = nep.sha(data)
+    van_bram = await upload(client, bram, "bram.jpg", data)
+    assert (added, seen) == ([sha], [])
+    async with nep.worker(tmp_path) as w:
+        w.page(data, 1, WORD)
+        await backfill(aan)
+        assert await nep.row(aan, sha) == ("skip", None, 0)
+        r = await client.patch("/api/v1/me/photo-settings", json={"ocr_photos": True}, headers=eva)
+        assert r.status_code == 200, r.text
+        await ocr_step.photos_job(aan, {"user": eva_id, "after": ""})
+        assert await nep.row(aan, sha) == ("skip", None, 0)  # Eva had hem nog niet
+        van_eva = await upload(client, eva, "eva.jpg", data)
+        # Geen nieuwe blob: blob_reused (na de commit) met Eva als eigenaar, geen blob_added
+        assert (added, seen) == ([sha], [(sha, uuid.UUID(eva_id))])
+        await ocr_step._new_photo(aan, sha, uuid.UUID(eva_id), reused=True)
+        assert await nep.row(aan, sha) == ("wait", None, 0)
+        assert await nep.pump(aan) == 1
+        assert len(w.ocr_calls()) == 1
+        assert (await nep.photo_text(aan, van_eva["id"]))[0] == WORD
+        assert await nep.photo_text(aan, van_bram["id"]) is None
+        # Heeft elke foto van Eva met die inhoud tekst, dan gaat hij niet nog eens in de rij
+        await ocr_step._new_photo(aan, sha, uuid.UUID(eva_id), reused=True)
+        assert await nep.row(aan, sha) == ("done", None, 0)
+        # Bram heeft het uit: zijn tweede upload zet niets klaar
+        await upload(client, bram, "bram2.jpg", data)
+        assert seen[-1] == (sha, uuid.UUID(bram_id))
+        await ocr_step._new_photo(aan, sha, uuid.UUID(bram_id), reused=True)
+        assert await nep.row(aan, sha) == ("done", None, 0)
+        assert len(w.ocr_calls()) == 1
+
+
+@motoren.needs_fts
 async def test_een_kopie_door_dezelfde_eigenaar_houdt_de_tekst(client, mensen, aan, tmp_path):
     (eva, _), _bram = mensen
     data = nep.photo("kopie")
@@ -425,6 +474,7 @@ async def test_uit_op_beheer_en_alles_opnieuw(client, admin, aan, tmp_path, monk
     monkeypatch.delitem(hooks._admin, "ocr")
 
 
+@motoren.needs_fts
 async def test_een_foto_van_een_ander_krijgt_niets_van_de_pomp(client, mensen, aan, tmp_path):
     """Dezelfde inhoud bij Eva en Bram (elk een eigen upload): Eva vraagt OCR; alleen haar node
     krijgt de tekst (photo_targets), Brams node niets."""

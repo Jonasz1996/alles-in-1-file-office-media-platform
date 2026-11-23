@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import access, analysis, userdelete
 from app.db import get_engine
 from app.models import User
-from tests.search import wereld
+from tests.search import motoren, wereld
 from tests.search.migratie import check_fts, check_tree
 from tests.search.referentie import Referentie
 
@@ -42,7 +42,6 @@ async def test_de_wereld_staat_er(settings):
     w = await W.bouw_async(settings)
     async with get_engine(settings).connect() as conn:
         aantal = await conn.run_sync(check_tree)
-        await conn.run_sync(check_fts)
 
         async def een(sql: str):
             return (await conn.exec_driver_sql(sql)).scalar()
@@ -73,9 +72,6 @@ async def test_de_wereld_staat_er(settings):
         assert await een("SELECT count(*) FROM share") == 9
         assert await een("SELECT count(*) FROM share WHERE token IS NOT NULL") == 2
         assert await een("SELECT count(*) FROM album_item WHERE shared = 1") == 1
-        assert await een("SELECT count(*) FROM fts_node") == await een(
-            "SELECT count(*) FROM search_src"
-        )
     # Elk bestand staat in de BlobStore, met de inhoud die bij zijn sha hoort
     for sha in set(w.shas.values()):
         pad = settings.blob_dir / sha[:2] / sha[2:4] / sha
@@ -204,7 +200,6 @@ async def test_intrekken_en_verhuizen(settings):
     await _doe(settings, W.verhuis, w)
     async with get_engine(settings).connect() as conn:
         await conn.run_sync(check_tree)
-        await conn.run_sync(check_fts)
     ref = await _lees(settings)
     hans, bram, eva = w.users["hans"], w.users["bram"], w.users["eva"]
     assert ref.zoek(hans, W.TEKST_WOORD, nu=W.DAG).alles == set()
@@ -232,15 +227,42 @@ async def test_iris_wissen_laat_geen_personen_achter(settings):
     async with get_engine(settings).connect() as conn:
 
         async def een(sql: str) -> int:
-            return (await conn.exec_driver_sql(sql, (iris.hex,))).scalar()
+            iris_id = sa.bindparam("iris", iris, type_=sa.Uuid)
+            return (await conn.execute(sa.text(sql).bindparams(iris_id))).scalar()
 
-        assert await een('SELECT count(*) FROM "user" WHERE id = ?') == 0
+        assert await een('SELECT count(*) FROM "user" WHERE id = :iris') == 0
         for tabel in ("person", "photo_person", "photo_geo", "node"):
-            assert await een(f"SELECT count(*) FROM {tabel} WHERE owner_id = ?") == 0, tabel
+            assert await een(f"SELECT count(*) FROM {tabel} WHERE owner_id = :iris") == 0, tabel
         await conn.run_sync(check_tree)
-        await conn.run_sync(check_fts)
         # Eva's persoon blijft
         assert (await conn.exec_driver_sql("SELECT count(*) FROM person")).scalar() == 1
+
+
+@motoren.fts5
+async def test_de_fts_index_van_de_wereld_is_heel(settings):
+    """De FTS-tabellen van de wereld zijn heel en gelijk aan hun inhoud (search_src): na het
+    bouwen, na intrekken en verhuizen, en na het wissen van Iris. Dit stond in de drie tests
+    hierboven; het gaat over de FTS5-index, en die heeft PostgreSQL pas met golf 3 (motoren.py)."""
+    w = await W.bouw_async(settings)
+    async with get_engine(settings).connect() as conn:
+        await conn.run_sync(check_fts)
+
+        async def een(sql: str):
+            return (await conn.exec_driver_sql(sql)).scalar()
+
+        assert await een("SELECT count(*) FROM fts_node") == await een(
+            "SELECT count(*) FROM search_src"
+        )
+    await _doe(settings, W.intrekken, w)
+    await _doe(settings, W.verhuis, w)
+    async with get_engine(settings).connect() as conn:
+        await conn.run_sync(check_fts)
+    iris = w.users["iris"]
+    async with get_engine(settings).begin() as conn:
+        await conn.execute(sa.update(User).where(User.id == iris).values(disabled_at=W.DAG))
+    await userdelete.run(settings, {"user_id": str(iris)})
+    async with get_engine(settings).connect() as conn:
+        await conn.run_sync(check_fts)
 
 
 async def test_zoeken_van_nu_volgt_de_referentie(client, settings, monkeypatch):

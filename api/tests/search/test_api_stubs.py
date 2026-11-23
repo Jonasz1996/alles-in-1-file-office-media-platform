@@ -27,6 +27,7 @@ from app.people import faces_types as f
 from app.people import types as p
 from app.search import types as t
 from app.security import download_token
+from tests.search import motoren
 from tests.test_files import new_user, put, root
 
 pytestmark = pytest.mark.anyio
@@ -477,15 +478,20 @@ async def test_de_woorden_alleen_met_het_token_van_dit_bestand(client, admin, se
     assert r.status_code == 422
 
 
-async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatch):
-    """Een vraag zoals in 0.7.0 (q) werkt; het antwoord heeft de velden van fase 6 erbij. Met de
-    index uit via LikeFallback, met de index aan (sinds Z1) via FtsEngine: dezelfde treffer,
-    met engine fts en een gerangschikte pagina. De grenzen van 0.7.0 (archive als soort, limit
-    tot 200) zijn sinds Z4 in beide motoren een 422 ("De overgang" in §3.4)."""
-    headers, _ = admin
+async def _jaarverslag(client, headers) -> str:
     root_id = (await root(client, headers))["folder"]["id"]
     await put(client, headers, root_id, "Jaarverslag 2025.pdf", b"%PDF-1.4\n")
     await put(client, headers, root_id, "notities.txt", b"jaarverslag")
+    return root_id
+
+
+async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatch):
+    """Een vraag zoals in 0.7.0 (q) werkt; het antwoord heeft de velden van fase 6 erbij. Met de
+    index uit via LikeFallback. De grenzen van 0.7.0 (archive als soort, limit tot 200) zijn
+    sinds Z4 in beide motoren een 422 ("De overgang" in §3.4). Met de index aan:
+    test_zoeken_met_de_index_aan_via_ftsengine."""
+    headers, _ = admin
+    root_id = await _jaarverslag(client, headers)
     monkeypatch.setattr(settings, "search_index", "uit")
     r = await client.get("/api/v1/search", params={"q": "jaarverslag"}, headers=headers)
     assert r.status_code == 200, r.text
@@ -511,6 +517,13 @@ async def test_zoeken_werkt_via_likefallback(client, admin, settings, monkeypatc
     r = await client.get("/api/v1/search/suggest", params={"q": ""}, headers=headers)
     assert r.status_code == 422
 
+
+@motoren.needs_fts
+async def test_zoeken_met_de_index_aan_via_ftsengine(client, admin, settings, monkeypatch):
+    """Dezelfde vraag als in test_zoeken_werkt_via_likefallback, met de index aan (sinds Z1) via
+    FtsEngine: dezelfde treffer, met engine fts en een gerangschikte pagina, en dezelfde 422."""
+    headers, _ = admin
+    root_id = await _jaarverslag(client, headers)
     # Met de index aan: FtsEngine (Z1), met hetzelfde pad. Een ruime grens: een volle ronde van
     # de garbage collector in ronde A gaf anders terecht een gedeeltelijke pagina (Keuze 9)
     monkeypatch.setattr(settings, "search_index", "aan")

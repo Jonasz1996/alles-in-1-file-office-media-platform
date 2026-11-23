@@ -131,7 +131,8 @@ type KeyLike = { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolea
 export function gridKey(e: KeyLike, mode: GridMode, lang = locale()): GridAction | null {
   const key = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && !e.altKey) return key === "z" && !e.shiftKey ? "undo" : null;
-  if (e.altKey || e.ctrlKey || e.metaKey) return null;
+  // Hier is Ctrl of Cmd alleen nog mogelijk met Alt erbij: dan doet het raster niets
+  if (e.altKey) return null;
   if (e.key === "Escape") return "close";
   if (e.key === "Enter") return "open";
   if (e.key === " ") return mode === "group" ? "select" : null;

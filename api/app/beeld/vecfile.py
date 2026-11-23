@@ -40,7 +40,7 @@ from pathlib import Path
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import beeld_rows
+from app import beeld_rows, dbdialect
 from app.analysis import VERSIONS, Step
 from app.beeld import types as vt
 from app.models import BeeldOwner, now
@@ -119,7 +119,13 @@ async def build(
     done = False
     try:
         async with maker() as db:
-            # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname
+            # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname. Op PostgreSQL
+            # geeft READ COMMITTED elk statement een eigen momentopname; REPEATABLE READ houdt
+            # er één voor de hele transactie (alleen lezen: geen serialisatiefout). Een vector
+            # die er intussen bijkomt, valt dan buiten het bestand én buiten de gen in de kop,
+            # zodat het bestand achterloopt en opnieuw komt. Op SQLite zoals voor 0.8.2
+            if dbdialect.is_pg(db):
+                await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             count = int(
                 await db.scalar(text(f"SELECT count(*) {beeld_rows.file_rows()}"), params) or 0
             )
@@ -226,9 +232,13 @@ def prefixes(fd: int, nums: list[int]) -> dict[int, bytes]:
     return out
 
 
-def is_current(directory: Path, user_id: uuid.UUID) -> bool:
+def is_current(directory: Path, user_id: uuid.UUID, built_gen: int | None = None) -> bool:
     """Het bestand is er en is van het model en de versie van nu (een nieuwe versie van de stap
-    embed: dan opnieuw, met alleen de nieuwe vectoren)."""
+    embed: dan opnieuw, met alleen de nieuwe vectoren).
+
+    Met built_gen (0.8.2, P4) ook: de gen in de kop is die van beeld_owner.built_gen. Anders is
+    het bestand niet het bestand dat de database noemt (een andere node maakte het, of de
+    database of de map kwam uit een kopie) en wordt het opnieuw gemaakt."""
     fd = open_for_worker(directory, user_id)
     if fd is None:
         return False
@@ -238,4 +248,6 @@ def is_current(directory: Path, user_id: uuid.UUID) -> bool:
         return False
     finally:
         os.close(fd)
+    if built_gen is not None and head.gen != built_gen:
+        return False
     return (head.model, head.version, head.dim) == (vt.MODEL, VERSIONS[Step.EMBED], vt.DIM)

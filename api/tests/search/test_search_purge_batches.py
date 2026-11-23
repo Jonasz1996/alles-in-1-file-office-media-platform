@@ -9,7 +9,8 @@ zoals userdelete._drop_nodes; delete_nodes zelf commit nooit.
   klaar, ook bij de prullenbak legen (purge_ids). Hier (3.53.1) kostte de hele boom in één
   transactie 0,78 s; de grens van 1 s alleen zegt dus te weinig;
 - geen aanroep van delete_nodes met meer dan CHUNK nodes, en samen precies de boom;
-- daarna klopt de boekhouding (check_refs), de boom (check_tree) en de index (check_fts);
+- daarna klopt de boekhouding (check_refs), de boom (check_tree) en de index (check_fts, waar
+  er een FTS-index is: motoren.check_index);
 - terugzetten tijdens het wissen: wat nog niet weg was, komt terug (heel), en het wissen
   antwoordt not_trashed;
 - tussen twee stukken: wat er onder de map bij kwam gaat mee, wat eruit verhuisde blijft;
@@ -22,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from datetime import datetime
 
 import pytest
 import sqlalchemy as sa
@@ -32,10 +34,14 @@ from app.models import Node
 from app.routers import trash
 from app.search import purge
 from app.storage import BlobStore
-from tests.search.migratie import NOW, check_fts, check_tree
+from tests.search import motoren
+from tests.search.migratie import NOW, check_tree
 from tests.test_files import check_refs, mkdir, put, root
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.sqlite_only("het ene schrijfslot van SQLite tijdens het wissen in stukken"),
+]
 
 MAPPEN = 10
 PER_MAP = 1090
@@ -55,23 +61,27 @@ async def _grote_map(client, headers, settings) -> tuple[str, str]:
         owner, blob = conn.execute(
             sa.select(Node.owner_id, Node.blob_id).where(Node.name == "inhoud.txt")
         ).one()
+        nu = datetime.fromisoformat(NOW)
+
+        def rij(id_, parent, name, kind, mime, blob_id, size) -> dict:
+            return {"id": id_, "parent_id": parent, "owner_id": owner, "name": name, "kind": kind,
+                    "mime": mime, "blob_id": blob_id, "size": size, "created_at": nu,
+                    "modified_at": nu, "search_name": name}  # fmt: skip
+
         mappen, bestanden = [], []
         for i in range(MAPPEN):
             folder = uuid.uuid4()
-            mappen.append((folder.hex, uuid.UUID(groot).hex, owner.hex, f"map-{i}", "dir",
-                           None, None, 0, NOW, NOW, f"map-{i}"))  # fmt: skip
+            mappen.append(rij(folder, uuid.UUID(groot), f"map-{i}", "dir", None, None, 0))
             for j in range(PER_MAP):
                 name = f"bestand-{i}-{j}.txt"
-                bestanden.append((uuid.uuid4().hex, folder.hex, owner.hex, name, "file",
-                                  "text/plain", blob, 15, NOW, NOW, name))  # fmt: skip
-        sql = (
-            "INSERT INTO node (id, parent_id, owner_id, name, kind, mime, blob_id, size, "
-            "created_at, modified_at, search_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        conn.exec_driver_sql(sql, mappen)
-        conn.exec_driver_sql(sql, bestanden)
-        conn.exec_driver_sql(
-            "UPDATE blob SET ref_count = ref_count + ? WHERE sha256 = ?", (len(bestanden), blob)
+                bestanden.append(rij(uuid.uuid4(), folder, name, "file", "text/plain", blob, 15))
+        # Via de tabel van het model: uuid en tijd elk in de vorm van de database (SQLite of
+        # PostgreSQL); de kolommen zijn die van de SQL hiervoor
+        conn.execute(sa.insert(Node.__table__), mappen)
+        conn.execute(sa.insert(Node.__table__), bestanden)
+        conn.execute(
+            sa.text("UPDATE blob SET ref_count = ref_count + :n WHERE sha256 = :sha"),
+            {"n": len(bestanden), "sha": blob},
         )
 
     async with get_engine(settings).begin() as conn:
@@ -106,7 +116,7 @@ async def _heel(settings) -> int:
     await check_refs(settings)
     async with get_engine(settings).begin() as conn:
         n = await conn.run_sync(check_tree)
-        await conn.run_sync(check_fts)
+        await conn.run_sync(motoren.check_index)
     return n
 
 
@@ -213,6 +223,9 @@ async def test_wat_er_tussen_twee_stukken_gebeurt(client, admin, settings):
 
 
 @pytest.mark.parametrize("hoe", ["los", "bulk", "legen"])
+@pytest.mark.sqlite_only(
+    "doet PostgreSQL na op SQLite: de triggers van 0010 weg; op PostgreSQL zelf de echte (0013)"
+)
 async def test_wissen_zonder_de_triggers_van_0010(client, admin, settings, monkeypatch, hoe):
     """Op PostgreSQL maakt 0010 alleen de tabellen en kolommen (§3.1): geen triggers, dus dead
     blijft 0 en mpath leeg. Definitief wissen mag daar niet van afhangen; dood volgt uit de

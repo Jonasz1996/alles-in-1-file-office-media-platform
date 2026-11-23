@@ -9,8 +9,10 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
+import asyncpg
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -25,6 +27,7 @@ from app.search import engine as search_engine
 from app.search import hooks, perhour
 from app.search.engine import Round
 from app.search.types import AdminOcr, AdminSearch
+from tests.search import motoren
 from tests.test_files import new_user
 
 pytestmark = pytest.mark.anyio
@@ -76,7 +79,7 @@ async def add(settings, *rows) -> None:
 
 async def leeg(settings) -> dict:
     return {
-        "engine": "fts",
+        "engine": motoren.DEFAULT,
         "paused": False,
         "index": {"names_done": True, "text_done": 0, "text_total": 0, "failed": 0},
         "rebuild": None,
@@ -151,6 +154,7 @@ async def test_de_tellers_per_uur(client, admin, settings, monkeypatch):
     assert got == {"deadline_b": 0, "deadline_c": 0, "busy": 1}
 
 
+@motoren.needs_fts
 async def test_ronde_b_en_c_aan_de_grens_en_search_busy_tellen(
     client, admin, settings, monkeypatch
 ):
@@ -205,6 +209,7 @@ async def test_de_uitkomst_van_de_zoekbench(client, admin, settings):
         assert (await client.get(ADMIN, headers=headers)).json()["bench"] is None
 
 
+@motoren.needs_fts
 async def test_een_herbouw_van_de_index_met_voortgang(client, admin, settings):
     headers, _ = admin
     async with db.get_engine(settings).begin() as conn:
@@ -225,6 +230,7 @@ async def test_een_herbouw_van_de_index_met_voortgang(client, admin, settings):
     assert r.json()["detail"]["code"] == "search_rebuild_running"
 
 
+@motoren.needs_fts
 async def test_motor_namen_en_herbouw_uit_een_lezing(client, admin, settings, monkeypatch):
     """Het laatste stuk van een herbouw kan midden in een GET vallen. De motor, "namen klaar" en
     de herbouw komen uit één lezing van search_state: nooit "like" zonder herbouw. Met twee
@@ -291,26 +297,71 @@ async def queued_pumps(settings) -> dict[str, list[datetime]]:
     return found
 
 
+def _klaarstaand(settings, pomp: str) -> list[tuple]:
+    """run_after van de pompen die klaarstaan, zoals ze gecommit zijn: op een eigen verbinding,
+    buiten de sessie van de app. SQLite: sqlite3 op het bestand. PostgreSQL: asyncpg in een eigen
+    draad, want de wekker draait midden in de event loop van de app."""
+    if settings.db_url.startswith("sqlite"):
+        con = sqlite3.connect(settings.db_url.removeprefix("sqlite+aiosqlite:///"))
+        try:
+            return con.execute(
+                "SELECT run_after FROM job WHERE type = ? AND status = 'queued'", (pomp,)
+            ).fetchall()
+        finally:
+            con.close()
+
+    async def lees() -> list[tuple]:
+        con = await asyncpg.connect(settings.db_url.replace("+asyncpg", "", 1))
+        try:
+            rows = await con.fetch(
+                "SELECT run_after FROM job WHERE type = $1 AND status = 'queued'", pomp
+            )
+        finally:
+            await con.close()
+        return [tuple(r) for r in rows]
+
+    with ThreadPoolExecutor(1) as draad:
+        return draad.submit(asyncio.run, lees()).result()
+
+
 def lezende_wekkers(settings, monkeypatch) -> list[tuple[str, datetime]]:
     """De workers van de rijen index en ocr (jobs._wakers) vervangen door wekkers die lezen wat
     een worker dan zou zien: de run_after van de pomp die klaarstaat, zoals hij gecommit is. Een
     seintje vóór de commit ziet nog de oude run_after; dan pakt de Runner de pomp pas bij zijn
     rondje (jobs.POLL, 5 s) op. Geeft de lijst (rij, run_after) die bij elk seintje groeit."""
-    bestand = settings.db_url.removeprefix("sqlite+aiosqlite:///")
     gewekt: list[tuple[str, datetime]] = []
+
+    def lees_pg(soort: str) -> list[tuple]:
+        """PostgreSQL: een eigen verbinding in een eigen draad (de wekker is synchroon en de
+        lus van de test draait al), zoals sqlite3.connect hieronder."""
+        import threading
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        uit: list[tuple] = []
+
+        async def lees() -> None:
+            engine = create_async_engine(settings.db_url, poolclass=NullPool)
+            try:
+                async with engine.connect() as conn:
+                    rijen = await conn.execute(
+                        sa.text("SELECT run_after FROM job WHERE type = :t AND status = 'queued'"),
+                        {"t": soort},
+                    )
+                    uit.extend(tuple(r) for r in rijen)
+            finally:
+                await engine.dispose()
+
+        draad = threading.Thread(target=lambda: asyncio.run(lees()))
+        draad.start()
+        draad.join()
+        return uit
 
     def waker(lane: str):
         def wake() -> None:
-            con = sqlite3.connect(bestand)
-            try:
-                rows = con.execute(
-                    "SELECT run_after FROM job WHERE type = ? AND status = 'queued'",
-                    (analysis.pump_type(lane),),
-                ).fetchall()
-            finally:
-                con.close()
-            for (at,) in rows:
-                found = datetime.fromisoformat(at)
+            for (at,) in _klaarstaand(settings, analysis.pump_type(lane)):
+                found = at if isinstance(at, datetime) else datetime.fromisoformat(at)
                 gewekt.append((lane, found if found.tzinfo else found.replace(tzinfo=UTC)))
 
         return wake
@@ -498,6 +549,7 @@ async def test_ocr_weer_aan_haalt_de_pomp_naar_voren(client, admin, settings):
 # --- POST rebuild --------------------------------------------------------------------------------
 
 
+@motoren.needs_fts
 async def test_de_index_herbouwen_loopt_op_de_achtergrond(client, admin, settings):
     headers, _ = admin
     r = await client.post(f"{ADMIN}/rebuild", json={"what": "names"}, headers=headers)
@@ -511,6 +563,7 @@ async def test_de_index_herbouwen_loopt_op_de_achtergrond(client, admin, setting
     assert got["rebuild"] is None and got["engine"] == "fts"
 
 
+@motoren.needs_fts
 async def test_na_de_202_ziet_een_get_de_herbouw_al(client, admin, settings, monkeypatch):
     """De web-app laadt direct na de 202 opnieuw: dan staat de herbouw er al (cursor 0), ook
     als de taak nog niet liep. De taak gaat daarna verder vanaf die cursor."""
@@ -594,6 +647,7 @@ async def test_hash_opnieuw_met_voortgang_en_409(client, admin, settings):
     assert r.status_code == 202
 
 
+@motoren.needs_fts
 async def test_hash_loopt_ook_als_de_index_tegelijk_herbouwd_wordt(client, admin, settings):
     """GET toont de herbouw van de index eerst; een tweede herbouw van photometa blijft toch 409."""
     headers, _ = admin

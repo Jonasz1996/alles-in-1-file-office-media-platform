@@ -9,6 +9,18 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# De databases (db_url) waarop app/analyse/pgcheck.py alle triggers van 0013 aan zag. Per URL,
+# want tests en de cli maken eigen Settings (en kopieën) voor dezelfde database
+_PG_TRIGGERS_SEEN: set[str] = set()
+
+
+def pg_triggers_seen(url: str, ok: bool) -> None:
+    """De uitkomst van pgcheck voor deze database (zie Settings.analyse_pg_block)."""
+    if ok:
+        _PG_TRIGGERS_SEEN.add(url)
+    else:
+        _PG_TRIGGERS_SEEN.discard(url)
+
 
 class Settings(BaseSettings):
     """Instellingen uit omgevingsvariabelen met prefix PLATFORM_."""
@@ -38,6 +50,10 @@ class Settings(BaseSettings):
     # met Pebble: eigen directory-URL en het CA-bestand om die te vertrouwen.
     acme_directory: str = ""
     acme_ca_file: str = ""
+    # Een reverse proxy ervoor (bijv. Nginx Proxy Manager die het certificaat doet): de adressen
+    # of netwerken waarvan de app X-Forwarded-For en -Proto gelooft, komma-gescheiden
+    # (192.168.102.244,192.168.102.0/24). Leeg = geen proxy: die koppen nooit geloven.
+    trusted_proxies: str = ""
 
     # Tokens
     jwt_secret: str = ""
@@ -165,6 +181,12 @@ class Settings(BaseSettings):
     # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes), en kijkt de app nooit
     # naar de socket (app/analyse/monitor.py: de stand is off)
     analyse_enabled: bool = False
+    # Op PostgreSQL (het cluster, 0.8.2) alleen met PLATFORM_ANALYSE_POSTGRES=true
+    # (compose.analyse.yaml: ANALYSE_POSTGRES): de beheerder zegt daarmee dat de sleutels van
+    # gezichten op elke node dezelfde zijn en met de eigenaar weggaan. Standaard uit, zodat een
+    # cluster met een oude template nooit gezichten start. Ook dan alleen met de triggers van
+    # 0013 (app/analyse/pgcheck.py, bij de start); ontbreekt er een, dan blijft het uit
+    analyse_postgres: bool = False
     # De socket in analyse-run, en de sleutel waarmee de worker zich bewijst (§3.11): 64 hex uit
     # .env (ANALYSE_WORKER_KEY). Leeg of korter dan 32 tekens is down: key_missing; gelijk aan
     # het geheim van de app of aan de sleutel van de mediaworker is down: key_reused
@@ -209,13 +231,26 @@ class Settings(BaseSettings):
     def db_url(self) -> str:
         return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
 
+    def analyse_pg_block(self) -> str | None:
+        """Waarom de analyse op deze database uit blijft, of None. SQLite: altijd None (zoals
+        vóór 0.8.2, zonder vraag aan de database). PostgreSQL: pg_not_enabled zonder
+        PLATFORM_ANALYSE_POSTGRES, no_pg_triggers zolang app/analyse/pgcheck.py de triggers van
+        0013 (die gezichten en beeld wissen) niet allemaal aan zag."""
+        if self.db_url.startswith("sqlite"):
+            return None
+        if not self.analyse_postgres:
+            return "pg_not_enabled"
+        if self.db_url not in _PG_TRIGGERS_SEEN:
+            return "no_pg_triggers"
+        return None
+
     @property
     def analyse_on(self) -> bool:
-        """PLATFORM_ANALYSE_ENABLED, en de database is SQLite. Op PostgreSQL maken 0011 en 0012
-        alleen de tabellen, zonder de triggers die gezichten en beeld wissen; daar blijven
-        gezichten en beeld uit, zoals FTS (Keuze 76; review A0, veilig F5). De monitor zegt dan
-        down met no_sqlite, de rij analyse draait niet en de schakelaars gaan niet aan."""
-        return self.analyse_enabled and self.db_url.startswith("sqlite")
+        """PLATFORM_ANALYSE_ENABLED, en de database kan het (analyse_pg_block): op SQLite
+        altijd, op PostgreSQL alleen met PLATFORM_ANALYSE_POSTGRES en de triggers van 0013.
+        Anders zegt de monitor down met die reden, draait de rij analyse niet en gaan de
+        schakelaars niet aan (review A0, veilig F5)."""
+        return self.analyse_enabled and self.analyse_pg_block() is None
 
     @property
     def beeld_dir(self) -> Path:

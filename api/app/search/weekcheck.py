@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from anyio import to_thread
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -188,6 +188,20 @@ async def _run_postgres(settings: Settings) -> AdminCheck | None:
     bad = sum(int(counts[k]) for k in DRIFT)
     if bad:
         await _fill(settings, repair=True)
+    # De index van 0014: een steekproef zoals op SQLite; een node die afwijkt meteen opnieuw
+    found = await rebuild.check(get_engine(settings), sample=SAMPLE)
+    wrong = sorted({num for num, _ in found.bad if num})
+    bad += len({num for num, _ in found.bad})
+    if wrong:
+        async with get_engine(settings).begin() as conn:
+            await conn.execute(text("SELECT fts_refresh(:nums, true)"), {"nums": wrong})
+            await conn.execute(
+                text(
+                    "DELETE FROM fts_node f WHERE f.rowid = ANY(:nums) "
+                    "AND NOT EXISTS (SELECT 1 FROM node n WHERE n.num = f.rowid)"
+                ),
+                {"nums": wrong},
+            )
     result = AdminCheck(at=now().isoformat(), sampled=nodes, bad=bad)
     async with maker() as db:
         row = await db.get(Setting, KEY)

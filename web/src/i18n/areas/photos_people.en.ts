@@ -72,6 +72,12 @@ const en: Translation<typeof nl> = {
     hide: "Hide this day",
     hidden: "This day no longer appears in your memories.",
     undo: "Undo",
+    hideFolder: "Hide a folder…",
+    pickFolder: "Which folder should no longer appear in your memories?",
+    pickFolderAction: "Hide this folder",
+    folderHidden: "Photos from {name} no longer appear in your memories.",
+    folderNotOwn: "Only a folder of your own can leave your memories.",
+    folderRoot: "Pick a folder. To hide everything, turn off Show memories on Photos under Account.",
   },
   filters: {
     title: "Filters",

@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import and_, bindparam, case, delete, exists, func, literal_column, or_, select
+from sqlalchemy import case, delete, exists, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +36,7 @@ from app.config import Settings
 from app.models import AlbumItem, AlbumRule, AlbumSkip, Node, Person, Tag, User
 from app.people.types import AlbumRuleInfo
 from app.routers.files import get_live_dir, to_utc
-from app.search.engine import FTS_NODE, LIKE, engine_for
+from app.search.engine import FTS_NODE, LIKE, AllWordsIn, FtsMatch, engine_for
 from app.search.filters import DATED, FILTERS, apply_all
 from app.search.like import check_library
 from app.search.live import own_live
@@ -145,14 +145,11 @@ async def matches(
         else:
             parsed = parse(rule.q)
             if parsed is not None:
+                # Alleen de eigen nodes: de OCR van een eigen foto telt mee (FtsMatch met owner)
                 whole = n.c.num.in_(
-                    select(FTS_NODE.c.rowid).where(
-                        literal_column("fts_node").op("MATCH")(
-                            bindparam("rule_match", parsed.match)
-                        )
-                    )
+                    select(FTS_NODE.c.rowid).where(FtsMatch("fts_node", parsed, owner.id))
                 )
-                pieces = and_(*(func.instr(n.c.search_name, w) > 0 for w in parsed.words))
+                pieces = AllWordsIn(parsed.words)
                 sel = sel.where(or_(whole, pieces))
     sel = sel.order_by(n.c.taken_day.desc(), n.c.taken_at.desc(), n.c.id.desc())
     return list((await db.scalars(sel.limit(MAX_ITEMS + 1))).all())

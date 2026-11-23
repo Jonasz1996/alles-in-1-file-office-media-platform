@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from app import analysis
 from app.models import BlobText, Node, OcrPage, PhotoOcr
 from tests.ocr import nep
+from tests.search import motoren
 from tests.search.fixtures import pdf_scan
 from tests.test_files import put, root
 
@@ -48,6 +49,7 @@ async def photo_with_text(client, headers, settings, w, name: str, data: bytes) 
     return node
 
 
+@motoren.needs_fts
 async def test_photo_ocr_per_node(client, mensen, aan, tmp_path):
     """Twee nodes van Eva met dezelfde inhoud (twee uploads): de tekst komt alleen bij de node
     waar ze om vroeg, en alleen die node vindt ze terug."""
@@ -61,6 +63,7 @@ async def test_photo_ocr_per_node(client, mensen, aan, tmp_path):
     assert set(await nep.search(client, eva, WORD)) == {node["id"]}
 
 
+@motoren.needs_fts
 async def test_ocr_searchable(client, mensen, aan, tmp_path):
     """De OCR van een PDF hoort bij de inhoud: elke node met die sha vindt hem (de triggers
     werken FTS bij), ook een kopie die er later bij komt."""
@@ -78,6 +81,7 @@ async def test_ocr_searchable(client, mensen, aan, tmp_path):
     assert {hits[n]["match"] for n in (eerst["id"], tweede["id"])} == {"ocr"}
 
 
+@motoren.needs_fts
 async def test_owner_change_wipes(client, mensen, aan, tmp_path):
     """Een andere eigenaar (owner_id verandert): node_au_owner wist photo_ocr van die node; de
     oude en de nieuwe eigenaar vinden de tekst niet meer."""
@@ -98,6 +102,7 @@ async def test_owner_change_wipes(client, mensen, aan, tmp_path):
     assert await nep.search(client, bram, WORD) == {}
 
 
+@motoren.needs_fts
 async def test_replace_no_old_text(client, mensen, aan, tmp_path):
     """Nieuwe inhoud voor de foto (een nieuwe versie): photo_ocr van die node weg; de oude
     tekst nooit meer, ook niet als de nieuwe inhoud nog niet gelezen is."""
@@ -116,6 +121,7 @@ async def test_replace_no_old_text(client, mensen, aan, tmp_path):
     assert r.json()["ocr"] == "skip"
 
 
+@motoren.needs_fts
 async def test_trash_and_restore_keep_ocr(client, mensen, aan, tmp_path):
     """Naar de prullenbak: weg uit zoeken, de rij in photo_ocr blijft; terug: weer te vinden."""
     (eva, _), _ = mensen
@@ -130,6 +136,7 @@ async def test_trash_and_restore_keep_ocr(client, mensen, aan, tmp_path):
     assert set(await nep.search(client, eva, WORD)) == {node["id"]}
 
 
+@motoren.needs_fts
 async def test_gc_cascade(client, mensen, aan, tmp_path):
     """Definitief gewist en de blob opgeruimd: ocr_page en blob_text gaan mee (cascade), en
     photo_ocr van de node ook."""

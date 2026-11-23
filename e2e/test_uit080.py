@@ -14,10 +14,11 @@ met de web van 0.8.0 (`3fca440`) op deze app. De API zelf antwoordt met de analy
 Wat per run verschilt, is gelijkgemaakt: ids, getallen, maanden en dagen (de datum van de
 upload) en "… geleden". De bewaking van de browser (CSP, i18n, fouten) staat aan zoals overal.
 
-Elke boom en elke titel is gelijk aan die van 0.8.0, op precies ANDERS en ERIN na: wat 0.8.1 (I2)
-met de analyse uit bewust anders toont (de zinnen dat gezichten en zoeken op beeld uitstaan, en op
-/account de link naar /over). De routes ook, op precies ERBIJ na: daar vraagt de web van golf 6
-twee routes die 0.8.0 al had, en toont er niets van (zie ERBIJ). Tot slot /over zelf, voor de gast
+Elke boom en elke titel is gelijk aan die van 0.8.0, op precies ANDERS, ERIN en MENU_082 na: wat
+0.8.1 (I2) met de analyse uit bewust anders toont (de zinnen dat gezichten en zoeken op beeld
+uitstaan, en op /account de link naar /over), en de link Dubbel in het hoofdmenu van 0.8.2. De
+routes ook, op precies ERBIJ na: daar vraagt de web van golf 6 twee routes die 0.8.0 al had, en
+toont er niets van (zie ERBIJ). Tot slot /over zelf, voor de gast
 Gijs met de analyse uit: de bronnen van de kaart en de modellen, zonder een vraag aan de API
 buiten die van de schil.
 
@@ -183,6 +184,16 @@ def apps(email: str) -> list[str]:
 
 
 APPS_ERIN = {"eva /account": apps("eva@voorbeeld.nl"), "jonas /account": apps("jonas@voorbeeld.nl")}
+
+
+# Wat de web van 0.8.2 erbij toont: de link Dubbel (/dubbel) in het hoofdmenu, direct na
+# Prullenbak, voor wie eigen bestanden heeft (niet voor de gast, en zonder login is er geen menu;
+# web/src/App.tsx). Met of zonder de analyse: /dubbel was er al in 0.8.0, alleen via /fotos. Op
+# elke pagina met het hoofdmenu precies één keer; de viewer van Eva is alleen het dialoog.
+PRULLENBAK = ['    - link "Prullenbak":', "      - /url: /prullenbak"]
+DUBBEL = ['    - link "Dubbel":', "      - /url: /dubbel"]
+MENU_082 = {f"{wie} {pad}" for wie in ("eva", "jonas") for pad in (*PAGINAS, VIEWER)}
+MENU_082.discard(f"eva {VIEWER}")
 
 _ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}")
 _GELEDEN = re.compile(
@@ -429,7 +440,8 @@ def viewer(page: Page, verkeer: Verkeer) -> dict[str, Any]:
 
 
 def met_081(key: str, boom: list[str]) -> list[str]:
-    """De boom van 0.8.0 met precies wat 0.8.1 anders toont (ANDERS) en erbij toont (ERIN)."""
+    """De boom van 0.8.0 met precies wat 0.8.1 anders toont (ANDERS) en erbij toont (ERIN), en
+    wat 0.8.2 erbij toont (MENU_082)."""
     for regel, nieuw in ANDERS.get(key, []):
         assert boom.count(regel) == 1, (key, regel)
         boom = [nieuw if r == regel else r for r in boom]
@@ -438,6 +450,11 @@ def met_081(key: str, boom: list[str]) -> list[str]:
         assert boom.count(voor) == 1, (key, voor)
         i = boom.index(voor)
         boom = boom[:i] + regels + boom[i:]
+    plekken = [i for i in range(len(boom) - 1) if boom[i : i + 2] == PRULLENBAK]
+    assert len(plekken) == (1 if key in MENU_082 else 0), (key, plekken)
+    if key in MENU_082:
+        i = plekken[0] + 2
+        boom = boom[:i] + DUBBEL + boom[i:]
     if key in APPS_ERIN:
         i = boom.index(OVER[0])
         boom = boom[:i] + APPS_ERIN[key] + boom[i:]

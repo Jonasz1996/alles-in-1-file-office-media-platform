@@ -28,6 +28,8 @@ from app.db import Checkpoint, get_engine, sqlite_path, wal_truncate, wal_trunca
 
 pytestmark = pytest.mark.anyio
 
+WAL = pytest.mark.sqlite_only("het WAL-checkpoint van SQLite")
+
 
 def _wal(path: Path) -> int:
     wal = path.with_name(path.name + "-wal")
@@ -71,6 +73,7 @@ def test_een_keer_per_uur_bij_het_opruimwerk():
     assert item.every == jobs.HOUSEKEEPING == 3600.0
 
 
+@WAL
 async def test_het_checkpoint_van_het_uur_maakt_de_wal_leeg(settings, caplog):
     path = _path(settings)
     await _write(settings)
@@ -81,6 +84,7 @@ async def test_het_checkpoint_van_het_uur_maakt_de_wal_leeg(settings, caplog):
     assert not [r for r in caplog.records if "WAL-checkpoint" in r.getMessage()]
 
 
+@WAL
 async def test_met_een_lezer_geeft_het_op_en_logt_alleen_getallen(settings, caplog):
     path = _path(settings)
     lezer = _reader(path)
@@ -104,6 +108,7 @@ async def test_met_een_lezer_geeft_het_op_en_logt_alleen_getallen(settings, capl
     assert _wal(path) == 0
 
 
+@WAL
 async def test_na_een_migratie_opnieuw_tot_het_budget_op_is(settings, monkeypatch, caplog):
     path = _path(settings)
     tries: list[Checkpoint] = []
@@ -137,6 +142,7 @@ async def test_na_een_migratie_opnieuw_tot_het_budget_op_is(settings, monkeypatc
     assert len(tries) == 1 and _wal(path) == 0
 
 
+@WAL
 async def test_retry_stopt_zodra_het_lukt(settings):
     path = _path(settings)
     lezer = _reader(path)
@@ -169,6 +175,7 @@ def _writes(path: Path, n: int) -> list[float]:
 
 
 @pytest.mark.parametrize("met_lezer", [False, True], ids=["zonder-lezer", "met-lezer"])
+@WAL
 async def test_een_schrijver_wacht_niet_op_het_checkpoint(settings, met_lezer):
     """K2-08: het checkpoint heeft busy_timeout 0 en neemt het schrijfslot hooguit even. 150
     schrijfacties, met ernaast een checkpoint zo vaak als de app het ooit doet (opnieuw na

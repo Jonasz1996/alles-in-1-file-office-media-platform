@@ -2,7 +2,8 @@
 // is voor dit bestand (GET /files/{id}/analysis) en de knop "Tekst herkennen" (POST
 // /files/{id}/ocr). Een foto: alleen de eigenaar (de tekst hoort bij zijn node, alleen hij vindt
 // hem); een PDF: wie mag schrijven (de tekst hoort bij de inhoud, wie mag lezen vindt hem). Wie
-// niet mag vragen, ziet de rij niet. Of je de eigenaar bent of mag schrijven, zegt GET /files/{id}
+// een PDF alleen mag lezen, ziet sinds 0.8.2 de stand zonder knop (x1.md Open 7); een foto van een
+// ander krijgt geen rij. Of je de eigenaar bent of mag schrijven, zegt GET /files/{id}
 // (permission), zoals bij Personen. Een eigen chunk met het gebied ocr; InfoPanel laadt hem lazy.
 //
 // Na het vragen wacht de knop (aria-disabled) tot search.ready voor dit bestand komt; dan leest
@@ -23,11 +24,11 @@ import { permissionOf } from "../sharing";
 import { Button } from "../ui/Button";
 import { announce } from "../ui/toast";
 import type { InfoRowProps } from "../viewer/infoRows";
-import { mayAsk, ocrView } from "./ocr";
+import { mayAsk, mayShow, ocrView } from "./ocr";
 import "./ocr.css";
 
-/** De stand, en of je mag vragen. */
-type Loaded = { may: boolean; state: Analysis };
+/** De stand, of je de rij ziet en of je mag vragen. */
+type Loaded = { show: boolean; may: boolean; state: Analysis };
 
 export default function OcrRow({ item, kind }: InfoRowProps): JSX.Element | null {
   const fileId = item.id;
@@ -41,7 +42,8 @@ export default function OcrRow({ item, kind }: InfoRowProps): JSX.Element | null
         api.request<FileNode>("GET", `/api/v1/files/${seg(fileId)}`),
         analysis(fileId),
       ]);
-      setLoaded({ may: mayAsk(kind, permissionOf(node)), state });
+      const permission = permissionOf(node);
+      setLoaded({ show: mayShow(kind, permission), may: mayAsk(kind, permission), state });
     } catch {
       // Weg, in de prullenbak of geen verbinding: dan geen rij (het paneel blijft werken)
       setLoaded(null);
@@ -59,8 +61,8 @@ export default function OcrRow({ item, kind }: InfoRowProps): JSX.Element | null
     if (Array.isArray(nodes) && nodes.includes(fileId)) void load();
   });
 
-  if (!loaded?.may) return null;
-  const view = ocrView(kind, loaded.state);
+  if (!loaded?.show) return null;
+  const view = ocrView(kind, loaded.state, loaded.may);
 
   async function ask() {
     setAsking(true);

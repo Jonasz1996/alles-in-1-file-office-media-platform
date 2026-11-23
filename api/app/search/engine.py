@@ -43,7 +43,10 @@ from typing import Any, Literal, Protocol
 
 from sqlalchemy import (
     URL,
+    BigInteger,
+    Float,
     Select,
+    Uuid,
     bindparam,
     case,
     column,
@@ -55,10 +58,13 @@ from sqlalchemy import (
     table,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Alias, Join
+from sqlalchemy.types import NullType
 
 from app import errors
 from app.access import Step
@@ -139,6 +145,9 @@ class CrossJoin(Join):
 def _cross_join(element: CrossJoin, compiler: Any, **kw: Any) -> str:
     # De gewone JOIN van SQLAlchemy (met zijn controle op een kruisproduct), met CROSS ervoor;
     # links staat altijd een gewone tabel (fts_node of fts_name)
+    if compiler.dialect.name != "sqlite":
+        # PostgreSQL (0.8.2, P5): een gewone JOIN; de planner kiest zelf
+        return compiler.visit_join(element, **kw)
     left, _, rest = compiler.visit_join(element, **kw).partition(" JOIN ")
     return f"{left} CROSS JOIN {rest}"
 
@@ -203,7 +212,7 @@ def top_level() -> Alias:
 @compiles(_ByParent)
 def _indexed(element: _Indexed, compiler: Any, **kw: Any) -> str:
     out = compiler.visit_alias(element, **kw)
-    if kw.get("asfrom"):
+    if kw.get("asfrom") and compiler.dialect.name == "sqlite":
         out += f" INDEXED BY {element.index}"
     return out
 
@@ -232,8 +241,182 @@ def alias() -> Any:
     return _NODE.alias("n")
 
 
-def _match(table_name: str, expr: str) -> Any:
-    return literal_column(table_name).op("MATCH")(bindparam(f"{table_name}_expr", expr))
+# --- Per dialect: FTS5 op SQLite, tsvector en LIKE op PostgreSQL (0.8.2, P5) ------------------
+#
+# Op PostgreSQL is fts_node een tabel (rowid, tsv, otsv) en fts_name een view (rowid,
+# search_name) op node (migratie 0014). Dezelfde vragen, met deze stukken per dialect.
+
+TS_WEIGHTS = "'{0.05, 0.1, 0.6, 1.0}'"  # D (meta), C (tekst, OCR), B (titel), A (naam)
+
+
+class FtsMatch(ColumnElement):
+    """De treffer op hele woorden (fts_node) of op stukken van namen (fts_name).
+
+    SQLite: `fts_node MATCH :fts_node_expr` (of fts_name). PostgreSQL: fts_node.tsv @@ de
+    tsquery, en voor de eigen nodes van owner ook otsv (met de OCR van een eigen foto; Keuze 16
+    en 25a); fts_name: elk woord van ≥ 3 tekens in search_name (LIKE, met de trigram-index)."""
+
+    inherit_cache = False
+    # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
+    type = NullType()
+
+    def __init__(self, table_name: str, parsed: Parsed, owner: uuid.UUID | None = None) -> None:
+        self.table_name = table_name
+        self.parsed = parsed
+        self.owner = owner
+
+
+@compiles(FtsMatch)
+def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
+    t, parsed = element.table_name, element.parsed
+    if compiler.dialect.name == "sqlite":
+        expr = parsed.match if t == "fts_node" else parsed.names
+        return compiler.process(literal_column(t).op("MATCH")(bindparam(f"{t}_expr", expr)), **kw)
+    if t == "fts_name":
+        long_words = [w for w in parsed.words if len(w) >= 3]
+        parts = [
+            compiler.process(
+                literal_column("fts_name.search_name").like(
+                    bindparam(f"fts_name_w{i}", "%" + _like_escape(w) + "%"), escape="\\"
+                ),
+                **kw,
+            )
+            for i, w in enumerate(long_words)
+        ]
+        return "(" + " AND ".join(parts or ["true"]) + ")"
+    q = compiler.process(bindparam("fts_node_q", parsed.tsquery()), **kw)
+    found = f"fts_node.tsv @@ to_tsquery('simple', {q})"
+    if element.owner is None:
+        return f"({found})"
+    owner = compiler.process(bindparam("fts_node_owner", element.owner, type_=Uuid()), **kw)
+    own = f"(fts_node.otsv @@ to_tsquery('simple', {q}) AND n.owner_id = {owner})"
+    return f"({found} OR {own})"
+
+
+def _like_escape(word: str) -> str:
+    return word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+class FtsRank(ColumnElement):
+    """De rang (lager is beter, zoals bm25). own: de OCR van een eigen foto telt mee."""
+
+    inherit_cache = False
+    type = Float()
+
+    def __init__(self, parsed: Parsed, own: bool) -> None:
+        self.parsed = parsed
+        self.own = own
+
+
+@compiles(FtsRank)
+def _fts_rank(element: FtsRank, compiler: Any, **kw: Any) -> str:
+    if compiler.dialect.name == "sqlite":
+        return RANK_OWN if element.own else RANK_OTHER
+    q = compiler.process(bindparam("fts_node_q", element.parsed.tsquery()), **kw)
+    vec = "coalesce(fts_node.otsv, fts_node.tsv)" if element.own else "fts_node.tsv"
+    # normalisatie 1: gedeeld door 1 + log(lengte), zodat een korte naam voorgaat (zoals bm25)
+    return f"(-ts_rank({TS_WEIGHTS}, {vec}, to_tsquery('simple', {q}), 1))"
+
+
+class NotFromPocr(ColumnElement):
+    """Een node van een ander met OCR-tekst uit een foto: de vraag moet ook zonder pocr passen
+    (SQLite). Op PostgreSQL zit dat al in FtsMatch (otsv alleen voor de eigen nodes)."""
+
+    inherit_cache = False
+    # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
+    type = NullType()
+
+    def __init__(self, n: Any, user_id: uuid.UUID, parsed: Parsed) -> None:
+        self.n = n
+        self.user_id = user_id
+        self.parsed = parsed
+
+
+@compiles(NotFromPocr)
+def _not_from_pocr_sql(element: NotFromPocr, compiler: Any, **kw: Any) -> str:
+    if compiler.dialect.name != "sqlite":
+        return "true"
+    n = element.n
+    inner = compiler.process(
+        or_(
+            n.c.owner_id == element.user_id,
+            ~exists().where(PhotoOcr.node_id == n.c.id),
+            text(
+                "EXISTS (SELECT 1 FROM fts_node AS f2 "
+                "WHERE f2.rowid = n.num AND f2.fts_node MATCH :not_pocr)"
+            ).bindparams(not_pocr=element.parsed.match_not_pocr()),
+        ),
+        **kw,
+    )
+    # tussen haakjes: de vorm is NullType, dus SQLAlchemy zet ze er zelf niet omheen
+    return f"({inner})"
+
+
+class AllWordsIn(ColumnElement):
+    """Elk woord staat in n.search_name (SQLite: json_each en instr; PostgreSQL: strpos)."""
+
+    inherit_cache = False
+    # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
+    type = NullType()
+
+    def __init__(self, words: Sequence[str], column_sql: str = "n.search_name") -> None:
+        self.words = tuple(words)
+        self.column_sql = column_sql
+
+
+@compiles(AllWordsIn)
+def _all_words_in(element: AllWordsIn, compiler: Any, **kw: Any) -> str:
+    col = element.column_sql
+    if compiler.dialect.name == "sqlite":
+        words = compiler.process(bindparam("words", json.dumps(list(element.words))), **kw)
+        return f"NOT EXISTS (SELECT 1 FROM json_each({words}) AS w WHERE instr({col}, w.value) = 0)"
+    parts = [
+        f"strpos({col}, {compiler.process(bindparam(f'word{i}', w), **kw)}) > 0"
+        for i, w in enumerate(element.words)
+    ]
+    return "(" + " AND ".join(parts or ["true"]) + ")"
+
+
+class NumNotIn(ColumnElement):
+    """n.num niet in deze lijst (SQLite: json_each; PostgreSQL: <> ALL)."""
+
+    inherit_cache = False
+    # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
+    type = NullType()
+
+    def __init__(self, nums: Sequence[int]) -> None:
+        self.nums = [int(x) for x in nums]
+
+
+class InRanges(ColumnElement):
+    """{alias}.mpath binnen de bereiken (access.ranges_sql, voor de dialect van de compiler)."""
+
+    inherit_cache = False
+    # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
+    type = NullType()
+
+    def __init__(self, ranges: Sequence[tuple[str, str]], alias: str = "n") -> None:
+        self.ranges = list(ranges)
+        self.alias = alias
+
+
+@compiles(InRanges)
+def _in_ranges(element: InRanges, compiler: Any, **kw: Any) -> str:
+    sql, params = ranges_sql(element.ranges, element.alias, compiler.dialect.name)
+    return f"({compiler.process(text(sql).bindparams(**params), **kw)})"
+
+
+@compiles(NumNotIn)
+def _num_not_in(element: NumNotIn, compiler: Any, **kw: Any) -> str:
+    if compiler.dialect.name == "sqlite":
+        nums = compiler.process(bindparam("without", json.dumps(element.nums)), **kw)
+        return f"n.num NOT IN (SELECT value FROM json_each({nums}))"
+    nums = compiler.process(bindparam("without", element.nums, type_=ARRAY(BigInteger())), **kw)
+    return f"n.num <> ALL({nums})"
+
+
+def _match(table_name: str, parsed: Parsed, owner: uuid.UUID | None = None) -> Any:
+    return FtsMatch(table_name, parsed, owner)
 
 
 @dataclass(frozen=True)
@@ -249,11 +432,10 @@ def scoped(sel: Select, n: Any, scope: Scope) -> Select:
     """Levend, geen album, binnen de bereiken, niet de eigen hoofdmap (zoals in LikeFallback;
     review golf 1, contract S2), en de filters uit het register. dead = 0 staat er letterlijk:
     alleen dan mag SQLite de partiële indexen gebruiken."""
-    sql, params = ranges_sql(scope.roots.ranges, n.name)
     sel = sel.where(
         n.c.dead == literal_column("0"),
         n.c.kind != literal_column("'album'"),
-        text(sql).bindparams(**params),
+        InRanges(scope.roots.ranges, n.name),
     )
     if scope.user.root_id is not None:
         sel = sel.where(n.c.id != scope.user.root_id)
@@ -262,14 +444,7 @@ def scoped(sel: Select, n: Any, scope: Scope) -> Select:
 
 def _not_from_pocr(n: Any, scope: Scope, parsed: Parsed) -> Any:
     """Een node van een ander met OCR-tekst uit een foto: de vraag moet ook zonder pocr passen."""
-    return or_(
-        n.c.owner_id == scope.user.id,
-        ~exists().where(PhotoOcr.node_id == n.c.id),
-        text(
-            "EXISTS (SELECT 1 FROM fts_node AS f2 "
-            "WHERE f2.rowid = n.num AND f2.fts_node MATCH :not_pocr)"
-        ).bindparams(not_pocr=parsed.match_not_pocr()),
-    )
+    return NotFromPocr(n, scope.user.id, parsed)
 
 
 def _columns(n: Any) -> list[Any]:
@@ -281,15 +456,15 @@ def ranked_select(parsed: Parsed, scope: Scope, k: int) -> Select:
     n = alias()
     if scope.roots.shared:
         score = case(
-            (n.c.owner_id == scope.user.id, literal_column(RANK_OWN)),
-            else_=literal_column(RANK_OTHER),
+            (n.c.owner_id == scope.user.id, FtsRank(parsed, True)),
+            else_=FtsRank(parsed, False),
         )
     else:
-        score = literal_column(RANK_OWN)
+        score = FtsRank(parsed, True)
     sel = (
         select(*_columns(n), score.label("s"))
         .select_from(CrossJoin(FTS_NODE, n, n.c.num == FTS_NODE.c.rowid))
-        .where(_match("fts_node", parsed.match))
+        .where(_match("fts_node", parsed, scope.user.id))
     )
     sel = scoped(sel, n, scope)
     if scope.roots.shared:
@@ -303,7 +478,7 @@ def stream_select(parsed: Parsed, scope: Scope, k: int, after: int | None, skip:
     sel = (
         select(*_columns(n))
         .select_from(CrossJoin(FTS_NODE, n, n.c.num == FTS_NODE.c.rowid))
-        .where(_match("fts_node", parsed.match))
+        .where(_match("fts_node", parsed, scope.user.id))
     )
     if after is not None:
         sel = sel.where(FTS_NODE.c.rowid > after)
@@ -332,25 +507,16 @@ def names_select(
         sel = (
             select(*_columns(n))
             .select_from(CrossJoin(FTS_NAME, n, n.c.num == FTS_NAME.c.rowid))
-            .where(_match("fts_name", parsed.names))
+            .where(_match("fts_name", parsed))
         )
         order = FTS_NAME.c.rowid
     else:
         n = indexed(_ByPath if small else _ByNum)
         sel = select(*_columns(n)).select_from(n)
         order = n.c.num
-    sel = sel.where(
-        text(
-            "NOT EXISTS (SELECT 1 FROM json_each(:words) AS w "
-            "WHERE instr(n.search_name, w.value) = 0)"
-        ).bindparams(words=json.dumps(list(parsed.words)))
-    )
+    sel = sel.where(AllWordsIn(parsed.words))
     if without:
-        sel = sel.where(
-            text("n.num NOT IN (SELECT value FROM json_each(:without))").bindparams(
-                without=json.dumps(list(without))
-            )
-        )
+        sel = sel.where(NumNotIn(without))
     return scoped(sel, n, scope).order_by(order).limit(k).offset(skip)
 
 
@@ -373,8 +539,10 @@ async def is_small(conn: AsyncConnection, roots: Ranges) -> bool:
     vanaf de paden een SCAN over heel ix_node_mpath (S10): dan altijd langs de tijd."""
     if len(roots.ranges) > MAX_OR:
         return False
-    sql, params = ranges_sql(roots.ranges)
-    count = text(f"SELECT count(*) FROM (SELECT 1 FROM node AS n WHERE {sql} LIMIT {SMALL + 1})")
+    sql, params = ranges_sql(roots.ranges, dialect=conn.dialect.name)
+    count = text(
+        f"SELECT count(*) FROM (SELECT 1 FROM node AS n WHERE {sql} LIMIT {SMALL + 1}) AS small"
+    )
     return (await conn.execute(count.bindparams(**params))).scalar_one() <= SMALL
 
 
@@ -650,6 +818,10 @@ async def read_conn_info(conn: AsyncConnection) -> ConnInfo:
         return _info[key]
     dialect = conn.dialect.name
     fts, version = False, None
+    if dialect == "postgresql":
+        # 0014 (0.8.2, P5): de tabel fts_node
+        found = await conn.exec_driver_sql("SELECT to_regclass('fts_node') IS NOT NULL")
+        fts = bool(found.scalar())
     if dialect == "sqlite":
         version = (await conn.exec_driver_sql("SELECT sqlite_version()")).scalar()
         found = await conn.exec_driver_sql(

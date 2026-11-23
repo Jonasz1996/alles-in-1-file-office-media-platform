@@ -3,11 +3,11 @@
 - **De instellingen.** De haken van prefs, search.hooks en people.hooks krijgen een sessie, geen
   Settings. configure(settings) onthoudt ze per database (de routes, de jobs en de start doen
   dat), en settings_for(db) zoekt ze op via de engine van de sessie. Onbekend telt als uit.
-- **Draait gezichten?** running(settings): PLATFORM_ANALYSE_ENABLED op SQLite (analyse_on) én een
-  map met sleutels (PLATFORM_FACES_KEYS, Keuze 68). Anders komt er niets in de rij analyse en
-  niets op schijf, en geven de routes van gezichten met de analyse uit 501 not_built("X2") zoals
-  0.8.0, met de analyse aan zonder sleutels 409 faces_unavailable: met ANALYSE=uit is gezichten
-  onzichtbaar.
+- **Draait gezichten?** running(settings): de analyse aan (analyse_on: PLATFORM_ANALYSE_ENABLED,
+  op PostgreSQL ook PLATFORM_ANALYSE_POSTGRES en de triggers van 0013) én een map met sleutels
+  (PLATFORM_FACES_KEYS, Keuze 68). Anders komt er niets in de rij analyse en niets op schijf, en
+  geven de routes van gezichten met de analyse uit 501 not_built("X2") zoals 0.8.0, met de
+  analyse aan zonder sleutels 409 faces_unavailable: met ANALYSE=uit is gezichten onzichtbaar.
 - **Het verbod** van de beheerder staat in Setting "search", veld faces_allowed (standaard aan).
 - **De eigenaar** heeft gezichten aan in photo_pref.faces.
 - **people.changed** hooguit één keer per 10 s per eigenaar; wat binnen die tijd komt, gaat aan
@@ -44,7 +44,10 @@ def now() -> datetime:
 
 
 def _key(url: Any) -> str:
-    return make_url(str(url)).render_as_string(hide_password=False)
+    # make_url neemt een str (settings.db_url) en een URL (die van de engine). Niet str(url): dat
+    # verbergt het wachtwoord (***), en dan vond settings_for de Settings van een database met
+    # een wachtwoord nooit (zoals app/search/engine.py, _key)
+    return make_url(url).render_as_string(hide_password=False)
 
 
 def configure(settings: Settings) -> None:
@@ -66,7 +69,7 @@ def settings_for(db: Any) -> Settings | None:
 
 
 def running(settings: Settings | None) -> bool:
-    """Gezichten draaien op dit platform: de analyse staat aan (op SQLite) en de map met sleutels
+    """Gezichten draaien op dit platform: de analyse staat aan (analyse_on) en de map met sleutels
     (PLATFORM_FACES_KEYS) is er. Zonder die map kan geen vector versleuteld worden: dan is het
     "niet geïnstalleerd", niet een job die elke keer faalt."""
     if settings is None or not settings.analyse_on:

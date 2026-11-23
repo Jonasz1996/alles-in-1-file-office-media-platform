@@ -780,6 +780,12 @@ export default {
         beeld: "Zoeken op beeld",
       },
     },
+    // Het blok Gezichten (FacesBlock, 0.8.2): hier en niet in photos_faces, dat in de chunk van
+    // gezichten zit (budget faces, 12 kB)
+    faceKeys: {
+      title: "Sleutels",
+      missing: "sleutel ontbreekt voor {n} eigenaar(s) (app.cli sleutels-check)",
+    },
     failed: {
       title: "Mislukte inhouden",
       none: "Niets mislukt.",

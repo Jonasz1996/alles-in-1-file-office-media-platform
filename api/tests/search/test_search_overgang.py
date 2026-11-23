@@ -22,6 +22,7 @@ from app.routers import search as search_router
 from app.search import engine
 from app.search.like import of_category
 from app.search.types import SearchPage, SearchParams, Suggestions
+from tests.search import motoren
 from tests.search.test_ftype import known_mimes
 from tests.test_files import put, root
 
@@ -47,7 +48,7 @@ def namen(r) -> list[str]:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("motor", ["like", "fts"])
+@pytest.mark.parametrize("motor", motoren.params("like", "fts"))
 async def test_de_vraag_van_070_is_een_422(client, admin, settings, monkeypatch, motor):
     if motor == "like":
         monkeypatch.setattr(settings, "search_index", "uit")

@@ -10,7 +10,8 @@ Het web-deel staat in [z0-web.md](z0-web.md). Het harnas, de fixtures, de wereld
 (§3.6) en de CI-jobs (§4.6) zijn van andere werkers; wat zij nog moeten doen staat onderaan bij
 **Open**.
 
-De keuzes B49–B60 staan nog open. Z0 bouwt op de standaard: geen tesseract in het image
+~~De keuzes B49–B60 staan nog open.~~ [17 november 2026: B49–B60 zijn besloten: standaard, Jonas 2026-11-17;
+B53 en B57 waren al besloten.] Z0 bouwt op de standaard: geen tesseract in het image
 (`ocr_enabled` uit, en de rij `ocr` draait dan niet), geen automatische gezichten, niet zoeken
 met een foto als vraag, GPS alleen voor de eigenaar, en de bronnen van GeoNames en Natural Earth
 haalt `install.sh` bij de installatie (Z7).

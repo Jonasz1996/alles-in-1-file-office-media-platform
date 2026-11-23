@@ -1,7 +1,7 @@
 """nextcloud-clients: app-wachtwoorden en de inlogflow v2
 
 Revision ID: 0015
-Revises: 0013
+Revises: 0014
 Create Date: 2026-11-17 06:30:00.000000
 
 Twee nieuwe tabellen, verder niets. app_password: één rij per gekoppeld apparaat (Nextcloud
@@ -9,15 +9,14 @@ desktop, Android, iOS, rclone); alleen de SHA-256 van het wachtwoord staat erin.
 een lopende inlogflow v2 (hooguit 20 minuten). Gewone tabellen, dus gelijk op SQLite en
 PostgreSQL.
 
-Volgt op 0013 (PostgreSQL, fase 6). Het nummer 0014 is gereserveerd voor de zoekindex op
-PostgreSQL (fase 6, golf 3): komt die later, dan volgt hij op 0015, zodat er één head blijft.
+Volgt op 0014 (de zoekindex op PostgreSQL, fase 6).
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0015"
-down_revision = "0013"
+down_revision = "0014"
 branch_labels = None
 depends_on = None
 

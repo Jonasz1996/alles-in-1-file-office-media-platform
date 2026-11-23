@@ -61,6 +61,18 @@ async def until(predicate, seconds: float = 5.0) -> float:
 
 
 @pytest.fixture
+def analyse_volgt_de_schakelaar(settings, monkeypatch):
+    """Deze test gaat over PLATFORM_ANALYSE_ENABLED zelf. Op PostgreSQL staat de analyse ook uit
+    zonder PLATFORM_ANALYSE_POSTGRES of de triggers van 0013 (Settings.analyse_pg_block; dat legt
+    tests/analyse/test_analyse_pg.py vast): hier volgt analyse_on alleen de schakelaar, zoals op
+    SQLite (waar niets verandert)."""
+    if not settings.db_url.startswith("sqlite"):
+        monkeypatch.setattr(
+            type(settings), "analyse_on", property(lambda self: self.analyse_enabled)
+        )
+
+
+@pytest.fixture
 async def runners(settings):
     """Start een Runner per rij (met media, ocr en analyse aan: anders draaien die rijen niet);
     stopt ze na de test."""
@@ -130,7 +142,9 @@ async def test_honderd_analyses_houden_een_scan_niet_op(settings, maker, kind, r
 
 
 @pytest.mark.anyio
-async def test_opruimwerk_een_keer_per_periode_met_alle_runners(settings, runners, monkeypatch):
+async def test_opruimwerk_een_keer_per_periode_met_alle_runners(
+    settings, runners, monkeypatch, analyse_volgt_de_schakelaar
+):
     calls = []
 
     async def count(_s):
@@ -172,7 +186,7 @@ async def test_zonder_media_alleen_default_en_preview(settings, maker, kind):
 
 
 @pytest.mark.anyio
-async def test_de_rij_analyse_alleen_met_de_container(settings):
+async def test_de_rij_analyse_alleen_met_de_container(settings, analyse_volgt_de_schakelaar):
     """De rij analyse (X2, X3) draait alleen met PLATFORM_ANALYSE_ENABLED (Keuze 59), los van
     media; zonder blijft een taak van analyse staan, zoals bij ocr. Standaard uit (Z0b)."""
     assert settings.analyse_enabled is False

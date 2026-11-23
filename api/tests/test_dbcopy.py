@@ -1,6 +1,7 @@
 """db-copy: SQLite van één node naar PostgreSQL (B12, B15).
 
-Alleen met PLATFORM_TEST_DATABASE_URL."""
+Alleen met PLATFORM_TEST_DATABASE_URL: de marker pg (zonder slaat tests/conftest.py ze over; de
+job api-postgres-15 kiest ze met -m pg)."""
 
 import os
 import uuid
@@ -16,10 +17,7 @@ from app.migrate import upgrade
 from app.models import Blob, Node, User
 
 PG = os.environ.get("PLATFORM_TEST_DATABASE_URL", "")
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(not PG, reason="geen PLATFORM_TEST_DATABASE_URL"),
-]
+pytestmark = [pytest.mark.anyio, pytest.mark.pg]
 
 
 async def _database(name: str, drop: bool = False) -> str:
@@ -151,12 +149,20 @@ async def test_copy_without_superuser(sqlite_with_data):
             parent = (await create_folder(session, owner, parent, name=f"diep{i}")).id
 
     name = "c_" + uuid.uuid4().hex
-    role = "r_" + uuid.uuid4().hex[:12]
+    # Op ClusterForge (en in de job api-postgres-15) maakt de beheerder geen rollen (geen
+    # CREATEROLE): daar bestaat de rol al en is de beheerder er lid van (PLATFORM_TEST_PG_ROLE,
+    # naam:wachtwoord). Anders maakt de test zelf een rol en haalt hem daarna weg.
+    given = os.environ.get("PLATFORM_TEST_PG_ROLE", "")
+    role, pw = given.split(":", 1) if given else ("r_" + uuid.uuid4().hex[:12], "pw")
     admin = await asyncpg.connect(PG.replace("postgresql+asyncpg://", "postgresql://"))
     try:
-        await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'pw' NOSUPERUSER")
+        if not given:
+            await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{pw}' NOSUPERUSER")
+            # Zo mag ook een beheerder zonder superuser de database aan die rol geven en hem
+            # daarna weghalen
+            await admin.execute(f"GRANT {role} TO CURRENT_USER")
         await admin.execute(f'CREATE DATABASE "{name}" OWNER {role}')
-        base = make_url(PG).set(username=role, password="pw", database=name)
+        base = make_url(PG).set(username=role, password=pw, database=name)
         url = base.render_as_string(hide_password=False)
         res = await db_copy(s, url, say=lambda _: None)
         assert res.rows["node"] == await _count(s, Node)
@@ -170,7 +176,8 @@ async def test_copy_without_superuser(sqlite_with_data):
         assert deferrable == 0
     finally:
         await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        await admin.execute(f"DROP ROLE IF EXISTS {role}")
+        if not given:
+            await admin.execute(f"DROP ROLE IF EXISTS {role}")
         await admin.close()
 
 
@@ -241,7 +248,11 @@ async def test_copy_de_boom_en_de_gezichten(sqlite_with_data):
                 "SELECT count(*), count(*) FILTER (WHERE tgenabled = 'D') FROM pg_trigger "
                 "WHERE NOT tgisinternal"
             )
-            assert tuple(got.one()) == (10, 0)
+            # 10 van 0013 en 6 van de zoekindex (0014), allemaal weer aan
+            assert tuple(got.one()) == (16, 0)
+            # De zoekindex: leeg, de app bouwt hem op bij het starten (cursor 0)
+            got = await conn.exec_driver_sql("SELECT cursor FROM search_state WHERE id = 1")
+            assert got.scalar_one() == 0
             top = (await conn.execute(select(func.max(Node.num)))).scalar_one()
             werk = (await conn.execute(select(Node.mpath).where(Node.id == ids["werk"]))).one()
         # Een nieuwe map in werk (in de prullenbak, via vakantie): het volgende num, het pad

@@ -165,6 +165,10 @@ async def _rank(
         raise Fallback("down")
     if not bjobs.ready(found):
         raise Fallback("no_model")
+    # Zonder built_gen: een bestand met een andere gen dan built_gen zet search() al klaar om
+    # opnieuw te maken. Tot dan weigert de worker het (RankArgs.gen is built_gen, de kop heeft
+    # een andere: BAD_REQUEST); _call logt dat als waarschuwing en geeft Fallback("slow"), dus
+    # zoekt de router gewoon. Er wordt niet in het oude bestand gezocht
     if not vecfile.is_current(settings.beeld_dir, user.id):
         raise Fallback("slow")  # nog geen bestand, of van een oude versie: het komt zo
     fd = vecfile.open_for_worker(settings.beeld_dir, user.id)
@@ -266,7 +270,7 @@ async def search(
     bjobs.searched(user.id)
     owner = await db.get(BeeldOwner, user.id, populate_existing=True)
     gen = owner.built_gen if owner is not None else 0
-    current = vecfile.is_current(settings.beeld_dir, user.id)
+    current = vecfile.is_current(settings.beeld_dir, user.id, gen)
     if owner is not None and (owner.gen > owner.built_gen or not current):
         await bjobs.queue_vec(db, user.id, settings, soon=True)
         await db.commit()
@@ -287,14 +291,14 @@ async def search(
         bcache.put(key, hits)
     conn = await db.connection()
     dialect = conn.dialect.name
-    rows = (
-        await engines.run(
-            conn,
-            _select(p, user, dialect).params(nums=_nums(dialect, [h[0] for h in hits])),
-            SQL_MS,
-            "beeld",
-        )
-    ).rows
+    sel = _select(p, user, dialect).params(nums=_nums(dialect, [h[0] for h in hits]))
+    if dialect == dbdialect.SQLITE:
+        rows = (await engines.run(conn, sel, SQL_MS, "beeld")).rows
+    else:
+        # deadline() stopt alleen een vraag op SQLite (interrupt()); op PostgreSQL zoekt dit
+        # hooguit top_k nodes op hun sleutel op, zonder grens tot de PostgreSQL-grens er is
+        with engines.timed("beeld"):
+            rows = list((await conn.execute(sel)).all())
     # §3.9: een node die sinds het bestand andere inhoud kreeg, nooit met de oude vector
     same = {h[0]: h[2] for h in hits}
     rows = [r for r in rows if str(r.blob_id or "")[: vt.SHA_BYTES * 2] == same.get(r.num)]

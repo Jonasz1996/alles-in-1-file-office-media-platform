@@ -18,9 +18,14 @@ import sqlalchemy as sa
 from app import cli
 from app.db import get_engine
 from app.migrate import upgrade
+from tests.conftest import database_env
 
 API_DIR = Path(__file__).resolve().parents[1]
 HEAD = "0015"
+
+# db-backup maakt een kopie van het SQLite-bestand; op PostgreSQL weigert het en verwijst het
+# naar pg_dump (dat toetst tests/test_pg_dialect.py)
+BACKUP = pytest.mark.sqlite_only("db-backup kopieert het SQLite-bestand; PostgreSQL: pg_dump")
 
 
 async def run_cli(settings, *args: str, stdin: bytes | None = None):
@@ -28,6 +33,7 @@ async def run_cli(settings, *args: str, stdin: bytes | None = None):
         **os.environ,
         "PLATFORM_DATA_DIR": str(settings.data_dir),
         "PYTHONDONTWRITEBYTECODE": "1",
+        **database_env(settings),
     }
     return await anyio.run_process(
         [sys.executable, "-m", "app.cli", *args],
@@ -45,11 +51,7 @@ async def revision(settings) -> str:
 
 async def has_table(settings, name: str) -> bool:
     async with get_engine(settings).connect() as conn:
-        found = await conn.scalar(
-            sa.text("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=:n"),
-            {"n": name},
-        )
-    return bool(found)
+        return await conn.run_sync(lambda sync: sa.inspect(sync).has_table(name))
 
 
 def test_check_downgrade():
@@ -119,14 +121,14 @@ async def test_downgrade_met_ja_vraagt_niets(settings):
 def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a). 0013 (PostgreSQL, 0.8.2) maakt op SQLite niets
-    kwijt (op PostgreSQL de plaatsen van foto's; review PG13-2, test hieronder), 0015 (de
-    Nextcloud-apps) alleen de app-wachtwoorden."""
-    assert cli.removed_revisions(HEAD, "0012") == ["0015", "0013"]
-    assert cli.removed_revisions(HEAD, "0011") == ["0015", "0013", "0012"]
-    assert cli.removed_revisions(HEAD, "0010") == ["0015", "0013", "0012", "0011"]
-    assert cli.removed_revisions(HEAD, "0009") == ["0015", "0013", "0012", "0011", "0010"]
+    kwijt, 0014 ook (op PostgreSQL de plaatsen van foto's en de zoekindex; review PG13-2, test
+    hieronder), 0015 (de Nextcloud-apps) alleen de app-wachtwoorden."""
+    assert cli.removed_revisions(HEAD, "0012") == ["0015", "0014", "0013"]
+    assert cli.removed_revisions(HEAD, "0011") == ["0015", "0014", "0013", "0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0015", "0014", "0013", "0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0015", "0014", "0013", "0012", "0011", "0010"]
     assert cli.removed_revisions(HEAD, "0007") == [
-        "0015", "0013", "0012", "0011", "0010", "0009", "0008"
+        "0015", "0014", "0013", "0012", "0011", "0010", "0009", "0008"
     ]  # fmt: skip
     assert cli.lost_lines(["0013"]) == []
     assert cli.PG_REVISION == "0013"
@@ -162,6 +164,8 @@ def test_wat_een_downgrade_op_postgresql_kwijtmaakt():
         cli.SEARCH_LOST,
     ]
     assert cli.lost_lines(["0012"], postgres=True) == [cli.BEELD_LOST]
+    assert cli.lost_lines(["0014", "0013"], postgres=True) == [cli.PG_SEARCH_LOST, cli.PG_LOST]
+    assert cli.lost_lines(["0014"], postgres=False) == []
     assert "plaatsen" in cli.PG_LOST
 
 
@@ -186,21 +190,24 @@ def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "db_revision", at_head)
     monkeypatch.setattr(cli, "_confirm", confirm)
     assert cli._downgrade(settings, "0012", yes=False) == 1
-    assert seen == [[cli.PG_LOST] if postgres else []]
+    assert seen == [[cli.PG_SEARCH_LOST, cli.PG_LOST] if postgres else []]
 
 
 async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
     """Een album met twee items van een regel die niet gedeeld worden, en één met de hand."""
     user, root, album = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     foto1, foto2, foto3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    moment = datetime(2026, 11, 3, 9, 0, tzinfo=UTC).isoformat()
+    moment = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+    # De tijd als datetime met het type van de kolom, niet als ISO-tekst: asyncpg wil een
+    # datetime voor timestamptz, en SQLite krijgt zo de tekst die de app zelf schrijft
+    tijd = sa.bindparam("t", type_=sa.DateTime(timezone=True))
     async with get_engine(settings).begin() as conn:
         await conn.execute(
             sa.text(
                 'INSERT INTO "user" (id, email, display_name, password_hash, role, '
                 "quota_bytes, root_id, created_at) VALUES (:id, 'eva@example.nl', 'Eva', 'x', "
                 "'user', 0, :root, :t)"
-            ),
+            ).bindparams(tijd),
             {"id": user.hex, "root": root.hex, "t": moment},
         )
         for node_id, name, kind in (
@@ -214,27 +221,29 @@ async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:
                 sa.text(
                     "INSERT INTO node (id, parent_id, owner_id, name, kind, size, created_at, "
                     "modified_at, search_name) VALUES (:id, :parent, :owner, :name, :kind, 0, "
-                    ":t, :t, :name)"
-                ),
+                    ":t, :t, :search_name)"
+                ).bindparams(tijd),
                 {
                     "id": node_id.hex,
                     "parent": None if kind != "file" else root.hex,
                     "owner": user.hex,
                     "name": name,
+                    # een eigen parameter: op PostgreSQL is name varchar en search_name text
+                    "search_name": name,
                     "kind": kind,
                     "t": moment,
                 },
             )
         for node_id, source, shared in (
-            (foto1, "rule", 0),
-            (foto2, "rule", 0),
-            (foto3, "hand", 1),
+            (foto1, "rule", False),
+            (foto2, "rule", False),
+            (foto3, "hand", True),
         ):
             await conn.execute(
                 sa.text(
                     "INSERT INTO album_item (album_id, node_id, added_at, source, shared) "
                     "VALUES (:album, :node, :t, :source, :shared)"
-                ),
+                ).bindparams(tijd),
                 {
                     "album": album.hex,
                     "node": node_id.hex,
@@ -345,6 +354,7 @@ def _backups(settings) -> list[Path]:
 
 
 @pytest.mark.anyio
+@BACKUP
 async def test_db_backup_maakt_een_kopie_terwijl_de_app_draait(settings):
     """Keuze 52: een kopie met sqlite3.Connection.backup, genoemd naar de head en de tijd. De
     app blijft draaien: deze test houdt een schrijver open."""
@@ -387,6 +397,7 @@ async def test_db_backup_maakt_een_kopie_terwijl_de_app_draait(settings):
 
 
 @pytest.mark.anyio
+@BACKUP
 async def test_db_backup_houdt_per_head_de_nieuwste(settings):
     folder = settings.data_dir / "backup"
     folder.mkdir()
@@ -414,6 +425,7 @@ async def test_db_backup_houdt_per_head_de_nieuwste(settings):
 
 
 @pytest.mark.anyio
+@BACKUP
 async def test_db_backup_zonder_database(settings, tmp_path):
     leeg = tmp_path / "leeg"
     leeg.mkdir()

@@ -16,10 +16,16 @@ Kijkt naar EXPLAIN QUERY PLAN en faalt met het hele plan erbij als:
 conn: een sqlite3-verbinding of een synchrone SQLAlchemy-verbinding (exec_driver_sql). De plannen
 hangen af van de versie van SQLite en van ANALYZE: test daarom met en zonder ANALYZE, en draai ze
 ook in python:3.12-slim (SQLite 3.46.1, e2e/slim.sh).
+
+pg_stappen: het plan van PostgreSQL (EXPLAIN (FORMAT JSON)) voor een test die op PostgreSQL een
+eigen verwachting heeft. PostgreSQL kiest bij een paar rijen zelf de volgorde van de tabellen;
+vast staat wat de vraag aanraakt, op welke voorwaarde, en dat elke tabel een index heeft die bij
+een voorwaarde past.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -87,3 +93,23 @@ def assert_plan(
     if fouten:
         raise AssertionError("; ".join(fouten) + "\n" + plan.tekst())
     return plan
+
+
+def pg_stappen(conn, sql: str, args: Sequence | dict = ()) -> list[dict]:
+    """De stappen van het plan van PostgreSQL, de buitenste eerst (conn: een synchrone
+    SQLAlchemy-verbinding in een transactie). Met enable_seqscan uit, alleen voor deze vraag:
+    dan blijft een Seq Scan alleen staan als geen index past bij een voorwaarde op die tabel."""
+    conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
+    try:
+        plan = conn.exec_driver_sql("EXPLAIN (FORMAT JSON) " + sql, args if args else ()).scalar()
+    finally:
+        conn.exec_driver_sql("SET LOCAL enable_seqscan = on")
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    stappen: list[dict] = []
+    open_ = [plan[0]["Plan"]]
+    while open_:
+        stap = open_.pop(0)
+        stappen.append(stap)
+        open_ += stap.get("Plans", [])
+    return stappen

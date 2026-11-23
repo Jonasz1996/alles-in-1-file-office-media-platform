@@ -318,3 +318,85 @@ async def test_een_fout_van_de_worker_logt_alleen_een_code(settings, nep, fake, 
     with caplog.at_level("DEBUG"):
         await draai(settings)
     assert "geheimwoord7" not in caplog.text
+
+
+async def _alleen_thumbnail(settings, nep, eva, name: str):
+    """Een foto zonder gezicht waarvan alleen de thumbnail er is (preview.large loopt nog): geen
+    1024, preview_meta partial. Geeft (node, sha)."""
+    from app.models import Blob, Node
+
+    node = await foto(settings, nep, eva, name, [], sizes=(256,))
+    async with maker(settings)() as session:
+        sha = (await session.get(Node, node)).blob_id
+        (await session.get(Blob, sha)).preview_meta = {"sizes": [256], "partial": True}
+        await session.commit()
+    return node, sha
+
+
+async def _large_klaar(settings, sha: str, seed: int) -> None:
+    """preview.large is klaar: de 1024 op zijn plek, partial weg, en de haak (faces.plan sha)
+    met de jobs van de rij default, zoals die naast de rij analyse lopen."""
+    from tests.people.faces.conftest import webp
+
+    await write_large(settings, sha, webp(seed))
+    await register.after_large(maker(settings), sha)
+    await jobs.run_pending(settings, lane="default")
+
+
+async def test_de_1024_komt_tijdens_de_batch(settings, nep, fake):
+    """Zoals de echte e2e (test_zoek_gezichten_echt.py, CI op debd1d9): drie foto's zonder gezicht.
+    De thumbnail zet een foto al op wait (previews.register_ready), dus de batch heeft de eerste
+    met zijn 1024 en twee zonder (no_preview). Tijdens de opdracht komt hun 1024; faces.plan (sha)
+    vindt ze dan busy en laat ze staan. Daarna mag no_preview ze niet laten wachten tot de ronde
+    van elk uur: alle drie klaar, 0 gezichten."""
+    eva = await _eva(settings)
+    een = await foto(settings, nep, eva, "ruis.jpg", [])
+    twee, sha2 = await _alleen_thumbnail(settings, nep, eva, "verloop.jpg")
+    drie, sha3 = await _alleen_thumbnail(settings, nep, eva, "vlak.jpg")
+    await aan(settings, eva)
+
+    async def en_intussen_de_1024(req):
+        if not nep.seen:
+            await _large_klaar(settings, sha2, 61_001)
+            await _large_klaar(settings, sha3, 61_002)
+        return await nep.faces(req)
+
+    fake.on(wire.Op.FACES, en_intussen_de_1024)
+    await draai(settings)
+    scans = await _scans(settings)
+    assert {n: scans[n] for n in (een, twee, drie)} == {
+        n: ("done", None, 0, 0) for n in (een, twee, drie)
+    }
+    assert nep.seen == 3 and await _faces(settings) == []
+
+
+async def test_een_plan_na_de_laatste_blik_van_de_scan(settings, nep, fake, monkeypatch):
+    """faces.plan zet een foto op wait terwijl faces.scan nog loopt, maar na diens laatste blik
+    (_again: niets meer op wait). De scan staat dan nog op running; zijn opvolger moet er toch
+    komen, anders wacht de foto tot de ronde van elk uur."""
+    from app.models import Node
+
+    eva = await _eva(settings)
+    een = await foto(settings, nep, eva, "een.jpg", [])
+    await aan(settings, eva)
+    again = scan._again
+    twee = []
+
+    async def en_dan_een_plan(s):
+        await again(s)
+        if twee:
+            return
+        async with maker(settings)() as session:
+            loopt = select(Job.id).where(Job.type == scan.SCAN, Job.status == "running")
+            assert await session.scalar(loopt) is not None
+        twee.append(await foto(settings, nep, eva, "twee.jpg", []))
+        async with maker(settings)() as session:
+            sha = (await session.get(Node, twee[0])).blob_id
+        await register.after_large(maker(settings), sha)
+        await jobs.run_pending(settings, lane="default")
+
+    monkeypatch.setattr(scan, "_again", en_dan_een_plan)
+    await draai(settings)
+    scans = await _scans(settings)
+    assert scans[een] == ("done", None, 0, 0)
+    assert scans[twee[0]] == ("done", None, 0, 0)

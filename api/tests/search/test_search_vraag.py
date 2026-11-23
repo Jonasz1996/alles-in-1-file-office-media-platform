@@ -31,6 +31,7 @@ from app.db import get_engine
 from app.models import MediaLibrary, Node
 from app.people import search as people_search
 from app.search import filters_photo
+from tests.search import motoren
 from tests.test_files import mkdir, new_user, put, root
 
 pytestmark = pytest.mark.anyio
@@ -46,7 +47,7 @@ class Motor(str):
     settings: Settings
 
 
-@pytest.fixture(params=["fts", "like"])
+@pytest.fixture(params=motoren.params("fts", "like"))
 def motor(request, settings, monkeypatch) -> Motor:
     if request.param == "like":
         monkeypatch.setattr(settings, "search_index", "uit")

@@ -10,9 +10,12 @@ import SearchTab, {
   indexRebuilding,
   photosRebuilding,
   POLL_MS,
+  progressOf,
   SearchView,
   textFraction,
+  withProgress,
 } from "./SearchTab";
+import searchTabSource from "./SearchTab.tsx?raw";
 import type { AdminBeeld, AdminFaces, AdminSearch } from "./searchApi";
 
 // De tab "Zoeken en foto's" op /beheer (Z7, Keuze 51), met onderaan de blokken "Gezichten" (X2)
@@ -92,6 +95,7 @@ const FACES: AdminFaces = {
   eta_s: null,
   wipe_waiting: false,
   quality: null,
+  keys_missing: 0,
 };
 
 const BEELD: AdminBeeld = {
@@ -423,5 +427,39 @@ describe("de blokken Gezichten (Keuze 67) en Zoeken op beeld (alleen aantallen, 
     expect(html).toContain('data-search="faces"');
     expect(html).toContain('data-search="beeld"');
     expect(html).not.toContain("komt later");
+  });
+});
+
+describe("search.progress op de tab (0.8.2, z0-web.md Open 6)", () => {
+  const loopt = state({ rebuild: { what: "geo", started_at: "2026-11-09T09:00:00+00:00", done: 0.25 } });
+
+  it("alleen een search.progress met what en een eindig getal telt", () => {
+    expect(progressOf({ type: "search.progress", data: { what: "geo", done: 0.5 } })).toEqual({ what: "geo", done: 0.5 });
+    expect(progressOf({ type: "search.ready", data: { what: "geo", done: 0.5 } })).toBeNull();
+    expect(progressOf({ type: "search.progress", data: { what: "geo" } })).toBeNull();
+    expect(progressOf({ type: "search.progress", data: { what: "geo", done: Number.NaN } })).toBeNull();
+    expect(progressOf({ type: "search.progress", data: { what: 3, done: 0.5 } })).toBeNull();
+  });
+
+  it("de voortgang van de herbouw die de tab toont, meteen; de rest wacht op de volgende GET", () => {
+    const nu = withProgress(loopt, { what: "geo", done: 0.6 });
+    expect(nu.rebuild).toEqual({ what: "geo", started_at: "2026-11-09T09:00:00+00:00", done: 0.6 });
+    expect(loopt.rebuild?.done).toBe(0.25); // de stand van de GET blijft zoals hij was
+    expect(view(nu)).toContain('value="0.6"');
+    // Een ander soort, de backfill, of geen herbouw: niets veranderd (hetzelfde object)
+    expect(withProgress(loopt, { what: "hash", done: 0.9 })).toBe(loopt);
+    expect(withProgress(loopt, { what: "backfill", done: 0.9 })).toBe(loopt);
+    const geen = state();
+    expect(withProgress(geen, { what: "geo", done: 0.9 })).toBe(geen);
+    // Hetzelfde getal: hetzelfde object (geen nieuwe render); buiten 0–1 begrensd
+    expect(withProgress(loopt, { what: "geo", done: 0.25 })).toBe(loopt);
+    expect(withProgress(loopt, { what: "geo", done: 1.5 }).rebuild?.done).toBe(1);
+    expect(withProgress(loopt, { what: "geo", done: -1 }).rebuild?.done).toBe(0);
+  });
+
+  it("de tab luistert naar de stroom en blijft elke 5 s vragen", () => {
+    expect(searchTabSource).toContain("useServerEvents((event) => {");
+    expect(searchTabSource).toContain("const progress = progressOf(event);");
+    expect(searchTabSource).toContain("usePolling(adminSearch, POLL_MS)");
   });
 });
