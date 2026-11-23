@@ -44,7 +44,7 @@ jobs:
         with:
           node-version: "22"
       - name: Bouwen
-        run: npx --yes @tauri-apps/cli@2.9.5 build --bundles ${{ matrix.bundle }}
+        run: npx --yes @tauri-apps/cli@2.12.6 build --bundles ${{ matrix.bundle }}
       - name: Namen voor de downloadpagina
         run: |
           mkdir -p out
