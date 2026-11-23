@@ -16,7 +16,7 @@ import org.platform.app.ui.upload
 object CameraSync {
     private data class Shot(val id: Long, val added: Long, val taken: Long, val video: Boolean)
 
-    suspend fun run(app: PlatformApp, context: Context, prefs: SyncPrefs, progress: (String) -> Unit): Int {
+    suspend fun run(app: PlatformApp, context: Context, prefs: SyncPrefs, progress: suspend (String) -> Unit): Int {
         if (!prefs.camera) return 0
         if (prefs.cameraSince < 0) {
             // Eerste keer: vanaf nu (geen hele fotorol in één keer)

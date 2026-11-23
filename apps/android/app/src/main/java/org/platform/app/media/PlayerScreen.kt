@@ -66,7 +66,7 @@ fun PlayerScreen(app: PlatformApp, node: String, onDone: () -> Unit) {
         // Bij stoppen kan het scherm al weg zijn: dan in een eigen draad, kort
         Thread {
             runCatching {
-                runBlocking { app.api.send("PUT", "/api/v1/media/progress/$node", ProgressIn.serializer(), body, null) }
+                runBlocking { app.api.send<ProgressIn, Unit>("PUT", "/api/v1/media/progress/$node", ProgressIn.serializer(), body, null) }
             }
         }.start()
     }

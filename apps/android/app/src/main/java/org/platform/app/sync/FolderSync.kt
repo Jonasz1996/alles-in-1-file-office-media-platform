@@ -43,7 +43,7 @@ object FolderSync {
         var removed = 0
     }
 
-    suspend fun run(app: PlatformApp, context: Context, prefs: SyncPrefs, progress: (String) -> Unit): Counts? {
+    suspend fun run(app: PlatformApp, context: Context, prefs: SyncPrefs, progress: suspend (String) -> Unit): Counts? {
         val tree = prefs.folderUri ?: return null
         val local = DocumentFile.fromTreeUri(context, Uri.parse(tree)) ?: return null
         val remoteRoot = prefs.folderRemote ?: Remote.folder(
@@ -70,7 +70,7 @@ object FolderSync {
         old: Map<String, Seen>,
         next: MutableMap<String, Seen>,
         counts: Counts,
-        progress: (String) -> Unit,
+        progress: suspend (String) -> Unit,
     ) {
         val locals = withContext(Dispatchers.IO) { dir.listFiles() }.filter { it.name != null }.associateBy { it.name!! }
         val remotes = Remote.children(app, remoteId).associateBy { it.name }
