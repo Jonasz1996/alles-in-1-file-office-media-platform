@@ -953,8 +953,9 @@ async def add_ref(
     mislukte preview (of een foto of video zonder) een nieuwe kans (previews.requeue), en een
     blob zonder bekende soort de soort van nu (een nieuwere app/mime.py kent hem misschien).
     Nieuwe inhoud gaat na de commit naar search.hooks.blob_added (fase 6, §3.5): owner is wie
-    het bestand bezit, voor de grenzen per gebruiker van Z2 en X1. Alleen onder
-    BlobStore.lock."""
+    het bestand bezit, voor de grenzen per gebruiker van Z2 en X1. Een inhoud die er al was,
+    gaat na de commit naar search.hooks.blob_reused (0.8.2: OCR van een foto voor de nieuwe
+    eigenaar). Alleen onder BlobStore.lock."""
     unknown = or_(Blob.mime.is_(None), Blob.mime == "application/octet-stream")
     result = await session.execute(
         update(Blob)
@@ -966,6 +967,7 @@ async def add_ref(
     )
     if result.rowcount:
         await previews.requeue(session, sha)
+        search_hooks.blob_reused_after_commit(session, sha, owner)
     else:
         session.add(
             Blob(
