@@ -205,9 +205,12 @@ async def test_een_stuk_schrijft_kort(settings):
         "DELETE",
     ]
     if engine.dialect.name == "postgresql":
-        # Daar eerst het slot van de boom, vóór de UPDATE van node (db.lock_tree, review PG13-1):
-        # ook één statement, hoe groot het stuk ook is
+        # Daar eerst het slot van de boom, vóór de UPDATE van node (db.lock_tree, review PG13-1),
+        # en nog eens vóór de plek: photo_rows.write neemt het slot zelf, voor elke aanroeper
+        # (0.8.2, P4); in dezelfde transactie wacht dat niet. Elk één statement, hoe groot het
+        # stuk ook is
         expected.insert(1, "NODE_LOCK_TREE")
+        expected.insert(4, "NODE_LOCK_TREE")
     assert burst == expected, seen
     async with maker(settings)() as session:
         for d, node_id in enumerate(ids, start=1):
