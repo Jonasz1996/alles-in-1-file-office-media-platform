@@ -21,7 +21,7 @@ from app.migrate import upgrade
 from tests.conftest import database_env
 
 API_DIR = Path(__file__).resolve().parents[1]
-HEAD = "0013"
+HEAD = "0014"
 
 # db-backup maakt een kopie van het SQLite-bestand; op PostgreSQL weigert het en verwijst het
 # naar pg_dump (dat toetst tests/test_pg_dialect.py)
@@ -122,12 +122,12 @@ def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a). 0013 (PostgreSQL, 0.8.2) maakt op SQLite niets
     kwijt; op PostgreSQL de plaatsen van foto's (review PG13-2, test hieronder)."""
-    assert cli.removed_revisions(HEAD, "0012") == ["0013"]
-    assert cli.removed_revisions(HEAD, "0011") == ["0013", "0012"]
-    assert cli.removed_revisions(HEAD, "0010") == ["0013", "0012", "0011"]
-    assert cli.removed_revisions(HEAD, "0009") == ["0013", "0012", "0011", "0010"]
+    assert cli.removed_revisions(HEAD, "0012") == ["0014", "0013"]
+    assert cli.removed_revisions(HEAD, "0011") == ["0014", "0013", "0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0014", "0013", "0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0014", "0013", "0012", "0011", "0010"]
     assert cli.removed_revisions(HEAD, "0007") == [
-        "0013", "0012", "0011", "0010", "0009", "0008"
+        "0014", "0013", "0012", "0011", "0010", "0009", "0008"
     ]  # fmt: skip
     assert cli.lost_lines(["0013"]) == []
     assert cli.PG_REVISION == "0013"
@@ -163,6 +163,8 @@ def test_wat_een_downgrade_op_postgresql_kwijtmaakt():
         cli.SEARCH_LOST,
     ]
     assert cli.lost_lines(["0012"], postgres=True) == [cli.BEELD_LOST]
+    assert cli.lost_lines(["0014", "0013"], postgres=True) == [cli.PG_SEARCH_LOST, cli.PG_LOST]
+    assert cli.lost_lines(["0014"], postgres=False) == []
     assert "plaatsen" in cli.PG_LOST
 
 
@@ -187,7 +189,7 @@ def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "db_revision", at_head)
     monkeypatch.setattr(cli, "_confirm", confirm)
     assert cli._downgrade(settings, "0012", yes=False) == 1
-    assert seen == [[cli.PG_LOST] if postgres else []]
+    assert seen == [[cli.PG_SEARCH_LOST, cli.PG_LOST] if postgres else []]
 
 
 async def _album_met_regel_items(settings) -> tuple[uuid.UUID, uuid.UUID]:

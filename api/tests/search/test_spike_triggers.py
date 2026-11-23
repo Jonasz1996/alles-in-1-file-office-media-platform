@@ -48,7 +48,7 @@ from app.routers import trash
 from app.storage import BlobStore
 from tests.factories import create_file, create_folder, create_user, maker
 from tests.search import spike
-from tests.search.migratie import check_tree, names, words
+from tests.search.migratie import check_fts, check_tree, names, words
 from tests.test_files import mkdir, put, root
 from tests.test_media_contract import media_app  # noqa: F401
 from tests.test_media_import import put as put_import
@@ -72,6 +72,10 @@ async def klopt(settings, termen: bool = True) -> None:
     """De boom en de index kloppen, en de index is gelijk aan een volledige herbouw."""
     async with get_engine(settings).connect() as conn:
         await conn.run_sync(check_tree)
+        if conn.dialect.name != "sqlite":
+            # PostgreSQL (0014): fts_node gelijk aan wat fts_refresh opnieuw schrijft
+            await conn.run_sync(check_fts)
+            return
     verschil = await anyio.to_thread.run_sync(
         lambda: spike.herbouw_verschil(pad(settings), termen=termen)
     )

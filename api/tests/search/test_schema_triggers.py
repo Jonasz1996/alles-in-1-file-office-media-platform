@@ -47,13 +47,13 @@ async def master(settings, kind: str) -> dict[str, str]:
 
 
 @pytest.mark.anyio
-@motoren.needs_fts
+@motoren.fts5
 async def test_triggers_in_de_database_zijn_schema_triggers(settings):
     assert await master(settings, "trigger") == schema.TRIGGERS
 
 
 @pytest.mark.anyio
-@motoren.needs_fts
+@motoren.fts5
 async def test_view_en_fts_tabellen_in_de_database(settings):
     assert await master(settings, "view") == {"search_src": schema.VIEW_SQL}
     tables = await master(settings, "table")
@@ -216,7 +216,7 @@ def test_elke_trigger_op_een_bekende_tabel():
 
 
 @pytest.mark.anyio
-@motoren.needs_fts
+@motoren.fts5
 async def test_ocr_van_een_foto_staat_alleen_in_pocr(settings):
     """Review Z0, veilig F3: OCR van een foto is alleen van de eigenaar (Keuze 16, 23, 25a).
     In fts_node heeft hij een eigen kolom pocr, los van de OCR van een PDF in ocr. Een vraag van

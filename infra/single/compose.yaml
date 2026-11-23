@@ -21,6 +21,8 @@ services:
     environment:
       PLATFORM_NODE_NAME: ${NODE_NAME:-node1}
       PLATFORM_SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      # Achter een reverse proxy (bijv. NPM): zijn adres(sen), komma-gescheiden
+      PLATFORM_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # De grootste upload in bytes (fase 5, M10): standaard 50 GiB, voor een film
       PLATFORM_MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-53687091200}
       # Plaatsnamen en landen bij foto's (fase 6, Keuze 29): aan of uit. install.sh haalt de

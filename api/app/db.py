@@ -96,9 +96,16 @@ async def lock_tree(session: AsyncSession) -> None:
     een opnamedatum): anders zet hij ze vast in een andere volgorde dan een verplaatsing erboven
     (die gaat op volgorde van mpath), en dan stopt PostgreSQL er één met 40P01 (review PG13-1).
     Neem het vóór de eerste rij van node in de transactie. Op SQLite niets: daar is maar één
-    schrijver."""
-    if session.get_bind().dialect.name == "postgresql":
-        await session.execute(text("SELECT node_lock_tree()"))
+    schrijver. Heeft deze transactie het slot al, dan geen tweede statement."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    sync = getattr(session, "sync_session", None)  # None: een nagemaakte sessie (tests)
+    held = sync.get_transaction() if sync is not None else None
+    if held is not None and session.info.get("tree_lock") is held:
+        return
+    await session.execute(text("SELECT node_lock_tree()"))
+    if sync is not None:
+        session.info["tree_lock"] = sync.get_transaction()
 
 
 # --- De WAL leegmaken ------------------------------------------------------------------------
