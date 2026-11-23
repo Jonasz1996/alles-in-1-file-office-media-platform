@@ -576,8 +576,7 @@ laatste bewijs is de eigen server (de LXC). De metingen staan in
 [docs/fase-6/metingen.md](fase-6/metingen.md), de integratie in
 [docs/fase-6/integratie.md](fase-6/integratie.md), wat er is, de
 grenzen en de vragen voor Jonas in
-[docs/fase-6/README.md](fase-6/README.md). Van B49–B70 zijn alleen B53
-en B57 besloten; de rest is nog voorstel, en 0.8.0 draait op de
+[docs/fase-6/README.md](fase-6/README.md). 0.8.0 draait op de
 standaarden van het bouwontwerp (ook Vraag 4: alleen de eigenaar ziet de
 plek van een foto).
 
@@ -590,26 +589,35 @@ p95 90 tot 107 ms op één kern bij 55.000 en 100.000 foto's (M12), en 191,8 ms 
 vol draait (M13; de grens is 250 ms). Sommige woorden vinden weinig
 (zoals 'bergen' en 'boot'); Jonas koos het toch uit te brengen (Keuze 85). Wat 0.8.1 brengt en de
 grenzen staan in [docs/fase-6/README.md](fase-6/README.md), de integratie in
-[docs/fase-6/integratie-2.md](fase-6/integratie-2.md). Van B49–B70 blijven alle punten behalve
-B53 en B57 een voorstel, net als B71; Vraag 4 en Vraag 8–14 staan nog open.
+[docs/fase-6/integratie-2.md](fase-6/integratie-2.md).
+
+Besluiten (17-11-2026): Jonas koos "Standaard vastzetten". Alle keuzes van fase 6
+die nog open waren, staan op hun standaard: B49–B71 (B53 en B57 waren al
+besloten), Vraag 4 en Vraag 8–14, en de vragen bij 0.8.0 en 0.8.1. Hun status is
+"besloten: standaard, Jonas 2026-11-17"; zie
+[docs/fase-0/beslissingen.md](fase-0/beslissingen.md). Er verandert niets aan de
+app: 0.8.1 draaide al zo. Dezelfde dag kwam PR #2 op de branch (`app.cli db-copy`
+naar PostgreSQL, tests op PostgreSQL met `PLATFORM_TEST_DATABASE_URL`, de CI-job
+`api-postgres`).
 
 Duur en omvang (3-11-2026): Jonas koos voor "alles": OCR, gezichten
 automatisch en zoeken op wat er op een foto staat, met een kaart zonder
 tegels van buiten. Daarmee is fase 6 ±43 werkdagen (±9 weken) in plaats
-van 3 weken, standaard in twee opleveringen (Vraag 13): 0.8.0 rond
+van 3 weken, in twee opleveringen (Vraag 13, besloten: standaard, Jonas 2026-11-17): 0.8.0 rond
 dag 27 met de kern, en 0.8.1 rond dag 43 met gezichten en beeld. Anders dan hierboven staat:
 YuNet en SFace in plaats van InsightFace (die gewichten zijn alleen voor
 niet-commercieel onderzoek), SigLIP 2 in plaats van CLIP (beter in het
 Nederlands), en de vectoren in de SQLite die er al is in plaats van
 pgvector (standalone draait op SQLite, B15). Gezichten en beeld rekenen
 in een eigen afgeschermde container, en staan per gebruiker standaard
-uit [0.8.1: de container zelf staat na de installatie standaard aan]. Zoeken op beeld mag standaard 250 ms duren (Vraag 14); gewoon zoeken
+uit [0.8.1: de container zelf staat na de installatie standaard aan]. Zoeken op beeld mag 250 ms duren (Vraag 14); gewoon zoeken
 houdt zijn 200 ms.
-Wie de plek van een foto ziet, heeft Jonas nog niet gekozen; tot dan
-ziet alleen de eigenaar hem. Het ontwerp, de planning en de open vragen
-staan in [docs/fase-6/README.md](fase-6/README.md) en
+Alleen de eigenaar ziet de plek van een foto (Vraag 4). Vraag 4, 13 en
+14 zijn, net als de andere vragen, besloten: standaard, Jonas 2026-11-17.
+Het ontwerp, de planning en de vragen met hun antwoord staan in
+[docs/fase-6/README.md](fase-6/README.md) en
 [docs/fase-6/bouwontwerp.md](fase-6/bouwontwerp.md); de keuzes in
-B49–B70.
+B49–B71.
 
 ### Fase 7 — Sync, delen en integraties (3 weken)
 
