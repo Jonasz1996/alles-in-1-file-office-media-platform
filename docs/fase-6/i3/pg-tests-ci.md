@@ -29,7 +29,7 @@ Branch `wip/i3-pg-tests-ci`, gemaakt vanaf `cbd0922` (golf 1 samengevoegd, zie [
 | Commit | Wat |
 |---|---|
 | `85e4650` | **Eén sjabloondatabase per run.** De fixture `settings` krijgt op PostgreSQL een kopie (`CREATE DATABASE … TEMPLATE`) van een database die één keer per sessie gemigreerd is, in plaats van per test een nieuwe database te migreren. Het sjabloon komt in een eigen draad met een eigen event loop, raakt dus de engines van de test niet, en gaat aan het eind weg met `WITH (FORCE)`. `PLATFORM_TEST_PG_TEMPLATE=0` zet het uit. De fixture `database_url` (P2) geeft nog steeds een lege database (de migratietests migreren zelf); `database_url_head` geeft er een op de nieuwste revisie. De markers `pg` en `sqlite_only` (P2) werken zoals eerst. |
-| `0221371` | **De deadlock van `test_on_dead_laat_een_pdf_die_er_is[tussen]`.** De test schreef de "klaar" van de conversie in dezelfde taak terwijl de sessie van `on_dead` de rij vasthield (`SELECT … FOR NO KEY UPDATE`). Op PostgreSQL wachtte de test op zichzelf; dat was de time-out van api-postgres. Nu loopt de conversie in een eigen taak met een eigen verbinding. Op PostgreSQL ziet de test met `pg_blocking_pids` dat de conversie op het slot van `on_dead` wacht en pas daarna klaar is. De bewering blijft: de PDF is `ready` met de huidige `PDF_VERSION`. Nagegaan: zonder de bewaking in de UPDATE faalt de run op SQLite, zonder `FOR NO KEY UPDATE` die op PostgreSQL. In de hele run op PostgreSQL slaagden `[al]` en `[tussen]`. |
+| `0221371` | **De deadlock van `test_on_dead_laat_een_pdf_die_er_is[tussen]`.** (Bij de review kwam `[zonder_slot]` erbij: op PostgreSQL toetst `[tussen]` het slot, niet de voorwaarde in de UPDATE; `[zonder_slot]` toetst die voorwaarde op beide databases. Zie [w2.md](w2.md).) De test schreef de "klaar" van de conversie in dezelfde taak terwijl de sessie van `on_dead` de rij vasthield (`SELECT … FOR NO KEY UPDATE`). Op PostgreSQL wachtte de test op zichzelf; dat was de time-out van api-postgres. Nu loopt de conversie in een eigen taak met een eigen verbinding. Op PostgreSQL ziet de test met `pg_blocking_pids` dat de conversie op het slot van `on_dead` wacht en pas daarna klaar is. De bewering blijft: de PDF is `ready` met de huidige `PDF_VERSION`. Nagegaan: zonder de bewaking in de UPDATE faalt de run op SQLite, zonder `FOR NO KEY UPDATE` die op PostgreSQL. In de hele run op PostgreSQL slaagden `[al]` en `[tussen]`. |
 | `736cdff`, `5621b58` | **`sqlite_only` op wat echt alleen SQLite is** (zie hieronder). **CLI-tests met de database van de test:** `database_env(settings)` geeft een kindproces (`python -m app.cli`) de `PLATFORM_DATABASE_URL` van de test; op SQLite verandert er niets. In `test_cli_db.py`: `has_table` via de inspector in plaats van `sqlite_master`, tijden als `datetime` met het type van de kolom in plaats van ISO-tekst, booleans voor `album_item.shared`, een eigen bind voor `search_name` (varchar tegen text). Ook `test_2fa.py` en `test_places_later.py` geven hun kindproces de database mee. |
 | `9ba6589` | **De zoekwereld (`tests/search/wereld.py`) op PostgreSQL.** `bench.ANALYSE_SQL` is SQL van sqlite3 (`?`, tijden als tekst). Op PostgreSQL gaan dezelfde rijen via de tabel `analysis` met echte tijden. Op SQLite blijft het statement gelijk. |
 | `8d24072` | **Eén plek voor de zoekmotoren: `tests/search/motoren.py`** (zie hieronder). |
@@ -109,7 +109,7 @@ de database geen FTS heeft, dus deed `[fts]` op PostgreSQL hetzelfde als `[like]
 Met de parameters erbij, zoals de junit van de run op PostgreSQL ze overslaat:
 
 - `tests/geo/test_photo_filters.py` (1): `test_de_plaatsen_in_de_suggesties_en_de_groep`
-- `tests/ocr/test_ocr_access.py` (3): `test_brams_ocr_van_zijn_kopie_komt_niet_bij_eva`, `test_de_ocr_van_een_pdf_volgt_de_leestoegang`, `test_een_kopie_van_bram_krijgt_eva_s_tekst_niet`
+- `tests/ocr/test_ocr_access.py` (3): `test_brams_ocr_van_zijn_kopie_komt_niet_bij_eva`, `test_de_ocr_van_een_pdf_volgt_de_leestoegang`, `test_een_kopie_van_bram_vindt_eva_s_tekst_niet` (review: het zoeken uit `test_een_kopie_van_bram_krijgt_eva_s_tekst_niet`; die draait nu op beide)
 - `tests/ocr/test_ocr_lifecycle.py` (6): `test_gc_cascade`, `test_ocr_searchable`, `test_owner_change_wipes`, `test_photo_ocr_per_node`, `test_replace_no_old_text`, `test_trash_and_restore_keep_ocr`
 - `tests/ocr/test_ocr_step.py` (4): `test_alleen_de_gescande_pagina_s_van_een_pdf`, `test_een_foto_alleen_op_verzoek`, `test_een_foto_van_een_ander_krijgt_niets_van_de_pomp`, `test_een_kopie_door_dezelfde_eigenaar_houdt_de_tekst`
 - `tests/people/test_people.py` (1): `test_de_suggesties_voor_personen`
@@ -123,9 +123,9 @@ Met de parameters erbij, zoals de junit van de run op PostgreSQL ze overslaat:
 - `tests/search/test_search_fallback.py` (2): `test_met_de_index_uit`, `test_tijdens_een_herbouw`
 - `tests/search/test_search_filters.py` (1): `test_een_woord_in_de_tekst_met_een_filter`
 - `tests/search/test_search_limits.py` (6): `test_25_tegelijk_geeft_search_busy`, `test_de_snelheid_via_de_api`, `test_de_tweede_vraag_stopt_de_eerste_via_de_api`, `test_een_tweede_vraag_van_dezelfde_gebruiker_stopt_de_eerste`, `test_overgenomen_via_de_api[/api/v1/search/suggest]`, `test_overgenomen_via_de_api[/api/v1/search]`
-- `tests/search/test_search_logs.py` (1): `test_niets_in_de_log_van_de_app`
+- `tests/search/test_search_logs.py` (1): `test_niets_in_de_log_bij_een_mismatch_of_een_databasefout` (review: de mismatch en de fout bij een suggestie uit `test_niets_in_de_log_van_de_app`; die draait nu op beide)
 - `tests/search/test_search_rebuild.py` (8): `test_de_controle_tijdens_een_herbouw`, `test_de_controle_vindt_verschillen`, `test_de_triggers_terug_en_wat_ze_bijhouden`, `test_een_herbouw_die_stopt_gaat_verder`, `test_een_node_met_meer_tekst_dan_het_budget_is_een_stuk`, `test_een_stuk_vol_lange_teksten_houdt_de_schrijver_kort`, `test_een_upload_wacht_hooguit_1_s_en_de_index_klopt`, `test_twee_tegelijk`
-- `tests/search/test_search_reference.py` (3): `test_bij_gelijke_score_op_num_ook_over_de_paginas`, `test_de_naam_staat_boven_de_tekst`, `test_een_heel_woord_staat_boven_een_stuk_van_een_naam`
+- `tests/search/test_search_reference.py` (3): `test_bij_gelijke_score_op_num_ook_over_de_paginas`, `test_de_naam_staat_boven_de_tekst`, `test_een_heel_woord_staat_boven_een_stuk_van_een_naam` (review: het bladeren zonder de volgorde van de motor staat in `test_bij_gelijke_treffers_houden_de_paginas_de_volgorde_van_de_lijst`, op beide)
 - `tests/search/test_search_snippets.py` (6): `test_de_ocr_van_een_foto_alleen_voor_de_eigenaar`, `test_de_snippet_in_het_antwoord`, `test_een_treffer_na_teken_20000`, `test_in_een_thread_met_een_limiter_van_1`, `test_server_timing_alleen_met_search_timing`, `test_ss_in_de_tekst_via_de_api`
 - `tests/search/test_search_suggest.py` (8): `test_albums_eigen_en_gedeeld`, `test_de_namen_krijgen_wat_er_van_het_verzoek_over_is`, `test_de_tweede_controle`, `test_kort_geen_namen_wel_tags`, `test_namen_die_je_mag_zien_het_voorvoegsel_eerst`, `test_personen_en_plaatsen_via_de_haken`, `test_tags_alleen_de_eigen`, `test_te_lang_en_leeg`
 - `tests/search/test_weekcheck.py` (6): `test_de_controle_leest_alleen_in_een_eigen_draad`, `test_een_verschil_komt_op_beheer_met_alleen_aantallen`, `test_na_een_verschil_het_volgende_uur_opnieuw`, `test_niet_tijdens_de_pauze`, `test_niet_tijdens_een_herbouw_zonder_fts5_of_zonder_nodes`, `test_wat_de_app_intussen_schrijft_is_geen_verschil`
@@ -142,11 +142,16 @@ plugin voor een tijdslimiet) en `--junitxml`; bij rood komt het junit-bestand al
 weg: die tests hebben nu de marker `pg` en lopen mee in de gewone run.
 
 **api-postgres-15** (nieuw) draait op `postgres:15-alpine` met de rol `eigenaar`, zoals op
-ClusterForge: eigenaar van zijn databases, geen superuser (`NOSUPERUSER CREATEDB`, en
-`CREATEROLE` omdat `test_copy_without_superuser` zelf een rol maakt en weghaalt). De superuser
-`platform` van de service maakt die rol in een eerste stap. Daarna: `-m pg` (de tests voor alleen
-PostgreSQL, met `test_dbcopy.py`), en `test_pg_dialect.py` met de migratietests
-(`tests/test_migration_0*.py`, `tests/search/test_migration_0*.py`). Tijdslimiet 20 minuten.
+ClusterForge: eigenaar van zijn databases, geen superuser (`NOSUPERUSER CREATEDB`). De superuser
+`platform` van de service maakt die rol in een eerste stap, en ook de rol `kopie`, die hij aan
+`eigenaar` geeft: `test_copy_without_superuser` geeft een database aan een andere rol, en krijgt
+die rol uit `PLATFORM_TEST_PG_ROLE` (zonder die variabele maakt de test zelf een rol, zoals
+eerst). Daarna: de tests voor alleen PostgreSQL (`pg`, met `test_dbcopy.py`), en
+`test_pg_dialect.py` met de migratietests (`tests/test_migration_0*.py`,
+`tests/search/test_migration_0*.py`) zonder `pg`. Een `-m` op de commandoregel vervangt die van
+`addopts`; daarom houdt elke `-m` in deze job zelf de uitsluitingen van `addopts` (`not media`,
+`not zoek_perf`, ...), behalve `beeld_echt` (die tests staan alleen in `tests_analyse/`).
+`tests/test_postgres_ci.py` houdt beide vast. Tijdslimiet 20 minuten.
 
 Lokaal nagedaan op PostgreSQL 16 (geen 15 in de sandbox) met dezelfde rol:
 
@@ -155,6 +160,7 @@ Lokaal nagedaan op PostgreSQL 16 (geen 15 in de sandbox) met dezelfde rol:
 | `-m pg` | eerst 1 rood: `test_copy_without_superuser` (`must be able to SET ROLE` bij `CREATE DATABASE … OWNER`). Na de `GRANT` in de test: 27 passed |
 | `-m "not pg"` met `test_pg_dialect.py` en de migratietests | 56 passed |
 | `tests/test_dbcopy.py` als superuser `platform` | 4 passed |
+| Na de review (golf 2): `eigenaar` zonder `CREATEROLE`, `PLATFORM_TEST_PG_ROLE=kopie:kopie`, beide stappen met de uitsluitingen van `addopts` | stap 1: 41 passed (de 40 van de samenvoeging en `test_pg_template.py`); stap 2: 54 passed, 7 niet gekozen (de 5 met `pg` en de 2 met `zoek_perf`); `beeld_echt` staat niet in de `-m`: die tests staan alleen in `tests_analyse/` (`test_beeld_ci.py`) |
 
 `yamllint -s .github/workflows/ci.yml` is groen. Een echte run in CI is er nog niet (er is niet
 gepusht).
@@ -192,6 +198,10 @@ Waar de 15 minuten vandaan komen:
 gestopt. Bij de samenvoeging één keer elk, na elkaar, op PostgreSQL 16 op de
 kop van golf 2: met sjabloon 204 passed in 105 s, met `PLATFORM_TEST_PG_TEMPLATE=0` 204 passed in
 144 s. Het sjabloon scheelt hier 39 s (27 %).
+
+**Nog open (review van golf 2, F7):** de duur van api-postgres en api-postgres-15 in CI, en de
+hele suite op SQLite (job api). De run in CI op `4e42d4f` (run 45262113496) stond bij de review
+nog in de rij; geen job was begonnen. De getallen komen hier na de eerste run die klaar is.
 
 **In CI.** De job api-postgres haalde nog nooit het eind (de deadlock; op `cbd0922` na 60 min
 afgebroken), dus een tijd van vóór dit pakket is er in CI niet. De job met de hele suite op
@@ -274,10 +284,22 @@ PostgreSQL groen is, zegt CI op de gepushte commit.
 
 ## Afwijkingen van het plan
 
-- **FTS-internals met `needs_fts`, niet met `sqlite_only`.** Het plan noemt "FTS5-internals"
-  bij `sqlite_only`. Hier krijgt alleen de spike van de triggers (die over SQLite-triggers gaat)
-  `sqlite_only`. Tests van de index zelf (herbouw, controle, weekcontrole, snippets) hebben
-  `needs_fts`: golf 3 zet ze met één regel terug op PostgreSQL.
+- **`needs_fts`: 88 tests (84 functies) in plaats van de 6 van het plan.** Het plan noemt alleen
+  de 6 tests van FTS5 in `test_search_rebuild.py` (met `sqlite_only`) en zegt: de rest wordt
+  hersteld, niet overgeslagen. Hier slaat `needs_fts` op PostgreSQL elke test over die
+  `FtsEngine` of de FTS-index nodig heeft, tot golf 3 de index van PostgreSQL brengt. Dat zijn
+  niet alleen tests van de index zelf (herbouw, controle, weekcontrole, snippets), maar ook van
+  wat alleen `FtsEngine` doet: de tweede controle van de toegang (de matrix van
+  `test_search_access.py`), de OCR-tekst in de zoekresultaten, de grenzen van zoeken
+  (`limits.admit`), de suggesties en de backfill van de index. LikeFallback doet dat op
+  PostgreSQL nu niet (Open 3). Nagedaan bij de review: met alleen `needs_fts` eraf faalden alle
+  88 op PostgreSQL 16. Golf 3 zet ze met één regel terug (`PG_FTS`). Of `needs_fts` als soort
+  overslaan mag naast `sqlite_only` en de varianten `[fts]`, is een vraag voor Jonas (zie
+  [w2.md](w2.md), de review).
+- **Gemengde tests gesplitst** (bij de review): waar een test met `needs_fts` ook iets toetste dat
+  niet van de motor afhangt, staat dat deel nu in een eigen test zonder `needs_fts`: de log van
+  de app (`test_search_logs.py`), de privacy van OCR bij een kopie (`test_ocr_access.py`) en het
+  bladeren bij gelijke treffers (`test_search_reference.py`).
 - **search-bench niet `sqlite_only`.** De test van de bench draait op PostgreSQL en is daar rood
   door een fout in de app (Open 2), in plaats van overgeslagen.
 - **Tests gesplitst.** Drie tests toetsten de namen en de FTS-index samen
@@ -289,6 +311,7 @@ PostgreSQL groen is, zegt CI op de gepushte commit.
   heeft, gekoppeld op zijn sleutel, en geen volledige scan (met `enable_seqscan = off`). De vorm
   van SQLite ("`photo_geo` eerst", "`node` via de sleutelindex") heeft geen vaste tegenhanger in
   een plan van PostgreSQL; de planner kiest de volgorde zelf.
-- **`CREATEROLE` voor de rol van api-postgres-15.** Het plan zegt `NOSUPERUSER CREATEDB`;
-  `test_copy_without_superuser` maakt zelf een rol, dus de rol krijgt ook `CREATEROLE`.
+- **De rol van api-postgres-15** is `NOSUPERUSER CREATEDB`, zoals het plan zegt (eerst ook
+  `CREATEROLE`; weg bij de review). De rol die `test_copy_without_superuser` nodig heeft, maakt de
+  superuser vooraf (`PLATFORM_TEST_PG_ROLE`).
 - **Geen aparte stap meer voor `test_dbcopy.py`** in api-postgres: de marker `pg` neemt hem mee.
