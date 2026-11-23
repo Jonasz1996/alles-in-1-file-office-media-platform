@@ -330,7 +330,7 @@ async def vec_job(settings: Settings, payload: dict[str, Any]) -> None:
         on = await admin_on(db) and await user_on(db, user_id)
     if row is None or not on:
         return
-    current = vecfile.is_current(settings.beeld_dir, user_id)
+    current = vecfile.is_current(settings.beeld_dir, user_id, row.built_gen)
     if row.gen <= row.built_gen and row.built_at is not None and current:
         return
     delay = wait_s(row, settings)
@@ -498,14 +498,16 @@ def remove_all(directory: Path) -> set[uuid.UUID]:
 
 
 async def _behind(db: AsyncSession, user_id: uuid.UUID, settings: Settings) -> bool:
-    """Het bestand van deze eigenaar loopt achter: een hogere gen, of een ander model of een
-    andere versie in de kop."""
+    """Het bestand van deze eigenaar loopt achter: een hogere gen, of een ander model, een
+    andere versie of een andere gen dan built_gen in de kop."""
     row = await db.get(BeeldOwner, user_id, populate_existing=True)
     if row is None:
         return False
     if row.gen > row.built_gen:
         return True
-    return row.built_at is not None and not vecfile.is_current(settings.beeld_dir, user_id)
+    return row.built_at is not None and not vecfile.is_current(
+        settings.beeld_dir, user_id, row.built_gen
+    )
 
 
 async def sweep(settings: Settings) -> None:

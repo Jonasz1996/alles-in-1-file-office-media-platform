@@ -15,6 +15,7 @@ from app.beeld import jobs as bjobs
 from app.beeld import limits as blimits
 from app.config import get_settings
 from app.main import app
+from tests.analyse import pgdb
 from tests.analyse.fake_worker import FakeAnalyseWorker
 from tests.beeld.nep import Nep
 from tests.test_shares import person
@@ -36,11 +37,16 @@ def _beeld_weer_uit():
 
 
 @pytest.fixture
-async def beeld(tmp_path, client):
-    """(nep, settings): de analyse aan met de nep, beeld aangemeld, de monitor op ok."""
+async def beeld(tmp_path, database_url, client):
+    """(nep, settings): de analyse aan met de nep, beeld aangemeld, de monitor op ok. De
+    database is die van client (database_url; op PostgreSQL met ANALYSE_POSTGRES en de
+    triggers van 0013)."""
     async with FakeAnalyseWorker(tmp_path / "run" / "worker.sock") as fake:
         nep = Nep(fake).install()
-        on = fake.settings(tmp_path, rate_limits=False, beeld_rebuild_s=0)
+        on = fake.settings(
+            tmp_path, rate_limits=False, beeld_rebuild_s=0, **pgdb.on_db(database_url)
+        )
+        await pgdb.ready(on)
         app.dependency_overrides[get_settings] = lambda: on
         monitor._status = await monitor.check(on)
         assert monitor.status().state == "ok", monitor.status()

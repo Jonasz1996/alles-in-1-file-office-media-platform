@@ -130,7 +130,19 @@ async def test_gezichten_en_beeld_aan_zonder_x2_en_x3(client, eva, settings):
         settings.analyse_enabled = False
 
 
-async def test_met_x2_aangemeld(client, eva, settings, monkeypatch):
+@pytest.fixture
+def analyse_volgt_de_schakelaar(settings, monkeypatch):
+    """Deze test gaat over PLATFORM_ANALYSE_ENABLED zelf. Op PostgreSQL staat de analyse ook uit
+    zonder PLATFORM_ANALYSE_POSTGRES of de triggers van 0013 (Settings.analyse_pg_block; dat legt
+    tests/analyse/test_analyse_pg.py vast): hier volgt analyse_on alleen de schakelaar, zoals op
+    SQLite (waar niets verandert)."""
+    if not settings.db_url.startswith("sqlite"):
+        monkeypatch.setattr(
+            type(settings), "analyse_on", property(lambda self: self.analyse_enabled)
+        )
+
+
+async def test_met_x2_aangemeld(client, eva, settings, monkeypatch, analyse_volgt_de_schakelaar):
     gezien: list[tuple] = []
     aanmelden("faces", prefs.SwitchState(available=True), gezien)
     # De analyse uit: Keuze 59 wint
@@ -161,7 +173,9 @@ async def test_met_x2_aangemeld(client, eva, settings, monkeypatch):
     assert (await instellingen(client, eva))["faces_forbidden"] is True
 
 
-async def test_op_postgresql_niet_beschikbaar(client, eva, settings, monkeypatch):
+async def test_op_postgresql_niet_beschikbaar(
+    client, eva, settings, monkeypatch, analyse_volgt_de_schakelaar
+):
     """Review A0, veilig F5: de route vraagt analyse_on, niet alleen PLATFORM_ANALYSE_ENABLED.
     Op PostgreSQL (analyse_on False, zie test_op_postgresql_blijft_de_analyse_uit) gaan
     gezichten en beeld niet aan, ook als X2 en X3 zich aanmelden."""

@@ -9,7 +9,10 @@
   ook niet na een fout; een symlink als map wordt geweigerd; het opruimwerk haalt een oud
   tijdelijk bestand van een gestopte build weg;
 - hooguit eens per PLATFORM_BEELD_REBUILD_S (5 minuten), en al na SOON_S (10 s) als de eigenaar
-  net zocht en het bestand ouder is dan FRESH_S (30 s).
+  net zocht en het bestand ouder is dan FRESH_S (30 s);
+- 0.8.2 (P4): een bestand met een andere gen in de kop dan built_gen (een andere node maakte het,
+  of de database kwam uit een kopie) is niet bij: een vraag, de job en het opruimwerk maken het
+  opnieuw.
 """
 
 from __future__ import annotations
@@ -303,6 +306,54 @@ async def test_is_current(client, mensen, beeld, monkeypatch):
     assert vecfile.is_current(settings.beeld_dir, user)
     monkeypatch.setitem(VERSIONS, Step.EMBED, VERSIONS[Step.EMBED] + 1)
     assert not vecfile.is_current(settings.beeld_dir, user)
+
+
+async def test_een_andere_gen_in_de_kop_maakt_het_bestand_opnieuw(client, mensen, beeld):
+    (eva, eva_id), _ = mensen
+    fake, settings = beeld
+    user = uuid.UUID(eva_id)
+    await nep.beeld_aan(client, eva)
+    await nep.run_jobs(settings)
+    await foto(client, eva, settings, "rood.jpg", "rood")
+    await nep.embed_all(settings)
+    stand = await nep.owner(settings, eva_id)
+    assert stand is not None and stand.built_gen == stand.gen and stand.built_at is not None
+    path = vecfile.path_for(settings.beeld_dir, user)
+    assert lees(path)[0].gen == stand.built_gen
+    assert vecfile.is_current(settings.beeld_dir, user, stand.built_gen)
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
+
+    # De database noemt een later bestand dan dit (gen en built_gen gelijk, dus zonder de kop
+    # zou niets het opnieuw maken)
+    later = stand.gen + 3
+    async with nep.maker(settings)() as db:
+        await db.execute(
+            sa.update(BeeldOwner)
+            .where(BeeldOwner.user_id == user)
+            .values(gen=later, built_gen=later)
+        )
+        await db.execute(sa.delete(Job).where(Job.type == bjobs.VEC))
+        await db.commit()
+    assert vecfile.is_current(settings.beeld_dir, user)  # model en versie kloppen wel
+    assert not vecfile.is_current(settings.beeld_dir, user, later)
+    async with nep.maker(settings)() as db:
+        assert await bjobs._behind(db, user, settings)
+
+    # Een vraag zet de job klaar (en zoekt intussen in het bestand dat er is)
+    r = await nep.zoek(client, eva, "rood")
+    assert r.status_code == 200, r.text
+    async with nep.maker(settings)() as db:
+        assert await db.scalar(sa.select(Job.id).where(Job.type == bjobs.VEC)) is not None
+
+    # De job maakt het opnieuw, met de gen van nu in de kop
+    await bjobs.vec_job(settings, {"user": user.hex})
+    na = await nep.owner(settings, eva_id)
+    assert na is not None and na.built_gen == later
+    assert lees(path)[0].gen == later
+    assert vecfile.is_current(settings.beeld_dir, user, later)
+    async with nep.maker(settings)() as db:
+        assert not await bjobs._behind(db, user, settings)
 
 
 # --- hoe vaak (Keuze 76) -----------------------------------------------------------------------

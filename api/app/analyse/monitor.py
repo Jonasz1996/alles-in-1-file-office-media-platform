@@ -7,7 +7,9 @@ Vier standen (app.search.types.AnalyseState):
   socket nooit aan; de rij analyse draait niet (jobs.active_lanes).
 - down: met een reden uit client.REASONS. Een sleutel die niet deugt (key_missing, key_reused)
   zegt de app bij de start, zonder lus: de sleutel verandert pas met een nieuwe start. Zo ook
-  no_sqlite: op PostgreSQL blijft de analyse uit (Settings.analyse_on; review A0, veilig F5).
+  pg_not_enabled en no_pg_triggers: op PostgreSQL blijft de analyse uit zonder
+  PLATFORM_ANALYSE_POSTGRES of zonder de triggers van 0013 (Settings.analyse_pg_block; review
+  A0, veilig F5; 0.8.2).
 - models_missing: caps meldt een model dat ontbreekt of anders is (reason: de namen).
 - ok: de handdruk klopt en de modellen kloppen.
 
@@ -70,9 +72,13 @@ TEXT = {
     "no_answer": "de analyse antwoordt niet binnen 5 s",
     "sandbox": "de afscherming van de container analyse klopt niet (de zelftest faalde)",
     "bad_answer": "de analyse geeft een antwoord op caps dat niet klopt",
-    "no_sqlite": (
-        "de analyse werkt alleen met SQLite: op PostgreSQL blijven gezichten en beeld uit "
-        "(Keuze 76)"
+    "pg_not_enabled": (
+        "op PostgreSQL staat de analyse uit tot ANALYSE_POSTGRES=true (de sleutels van "
+        "gezichten op elke node gelijk)"
+    ),
+    "no_pg_triggers": (
+        "op PostgreSQL ontbreken de triggers van migratie 0013 die gezichten en beeld wissen "
+        "(of ze staan uit): de analyse blijft uit"
     ),
 }
 
@@ -99,7 +105,6 @@ class AnalyseStatus:
 
 
 OFF = AnalyseStatus("off")
-NO_SQLITE = AnalyseStatus("down", "no_sqlite")  # Settings.analyse_on (review A0, veilig F5)
 _status: AnalyseStatus = OFF
 _task: asyncio.Task | None = None
 
@@ -147,12 +152,13 @@ def deferral(exc: BaseException) -> jobs.Defer | None:
 
 
 async def check(settings: Settings) -> AnalyseStatus:
-    """Eén keer caps; zonder PLATFORM_ANALYSE_ENABLED meteen OFF, op PostgreSQL meteen down met
-    no_sqlite (allebei zonder de socket)."""
+    """Eén keer caps; zonder PLATFORM_ANALYSE_ENABLED meteen OFF, op PostgreSQL zonder
+    PLATFORM_ANALYSE_POSTGRES of de triggers meteen down met pg_not_enabled of no_pg_triggers
+    (allebei zonder de socket)."""
     if not settings.analyse_enabled:
         return OFF
-    if not settings.analyse_on:
-        return NO_SQLITE
+    if (block := blocked(settings)) is not None:
+        return block
     try:
         caps = await client.caps(settings)
     except client.AnalyseDown as exc:
@@ -163,6 +169,13 @@ async def check(settings: Settings) -> AnalyseStatus:
     if missing:
         return AnalyseStatus("models_missing", ", ".join(missing), missing, caps)
     return AnalyseStatus("ok", caps=caps)
+
+
+def blocked(settings: Settings) -> AnalyseStatus | None:
+    """Down met de reden waarom de database de analyse tegenhoudt (Settings.analyse_pg_block),
+    of None: op SQLite altijd None."""
+    reason = settings.analyse_pg_block()
+    return None if reason is None else AnalyseStatus("down", reason)
 
 
 def _set(found: AnalyseStatus) -> None:
@@ -200,14 +213,15 @@ async def _loop(settings: Settings) -> None:
 
 def start(settings: Settings) -> asyncio.Task | None:
     """Vanuit de lifespan. Zonder PLATFORM_ANALYSE_ENABLED gebeurt er niets: geen taak, geen
-    socket, geen sleutel, de stand blijft OFF. Op PostgreSQL: down met no_sqlite, en ook geen
-    taak, socket of sleutel. Met een sleutel die niet deugt: down, zonder taak."""
+    socket, geen sleutel, de stand blijft OFF. Op PostgreSQL zonder PLATFORM_ANALYSE_POSTGRES
+    of de triggers (pgcheck): down met pg_not_enabled of no_pg_triggers, en ook geen taak,
+    socket of sleutel. Met een sleutel die niet deugt: down, zonder taak."""
     global _task
     _set_quiet(OFF)
     if not settings.analyse_enabled:
         return None
-    if not settings.analyse_on:
-        _set(NO_SQLITE)
+    if (block := blocked(settings)) is not None:
+        _set(block)
         return None
     problem = settings.analyse_key_problem()
     if problem is not None:

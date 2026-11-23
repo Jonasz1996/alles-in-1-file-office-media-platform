@@ -70,6 +70,8 @@ export interface AdminFaces {
   wipe_waiting: boolean;
   /** De laatste uitkomst van app.cli analyse-kwaliteit (Vraag 8); null: niet gemeten */
   quality: { at: string; ok: boolean } | null;
+  /** Eigenaren met versleutelde gezichten zonder sleutel (0.8.2): "sleutel ontbreekt" */
+  keys_missing: number;
 }
 
 /** Het blok "Zoeken op beeld" (X3, Keuze 82; voorstel). */

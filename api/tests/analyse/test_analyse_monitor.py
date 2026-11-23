@@ -22,6 +22,7 @@ import pytest
 from app import cli, jobs, main
 from app.analyse import client, lock, monitor, wire
 from app.analyse.wire import Child, Code, Op
+from app.beeld import jobs as bjobs
 from app.config import Settings, get_settings
 from app.main import app
 from app.models import Job
@@ -181,7 +182,8 @@ async def test_down_door_de_sleutel(extra, reason, fake, tmp_path):
 
 
 def test_elke_reden_heeft_een_nederlandse_tekst():
-    assert set(monitor.TEXT) == set(client.REASONS) | {"bad_answer", "no_sqlite"}
+    pg = {"pg_not_enabled", "no_pg_triggers"}  # op PostgreSQL (Settings.analyse_pg_block)
+    assert set(monitor.TEXT) == set(client.REASONS) | {"bad_answer"} | pg
     for reason, text in monitor.TEXT.items():
         found = monitor.AnalyseStatus("down", reason)
         assert monitor.analyse_problem(found) == text
@@ -381,6 +383,9 @@ async def started(tmp_path, monkeypatch, **env):
             yield
     finally:
         get_settings.cache_clear()
+        # Met de analyse aan meldt de lifespan beeld aan (bjobs.on_start); weer weg, zoals
+        # tests/beeld/conftest.py doet, zodat een volgende test de soorten van 0.8.0 ziet
+        bjobs.disable()
         for name in ("certs", "security"):
             with contextlib.suppress(AttributeError, KeyError):
                 delattr(app.state, name)
@@ -516,25 +521,36 @@ PG = "postgresql+asyncpg://u:p@127.0.0.1:1/x"
 
 
 async def test_op_postgresql_blijft_de_analyse_uit(fake, tmp_path):
-    """Review A0, veilig F5: op PostgreSQL maken 0011 en 0012 alleen de tabellen, zonder de
-    triggers die gezichten en beeld wissen. Daar blijft de analyse dus uit, ook met
-    PLATFORM_ANALYSE_ENABLED: down met no_sqlite, zonder taak, socket of sleutel, en de rij
-    analyse draait niet."""
+    """Review A0, veilig F5, en 0.8.2 (P4): op PostgreSQL staat de analyse alleen aan met
+    PLATFORM_ANALYSE_POSTGRES en de triggers van 0013 (app/analyse/pgcheck.py). Zonder de
+    instelling: down met pg_not_enabled; met de instelling maar zonder dat pgcheck de triggers
+    zag: down met no_pg_triggers. Allebei zonder taak, socket of sleutel, en de rij analyse
+    draait niet. De database hier bestaat niet: er wordt ook niets gevraagd."""
     settings = fake.settings(tmp_path, database_url=PG)
     assert settings.analyse_enabled and not settings.analyse_on
+    assert settings.analyse_pg_block() == "pg_not_enabled"
     assert monitor.start(settings) is None
     assert monitor._task is None
-    assert (monitor.status().state, monitor.status().reason) == ("down", "no_sqlite")
-    assert monitor.analyse_problem() == monitor.TEXT["no_sqlite"]
-    assert (await monitor.check(settings)).reason == "no_sqlite"
+    assert (monitor.status().state, monitor.status().reason) == ("down", "pg_not_enabled")
+    assert monitor.analyse_problem() == monitor.TEXT["pg_not_enabled"]
+    assert (await monitor.check(settings)).reason == "pg_not_enabled"
     assert "analyse" not in jobs.active_lanes(settings)
-    # Ook zonder sleutel: no_sqlite, de sleutel wordt niet gelezen
+    # Ook zonder sleutel: pg_not_enabled, de sleutel wordt niet gelezen
     bare = fake.settings(tmp_path, database_url=PG, analyse_worker_key="")
-    assert (await monitor.check(bare)).reason == "no_sqlite"
+    assert (await monitor.check(bare)).reason == "pg_not_enabled"
+    # Met PLATFORM_ANALYSE_POSTGRES, maar de triggers niet gezien: no_pg_triggers
+    aan = fake.settings(tmp_path, database_url=PG, analyse_postgres=True)
+    assert not aan.analyse_on and aan.analyse_pg_block() == "no_pg_triggers"
+    assert monitor.start(aan) is None
+    assert monitor._task is None
+    assert (monitor.status().state, monitor.status().reason) == ("down", "no_pg_triggers")
+    assert (await monitor.check(aan)).reason == "no_pg_triggers"
+    assert "analyse" not in jobs.active_lanes(aan)
     assert fake.hellos == 0
-    # Met SQLite gewoon aan
+    # Met SQLite gewoon aan; PLATFORM_ANALYSE_POSTGRES verandert daar niets
     sqlite = fake.settings(tmp_path)
     assert sqlite.analyse_on and "analyse" in jobs.active_lanes(sqlite)
+    assert fake.settings(tmp_path, analyse_postgres=True).analyse_pg_block() is None
     assert (await monitor.check(sqlite)).state == "ok"
 
 
