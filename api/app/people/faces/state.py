@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.engine import URL, make_url
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -44,10 +44,10 @@ def now() -> datetime:
 
 
 def _key(url: Any) -> str:
-    # str() van een URL verbergt het wachtwoord ("***"): een URL dus zelf weergeven, anders
-    # vond settings_for op PostgreSQL (met een wachtwoord in de URL) nooit iets
-    found = url if isinstance(url, URL) else make_url(str(url))
-    return found.render_as_string(hide_password=False)
+    # make_url neemt een str (settings.db_url) en een URL (die van de engine). Niet str(url): dat
+    # verbergt het wachtwoord (***), en dan vond settings_for de Settings van een database met
+    # een wachtwoord nooit (zoals app/search/engine.py, _key)
+    return make_url(url).render_as_string(hide_password=False)
 
 
 def configure(settings: Settings) -> None:
