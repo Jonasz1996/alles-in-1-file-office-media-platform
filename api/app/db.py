@@ -99,11 +99,13 @@ async def lock_tree(session: AsyncSession) -> None:
     schrijver. Heeft deze transactie het slot al, dan geen tweede statement."""
     if session.get_bind().dialect.name != "postgresql":
         return
-    held = session.sync_session.get_transaction()
+    sync = getattr(session, "sync_session", None)  # None: een nagemaakte sessie (tests)
+    held = sync.get_transaction() if sync is not None else None
     if held is not None and session.info.get("tree_lock") is held:
         return
     await session.execute(text("SELECT node_lock_tree()"))
-    session.info["tree_lock"] = session.sync_session.get_transaction()
+    if sync is not None:
+        session.info["tree_lock"] = sync.get_transaction()
 
 
 # --- De WAL leegmaken ------------------------------------------------------------------------
