@@ -1,11 +1,12 @@
 """python -m app.cli sleutels-check [--opruimen] en backup-wipe-tables (0.8.2, P4).
 
 sleutels-check kijkt of elke eigenaar die een sleutel nodig heeft (face_rows.key_owners:
-gezichten aan, geen wisronde, minstens één versleutelde vector) er een heeft zoals het hoort:
-een gewoon bestand (geen symlink) van 32 bytes, rechten 0600, eigenaar KEY_UID (10001, de
-gebruiker van de app in de container), in een sleutelmap die zelf geen symlink is. Exitcode 0
-alleen als dat voor iedereen klopt; anders 1. Op een cluster draait het op elke node: de
-sleutels moeten op elke node gelijk zijn.
+gezichten aan, minstens één versleutelde vector) er een heeft zoals het hoort: een gewoon
+bestand (geen symlink) van 32 bytes, rechten 0600, eigenaar KEY_UID (10001, de gebruiker van de
+app in de container), in een sleutelmap die zelf geen symlink is, en die één versleuteld gezicht
+van die eigenaar opent (crypto.key_opens: anders is het een andere sleutel). Exitcode 0 alleen
+als dat voor iedereen klopt; anders 1. Op een cluster draait het op elke node: de sleutels
+moeten op elke node gelijk zijn, en een node met een andere sleutel geeft zo exitcode 1.
 
 --opruimen haalt de sleutels weg van eigenaren zonder rijen van gezichten (face, face_scan,
 face_owner) die gezichten niet aan hebben, of die niet meer bestaan: een sleutel die op een
@@ -50,6 +51,7 @@ PROBLEMS = {
     "size": f"niet {crypto.KEY_BYTES} bytes",
     "mode": "rechten niet 0600",
     "uid": f"eigenaar niet {KEY_UID}",
+    "wrong": "sleutel opent de gezichten niet",
 }
 
 
@@ -149,10 +151,18 @@ async def check(settings: Settings, cleanup: bool = False) -> Report:
             report.folder_ok = False
             report.problems["missing"] = len(needed)
         return report
-    for owner in needed:
-        found = problem(crypto.key_path(settings, owner))
-        if found is not None:
-            report.problems[found] += 1
+    async with maker() as db:
+        for owner in needed:
+            found = problem(crypto.key_path(settings, owner))
+            if found is None:
+                # Een goed bestand kan nog een andere sleutel zijn: open één gezicht ermee
+                key = crypto.load_key(settings, owner)
+                if key is None:
+                    found = "missing"
+                elif not await crypto.key_opens(db, owner, key):
+                    found = "wrong"
+            if found is not None:
+                report.problems[found] += 1
     present, report.other = _key_files(folder)
     wanted = set(needed)
     for owner in present:

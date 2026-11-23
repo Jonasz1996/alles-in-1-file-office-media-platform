@@ -65,9 +65,9 @@ async def gedeeld(client, eva, bram_id: str) -> str:
     return folder
 
 
-@motoren.needs_fts
-async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, tmp_path):
-    (eva, eva_id), (bram, bram_id) = mensen
+async def _eva_s_bon(client, mensen, aan, tmp_path) -> dict:
+    """Eva's foto in een map die ze met Bram deelt, met OCR op haar verzoek (Kassabon WORD)."""
+    (eva, _eva_id), (_bram, bram_id) = mensen
     folder = await gedeeld(client, eva, bram_id)
     data = nep.photo("eva")
     foto = await upload(client, eva, "bon.jpg", data, folder)
@@ -79,10 +79,15 @@ async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, t
         ).status_code == 202
         assert await nep.pump(aan) == 1
     assert (await nep.photo_text(aan, foto["id"]))[0] == f"Kassabon {WORD}"
-    # Eva vindt haar foto; Bram ziet hem via de deling, maar niet via de tekst
-    assert (await nep.search(client, eva, WORD))[foto["id"]]["match"] == "ocr"
-    assert await nep.search(client, bram, WORD) == {}
-    assert (await nep.search(client, bram, "bon"))[foto["id"]]["match"] == "name"
+    return foto
+
+
+async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, tmp_path):
+    """De tekst van Eva's foto blijft van Eva, ook in een kopie van Bram. Zonder zoeken: dit deel
+    hangt niet af van de zoekmotor en draait ook op PostgreSQL (het zoeken staat in de test
+    hieronder, met needs_fts)."""
+    (eva, eva_id), (bram, bram_id) = mensen
+    foto = await _eva_s_bon(client, mensen, aan, tmp_path)
     assert (await analysis_of(client, bram, foto["id"]))["ocr"] == "skip"
     assert (await analysis_of(client, eva, foto["id"]))["ocr"] == "done"
     r = await words(client, aan, bram_id, foto["id"])
@@ -94,10 +99,24 @@ async def test_een_kopie_van_bram_krijgt_eva_s_tekst_niet(client, mensen, aan, t
     bram_root = (await root(client, bram))["folder"]["id"]
     kopie = await copy(client, bram, foto["id"], bram_root)
     assert await nep.photo_text(aan, kopie["id"]) is None
-    assert await nep.fts(aan, "pocr", WORD) == {foto["id"]}
-    assert await nep.search(client, bram, WORD) == {}
     assert (await analysis_of(client, bram, kopie["id"]))["ocr"] == "skip"
     assert (await words(client, aan, bram_id, kopie["id"])).status_code == 404
+
+
+@motoren.needs_fts
+async def test_een_kopie_van_bram_vindt_eva_s_tekst_niet(client, mensen, aan, tmp_path):
+    """Het zoeken bij de test hierboven: Eva vindt haar foto op de tekst; Bram ziet hem via de
+    deling, maar niet via de tekst, ook niet in zijn kopie. Leest de FTS-index (pocr)."""
+    (eva, _eva_id), (bram, _bram_id) = mensen
+    foto = await _eva_s_bon(client, mensen, aan, tmp_path)
+    assert (await nep.search(client, eva, WORD))[foto["id"]]["match"] == "ocr"
+    assert await nep.search(client, bram, WORD) == {}
+    assert (await nep.search(client, bram, "bon"))[foto["id"]]["match"] == "name"
+    bram_root = (await root(client, bram))["folder"]["id"]
+    kopie = await copy(client, bram, foto["id"], bram_root)
+    assert await nep.photo_text(aan, kopie["id"]) is None
+    assert await nep.fts(aan, "pocr", WORD) == {foto["id"]}
+    assert await nep.search(client, bram, WORD) == {}
 
 
 @motoren.needs_fts

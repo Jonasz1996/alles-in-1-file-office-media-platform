@@ -23,7 +23,7 @@ from app import cli, jobs, main
 from app.analyse import client, lock, monitor, wire
 from app.analyse.wire import Child, Code, Op
 from app.beeld import jobs as bjobs
-from app.config import Settings, get_settings
+from app.config import Settings, get_settings, pg_triggers_seen
 from app.main import app
 from app.models import Job
 from app.routers import uploads
@@ -412,6 +412,32 @@ async def test_de_lifespan_met_analyse(fake, tmp_path, monkeypatch):
         await until(lambda: monitor.status().state == "ok")
         assert fake.hellos >= 1
     assert task.done() and monitor._task is None and monitor.status() is monitor.OFF
+
+
+@pytest.mark.pg
+async def test_de_lifespan_zet_de_analyse_aan_op_postgresql(fake, tmp_path, monkeypatch, settings):
+    """Op PostgreSQL met PLATFORM_ANALYSE_POSTGRES zet de lifespan de analyse aan: hij kijkt de
+    triggers van 0013 na (pgcheck.check) voordat hij iets van de analyse aanmeldt. Zonder die
+    vraag bleef de analyse op het cluster altijd uit (down: no_pg_triggers), en geen andere test
+    zag dat: die roepen pgcheck.check zelf aan (review van golf 2, pg-analyse F3)."""
+    env = {
+        "PLATFORM_DATABASE_URL": settings.database_url,
+        "PLATFORM_ANALYSE_ENABLED": "true",
+        "PLATFORM_ANALYSE_POSTGRES": "true",
+        "PLATFORM_ANALYSE_WORKER": str(fake.socket),
+        "PLATFORM_ANALYSE_WORKER_KEY": fake.key,
+    }
+    try:
+        async with started(tmp_path, monkeypatch, **env):
+            s = get_settings()
+            assert s.database_url == settings.database_url
+            assert s.analyse_pg_block() is None and s.analyse_on
+            assert "analyse" in jobs.active_lanes(s)
+            assert monitor._task is not None
+            await until(lambda: monitor.status().state == "ok")
+        assert monitor.status() is monitor.OFF
+    finally:
+        pg_triggers_seen(settings.database_url, False)
 
 
 # --- app.cli analyse-status ---

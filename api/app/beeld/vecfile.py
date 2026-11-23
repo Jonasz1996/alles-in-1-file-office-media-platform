@@ -40,7 +40,7 @@ from pathlib import Path
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import beeld_rows
+from app import beeld_rows, dbdialect
 from app.analysis import VERSIONS, Step
 from app.beeld import types as vt
 from app.models import BeeldOwner, now
@@ -119,7 +119,13 @@ async def build(
     done = False
     try:
         async with maker() as db:
-            # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname
+            # Eén leestransactie: aantal, gen en rijen uit dezelfde momentopname. Op PostgreSQL
+            # geeft READ COMMITTED elk statement een eigen momentopname; REPEATABLE READ houdt
+            # er één voor de hele transactie (alleen lezen: geen serialisatiefout). Een vector
+            # die er intussen bijkomt, valt dan buiten het bestand én buiten de gen in de kop,
+            # zodat het bestand achterloopt en opnieuw komt. Op SQLite zoals voor 0.8.2
+            if dbdialect.is_pg(db):
+                await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             count = int(
                 await db.scalar(text(f"SELECT count(*) {beeld_rows.file_rows()}"), params) or 0
             )

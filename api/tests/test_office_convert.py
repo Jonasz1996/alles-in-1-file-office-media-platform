@@ -3040,7 +3040,7 @@ async def test_eerst_de_rij_dan_de_voorwaarde_op_de_taak(client, admin, office, 
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("when", ["al", "tussen"])
+@pytest.mark.parametrize("when", ["al", "tussen", "zonder_slot"])
 async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch, caplog, when):
     """al: de PDF is er (ready, de huidige PDF_VERSION), maar de thumbnails mislukten twee keer
     als poging (zoals een timeout van de taak). on_dead laat ready staan, en meldt niet dat het
@@ -3052,7 +3052,13 @@ async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch
     zevende tegenlezing). In PostgreSQL houdt _rows_first de rij vast (FOR NO KEY UPDATE): de
     conversie wacht dan op dat slot tot on_dead commit, en schrijft daarna ready; ook dan
     blijft ready. Eerder schreef de test die conversie in dezelfde taak: in PostgreSQL wachtte
-    de test zo op zichzelf, voor altijd (pg-tests.md §3)."""
+    de test zo op zichzelf, voor altijd (pg-tests.md §3).
+
+    Wat [tussen] toetst, verschilt dus per database: op SQLite de voorwaarde in de UPDATE, op
+    PostgreSQL het slot (de voorwaarde is daar met het slot niet te bereiken). zonder_slot toetst
+    de voorwaarde op beide: on_dead leest de rij zonder hem vast te houden (een eigen sessie,
+    meteen klaar), dan schrijft de conversie ready, dan komt de UPDATE. Alleen de voorwaarde
+    houdt ready dan (review van golf 2, F4)."""
     jonas, _ = admin
     s = office.settings
     caplog.set_level(logging.WARNING, logger="platform.office")
@@ -3067,6 +3073,26 @@ async def test_on_dead_laat_een_pdf_die_er_is(client, admin, office, monkeypatch
         await run_later(s)  # twee pogingen: PDF en thumbnails, dan alleen de thumbnails
         sha = (await blob_of(s, node["id"])).sha256
         assert [(j.status, j.attempts) for j in await office_jobs(s)] == [("failed", 2)]
+    elif when == "zonder_slot":
+        sha = await content(s, "zonder_slot.docx", "pending", "failed")
+        rows_first = convert._rows_first
+
+        async def unlocked(_session, shas, states):
+            """De rij lezen zonder slot (eigen sessie, meteen klaar), dan de conversie."""
+            async with maker(s)() as peek:
+                found = await rows_first(peek, shas, states)
+                await peek.commit()
+            async with maker(s)() as other:
+                await other.execute(
+                    update(Blob)
+                    .where(Blob.sha256 == sha)
+                    .values(pdf_state="ready", pdf_version=keys.PDF_VERSION)
+                )
+                await other.commit()
+            return found
+
+        monkeypatch.setattr(convert, "_rows_first", unlocked)
+        await convert.on_dead(s, {"sha": sha}, "x")
     else:
         sha = await content(s, "tussen.docx", "pending", "failed")
         rows_first = convert._rows_first
