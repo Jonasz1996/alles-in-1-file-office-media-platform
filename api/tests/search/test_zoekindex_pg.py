@@ -13,6 +13,8 @@ Wat hier vastligt, alleen op PostgreSQL (marker pg):
 from __future__ import annotations
 
 import asyncio
+import logging
+import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -448,3 +450,43 @@ async def test_check_schrijft_niet(settings):
         await engine.dispose()
     assert sorted(found.bad) == sorted([(num, "fts_node"), (eerste, "fts_node")])
     assert found.sampled == await een(settings, "SELECT count(*) FROM node")
+
+
+async def test_een_database_met_lc_ctype_c_geeft_een_waarschuwing(tmp_path, caplog):
+    """cf_fold hangt af van LC_CTYPE van de database: met C kent lower() en [[:alnum:]] alleen
+    ASCII, en valt elke andere letter uit de index. De app zegt dat bij de start, in het log
+    (review van PR #6, F12). ClusterForge maakt de database met C.UTF-8: daar niets."""
+    import asyncpg
+
+    from app.config import Settings
+    from app.migrate import upgrade
+    from tests.conftest import PG_URL, _pg_url
+
+    naam = "ctype_c_" + uuid.uuid4().hex[:12]
+    beheer = await asyncpg.connect(PG_URL.replace("postgresql+asyncpg://", "postgresql://"))
+    try:
+        await beheer.execute(
+            f"CREATE DATABASE \"{naam}\" TEMPLATE template0 ENCODING 'UTF8' "
+            "LC_COLLATE 'C' LC_CTYPE 'C'"
+        )
+        settings = Settings(data_dir=tmp_path, web_dist=tmp_path / "web", jwt_secret="test" * 8,
+                            database_url=_pg_url(naam))  # fmt: skip
+        caplog.set_level(logging.WARNING, logger="platform.search")
+        try:
+            await upgrade(settings)
+        finally:
+            await get_engine(settings).dispose()
+            engines.forget(settings.db_url)
+        meldingen = [r.getMessage() for r in caplog.records if r.name == "platform.search"]
+        assert any("LC_CTYPE" in m and "C.UTF-8" in m for m in meldingen), meldingen
+    finally:
+        await beheer.execute(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
+        await beheer.close()
+
+
+async def test_een_database_met_c_utf8_geeft_geen_waarschuwing(settings, caplog):
+    caplog.set_level(logging.WARNING, logger="platform.search")
+    engines.forget(settings.db_url)
+    async with get_engine(settings).connect() as conn:
+        assert (await engines.read_conn_info(conn)).fts is True
+    assert not [r for r in caplog.records if r.name == "platform.search"]

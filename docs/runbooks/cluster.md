@@ -293,6 +293,11 @@ de melding zegt dan hoe je ze weer gelijk zet.
   Dat start niet; het VIP springt door. Draai dan Platform bijwerken.
 - Een image van vóór de eerste Platform bijwerken heeft nog geen bekende commit; het script
   neemt dan de commit uit `/var/lib/clusterforge/platform-image.rev`.
+- **De zoekindex van 0.8.2 vraagt een database met een UTF-8-ctype**, zoals ClusterForge hem
+  maakt (`C.UTF-8`). Met `LC_CTYPE` `C` kent PostgreSQL alleen letters uit ASCII: een woord met
+  een accent, Grieks of Cyrillisch is dan niet te vinden. De app zegt dat bij de start in het
+  log ("de database heeft LC_CTYPE C"). Kijken kan met
+  `SELECT datctype FROM pg_database WHERE datname = current_database();`.
 
 ## Wat er op een node staat
 

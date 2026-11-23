@@ -32,6 +32,7 @@ pocr passen, en zijn score telt pocr niet mee. Elke treffer gaat daarna door de 
 from __future__ import annotations
 
 import json
+import logging
 import time as clock
 import uuid
 from collections.abc import Iterator, Sequence
@@ -803,6 +804,13 @@ class FtsEngine:
 LIKE = LikeFallback()
 FTS: SearchEngine | None = FtsEngine()
 
+log = logging.getLogger("platform.search")
+
+# Een letter met accent en een Griekse letter, en wat cf_fold van 0014 daarvan moet maken
+# (fold(), zonder accent). Met LC_CTYPE C van de database kennen lower() en [[:alnum:]] alleen
+# ASCII en geeft cf_fold " λ" niet terug: dan mist de index elke andere letter.
+FOLD_PROBE = ("Éλ", "eλ")
+
 _info: dict[str, ConnInfo] = {}
 
 
@@ -822,6 +830,8 @@ async def read_conn_info(conn: AsyncConnection) -> ConnInfo:
         # 0014 (0.8.2, P5): de tabel fts_node
         found = await conn.exec_driver_sql("SELECT to_regclass('fts_node') IS NOT NULL")
         fts = bool(found.scalar())
+        if fts:
+            await _check_fold(conn)
     if dialect == "sqlite":
         version = (await conn.exec_driver_sql("SELECT sqlite_version()")).scalar()
         found = await conn.exec_driver_sql(
@@ -830,6 +840,27 @@ async def read_conn_info(conn: AsyncConnection) -> ConnInfo:
         fts = found.scalar() is not None
     _info[key] = ConnInfo(dialect=dialect, fts=fts, sqlite_version=version)
     return _info[key]
+
+
+async def _check_fold(conn: AsyncConnection) -> None:
+    """cf_fold van 0014 hangt af van LC_CTYPE van de database (review van PR #6, F12): met C
+    vallen alle letters buiten ASCII uit de index. Dan een waarschuwing, één keer per database
+    (read_conn_info onthoudt het); zoeken met de index blijft aan, voor wat wel ASCII is."""
+    probe, want = FOLD_PROBE
+    got = (await conn.execute(text("SELECT cf_fold(:p)"), {"p": probe})).scalar()
+    if got == want:
+        return
+    ctype = (
+        await conn.exec_driver_sql(
+            "SELECT datctype FROM pg_database WHERE datname = current_database()"
+        )
+    ).scalar()
+    log.warning(
+        "Zoeken: de database heeft LC_CTYPE %s; daarmee mist de zoekindex elke letter buiten "
+        "ASCII (accenten, Grieks, Cyrillisch). Maak de database met LC_CTYPE C.UTF-8 of een "
+        "andere UTF-8-locale (runbook cluster, PostgreSQL).",
+        ctype,
+    )
 
 
 def forget(url: str | None = None) -> None:
