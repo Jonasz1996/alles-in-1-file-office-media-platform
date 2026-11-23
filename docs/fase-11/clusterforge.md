@@ -103,29 +103,46 @@ inhoud ook in iemands eigen map, dan blijft of komt ze terug in `blobs/`. Nieuwe
 uploads komen eerst in `blobs/` en verhuizen binnen het uur. Een verhuisde kopie blijft nog een
 dag in `.weg/` liggen (een lopende stream leest verder) en gaat dan weg.
 
-Stappen, na de update (niet vóór 0.8.2):
+Wat er nu in het cluster staat (template `media-platform` 1.0.0 in ClusterForge, gezien 23-11):
+de master heeft `-defaultReplication=002`, de filer `-defaultReplicaPlacement=002`, en de mount
+(`cf-platform-mount.service`, op elke node) geeft zelf `-replication=002` mee. Die laatste wint
+van elke regel per map, dus die moet weg. De standaard 002 van master en filer blijft: al de
+rest blijft zo op 3 kopieën, een regel voor `/` is niet nodig.
 
-1. **Het pad in de filer zoeken.** De app ziet `/data/blobs`; in SeaweedFS is dat
-   `<filerpad van de mount>/blobs`. Op de VIP-node: `mount | grep -i weed` of de unit van de
-   mount bekijken (`-filer.path=`, standaard `/`). Daarna in `weed shell`: `fs.ls <pad>` moet
-   `blobs` tonen.
-2. **De regel zetten** (in `weed shell`, één keer, geldt voor het hele cluster):
+**A. In de template (repo ClusterForge, `internal/templates/builtin/media-platform/1.0.0`):**
+
+1. `files/cf-platform-mount.service.tmpl`: ` -replication={{ .params.replication }}` weglaten
+   uit `ExecStart`. Dat geldt dan voor alle nodes.
+2. `files/platform-cluster.yaml.tmpl`, bij `environment` van het platform:
+   `PLATFORM_BLOB_SPLIT: ${PLATFORM_BLOB_SPLIT:-false}`; en in `files/platform.env.tmpl` een
+   regel `PLATFORM_BLOB_SPLIT=true` (of een parameter aan/uit, standaard uit).
+3. `files/platform-ctl.sh.tmpl`, functie `replicatie`: die zet nu ALLE volumes op de replicatie
+   van ClusterForge (`volume.configure.replication … -collectionPattern *`) en `--check` meldt
+   elk volume dat afwijkt. De volumes van collectie `media` moet hij overslaan: in
+   `volumes_placements` alleen volumes zonder collectie meetellen, en `volume.configure.replication`
+   alleen op de standaardcollectie laten werken. Anders zet hij de films terug op 3 kopieën en
+   blijft de controle rood.
+
+**B. Na de update van het platform naar een versie met blobsplit (dus na 0.8.2):**
+
+1. De template uitrollen. Daarna de mount per node herstarten, de VIP-node als laatste:
+   - op elke andere node: `systemctl restart cf-platform-mount`;
+   - op de VIP-node: `platform-ctl.sh down`, `systemctl restart cf-platform-mount`,
+     `platform-ctl.sh up`.
+   Nakijken: `ps aux | grep "weed mount"` toont geen `-replication` meer.
+2. De regel zetten, één keer (geldt voor het hele cluster), op een node:
    ```
-   fs.configure -locationPrefix=<pad>/blobs-media/ -collection=media -replication=001 -apply
+   printf 'fs.configure -locationPrefix=/blobs-media/ -collection=media -replication=001 -apply\n' | weed shell -master=127.0.0.1:9333
    ```
-   `001` is 2 kopieën op verschillende servers; met 3 nodes overleeft dat het verlies van één
-   node. Een eigen collectie maakt het nakijken makkelijk (stap 5).
-3. **Let op de mount-opties.** Geeft de mount zelf `-replication=` of `-collection=` mee, dan
-   wint die van de regel uit stap 2. Haal ze dan weg uit de mount en zet de standaard (002) op
-   de master (`-defaultReplication=002`) of in een regel voor `<pad>/`:
-   `fs.configure -locationPrefix=<pad>/ -replication=002 -apply`.
-4. **Aanzetten in de app:** `PLATFORM_BLOB_SPLIT=true` in de omgeving van de app-container
-   (`/etc/clusterforge/platform.env`, zoals de andere PLATFORM_-instellingen; de template moet
-   die doorgeven), dan "Platform bijwerken" of de app herstarten. De eerste ronde kopieert alle
-   films en series één keer (dat duurt even en vraagt tijdelijk extra ruimte per film).
-5. **Nakijken:** in `weed shell` `volume.list` (of `collection.list`): de volumes van collectie
-   `media` hebben `replication:001`, de rest `002`. In de log van de app staat na een ronde
-   `blobsplit: {'naar_media': …}`.
+   De mount gebruikt `-filer.path=/`, dus `/srv/platform-data/blobs-media` is in de filer
+   `/blobs-media/`. `001` is 2 kopieën op verschillende nodes: met 3 nodes overleeft dat het
+   verlies van één node.
+3. `PLATFORM_BLOB_SPLIT=true` staat in platform.env (stap A2); de app herstarten. De eerste
+   ronde kopieert alle films en series één keer (dat duurt even en vraagt tijdelijk extra
+   ruimte per film).
+4. Nakijken: `printf 'volume.list\n' | weed shell -master=127.0.0.1:9333 | grep -c 'collection:"media"'`
+   geeft volumes, en die hebben `replica_placement:1`; de andere volumes `2`. In de log van de
+   app staat na een ronde `blobsplit: {'naar_media': …}`.
 
 Zonder `PLATFORM_BLOB_SPLIT` doet de app niets en blijft alles in `blobs/`. Uitzetten kan altijd:
 wat al in `blobs-media/` staat, blijft daar leesbaar (de app kijkt in beide mappen). Terug naar 3
