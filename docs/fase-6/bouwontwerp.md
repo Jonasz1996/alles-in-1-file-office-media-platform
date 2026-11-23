@@ -1,8 +1,9 @@
 > Werkdocument: het bouwontwerp van fase 6 (zoeken en foto's), revisie 3. Revisie 3 is leidend.
 > Revisie 2 staat in [bouwontwerp-r2.md](bouwontwerp-r2.md), revisie 1 in
 > [bouwontwerp-r1.md](bouwontwerp-r1.md).
-> Jonas besliste op 3 november 2026 over de omvang. De vragen die nog open zijn, staan onder
-> "Vragen voor Jonas". Tot hij antwoordt, bouwen we op de standaard die daar staat.
+> Jonas besliste op 3 november 2026 over de omvang. Op 17 november 2026 zette hij elke vraag die
+> toen nog open was op haar standaard ("Standaard vastzetten"):
+> besloten: standaard, Jonas 2026-11-17. Zie "Vragen voor Jonas".
 > Bijgewerkt na de spike (Z0, 3 november 2026). Wat de spike veranderde, staat erin als
 > "Herzien na de spike (Sx)"; de uitkomsten per stap staan in [spike.md](spike.md). Revisie 3
 > blijft verder de tekst.
@@ -27,7 +28,7 @@ kaart met tegels van buiten?" Het antwoord was dus: gezichten ja, tegels van bui
 | 7. de omvang | alles | De planning wordt ±43 werkdagen, in twee opleveringen (§5, Vraag 13). |
 | de kaart (het kaartje) | geen tegels van buiten | Alleen landsgrenzen, zoals Keuze 31. De CSP blijft gelijk. |
 | 5 en 6 | geen eigen antwoord: de kaartjes zijn ingetrokken, omdat "alles" ze dekt | De standaard geldt: GeoNames en Natural Earth bij de installatie, en alleen grenzen onder de kaart. |
-| 4. wie ziet de plek van een foto | **niet beantwoord** | De standaard geldt: alleen de eigenaar, met de waarschuwing in het deeldialoog. Dat is geen keuze van Jonas. |
+| 4. wie ziet de plek van een foto | bij revisie 3 nog niet; op 17 november 2026 de standaard (besloten: standaard, Jonas 2026-11-17) | De standaard geldt: alleen de eigenaar, met de waarschuwing in het deeldialoog. |
 
 Het kaartje noemde alleen gezichten en tegels. Dat zoeken op beeld erbij hoort, volgt uit "ja voeg
 alles toe" en uit de oude Vraag 3. Omdat Jonas daar niet apart over koos, staat beeld per gebruiker
@@ -278,7 +279,7 @@ Afkortingen:
   head `0009` (§3.10).
   **Notitie bij 0.8.0 (I1).** Gebouwd: terug naar 0.7.1, commit `80d5bb8`, met
   `db-downgrade 0009` (§3.10). De tag `v0.7.0` is er niet gekomen, en `v0.7.1` ook niet; de
-  stappen gebruiken de volledige commit. Of er een tag komt, kiest Jonas.
+  stappen gebruiken de volledige commit. Er komt geen tag (besloten: standaard, Jonas 2026-11-17).
 - **J6. Het voorbeeld van 256 px is al gedraaid volgens EXIF** (`render.py:357` en `:370`)
   [code]. De pHash daarop heeft geen eigen draaiing nodig.
 - **J7. GPS uit downloads halen** hoort bij de bewerking "metadata en GPS-locatie weghalen" van
@@ -1302,8 +1303,8 @@ komt; "(r2)" en "(r3)" zijn van revisie 2 en 3, met de kritiek erbij.
     `test_install_search.sh` draait precies de stappen van §3.10.
     **Notitie bij 0.8.0 (I1).** Sinds 0.7.1 gaat de weg terug naar 0.7.1: commit `80d5bb8`, met
     `db-downgrade 0009` (§3.10). `test_install_search.sh` gebruikt die commit en head
-    (`ROLLBACK_SHA` en `ROLLBACK_HEAD`). Een tag `v0.7.0` of `v0.7.1` is er niet; of die komt,
-    kiest Jonas.
+    (`ROLLBACK_SHA` en `ROLLBACK_HEAD`). Een tag `v0.7.0` of `v0.7.1` is er niet, en komt er niet
+    (besloten: standaard, Jonas 2026-11-17).
 54. **Meten op de LXC** (A). `app.cli bench --los` maakt een boom van 100.000 in
     `/data/cache/zoekbench` (±2 minuten, ±500 MB), meet zoeken voor "eigenaar" en "alles", en
     wist hem weer. De uitkomst komt op `/beheer`. Al in week 1 kan Jonas de losse versie uit Z0
@@ -2329,16 +2330,19 @@ Keuze 70–85 van X3.
 | 6. Wat ligt er onder de kaart? | Alleen landsgrenzen, geen tegels van buiten (het kaartje). De CSP blijft gelijk. |
 | 7. Mag fase 6 langer duren? | Ja, met alles. Met gezichten en beeld is het ±43 werkdagen (§5). Hoe we opleveren, is Vraag 13. |
 
-**Nog open.** Elke vraag heeft een standaard. Niemand hoeft op een antwoord te wachten.
+**Besloten op 17 november 2026: de standaard.** Jonas koos "Standaard vastzetten": elke vraag
+hieronder (Vraag 4 en Vraag 8–14) staat op haar standaard, met de status
+**besloten: standaard, Jonas 2026-11-17**. De andere antwoorden blijven hier staan als uitleg;
+niets daarvan is gebouwd.
 
-4. **Wie ziet de plek van een foto?** (niet beantwoord; ongewijzigd sinds revisie 2)
+4. **Wie ziet de plek van een foto?** (ongewijzigd sinds revisie 2; besloten: standaard, Jonas 2026-11-17)
    Standaard: **alleen de eigenaar.** Nooit via een publieke link. Het deeldialoog waarschuwt dat
    een download de locatie in het bestand meeneemt; de bytes blijven gelijk. Andere antwoorden:
    (b) GPS uit downloads halen voor iedereen behalve de eigenaar (de bewerking van fase 10 naar
    voren, ±2 dagen);
    (c) "wie ik deel, ziet de plek ook" als keuze per gebruiker.
 8. **Mogen echte gezichten van NASA in CI gebruikt worden om de herkenning te meten?** (nieuw in
-   r3, herschreven na K1-10)
+   r3, herschreven na K1-10; besloten: standaard, Jonas 2026-11-17: nee)
    Wat er dan gebeurt: een CI-job op de runners van GitHub (in de VS) downloadt ±40 foto's van
    echte mensen, maakt van elk gezicht een vector, en koppelt die aan hun naam ("van links naar
    rechts" uit de beschrijving van NASA). Dat is biometrie van echte mensen, bij naam, buiten je
@@ -2348,7 +2352,10 @@ Keuze 70–85 van X3.
    getallen. Niets verlaat de LXC. In CI draaien alleen de synthetische lagen (X2, "Tests").
    Met ja: de set alleen in CI, met sha256, nooit in het repo, het image of een artefact, en
    zonder namen in de log.
-9. **Worden foto's gescand die een ander in jouw map zette?** (nieuw in r3, K1-02)
+   Gevolg van nee: de twee eisen zonder gereedschap ("≥ 95% van de portretten" en de
+   kleurvolgorde, X2 "Harde poorten") blijven bij besluit niet gemeten; alleen Jonas meet de
+   kwaliteit, met `analyse-kwaliteit` op de LXC.
+9. **Worden foto's gescand die een ander in jouw map zette?** (nieuw in r3, K1-02; besloten: standaard, Jonas 2026-11-17)
    Het gaat om uploads van een ander in een gedeelde map, uploads via een publieke uploadlink, en
    kopieën die een ander naar jouw map maakt. Die worden van jou.
    Standaard: **niet scannen, tenzij die ander het zelf aan heeft.** Een upload via een link
@@ -2357,7 +2364,7 @@ Keuze 70–85 van X3.
    Anders: (b) alles in jouw map scannen onder jouw keuze; (c) nooit iets scannen wat je niet zelf
    uploadde.
 10. **Hoe komt het model voor zoeken op beeld op je LXC?** (nieuw in r3; was Vraag 20 in het
-    ontwerp van X3)
+    ontwerp van X3; besloten: standaard, Jonas 2026-11-17: (a))
     Standaard: **(a) downloaden en omzetten op de LXC.** `install.sh` haalt de originele gewichten
     van Google (Apache-2.0, 1,55 GB) van huggingface.co en zet ze één keer om met eigen code, in
     een eigen container zonder netwerk en zonder sleutel (Keuze 73). Er komt geen nieuw pakket bij,
@@ -2367,14 +2374,16 @@ Keuze 70–85 van X3.
         repo (±400 MB). Dan download je minder, maar verspreiden wij de gewichten, met hun licentie;
     (c) het grotere model B/16: ±2,6 punten beter in het Nederlands (75,33 tegen 72,72), maar elke
         foto bekijken kost ±3× zo veel (+4,2 core-uur per 100.000 foto's) [B6].
-11. **Staat zoeken op beeld standaard aan voor elke gebruiker?** (nieuw in r3, K1-09, K2-22)
+11. **Staat zoeken op beeld standaard aan voor elke gebruiker?** (nieuw in r3, K1-09, K2-22;
+    besloten: standaard, Jonas 2026-11-17: uit)
     Standaard: **uit**, tot BZ10 gemeten heeft of "Meer zoals deze" op een portret dezelfde
     persoon terugvindt. Wie het wil, zet het aan bij Account → Foto's. Dan rekent de server ook
     alleen voor wie het wil: de backfill kost ±1,1–1,2 core-uur per 55.000 foto's (Keuze 77).
     Anders: (b) **aan** voor iedereen. Dan starten na de update de backfills van alle gebruikers,
     na die van de index. Een later besluit is goedkoop: `photo_pref.beeld` is `NULL` tot iemand
     kiest.
-12. **Wat mag CI gebruiken om zoeken op beeld na te rekenen?** (nieuw in r3)
+12. **Wat mag CI gebruiken om zoeken op beeld na te rekenen?** (nieuw in r3; besloten: standaard, Jonas 2026-11-17:
+    (a) ja, (b) nee)
     (a) Een vaste set van 120 foto's uit het publiek domein (CC0 of publiek domein, elk met sha256,
         liefst zonder herkenbare mensen), alleen gedownload in de job `beeld-model`, nooit in het
         repo of het image. Standaard: **ja.** Zonder die set is er geen harde poort op de
@@ -2383,7 +2392,8 @@ Keuze 70–85 van X3.
         `beeld-model`, nooit in het image. Die vergelijkt onze omzetting en onze tokenizer getal
         voor getal met het origineel. Standaard: **nee.** Dan bewijzen alleen de kwaliteitspoort en
         BZ3 dat het klopt.
-13. **Leveren we in twee delen op?** (nieuw in r3, K2-11)
+13. **Leveren we in twee delen op?** (nieuw in r3, K2-11; besloten: standaard, Jonas 2026-11-17: twee delen, 0.8.0
+    en 0.8.1)
     Standaard: **ja, twee delen.** 0.8.0 met de kern (zoeken, tekst, OCR, foto-gegevens, kaart,
     duplicaten, personen, herinneringen, slimme albums) rond dag 27; daarna 0.8.1 met gezichten en
     beeld rond dag 43. Zo heb je de kern ±3 weken eerder.
@@ -2391,7 +2401,7 @@ Keuze 70–85 van X3.
     Loopt het uit, dan schrappen we in deze volgorde: eerst zoeken met woorden op beeld (de
     tokenizer en de tekstkant; "Meer zoals deze" blijft), dan beeld helemaal (naar een fase 6b),
     dan de groepen "Wie is dit?" van gezichten (de voorstellen blijven).
-14. **Mag zoeken op beeld 250 ms duren?** (nieuw in r3, K2-13)
+14. **Mag zoeken op beeld 250 ms duren?** (nieuw in r3, K2-13; besloten: standaard, Jonas 2026-11-17: ja)
     Het stappenplan zegt 200 ms. Gewoon zoeken houdt die 200 ms. Zoeken op beeld rekent eerst een
     taalmodel (±62–74 ms) en vergelijkt dan alle foto's; bij 100.000 foto's is dat in de container
     al ±125 ms, zonder de rest van de app.
@@ -2404,9 +2414,9 @@ Keuze 70–85 van X3.
     **Beantwoord op 4 november 2026: "Ja, erin"** (kaartje). Tesseract komt in het image, met
     + ≤ 75 MB als poort in `images`. Het andere antwoord was (b) geen OCR.
 
-Vraag 1–7 kwamen uit revisie 2; daarvan is alleen Vraag 4 nog open. Vraag 8–15 zijn nieuw;
-Vraag 15 is beantwoord. De
-oude nummers 8 en 20–22 uit de twee ontwerpen voor X2 en X3 bestaan niet meer.
+Vraag 1–7 kwamen uit revisie 2; Vraag 4 bleef zonder antwoord tot 17 november 2026. Vraag 8–15
+zijn nieuw. Vraag 15 is beantwoord op 4 november 2026, Vraag 4 en Vraag 8–14 op 17 november 2026
+(de standaard). De oude nummers 8 en 20–22 uit de twee ontwerpen voor X2 en X3 bestaan niet meer.
 
 ---
 
@@ -3613,7 +3623,8 @@ spike B6]. Daarom:
 - [ ] Poort: 60.000 gezichten groeperen in ≤ 60 s en ≤ 400 MB.
 - [ ] De kwaliteit op echte gezichten: `analyse-kwaliteit` heeft op de LXC gedraaid (of, met ja op
       Vraag 8, de poorten in CI), en de drempels staan in `drempels.py`. Tot dan staat in de README
-      en op `/beheer` dat de kwaliteit niet gemeten is.
+      en op `/beheer` dat de kwaliteit niet gemeten is. [Vraag 8 is nee (besloten: standaard, Jonas 2026-11-17):
+      alleen Jonas meet dit, op de LXC.]
 - [ ] `e2e/test_zoek_gezichten.py` (alleen het toetsenbord) is groen, en
       `docs/fase-6/toetsenbord-x2.md` is af.
 - [ ] `e2e/test_zoek_gezichten_echt.py` is groen in `analyse-image`.
@@ -4917,16 +4928,16 @@ zoals bestanden van vóór de update (Vraag 9). De sleutels in `SLEUTELS_ROOT` e
 `MODELLEN_ROOT` blijven op schijf; het runbook (`docs/runbooks/analyse.md`) zegt hoe je ze wist.
 `test_install_analyse.sh` doet die stappen (§4.6).
 
-**Notitie bij 0.8.0 (I1).** De commit van 0.8.0 staat in [integratie.md](integratie.md), "Afronden en 0.8.0". Een tag `v0.8.0` is er niet;
-of die komt, kiest Jonas. 0.8.1 is er nog niet: deze weg terug, het runbook `analyse.md` en
+**Notitie bij 0.8.0 (I1).** De commit van 0.8.0 staat in [integratie.md](integratie.md), "Afronden en 0.8.0". Een tag `v0.8.0` is er niet,
+en komt er niet (besloten: standaard, Jonas 2026-11-17). 0.8.1 is er nog niet: deze weg terug, het runbook `analyse.md` en
 `test_install_analyse.sh` komen pas met 0.8.1.
 
 **Notitie bij 0.8.1 (I2).** 0.8.1 is gebouwd in I2 ([integratie-2.md](integratie-2.md)). De weg
 terug naar 0.8.0 staat in `infra/single/README.md` en in de runbooks (`zoeken.md`, "Terug naar
 0.8.0 van `59e0250`"; `analyse.md` en `gezichten.md`, "Terug naar 0.8.0"), ook met de analyse
 aan; `test_install_analyse.sh` doet die stappen. De commit van 0.8.1 is
-`ae163ac69470343de7bc8d876db1a48e7da9331e` (de laatste push van I2; CI groen in run 43981579405). Een tag `v0.8.1` is er niet; of
-die komt, kiest Jonas.
+`ae163ac69470343de7bc8d876db1a48e7da9331e` (de laatste push van I2; CI groen in run 43981579405). Een tag `v0.8.1` is er niet, en
+komt er niet (besloten: standaard, Jonas 2026-11-17).
 
 ### 3.11 De container `analyse` (A0, X2a en X3a; Keuze 56–59, 68, 73, 75, 84)
 
@@ -5358,11 +5369,14 @@ pakketten die met onnxruntime meekomen: protobuf, flatbuffers en packaging.
 | Alles met het toetsenbord (sinds fase 3) | e2e met alleen het toetsenbord per scherm; `docs/fase-6/toetsenbord-z*.md` | `e2e` |
 
 Eerlijk: de kwaliteit van gezichten en beeld op echte foto's is in de sandbox niet te meten (geen
-echte gezichten, huggingface.co dicht). Die poorten draaien op de LXC van Jonas
-(`analyse-kwaliteit`, `beeld-kwaliteit`), of in CI als de runner erbij kan (BZ1) en Jonas ja zegt
-op Vraag 8 en 12. Tot dan staat in de README en op `/beheer` dat de kwaliteit niet gemeten is.
-Schuift X3 naar een fase 6b (§2.0), dan blijft "semantisch zoeken" open. Zo staat het ook in de
-README.
+echte gezichten, huggingface.co dicht). Vraag 8 en 12 zijn besloten op hun standaard
+(besloten: standaard, Jonas 2026-11-17). Voor gezichten is Vraag 8 nee: geen echte gezichten in CI. Die
+kwaliteit meet alleen Jonas, met `analyse-kwaliteit` op de LXC; de twee eisen zonder gereedschap
+("≥ 95% van de portretten" en de kleurvolgorde) blijven bij besluit niet gemeten, en zo staat het
+in de README en op `/beheer`. Voor beeld is Vraag 12 (a) ja: de kwaliteitspoort (BZ4) draait in
+CI in `beeld-model`, met 120 foto's uit het publiek domein (groen op `dc5dfe5`, Keuze 85);
+`beeld-kwaliteit --personen` (BZ10) draait op de LXC. X3 schoof niet naar een fase 6b: zoeken op
+beeld zit in 0.8.1 (Keuze 85).
 
 ### 4.1 De lagen
 
@@ -5690,7 +5704,7 @@ en duurt de laatste integratie 4 dagen: 0.8.0 rond dag 41.
 
 **Notitie bij 0.8.0 (I1).** De rij "Integratie 1" noemt een tag `v0.7.0`. Die tag is er niet
 gekomen, en ook geen `v0.7.1` of `v0.8.0`: de weg terug gebruikt de volledige commit van 0.7.1
-(`80d5bb8`, §3.10). Of er tags komen, kiest Jonas. 0.8.0 (11 november 2026) staat op de branch
+(`80d5bb8`, §3.10). Er komen geen tags (besloten: standaard, Jonas 2026-11-17). 0.8.0 (11 november 2026) staat op de branch
 `claude/stappenplan-uitwerken-lu4uv3`.
 
 **Notitie bij 0.8.1 (I2).** De rij "Integratie 2" is gedaan: 0.8.1 met gezichten en zoeken op
@@ -5704,7 +5718,8 @@ sha256 geeft, en als BZ1 zegt of de runner bij de bron kan. Nee: X3 gaat naar ee
 dit ontwerp, X3b vervalt in golf 6, en X2b krijgt die dagen als marge. De kern en X2 wachten
 nergens op.
 
-**Wat er gebeurt als Jonas antwoordt:**
+**Wat een ander antwoord had gekost.** Jonas koos op 17 november 2026 overal de standaard
+(besloten: standaard, Jonas 2026-11-17); niets hieronder is gebouwd.
 
 - **Vraag 4 (b)**: GPS uit downloads halen, ±2 dagen: een pakket naast Z7 in golf 4 (die wordt
   dan 4 dagen), of in fase 10. **(c)**: een keuze per gebruiker, in Z6.
@@ -5721,7 +5736,8 @@ nergens op.
 - **Vraag 14 nee**: dan geldt 200 ms ook voor beeld. Dat halen we bij 100.000 foto's niet zeker
   (K2-13); de terugval naar gewoon zoeken gebeurt dan vaker, en de poort in CI wordt 200 ms.
 
-Niemand hoeft op een antwoord te wachten om verder te bouwen: elke vraag heeft een standaard.
+Niemand hoefde op een antwoord te wachten om verder te bouwen: elke vraag had een standaard, en
+die standaard is nu het besluit.
 
 ### 5.1 Risico's
 
@@ -5741,13 +5757,13 @@ Niemand hoeft op een antwoord te wachten om verder te bouwen: elke vraag heeft e
 | R12 | De backfill vult de WAL en houdt de schrijver bezet | trage uploads tijdens de backfill | één blob per transactie; `test_backfill.py` (een upload wacht ≤ 1 s) |
 | R13 | De bronnen voor plaatsen komen niet binnen bij de installatie | geen plaatsnamen en geen landen | niet fataal; de volgende run probeert opnieuw; `/beheer` zegt het; `PLAATSEN=uit` |
 | R14 | Tekst van 1 MB maakt snippets traag | `/search` boven 200 ms | venster van 20.000 tekens, één regex, 40 ms per verzoek, 100 ms CPU per seconde voor de app (Keuze 8); profiel "groot" met een harde poort |
-| R15 | Jonas antwoordt niet op Vraag 4 en 8–14 | onduidelijk wie de plek ziet, hoe de kwaliteit gemeten wordt, en hoe we opleveren | elke vraag heeft een standaard waarmee de bouw doorgaat; de README zegt welke standaard geldt; Vraag 1, 2, 3, 5, 6 en 7 zijn beantwoord of ingetrokken |
+| R15 | Jonas antwoordt niet op Vraag 4 en 8–14 | onduidelijk wie de plek ziet, hoe de kwaliteit gemeten wordt, en hoe we opleveren | elke vraag heeft een standaard waarmee de bouw doorgaat; de README zegt welke standaard geldt; Vraag 1, 2, 3, 5, 6 en 7 zijn beantwoord of ingetrokken. **Voorbij:** op 17 november 2026 koos Jonas voor Vraag 4 en 8–14 de standaard (besloten: standaard, Jonas 2026-11-17) |
 | R16 | De runner in CI is wisselend snel | `zoek-perf` faalt zonder reden | de mediaan van 3 rondes; alleen p99 en max mogen naar een rapport; de p95 blijft hard |
 | R17 | Twee verschillende bestanden heten "bijna zeker gelijk" | iemand gooit het verkeerde weg | vlakke beelden zonder hash, de tweede controle, klieken, tekst telt mee, nooit iets vooraf aangevinkt, alles via de prullenbak (Keuze 35, 36) |
 | R18 | Vectoren van gezichten (X2) zijn biometrische data van derden | privacy, ook in WAL, tijdelijke bestanden, reservekopieën en snapshots | per node, alleen eigen en levend, standaard uit, een verbod; versleuteld met een sleutel per eigenaar buiten `/data` ("uit" wist eerst de sleutel); `secure_delete`, `temp_store` in het geheugen, TRUNCATE tot het lukt, een test op merktekens; nooit in de API, de logs of een bericht; de reservekopie zonder gezichten (Keuze 64, 68; K1-01, K1-03) |
 | R19 | Natural Earth 10m is ±1 km nauwkeurig en kent de enclaves van Baarle niet | een foto vlak bij een grens krijgt het verkeerde land | staat bij de bronvermelding; de plaats moet in hetzelfde land liggen; later een fijnere bron (Keuze 29) |
 | R20 | Een eigenaar snapt "alleen voor jou" bij een slim album niet | hij denkt dat Bram iets ziet wat Bram niet ziet, of andersom | het merkje per item, de telling in het deeldialoog, de vraag bij elke deling (Keuze 42) |
-| R21 | Vraag 13 blijft open terwijl de bouw loopt | onduidelijk of 0.8.0 de kern is of alles | de standaard is twee opleveringen; de volgorde zet de kern vooraan, en na dag 15 en dag 27 is er telkens een bruikbare stand |
+| R21 | Vraag 13 blijft zonder antwoord terwijl de bouw loopt | onduidelijk of 0.8.0 de kern is of alles | de standaard is twee opleveringen; de volgorde zet de kern vooraan, en na dag 15 en dag 27 is er telkens een bruikbare stand. **Voorbij:** zo gebeurd (0.8.0 en 0.8.1), en op 17 november 2026 besloten (besloten: standaard, Jonas 2026-11-17) |
 | R22 | De drempels zijn op echte gezichten niet te meten in de sandbox | te veel of te weinig voorstellen | `analyse-kwaliteit` op de LXC tegen Jonas' eigen "ja" en "nee" (Vraag 8; met ja ook de set van NASA in CI); de drempels in `drempels.py` met de versie; 0,45 is strenger dan die van OpenCV (0,363); niets wordt vanzelf bevestigd |
 | R23 | De CPU van Jonas is trager dan de sandbox | de backfill van gezichten duurt langer dan ±2,2–2,5 uur per 55.000 foto's [K2-04] | `analyse-bench` op de LXC; `/beheer` toont de schatting; fp32, dus VNNI maakt voor gezichten niet uit; `cpus: 1.0` houdt drie cores vrij |
 | R24 | Het image wordt 118–141 MB groter, ook met `ANALYSE=uit` [B1] | meer schijf en een tragere update | gemeten; de poort ≤ +160 MB; een apart image kan later, als de grootte gaat tellen |
