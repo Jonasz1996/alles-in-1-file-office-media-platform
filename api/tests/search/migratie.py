@@ -288,7 +288,9 @@ def fts_column_sql(dialect: str, column: str) -> str:
     voor SQLite (FTS5, met :q = kolom:"woord") en PostgreSQL (0014)."""
     if dialect == "sqlite":
         return "SELECT fts_node.rowid FROM fts_node WHERE fts_node MATCH :q"
-    q = f"to_tsquery('simple', quote_literal(trim(cf_fold(:w))) || ':{PG_WEIGHT[column]}')"
+    # \\: is een dubbele punt in text(), geen bindparameter
+    weight = f"'\\:{PG_WEIGHT[column]}'"
+    q = f"to_tsquery('simple', quote_literal(trim(cf_fold(:w))) || {weight})"
     if column == "pocr":
         return f"SELECT rowid FROM fts_node WHERE otsv @@ {q} AND NOT tsv @@ {q}"
     return f"SELECT rowid FROM fts_node WHERE tsv @@ {q}"

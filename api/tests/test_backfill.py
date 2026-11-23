@@ -417,7 +417,10 @@ async def test_het_deel_per_node_ook_bij_alleen_ocr(settings, client, admin, mon
                     )
                 )
             ).one()
-            await db.execute(sa.text("INSERT INTO fts_node(fts_node) VALUES('integrity-check')"))
+            if (await db.connection()).dialect.name == "sqlite":
+                await db.execute(
+                    sa.text("INSERT INTO fts_node(fts_node) VALUES('integrity-check')")
+                )
         return row[0], row[1], row[2]
 
     async def write(**kwargs) -> None:

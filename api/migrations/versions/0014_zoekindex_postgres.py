@@ -182,9 +182,32 @@ END $$
 """
 
 
+# fase6_fill (0013) zette een cursor van search_state altijd terug op NULL: op PostgreSQL liep
+# toen nooit een herbouw. Met de index van 0014 is een cursor een herbouw die loopt (search-
+# triggers, db-copy, beheer); de weekcontrole mag die niet afbreken. Dezelfde functie, zonder
+# dat stuk; de downgrade zet die van 0013 terug.
+FILL_STATE_0013 = "SELECT count(*) INTO n_state FROM search_state WHERE cursor IS NOT NULL;"
+FILL_STATE_0014 = "n_state := 0;  -- 0014: een cursor is een herbouw van de index die loopt"
+
+
+def _fill_0013() -> str:
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).with_name("0013_postgres.py")
+    spec = importlib.util.spec_from_file_location("m0013_voor_0014", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sql = module.FUNCTION_SQL["fase6_fill"]
+    assert FILL_STATE_0013 in sql
+    return sql
+
+
 def upgrade() -> None:
     if op.get_bind().dialect.name != "postgresql":
         return
+    op.execute(_fill_0013().replace(FILL_STATE_0013, FILL_STATE_0014))
     op.execute(
         "INSERT INTO search_state (id, cursor, started_at, what) "
         "SELECT 1, NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM search_state WHERE id = 1)"
@@ -213,6 +236,9 @@ def downgrade() -> None:
         return
     for name, table, _when, _func in reversed(TRIGGERS):
         op.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
+    # Zonder index is er niets om te herbouwen; fase6_fill van 0013 terug
+    op.execute("UPDATE search_state SET cursor = NULL WHERE cursor IS NOT NULL")
+    op.execute(_fill_0013())
     for name in ("fts_by_node_trg", "fts_blob_trg", "fts_node_trg"):
         op.execute(f"DROP FUNCTION IF EXISTS {name}()")
     op.execute("DROP FUNCTION IF EXISTS fts_refresh(bigint[], boolean)")

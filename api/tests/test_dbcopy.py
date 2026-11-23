@@ -242,7 +242,11 @@ async def test_copy_de_boom_en_de_gezichten(sqlite_with_data):
                 "SELECT count(*), count(*) FILTER (WHERE tgenabled = 'D') FROM pg_trigger "
                 "WHERE NOT tgisinternal"
             )
-            assert tuple(got.one()) == (10, 0)
+            # 10 van 0013 en 6 van de zoekindex (0014), allemaal weer aan
+            assert tuple(got.one()) == (16, 0)
+            # De zoekindex: leeg, de app bouwt hem op bij het starten (cursor 0)
+            got = await conn.exec_driver_sql("SELECT cursor FROM search_state WHERE id = 1")
+            assert got.scalar_one() == 0
             top = (await conn.execute(select(func.max(Node.num)))).scalar_one()
             werk = (await conn.execute(select(Node.mpath).where(Node.id == ids["werk"]))).one()
         # Een nieuwe map in werk (in de prullenbak, via vakantie): het volgende num, het pad

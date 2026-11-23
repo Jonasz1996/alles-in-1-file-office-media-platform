@@ -122,12 +122,12 @@ def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a). 0013 (PostgreSQL, 0.8.2) maakt op SQLite niets
     kwijt; op PostgreSQL de plaatsen van foto's (review PG13-2, test hieronder)."""
-    assert cli.removed_revisions(HEAD, "0012") == ["0013"]
-    assert cli.removed_revisions(HEAD, "0011") == ["0013", "0012"]
-    assert cli.removed_revisions(HEAD, "0010") == ["0013", "0012", "0011"]
-    assert cli.removed_revisions(HEAD, "0009") == ["0013", "0012", "0011", "0010"]
+    assert cli.removed_revisions(HEAD, "0012") == ["0014", "0013"]
+    assert cli.removed_revisions(HEAD, "0011") == ["0014", "0013", "0012"]
+    assert cli.removed_revisions(HEAD, "0010") == ["0014", "0013", "0012", "0011"]
+    assert cli.removed_revisions(HEAD, "0009") == ["0014", "0013", "0012", "0011", "0010"]
     assert cli.removed_revisions(HEAD, "0007") == [
-        "0013", "0012", "0011", "0010", "0009", "0008"
+        "0014", "0013", "0012", "0011", "0010", "0009", "0008"
     ]  # fmt: skip
     assert cli.lost_lines(["0013"]) == []
     assert cli.PG_REVISION == "0013"

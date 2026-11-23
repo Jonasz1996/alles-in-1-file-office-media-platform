@@ -32,6 +32,7 @@ import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import func, inspect, literal_column, select, text
@@ -45,6 +46,9 @@ from app.db import Base
 BATCH = 2000
 # De tabellen met triggers van 0013 (PostgreSQL), uit tijdens het kopiëren
 TRIGGER_TABLES = ("node", "photo_geo", "person")
+# Niet overzetten: de stand van een herbouw van de zoekindex. 0014 maakt die rij op PostgreSQL
+# zelf; na de kopie begint daar een herbouw (_start_search_rebuild)
+SKIP_TABLES = ("search_state",)
 
 
 class CopyError(Exception):
@@ -92,7 +96,7 @@ async def _target_rows(conn: AsyncConnection) -> dict[str, int]:
     names = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))
     out = {}
     for table in Base.metadata.sorted_tables:
-        if table.name in names:
+        if table.name in names and table.name not in SKIP_TABLES:
             out[table.name] = (
                 await conn.execute(select(func.count()).select_from(table))
             ).scalar_one()
@@ -104,6 +108,8 @@ async def _drop_platform_tables(conn: AsyncConnection) -> None:
     for table in reversed(Base.metadata.sorted_tables):
         if table.name in names:
             await conn.execute(text(f'DROP TABLE IF EXISTS "{table.name}" CASCADE'))
+    # De zoekindex van 0014 staat niet in Base.metadata (zoals de FTS5-tabellen van SQLite)
+    await conn.execute(text("DROP TABLE IF EXISTS fts_node CASCADE"))
     await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
 
 
@@ -175,6 +181,22 @@ async def _fix_sequences(conn: AsyncConnection, table) -> None:
             )
 
 
+async def _start_search_rebuild(conn: AsyncConnection) -> bool:
+    """Met de zoekindex van 0014: fts_node leeg en de cursor op 0, zodat de app bij het starten
+    de index opbouwt (search.admin.on_start). Tijdens de kopie stonden de triggers van node uit,
+    dus de index is niet volledig."""
+    if (await conn.execute(text("SELECT to_regclass('fts_node') IS NOT NULL"))).scalar_one():
+        await conn.execute(text("DELETE FROM fts_node"))
+        await conn.execute(
+            text(
+                "UPDATE search_state SET cursor = 0, started_at = :at, what = 'text' WHERE id = 1"
+            ),
+            {"at": datetime.now(UTC).isoformat()},
+        )
+        return True
+    return False
+
+
 async def db_copy(
     settings: Settings,
     target_url: str,
@@ -240,7 +262,7 @@ async def db_copy(
                 for name in TRIGGER_TABLES:
                     await dst.execute(text(f"ALTER TABLE {_quote(name)} DISABLE TRIGGER USER"))
             for table in Base.metadata.sorted_tables:
-                if table.name not in src_names:
+                if table.name not in src_names or table.name in SKIP_TABLES:
                     continue
                 cols = [c for c in _copyable(table) if c.name in src_cols[table.name]]
                 stmt = select(*cols).order_by(*_order(table, cols))
@@ -262,6 +284,11 @@ async def db_copy(
                 )
                 for name in TRIGGER_TABLES:
                     await dst.execute(text(f"ALTER TABLE {_quote(name)} ENABLE TRIGGER USER"))
+            if await _start_search_rebuild(dst):
+                say(
+                    "De zoekindex van PostgreSQL wordt opgebouwd bij de eerste start van de app "
+                    "(zoeken gebruikt tot dan LIKE)."
+                )
             for name, count in result.rows.items():
                 table = Base.metadata.tables[name]
                 got = (await dst.execute(select(func.count()).select_from(table))).scalar_one()
