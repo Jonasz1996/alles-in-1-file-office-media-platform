@@ -338,11 +338,9 @@ async def test_een_te_grote_tekst_houdt_zoveel_woorden_als_past(client, settings
         capped, k = found.one()
         assert capped is True
         assert 80_000 < k < len(woorden)  # halveren hield er 58.254
-        naam = "cf_tsv('brief.txt', 'A')"
-        assert await _past(conn, f"SELECT {naam} || cf_tsv(:t, 'C')", t=" ".join(woorden[:k]))
-        assert not await _past(
-            conn, f"SELECT {naam} || cf_tsv(:t, 'C')", t=" ".join(woorden[: k + 1])
-        )
+        samen = "SELECT cf_cat(cf_tsv('brief.txt', 'A'), cf_tsv(:t, 'C'))"
+        assert await _past(conn, samen, t=" ".join(woorden[:k]))
+        assert not await _past(conn, samen, t=" ".join(woorden[: k + 1]))
         for i, verwacht in ((0, True), (60_000, True), (k - 1, True), (k, False)):
             gevonden = await conn.execute(
                 sa.text("SELECT tsv @@ to_tsquery('simple', :w) FROM fts_node WHERE rowid = :n"),
@@ -373,7 +371,7 @@ async def test_de_functies_van_de_index_in_een_parallel_plan(settings):
             "SELECT count(*) FROM node p JOIN node q ON p.num = q.num "
             "WHERE cf_tsv(p.search_name, 'C') @@ to_tsquery('simple', 'x')",
             "SELECT count(*) FROM node "
-            "WHERE (fts_doc(search_name, '', '', '', NULL)).tsv @@ to_tsquery('simple', 'x')",
+            "WHERE (fts_doc(search_name, '', '', '', '', NULL)).tsv @@ to_tsquery('simple', 'x')",
         ):
             assert (await conn.exec_driver_sql(sql)).scalar() is not None
         found = await conn.execute(

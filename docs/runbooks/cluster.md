@@ -300,6 +300,11 @@ de melding zegt dan hoe je ze weer gelijk zet.
   een accent, Grieks of Cyrillisch is dan niet te vinden. De app zegt dat bij de start in het
   log ("de database heeft LC_CTYPE C"). Kijken kan met
   `SELECT datctype FROM pg_database WHERE datname = current_database();`.
+- **Een frase in een lange tekst op PostgreSQL.** Een tsvector kent hooguit plek 16.383, en per
+  woord hooguit 256 plekken. Na ongeveer 16.000 woorden, of na de 256e keer van een woord, vindt
+  een frase ("…") daar soms niet wat SQLite vindt, of juist iets wat er niet zo staat. Losse
+  woorden vindt de index tot de grens van 1 MB. Een frase loopt wel nooit over twee kolommen
+  (naam, titel, tekst, OCR, meta), net als op SQLite.
 - **Een database die een eerdere 0014 draaide** (een testcluster op de branch vóór de review
   van PR #6) houdt de oude functies en mist de kolom `capped`: een migratie draait niet twee
   keer. Zet hem eerst terug met `python -m app.cli db-downgrade 0013 --ja` (met het image van nu)

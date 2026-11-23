@@ -16,12 +16,18 @@ Op PostgreSQL:
   spatie. De tabellen zijn bevroren (Python 3.13, Unicode 15.1, tegen lower() van PostgreSQL 16
   met C.UTF-8): elke letter en elk cijfer geeft dan hetzelfde als fold() (review van PR #6, F2).
 - cf_tsv(text, "char"): to_tsvector('simple', cf_fold(t)) met dat gewicht.
+- cf_cat(tsvector, tsvector): twee kolommen achter elkaar, met één plek ertussen. Zo is het
+  laatste woord van de ene met het eerste van de volgende geen frase, zoals in FTS5, waar een
+  frase in één kolom staat (review van PR #6, F11).
 - cf_add(tsvector, text, "char") en fts_doc(...): de tsvector van een node. Past die niet in een
   tsvector (1 MB aan woorden en plekken), dan houdt hij de langste reeks woorden vooraan die
   nog past, en is de rij capped (plan 0.8.2, vraag 8; review van PR #6, F3 en F10).
 - fts_node(rowid, tsv, otsv, capped): rowid is node.num (dezelfde naam als in FTS5, zodat de
   vragen van app/search/engine.py dezelfde vorm houden). tsv: naam (A), titel uit de
-  mediabibliotheek (B), tekst en OCR van de inhoud (C), meta (D). otsv: tsv met de OCR van een
+  mediabibliotheek (B), tekst (C), OCR van de inhoud (C), meta (D), elk met cf_cat erachter, zoals
+  de kolommen van FTS5. Boven plek 16.383 staan alle woorden op 16.383, en een woord houdt
+  hooguit 256 plekken (de grenzen van een tsvector): daar vindt een frase niet wat FTS5 vindt,
+  of juist wel (runbook cluster, "Bekende grenzen"). otsv: tsv met de OCR van een
   foto (C) erbij, alleen als die er is; die is alleen van de eigenaar (Keuze 16 en 25a). GIN op
   tsv en otsv. capped: de tekst was te groot en is ingekort (/admin/search telt ze).
 - fts_rows(nums, cur): de rijen zoals ze uit de bron volgen, zonder te schrijven; check() van
@@ -70,8 +76,20 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
   SELECT setweight(to_tsvector('simple', cf_fold(t)), w)
 $$
 """,
-    # v met de woorden van t erachter; past dat niet in een tsvector (1 MB), dan de langste reeks
-    # woorden vooraan die nog past (gezocht op woorden, niet gehalveerd; F10), en capped.
+    # a en dan b, met één plek ertussen (F11): || telt bij de plekken van b de hoogste plek van a
+    # op, dus eerst een woord '-' erachter, en dat daarna weer weg. '-' komt nooit uit cf_fold.
+    # Is a of b leeg, dan geen plek: de rang (lengte van het document) blijft dan gelijk.
+    # '-\\:1' is '-:1' (het woord '-' op plek 1); zonder \\ leest op.execute :1 als parameter.
+    "cf_cat": """
+CREATE OR REPLACE FUNCTION cf_cat(a tsvector, b tsvector) RETURNS tsvector
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE WHEN length(a) = 0 THEN b WHEN length(b) = 0 THEN a
+              ELSE ts_delete(a || '-\\:1'::tsvector || b, '-') END
+$$
+""",
+    # v met de woorden van t erachter (cf_cat); past dat niet in een tsvector (1 MB), dan de
+    # langste reeks woorden vooraan die nog past (gezocht op woorden, niet gehalveerd; F10), en
+    # capped.
     # PARALLEL UNSAFE: een EXCEPTION-blok is een subtransactie, en die mag in geen enkel deel
     # van een parallel plan, ook niet in de leider (dus ook niet RESTRICTED; F14).
     "cf_add": """
@@ -86,7 +104,7 @@ DECLARE
 BEGIN
   capped := false;
   BEGIN
-    tsv := v || cf_tsv(t, w);
+    tsv := cf_cat(v, cf_tsv(t, w));
     RETURN;
   EXCEPTION WHEN program_limit_exceeded THEN
     capped := true;
@@ -97,23 +115,23 @@ BEGIN
   WHILE hi - lo > 1 LOOP
     m := (lo + hi) / 2;
     BEGIN
-      PERFORM v || setweight(to_tsvector('simple', array_to_string(words[1:m], ' ')), w);
+      PERFORM cf_cat(v, setweight(to_tsvector('simple', array_to_string(words[1:m], ' ')), w));
       lo := m;
     EXCEPTION WHEN program_limit_exceeded THEN
       hi := m;
     END;
   END LOOP;
-  tsv := v || setweight(to_tsvector('simple', array_to_string(words[1:lo], ' ')), w);
+  tsv := cf_cat(v, setweight(to_tsvector('simple', array_to_string(words[1:lo], ' ')), w));
 END $$
 """,
     # De rij van fts_node voor één node. Meestal past alles in één keer. Anders deel voor deel
-    # in dezelfde volgorde (naam, titel, tekst, meta, dan de OCR van de foto in otsv), elk met
+    # in dezelfde volgorde (naam, titel, tekst, OCR, meta, dan de OCR van de foto in otsv), elk met
     # cf_add: wat na de grens komt, is niet vindbaar (plan 0.8.2, vraag 8), en capped telt in
     # /admin/search. Ook de som van de delen is begrensd, niet elk deel apart (F3).
     "fts_doc": """
-CREATE OR REPLACE FUNCTION fts_doc(name_t text, title_t text, body_t text, meta_t text,
-                                   pocr_t text, OUT tsv tsvector, OUT otsv tsvector,
-                                   OUT capped boolean)
+CREATE OR REPLACE FUNCTION fts_doc(name_t text, title_t text, body_t text, ocr_t text,
+                                   meta_t text, pocr_t text, OUT tsv tsvector,
+                                   OUT otsv tsvector, OUT capped boolean)
 LANGUAGE plpgsql IMMUTABLE PARALLEL UNSAFE AS $$
 DECLARE
   r record;
@@ -122,9 +140,9 @@ DECLARE
 BEGIN
   capped := false;
   BEGIN
-    tsv := cf_tsv(name_t, 'A') || cf_tsv(title_t, 'B') || cf_tsv(body_t, 'C')
-           || cf_tsv(meta_t, 'D');
-    otsv := CASE WHEN pocr_t IS NOT NULL THEN tsv || cf_tsv(pocr_t, 'C') END;
+    tsv := cf_cat(cf_cat(cf_cat(cf_cat(cf_tsv(name_t, 'A'), cf_tsv(title_t, 'B')),
+                                cf_tsv(body_t, 'C')), cf_tsv(ocr_t, 'C')), cf_tsv(meta_t, 'D'));
+    otsv := CASE WHEN pocr_t IS NOT NULL THEN cf_cat(tsv, cf_tsv(pocr_t, 'C')) END;
     RETURN;
   EXCEPTION WHEN program_limit_exceeded THEN
     NULL;
@@ -134,6 +152,8 @@ BEGIN
   SELECT * INTO r FROM cf_add(v, title_t, 'B');
   v := r.tsv; c := c OR r.capped;
   SELECT * INTO r FROM cf_add(v, body_t, 'C');
+  v := r.tsv; c := c OR r.capped;
+  SELECT * INTO r FROM cf_add(v, ocr_t, 'C');
   v := r.tsv; c := c OR r.capped;
   SELECT * INTO r FROM cf_add(v, meta_t, 'D');
   v := r.tsv; c := c OR r.capped;
@@ -159,7 +179,8 @@ LANGUAGE sql STABLE PARALLEL UNSAFE AS $$
   CROSS JOIN LATERAL fts_doc(
     n.search_name,
     (SELECT string_agg(m.title, ' ') FROM media_item m WHERE m.node_id = n.id),
-    coalesce(t.body, '') || ' ' || coalesce(t.ocr, ''),
+    t.body,
+    t.ocr,
     t.meta,
     CASE WHEN po.node_id IS NOT NULL THEN coalesce(po.text, '') END
   ) AS d
@@ -315,8 +336,9 @@ def downgrade() -> None:
         op.execute(f"DROP FUNCTION IF EXISTS {name}()")
     op.execute("DROP FUNCTION IF EXISTS fts_refresh(bigint[], boolean)")
     op.execute("DROP FUNCTION IF EXISTS fts_rows(bigint[], bigint)")
-    op.execute("DROP FUNCTION IF EXISTS fts_doc(text, text, text, text, text)")
+    op.execute("DROP FUNCTION IF EXISTS fts_doc(text, text, text, text, text, text)")
     op.execute('DROP FUNCTION IF EXISTS cf_add(tsvector, text, "char")')
+    op.execute("DROP FUNCTION IF EXISTS cf_cat(tsvector, tsvector)")
     op.execute('DROP FUNCTION IF EXISTS cf_tsv(text, "char")')
     op.execute("DROP FUNCTION IF EXISTS cf_fold(text)")
     op.execute("DROP VIEW IF EXISTS fts_name")

@@ -23,12 +23,12 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db import get_engine
-from app.models import MediaLibrary, Node
+from app.models import BlobText, MediaLibrary, Node
 from app.people import search as people_search
 from app.search import filters_photo, limits
 from tests.search import motoren
@@ -279,3 +279,36 @@ async def test_from_en_to_in_beide_motoren(client, admin, settings, motor):
         "dag ervoor.txt"
     }
     assert await _beide(client, headers, motor, **gelijk) == {"dag zelf.txt", "dag foto.png"}
+
+
+@motoren.needs_fts
+async def test_een_frase_loopt_niet_over_twee_kolommen(client, settings, monkeypatch):
+    """Een frase: opeenvolgende woorden in één kolom (Referentie, Keuze 5), zoals FTS5. Op
+    PostgreSQL plakt de index de kolommen aan elkaar (0014); daar mocht het laatste woord van de
+    naam met het eerste van de tekst geen frase zijn (review van PR #6, F11). Kolommen: naam,
+    tekst, OCR en meta van Brief.txt (van Eva)."""
+    from tests.search import wereld as W
+    from tests.search.test_search_access import kop
+
+    monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
+    w = await W.bouw_async(settings)
+    async with get_engine(settings).begin() as conn:
+        blob = (
+            await conn.execute(select(Node.blob_id).where(Node.id == w.ids["brief"]))
+        ).scalar_one()
+        await conn.execute(
+            update(BlobText)
+            .where(BlobText.blob_sha == blob)
+            .values(body="noord zuid", ocr="oost west", meta="boven onder")
+        )
+    eva = await kop(client, "eva")
+
+    async def gevonden(q: str) -> bool:
+        page = await _zoek(client, eva, q=q)
+        assert page["engine"] == "fts"
+        return "Brief.txt" in _namen(page)
+
+    for binnen in ('"noord zuid"', '"oost west"', '"boven onder"', '"brief txt"'):
+        assert await gevonden(binnen), binnen
+    for over in ('"txt noord"', '"zuid oost"', '"west boven"'):
+        assert not await gevonden(over), over
