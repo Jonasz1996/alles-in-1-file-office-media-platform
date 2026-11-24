@@ -11,7 +11,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+# --no-cache: anders blijft de cache van uv (de wheels en hun uitgepakte kopie) in
+# /root/.cache/uv in het image staan, zoals in de Dockerfile van het platform (a0.md, Open 9).
+# /opt/venv zelf is er niet anders door
+RUN uv sync --frozen --no-dev --no-cache
 
 COPY app ./app
 COPY migrations ./migrations

@@ -54,6 +54,21 @@ def test_het_blok_staat_direct_na_uv_sync():
     assert "" not in lines[run : end - 1]  # één blok: de RUN loopt door tot vlak voor COPY
 
 
+def test_geen_cache_van_uv_in_de_images():
+    """Elke uv sync en uv pip install in de Dockerfile van het platform en in die van het image
+    api (de job images, context api) draait met --no-cache: anders blijft de cache van uv in het
+    image staan (a0.md, Open 9; install-ci.md)."""
+    for path in (ROOT / "Dockerfile", ROOT / "api" / "Dockerfile"):
+        text = path.read_text(encoding="utf-8").replace("\\\n", " ")
+        runs = [" ".join(line.split()) for line in text.splitlines() if line.startswith("RUN ")]
+        uv = [run for run in runs if re.search(r"\buv (sync|pip install)\b", run)]
+        assert uv, path
+        for run in uv:
+            for part in re.split(r"&&|;", run):
+                if re.search(r"\buv (sync|pip install)\b", part):
+                    assert "--no-cache" in part.split(), (path, part)
+
+
 # Uit de export met hashes de blokken van precies de vijf namen van analyse.txt (veilig F1)
 AWK = "awk 'NR == FNR { vijf[$1]; next } /^[a-z]/ { mee = $1 in vijf } mee'"
 

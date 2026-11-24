@@ -71,7 +71,9 @@ Hier kon het niet (geen Docker-daemon). Op de PR-run:
 ## Open
 
 - `api/Dockerfile` (het image `api` van de job `images`) heeft nog `uv sync --frozen --no-dev`
-  zonder `--no-cache`. Dat bestand hoort niet bij P10.
+  zonder `--no-cache`. Dat bestand hoort niet bij P10. **Golf 4b**: gedaan, nu ook met
+  `--no-cache`; `test_geen_cache_van_uv_in_de_images` (`tests/analyse/test_analyse_image.py`)
+  houdt het vast voor beide Dockerfiles.
 - `test_install_update.sh` liep nergens echt. Is de job rood, dan zegt de log welke stap; een
   rode stap daar is een echte bevinding over office na een update, geen reden om de test te
   verzwakken.
