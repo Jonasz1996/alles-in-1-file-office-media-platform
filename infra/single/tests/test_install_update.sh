@@ -5,9 +5,10 @@
 # zegt, en weer vooruit. Hij bouwt het platform vier keer en start DS een paar keer (±17 minuten
 # met een warme build-cache, de eerste keer langer). Sinds 0.8.2 (P10) in CI, in de job
 # install-update op een schone runner. Als root, zoals op de LXC: .env (600) en de broncode zijn
-# van root (in CI met sudo -E, zodat uv, PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS blijven):
+# van root (geef PATH voor uv, en PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS als je die zet,
+# zelf mee via env: sudo -E hield ze in CI niet):
 #
-#   sudo -E env "PATH=$PATH" bash infra/single/tests/test_install_update.sh
+#   sudo env "PATH=$PATH" bash infra/single/tests/test_install_update.sh
 #
 # De stappen: A (fase 3 installeren, een beheerder met 2FA, twee bestanden met een versie), B
 # (bijwerken; /api/v1/office/status zegt starting tot de font-herstart van DS voorbij is, dan

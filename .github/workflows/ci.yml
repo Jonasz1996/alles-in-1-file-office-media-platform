@@ -1324,9 +1324,10 @@ jobs:
           # Chromium hier; de test (als root) vindt hem via hetzelfde pad
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
         run: uv run --with playwright python -m playwright install --with-deps chromium
-      # Als root, zoals op de LXC: .env (600) en de broncode zijn van root. sudo -E houdt
-      # PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS; PATH voor uv. Root krijgt een eigen cache
-      # van uv: die van setup-uv blijft van de runner (de stap na de job ruimt hem op)
+      # Als root, zoals op de LXC: .env (600) en de broncode zijn van root. sudo -E hield
+      # PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS niet (run 195: Chromium gezocht in
+      # /root/.cache, geen logs), dus gaan ze net als PATH (voor uv) mee via env. Root krijgt een
+      # eigen cache van uv: die van setup-uv blijft van de runner (de stap na de job ruimt hem op)
       - name: Office over een update, terug naar fase 3 en weer vooruit (test_install_update.sh)
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
@@ -1335,6 +1336,7 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/install-update"
           sudo -E env "PATH=$PATH" "UV_CACHE_DIR=$RUNNER_TEMP/uv-root" \
+            "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" "INSTALL_TEST_LOGS=$INSTALL_TEST_LOGS" \
             bash infra/single/tests/test_install_update.sh 2>&1 | tee "$RUNNER_TEMP/install-update/test.log"
       - uses: actions/upload-artifact@v4
         if: always()
