@@ -34,7 +34,7 @@
 # - de weg terug naar 0.8.0 van 59e0250 (head 0010) en naar 0.8.1 van ae163ac (head 0012) in de
 #   README en het runbook, net zo; in elk blok de kopie van de head van nu, en in het runbook
 #   precies wat db-downgrade zegt dat weggaat (de teksten van api/app/cli.py; terug naar 0.8.1
-#   gaat op SQLite niets weg, dus daar geen citaat);
+#   alleen wat 0.8.3 bijbracht: 0013 en 0014 doen op SQLite niets);
 # - de voorcontrole van --stappen (met een nep-docker; er wordt niets gebouwd): een werkmap die
 #   de test weigert, blijft zoals hij was, en het blok Samenvatting staat altijd als laatste;
 #   --stappen-081 maakt zijn eigen werkmap van root (1777, zoals /tmp) en weigert een werkmap die
@@ -59,11 +59,27 @@ ROLLBACK_HEAD=0009
 BACK080_SHA=59e0250ba63d31c41b92f7ec8430446810db8a74
 BACK080_HEAD=0010
 # De weg terug naar 0.8.1 (release 0.8.2, P10): de commit van 0.8.1, met migratie 0012. 0013 en
-# 0014 van 0.8.2 doen op SQLite niets; db-downgrade 0012 zet daar alleen de revisie terug
+# 0014 van 0.8.2 doen op SQLite niets; 0016, 0018 en 0019 van 0.8.3 halen hun tabellen en kolom weg
 BACK081_SHA=ae163ac69470343de7bc8d876db1a48e7da9331e
 BACK081_HEAD=0012
 BRANCH_NAME=claude/stappenplan-uitwerken-lu4uv3
 SEARCH_LINE="Zoeken op naam werkt meteen. De inhoud wordt nu op de achtergrond gelezen; volg het op /beheer → Zoeken en foto's."
+
+# De teksten van api/app/cli.py die db-downgrade noemt (wat weggaat), één per regel, in de gegeven volgorde
+lost_texts() {
+  python3 -I - "$top/api/app/cli.py" "$@" <<'PY'
+import ast
+import sys
+
+consts = {}
+for node in ast.parse(open(sys.argv[1], encoding="utf-8").read()).body:
+    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        if node.targets[0].id in sys.argv[2:]:
+            consts[node.targets[0].id] = ast.literal_eval(node.value)
+if all(name in consts for name in sys.argv[2:]):
+    print("\n".join(consts[name] for name in sys.argv[2:]))
+PY
+}
 
 fails=0
 oks=0
@@ -984,13 +1000,13 @@ WANT81 = want(SHA81, HEAD81, "0.8.1")
 consts = {}
 for node in ast.parse((top / "api/app/cli.py").read_text(encoding="utf-8")).body:
     if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-        if node.targets[0].id in ("BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
+        if node.targets[0].id in ("COPIES_LOST", "RESET_LOST", "ARR_LOST", "BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
             consts[node.targets[0].id] = ast.literal_eval(node.value)
-LOST80 = [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]
+# Terug naar 0.8.1 haalt 0013 tot en met 0019 weg. 0013 en 0014 doen op SQLite niets (PG_LOST en
+# PG_SEARCH_LOST gelden alleen op PostgreSQL); 0019, 0018 en 0016 van 0.8.3 wel
+LOST81 = [consts.get("COPIES_LOST"), consts.get("RESET_LOST"), consts.get("ARR_LOST")]
+LOST80 = LOST81 + [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]
 LOST71 = LOST80 + [consts.get("SEARCH_LOST")]
-# Terug naar 0.8.1 haalt 0013 en 0014 weg; op SQLite doen die niets, dus db-downgrade noemt niets
-# (PG_LOST en PG_SEARCH_LOST gelden alleen op PostgreSQL)
-LOST81 = []
 
 
 def section(text, start, ends):
@@ -1029,7 +1045,7 @@ if start < 0 or end < 0:
 else:
     in_order("bouwontwerp.md §3.10", design[start:end], WANT71)
 if None in LOST71:
-    problems.append("api/app/cli.py: BEELD_LOST, FACES_LOST of SEARCH_LOST niet gevonden")
+    problems.append("api/app/cli.py: een van de teksten *_LOST niet gevonden")
 docs = {
     "README.md": ((top / "infra/single/README.md"), "**Terug naar 0.8.1 van `ae163ac`.**", "**Terug naar 0.8.0 van `59e0250`.**", "**Terug naar 0.7.1.**", ("## ", "**Terug naar ")),
     "zoeken.md": ((top / "docs/runbooks/zoeken.md"), "## Terug naar 0.8.1 van `ae163ac`", "## Terug naar 0.8.0 van `59e0250`", "## Terug naar 0.7.1", ("## ",)),
@@ -1927,7 +1943,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
 #   |---|---|---|
 #   | 1 | 0.8.1 installeren met het script van ae163ac; de analyse standaard aan | exit 0; schema 0012; ANALYSE=aan; beide modellen van gezichten één keer geprobeerd en niet geladen, geen .onnx en geen tijdelijke map; de container analyse op het image van de app, met models_missing; zoeken op beeld niet geladen |
 #   | 2 | bijwerken naar deze versie (de branch) | exit 0; de kopie platform-0012 met het image van 0.8.1, vóór de nieuwe app; schema 0014; de app is deze versie; de analyse op het nieuwe image, met models_missing; plaatsen geladen; het bestand heel |
-#   | 3 | terug naar 0.8.1: precies het runbook | git fetch en cat-file; dc stop platform media (analyse blijft); db-backup (een kopie van 0014); db-downgrade 0012 met "ja", zonder een regel over wat weggaat; het script van ae163ac met PLATFORM_SRC_REF; schema 0012, de app van 0.8.1, de analyse met models_missing, het bestand heel |
+#   | 3 | terug naar 0.8.1: precies het runbook | git fetch en cat-file; dc stop platform media (analyse blijft); db-backup (een kopie van 0014); db-downgrade 0012 met "ja", met precies de regels van 0.8.3 over wat weggaat; het script van ae163ac met PLATFORM_SRC_REF; schema 0012, de app van 0.8.1, de analyse met models_missing, het bestand heel |
 #   | 4 | weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF | exit 0; schema 0014; een nieuwe kopie van 0012 met het image van 0.8.1, die van 0014 blijft; de analyse met models_missing; het bestand heel |
 #
 # De functies hieronder komen uit stappen() (bash: wat een functie definieert, is daarna overal
@@ -2065,12 +2081,16 @@ stappen_081() {
     fout "3.4: db-downgrade $from_head"
     tail -n 20 "$WORK/logs/3-downgrade.log"
   fi
-  # Op SQLite doen 0013 en 0014 niets: de vraag, en dan geen regel over wat weggaat (PG_LOST en
-  # PG_SEARCH_LOST alleen op PostgreSQL). Zonder terminal staat de uitkomst op de regel van de vraag
-  check "3.4: het commando vraagt om \"ja\", noemt niets dat weggaat, en zegt dat het schema op $from_head staat" eval \
+  # Op SQLite doen 0013 en 0014 niets (PG_LOST en PG_SEARCH_LOST alleen op PostgreSQL); wat 0.8.3
+  # bijbracht (0019, 0018, 0016) wel: de vraag, precies die drie regels (de teksten van
+  # api/app/cli.py, de nieuwste eerst) en niets anders dat weggaat. Zonder terminal staat de
+  # uitkomst op de regel van de vraag
+  lost081=$(lost_texts COPIES_LOST RESET_LOST ARR_LOST)
+  check "3.4: het commando vraagt om \"ja\", noemt precies wat 0.8.3 bijbracht als wat weggaat, en zegt dat het schema op $from_head staat" eval \
     'grep -qxF "De database gaat van revisie $schema_head terug naar $from_head. Wat alleen in de nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?" "$WORK/logs/3-downgrade.log" &&
       grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $from_head." "$WORK/logs/3-downgrade.log" &&
-      ! grep -qE "gaat weg|gaan weg|Weg zijn daarna" "$WORK/logs/3-downgrade.log"'
+      [ -n "$lost081" ] &&
+      [ "$(sed -n "/^De database gaat van revisie /,/^Typ /{/^De database gaat van revisie /d;/^Typ /d;p}" "$WORK/logs/3-downgrade.log")" = "$lost081" ]'
   rc=0
   step 3-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || rc=$?
   check "3.5: het script van $OLD_VERSION stopt niet (exit $rc)" test "$rc" = 0
