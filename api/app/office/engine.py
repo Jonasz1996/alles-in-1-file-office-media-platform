@@ -167,9 +167,16 @@ class Engine(Protocol):
         ...
 
     async def convert(
-        self, src_url: str, ext: str, key: str, title: str, out: Path, limit: int
+        self,
+        src_url: str,
+        ext: str,
+        key: str,
+        title: str,
+        out: Path,
+        limit: int,
+        output: str = "pdf",
     ) -> None:
-        """ConvertError bij een fout."""
+        """Omzetten naar output (standaard pdf). ConvertError bij een fout."""
         ...
 
     async def forgotten(self) -> list[str]: ...

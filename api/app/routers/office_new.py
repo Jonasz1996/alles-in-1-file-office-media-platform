@@ -1,4 +1,4 @@
-"""POST /api/v1/office/new: een leeg docx, xlsx of pptx in een map (Keuze 24, §2 O4).
+"""POST /api/v1/office/new: een leeg docx, xlsx, pptx of txt in een map (Keuze 24, §2 O4).
 
 Het nieuwe bestand is gewoon een bestand: place_file met conflict "rename", dus met de rechten,
 het quotum en de gebeurtenissen van een upload. In een gedeelde map met schrijfrecht wordt het
@@ -91,11 +91,13 @@ async def new_document(
     blobs: Store,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> NodeOut:
-    """Een leeg document in map parent_id; daarna opent de web-app het in de editor."""
-    if not runtime.settings().office_configured:
-        raise errors.fail(503, "office_off", OFF)
-    if not (await office_policy(request.app).get(session)).enabled:
-        raise errors.fail(503, "office_off", OFF)
+    """Een leeg document in map parent_id; daarna opent de web-app het in de editor. Een leeg
+    tekstbestand (kind txt) kan altijd, ook zonder office: de web-app bewerkt tekst zelf."""
+    if body.kind != "txt":
+        if not runtime.settings().office_configured:
+            raise errors.fail(503, "office_off", OFF)
+        if not (await office_policy(request.app).get(session)).enabled:
+            raise errors.fail(503, "office_off", OFF)
 
     # De map: zoals bij uploaden (get_live_dir), maar een album geeft 422 album en wat er niet
     # is (of niet zichtbaar) 404 folder_not_found

@@ -10,7 +10,7 @@ want de handtekening van de link hangt alleen af van pad, expires en het linkgeh
 
 import re
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from app.config import Settings
 
@@ -18,6 +18,10 @@ from app.config import Settings
 _SEGMENT = r"[A-Za-z0-9_=-][A-Za-z0-9._=-]*"
 _TAIL = rf"(?:/{_SEGMENT})+"
 _PREFIX = r"(?:/office)?"
+# "Kopie opslaan als" (onRequestSaveAs): DS zet na de key nog een eigen stuk (verbinding,
+# volgnummer) en als laatste segment de titel, met procentcodes (spaties, accenten)
+_SAVE_AS_SEGMENT = r"[A-Za-z0-9._=~%()+,!'-]+"
+_SAVE_AS_TAIL = rf"(?:/{_SAVE_AS_SEGMENT})+"
 
 
 def internal_url(settings: Settings, path: str) -> str:
@@ -35,13 +39,32 @@ def _pattern(key: str, kind: str) -> re.Pattern:
         body = rf"/cache/files/data/conv_{k}(?:_\d+)?"
     elif kind == "forgotten":
         body = rf"/cache/files/forgotten/{k}"
+    elif kind == "saveas":
+        body = rf"/cache/files/data/{k}[A-Za-z0-9_-]{{0,128}}"
+        return re.compile(rf"{_PREFIX}({body}{_SAVE_AS_TAIL})")
     else:
         raise ValueError(f"onbekende soort {kind}")
     return re.compile(rf"{_PREFIX}({body}{_TAIL})")
 
 
+def _safe_escapes(path: str) -> bool:
+    """Procentcodes die na decoderen geen /, \\, NUL, . of .. maken (alleen voor saveas)."""
+    if re.search(r"%(?![0-9A-Fa-f]{2})", path):
+        return False
+    decoded = unquote(path)
+    if decoded.count("/") != path.count("/"):
+        return False
+    if any(c in decoded for c in ("\\", "\x00")):
+        return False
+    return not any(segment in (".", "..") for segment in decoded.split("/"))
+
+
 def rewrite(
-    settings: Settings, url: str, *, key: str, kind: Literal["data", "conv", "forgotten"]
+    settings: Settings,
+    url: str,
+    *,
+    key: str,
+    kind: Literal["data", "conv", "forgotten", "saveas"],
 ) -> str:
     """Het adres bij PLATFORM_OFFICE_URL voor een adres uit een antwoord van DS. Alleen pad en
     query; het pad moet bij onze key passen. Anders ValueError."""
@@ -52,7 +75,7 @@ def rewrite(
         raise ValueError("ongeldig schema")
     path = parts.path
     # Geen procentcodes in het pad: zo kan niets na decoderen een / of .. worden
-    if "%" in path:
+    if "%" in path and (kind != "saveas" or not _safe_escapes(path)):
         raise ValueError("procentcode in het pad")
     if any(segment in (".", "..") for segment in path.split("/")):
         raise ValueError("relatief pad")

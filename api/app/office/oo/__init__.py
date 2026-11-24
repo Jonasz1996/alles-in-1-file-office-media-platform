@@ -95,9 +95,16 @@ class OnlyOffice:
         await editor.drop(key, ds_uids)
 
     async def convert(
-        self, src_url: str, ext: str, key: str, title: str, out: Path, limit: int
+        self,
+        src_url: str,
+        ext: str,
+        key: str,
+        title: str,
+        out: Path,
+        limit: int,
+        output: str = "pdf",
     ) -> None:
-        await conversion.convert(self.settings, src_url, ext, key, title, out, limit)
+        await conversion.convert(self.settings, src_url, ext, key, title, out, limit, output)
 
     async def forgotten(self) -> list[str]:
         return await admin.forgotten_list()
