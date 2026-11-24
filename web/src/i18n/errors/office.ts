@@ -15,6 +15,7 @@ export default {
   office_gate: { en: "Your access to the editor has ended; open the document again" },
   office_token: { en: "Invalid or expired token from the document server" },
   office_convert_failed: { en: "The document could not be converted to PDF (code {code})" },
+  office_convert_to_failed: { en: "The file could not be converted (code {code})" },
   pdf_pending: { en: "The PDF is still being made; try again in a moment" },
   office_owner_gone: { en: "The owner of this document no longer exists" },
   office_misconfigured: {

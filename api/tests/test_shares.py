@@ -829,3 +829,33 @@ async def test_versies_van_wat_gedeeld_is(client, setup):
     ]:
         r = await client.request(method, url, params=params, headers=bert)
         assert r.status_code == 404, (method, url, r.text)
+
+
+@pytest.mark.anyio
+async def test_nieuwe_inhoud_met_if_match(client, setup, settings):
+    """If-Match (0.8.3, tekst bewerken in de viewer): alleen opslaan als de inhoud nog die is
+    waar de wijziging op voortbouwt; anders 412 content_changed en blijft alles zoals het was.
+    Ook voor wie alleen dit ene bestand gedeeld kreeg; "*" of zonder header: altijd."""
+    s = setup
+    jonas, anna = s["jonas"], s["anna"]
+    url = f"/api/v1/files/{s['a']}/content"
+    await share_with(client, jonas, s["a"], user_id=s["anna_id"], permission="write")
+    start = (await client.get(f"/api/v1/files/{s['a']}", headers=jonas)).json()["etag"]
+    r = await client.put(url, content=b"van anna", headers={**anna, "If-Match": start})
+    assert r.status_code == 200, r.text
+    nu = r.json()["etag"]
+    assert nu != start
+    # Jonas bouwt nog voort op de oude inhoud: geweigerd, er verandert niets
+    r = await client.put(url, content=b"van jonas", headers={**jonas, "If-Match": start})
+    assert r.status_code == 412 and code(r) == "content_changed", r.text
+    assert (await client.get(url, headers=jonas)).content == b"van anna"
+    assert len(await get(client, jonas, f"/api/v1/files/{s['a']}/versions")) == 1
+    # Met de etag van nu (ook als een van meerdere, of zwak) wel
+    r = await client.put(url, content=b"van jonas", headers={**jonas, "If-Match": f'"x", W/{nu}'})
+    assert r.status_code == 200, r.text
+    # "*" en zonder header: altijd
+    r = await client.put(url, content=b"ster", headers={**jonas, "If-Match": "*"})
+    assert r.status_code == 200
+    r = await client.put(url, content=b"zonder", headers=jonas)
+    assert r.status_code == 200
+    await check_refs(settings)

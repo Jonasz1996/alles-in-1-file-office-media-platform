@@ -9,6 +9,11 @@
 // De haak van office in de werkbalk (fase 4, van O0): "Bewerken" (E) en "Downloaden als PDF".
 // Of ze er zijn, zeggen office/actions.ts (O2) en office/pdf.ts (O3); nooit via een publieke
 // link en nooit bij een eerdere versie. Zonder office zijn ze er niet, precies zoals fase 3.
+//
+// Tekst bewerken (0.8.3) zit in TextView zelf. Met wijzigingen die nog niet zijn opgeslagen
+// vraagt de viewer eerst of ze weg mogen, bij sluiten, bij het volgende bestand en bij Terug in
+// de browser (leaveGuard.ts), en de browser bij het verlaten van de pagina (beforeunload). Een
+// nieuwe etag laat TextView staan (viewKeys.ts).
 
 import {
   type JSX,
@@ -31,12 +36,15 @@ import type { HookState, OfficeTarget } from "../office/types";
 import { Button, IconButton } from "../ui/Button";
 import { pushScope, useShortcuts } from "../ui/keys";
 import { openShortcutHelp } from "../ui/ShortcutHelp";
+import { confirm } from "../ui/dialogs";
 import { Spinner } from "../ui/Spinner";
 import { modals } from "../ui/topLayer";
 import type { ViewerDetail } from "./api";
+import { backGuard, onBeforeUnload, routerIndex, whenMayLeave } from "./leaveGuard";
 import { moreComing, previewReadyFor, type ViewKind, viewKind } from "./media";
 import { type Source, sourceOf } from "./source";
 import type { ViewerItem, ViewerProps } from "./types";
+import { fileKeyOf, keyOf, type LoadedLike, shownLoaded } from "./viewKeys";
 import "./viewer.css";
 
 const ZoomView = lazy(() => import("./ZoomView"));
@@ -52,6 +60,16 @@ const PENDING_ROUNDS = 20;
 const PENDING_MS = 3000;
 /** Zo ver (px) vegen is naar het volgende bestand. */
 const SWIPE = 60;
+/** Wijzigingen in een tekst die nog niet zijn opgeslagen: weggooien? */
+function askLeave(): Promise<boolean> {
+  return confirm({
+    title: t("viewer.text.edit.leaveTitle"),
+    message: t("viewer.text.edit.leaveMessage"),
+    confirm: t("viewer.text.edit.leaveConfirm"),
+    danger: true,
+  });
+}
+
 /** Een haak van office die er niet is. */
 const NO_HOOK: HookState = { visible: false, reason: null };
 
@@ -65,10 +83,6 @@ function scrollsSideways(from: Element | null, direction: -1 | 1): boolean {
     if (direction < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1) return true;
   }
   return false;
-}
-
-function keyOf(item: ViewerItem): string {
-  return `${item.id}|${item.etag ?? ""}|${item.version?.id ?? ""}`;
 }
 
 /** Details per bestand, voor deze viewer: terug naar een bestand vraagt niets opnieuw. */
@@ -89,17 +103,28 @@ function useDetails(source: Source) {
   );
 }
 
-type Loaded = { key: string; detail?: ViewerDetail; error?: unknown };
+type Loaded = LoadedLike<ViewerDetail>;
 
-export default function Viewer({ items, index, onIndexChange, onClose: close, onNeedMore, source }: ViewerProps): JSX.Element | null {
+export default function Viewer({
+  items,
+  index,
+  onIndexChange,
+  onClose: close,
+  onNeedMore,
+  source,
+  editText,
+}: ViewerProps): JSX.Element | null {
   const src = sourceOf(source);
   // Hooguit één keer sluiten: Esc komt zowel als sneltoets als als cancel van de <dialog>, en
   // twee keer "terug" zou ook de pagina eronder verlaten
   const closed = useRef(false);
   const onClose = useCallback(() => {
     if (closed.current) return;
-    closed.current = true;
-    close();
+    whenMayLeave(() => {
+      if (closed.current) return;
+      closed.current = true;
+      close();
+    }, askLeave);
   }, [close]);
   const item = items[index] as ViewerItem | undefined;
   const dialog = useRef<HTMLDialogElement>(null);
@@ -111,12 +136,28 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
   const zoomed = useRef(false);
   const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
   const key = item ? keyOf(item) : "";
+  const fileKey = item ? fileKeyOf(item) : "";
   // Office: alleen voor wie ingelogd is. Een item uit Bestanden is een FileNode (met kind en
   // permission); zonder permission is het van jou, zoals overal
   const office = useOfficeStatus(src.kind === "user");
   const target = item as (ViewerItem & OfficeTarget) | undefined;
   const editHook = target && src.kind === "user" ? canEdit(target, office) : NO_HOOK;
   const pdfHook = target && src.kind === "user" ? canPdf(target, office) : NO_HOOK;
+
+  // De pagina verlaten met tekst die nog niet is opgeslagen: de browser vraagt het. Terug of
+  // Vooruit in de browser: eerst wij (capture, vóór de router die ?bestand= zou weghalen)
+  useEffect(() => {
+    window.addEventListener("beforeunload", onBeforeUnload);
+    const onPop = backGuard(
+      { index: routerIndex, go: (delta) => window.history.go(delta), ask: askLeave },
+      routerIndex(window.history.state),
+    );
+    window.addEventListener("popstate", onPop, { capture: true });
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("popstate", onPop, { capture: true });
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const el = dialog.current;
@@ -159,11 +200,11 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
       getDetail(item, fresh).then(
         (detail) => {
           if (!live) return;
-          setLoaded({ key, detail });
+          setLoaded({ key, file: fileKey, detail });
           clearTimeout(timer);
           if (moreComing(detail) && ++rounds < PENDING_ROUNDS) timer = setTimeout(() => load(true), PENDING_MS);
         },
-        (e: unknown) => live && setLoaded({ key, error: e }),
+        (e: unknown) => live && setLoaded({ key, file: fileKey, error: e }),
       );
     };
     load(false);
@@ -206,14 +247,14 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
         onNeedMore?.(step);
         return;
       }
-      onIndexChange(next);
+      whenMayLeave(() => onIndexChange(next), askLeave);
     },
     [index, items.length, onIndexChange, onNeedMore],
   );
 
   const goTo = useCallback(
     (i: number) => {
-      if (i !== index && i >= 0 && i < items.length) onIndexChange(i);
+      if (i !== index && i >= 0 && i < items.length) whenMayLeave(() => onIndexChange(i), askLeave);
     },
     [index, items.length, onIndexChange],
   );
@@ -292,7 +333,9 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
 
   if (!item) return null;
 
-  const current = loaded?.key === key ? loaded : null;
+  // Een tekst houdt het vorige detail terwijl het nieuwe van een andere etag komt: anders zou
+  // TextView even weg zijn (en het bewerken kwijt)
+  const current = shownLoaded(loaded, key, fileKey, (d: ViewerDetail) => viewKind(item, d.meta) === "text");
   const detail = current?.detail;
   const kind: ViewKind = viewKind(item, detail?.meta ?? {});
 
@@ -352,7 +395,9 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
       />
     );
   } else if (kind === "text") {
-    body = <TextView key={key} item={item} detail={detail} source={src} />;
+    // Op fileKey, niet key: een nieuwe etag (opgeslagen, door jou of een ander) begint niet
+    // opnieuw; TextView ziet hem zelf (bewerken blijft, met een melding)
+    body = <TextView key={fileKey} item={item} detail={detail} source={src} startEditing={editText === item.id} />;
   } else if (kind === "office") {
     body = <OfficeView key={key} item={item} detail={detail} source={src} />;
   } else if (kind === "archive") {

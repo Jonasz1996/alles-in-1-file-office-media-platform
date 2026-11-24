@@ -82,6 +82,7 @@ from app.routers import (
     office_internal,
     office_new,
     office_pdf,
+    office_saveas,
     pages_words,
     people,
     people_faces,
@@ -625,6 +626,7 @@ app.include_router(live_events.router)
 app.include_router(office.router)
 app.include_router(office_pdf.router)
 app.include_router(office_new.router)
+app.include_router(office_saveas.router)
 app.include_router(admin_office.router)
 # Zoeken en foto's (fase 6, §3.4): zoeken via select_engine; de rest zijn stubs van Z0 die
 # 501 not_built geven tot hun pakket ze vult

@@ -4,8 +4,8 @@
 // zonder alles opnieuw te laden. Selecteren met muis, aanraking en toetsenbord; acties uit één
 // register (browser/actions.ts) in de selectiebalk, het contextmenu en als sneltoets; slepen
 // naar een map in de lijst of in het pad; bestanden van buiten de browser loslaten = uploaden.
-// Met office (fase 4) wordt "Nieuwe map" het menu Nieuw (O): Map plus wat office/newItems.ts
-// geeft. Zonder office blijft het de knop van fase 3.
+// Waar je mag schrijven is "Nieuwe map" het menu Nieuw (O): Map plus wat office/newItems.ts geeft
+// (Tekstbestand altijd, sinds 0.8.3; met office ook Document, Werkblad en Presentatie).
 
 import {
   type DragEvent,
@@ -66,6 +66,7 @@ import { clickSelect, keySelect, SelectionStore, useSelection } from "./ui/selec
 import { announce, toast } from "./ui/toast";
 import { hasFiles, UploadButtons, uploadDropped } from "./upload/index";
 import { useViewerParam, Viewer } from "./viewer";
+import { withViewing } from "./viewer/param";
 import "./files.css";
 import "./share.css";
 import "./browser/browser.css";
@@ -119,6 +120,11 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
   const sel = useSelection(selection);
   const clip = useSyncExternalStore(clipboard.subscribe, clipboard.getSnapshot, clipboard.getSnapshot);
   const [viewing, setViewing] = useViewerParam();
+  // Een nieuw tekstbestand: de viewer begint met bewerken (één keer: weg zodra hij iets anders toont)
+  const [editText, setEditText] = useState<string | null>(null);
+  useEffect(() => {
+    if (editText !== null && viewing !== editText) setEditText(null);
+  }, [viewing]);
   const [sharingFolder, setSharingFolder] = useState(false);
   const [dropId, setDropId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -316,9 +322,20 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
     }
   }
 
-  // --- het menu Nieuw (fase 4): Map plus de items van office; zonder die items de knop van fase 3 ---
+  // --- het menu Nieuw (fase 4): Map plus de items van office/newItems.ts (Tekstbestand altijd, de
+  // kantoorsoorten met office); zonder items de knop van fase 3 ---
   const extraNew: MenuItem[] =
-    folder && can.mkdir ? newItems({ folder, status: office, added: (node) => store.upsert([node]) }) : [];
+    folder && can.mkdir
+      ? newItems({
+          folder,
+          status: office,
+          added: (node) => store.upsert([node]),
+          openText: (node) => {
+            setEditText(node.id);
+            setViewing(node.id);
+          },
+        })
+      : [];
   const newMenu = extraNew.length > 0;
   const newMenuItems = (): MenuItem[] => [
     { id: "new-folder", label: t("browser.office.new.folder"), icon: "new-folder", shortcut: "n", onSelect: () => void newFolder() },
@@ -458,12 +475,13 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
   const viewerItems = useMemo(() => {
     if (!open) return [];
     const out: FileNode[] = [];
-    for (const id of viewIds) {
+    // Ook het bestand dat open moet als het filter het verbergt (een nieuw tekstbestand)
+    for (const id of withViewing(viewIds, snap.ids, viewing)) {
       const n = snap.nodes.get(id);
       if (n && n.kind === "file") out.push(n);
     }
     return out;
-  }, [open, viewIds, snap.version]);
+  }, [open, viewIds, snap.ids, viewing, snap.version]);
   const viewIndex = viewing ? viewerItems.findIndex((n) => n.id === viewing) : -1;
 
   const cut = useMemo(
@@ -730,6 +748,7 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
             index={viewIndex}
             onIndexChange={(i) => setViewing(viewerItems[i].id)}
             onClose={() => setViewing(null)}
+            editText={editText}
           />
         </Suspense>
       )}

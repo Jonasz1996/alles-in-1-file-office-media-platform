@@ -129,7 +129,14 @@ UIT_BEHEER = (
     "daar ANALYSE=uit, draai het script dan opnieuw met ANALYSE=aan; daarna zet ieder het zelf aan "
     "bij Account → Foto's. Zie docs/runbooks/analyse.md."
 )
+# Wat de web van 0.8.3 anders toont: in Bestanden is de knop Nieuwe map het menu Nieuw, ook zonder
+# office (Map en Tekstbestand; web/src/office/newItems.ts)
+NIEUWE_MAP_080 = '    - button "Nieuwe map"'
+NIEUW = '    - button "Nieuw"'
 ANDERS: dict[str, list[tuple[str, str]]] = {
+    "eva /": [(NIEUWE_MAP_080, NIEUW)],
+    "eva /map/{map}": [(NIEUWE_MAP_080, NIEUW)],
+    "jonas /": [(NIEUWE_MAP_080, NIEUW)],
     "eva /zoeken?q=strand&mode=image": [(LATER_080, LATER)],
     "gijs /zoeken?q=strand&mode=image": [(LATER_080, LATER)],
     "jonas /zoeken?q=strand&mode=image": [(LATER_080, LATER)],

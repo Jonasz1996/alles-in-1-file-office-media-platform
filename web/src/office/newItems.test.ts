@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { ApiError, api, type FileNode } from "../api";
 import { dirNode, fileNode } from "../browser/testNodes";
 import { loadAreas, resetI18nForTests } from "../i18n";
+import * as router from "../router";
 import { announcer, toasts } from "../ui/toast";
 import { newDocument } from "./api";
 import { createDocument, NEW_KINDS, type NewItemsDeps, newItems } from "./newItems";
@@ -44,31 +45,35 @@ afterEach(() => {
 });
 
 describe("welke items er in het menu Nieuw komen", () => {
-  it("zonder office, bij een oudere server of met office uit: geen, dus precies fase 3", () => {
-    expect(newItems({ folder, status: null, added: () => {} })).toEqual([]);
-    expect(
-      newItems({ folder, status: { ...on, enabled: false, editing: false, state: "off" }, added: () => {} }),
-    ).toEqual([]);
+  it("zonder office, bij een oudere server of met office uit: alleen Tekstbestand (dat kan altijd)", () => {
+    const ids = (status: OfficeStatus | null) => newItems({ folder, status, added: () => {} }).map((i) => i.id);
+    expect(ids(null)).toEqual(["new-txt"]);
+    expect(ids({ ...on, enabled: false, editing: false, state: "off" })).toEqual(["new-txt"]);
+    const [txt] = newItems({ folder, status: null, added: () => {} });
+    expect(txt?.label).toBe("Tekstbestand");
+    expect(txt?.icon).toBe("document");
   });
 
-  it("als de editor nu niet bereikbaar is of verkeerd staat: ook geen", () => {
+  it("als de editor nu niet bereikbaar is of verkeerd staat: ook alleen Tekstbestand", () => {
     for (const state of ["down", "starting", "misconfigured"] as const) {
-      expect(newItems({ folder, status: { ...on, editing: false, state }, added: () => {} })).toEqual([]);
+      expect(newItems({ folder, status: { ...on, editing: false, state }, added: () => {} }).map((i) => i.id)).toEqual([
+        "new-txt",
+      ]);
     }
   });
 
-  it("met bewerken aan: Document, Werkblad en Presentatie, in die volgorde", () => {
+  it("met bewerken aan: Document, Werkblad, Presentatie en Tekstbestand, in die volgorde", () => {
     const items = newItems({ folder, status: on, added: () => {} });
-    expect(items.map((i) => i.id)).toEqual(["new-docx", "new-xlsx", "new-pptx"]);
-    expect(items.map((i) => i.label)).toEqual(["Document", "Werkblad", "Presentatie"]);
+    expect(items.map((i) => i.id)).toEqual(["new-docx", "new-xlsx", "new-pptx", "new-txt"]);
+    expect(items.map((i) => i.label)).toEqual(["Document", "Werkblad", "Presentatie", "Tekstbestand"]);
     expect(items.every((i) => i.icon === "document" && !i.disabled)).toBe(true);
     expect(NEW_KINDS).toEqual(["docx", "xlsx", "pptx"]);
   });
 
-  it("alleen de soorten die de server kan maken (new_kinds), in de vaste volgorde", () => {
+  it("alleen de soorten die de server kan maken (new_kinds), in de vaste volgorde; Tekstbestand altijd", () => {
     const items = newItems({ folder, status: { ...on, new_kinds: ["pptx", "docx"] }, added: () => {} });
-    expect(items.map((i) => i.id)).toEqual(["new-docx", "new-pptx"]);
-    expect(newItems({ folder, status: { ...on, new_kinds: [] }, added: () => {} })).toEqual([]);
+    expect(items.map((i) => i.id)).toEqual(["new-docx", "new-pptx", "new-txt"]);
+    expect(newItems({ folder, status: { ...on, new_kinds: [] }, added: () => {} }).map((i) => i.id)).toEqual(["new-txt"]);
   });
 
   it("in het Engels", async () => {
@@ -76,7 +81,7 @@ describe("welke items er in het menu Nieuw komen", () => {
     await loadAreas(["common", "browser"]);
     try {
       const items = newItems({ folder, status: on, added: () => {} });
-      expect(items.map((i) => i.label)).toEqual(["Document", "Spreadsheet", "Presentation"]);
+      expect(items.map((i) => i.label)).toEqual(["Document", "Spreadsheet", "Presentation", "Text file"]);
     } finally {
       resetI18nForTests("nl");
       await loadAreas(["common", "browser"]);
@@ -155,5 +160,49 @@ describe("een item kiezen", () => {
     expect(request).toHaveBeenCalledWith("POST", "/api/v1/office/new", { parent_id: "map", kind: "pptx" });
     expect(node?.name).toBe("Nieuwe presentatie.pptx");
     expect(open).toHaveBeenCalledWith(node);
+  });
+});
+
+describe("Nieuw tekstbestand", () => {
+  it("maakt een txt in deze map en opent hem in de viewer, meteen om te bewerken (niet de editor)", async () => {
+    const d = deps(async () => made("Nieuw tekstbestand.txt"));
+    const added = vi.fn();
+    const openText = vi.fn();
+    const items = newItems({ folder, status: null, added, openText }, d);
+    const txt = items.find((i) => i.id === "new-txt");
+    txt?.onSelect?.();
+    await vi.waitFor(() => expect(openText).toHaveBeenCalledTimes(1));
+    expect(d.create).toHaveBeenCalledWith({ parent_id: "map", kind: "txt" });
+    expect(added).toHaveBeenCalledWith(made("Nieuw tekstbestand.txt"));
+    expect(openText).toHaveBeenCalledWith(made("Nieuw tekstbestand.txt"));
+    expect(d.open).not.toHaveBeenCalled();
+    expect(announcer.getSnapshot().polite.trim()).toBe("Nieuw tekstbestand.txt gemaakt");
+  });
+
+  it("zonder openText: naar de map met ?bestand=", async () => {
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const d = deps(async () => made("Nieuw tekstbestand.txt"));
+    const node = await createDocument({ folder, added: () => {} }, "txt", d);
+    expect(node?.name).toBe("Nieuw tekstbestand.txt");
+    expect(navigate).toHaveBeenCalledWith("/map/map?bestand=nieuw");
+    expect(d.open).not.toHaveBeenCalled();
+  });
+
+  it("een fout (alleen leesrecht): een melding, geen viewer", async () => {
+    const d = deps(async () => {
+      throw new ApiError(403, "Je mag hier alleen kijken", "read_only");
+    });
+    const openText = vi.fn();
+    expect(await createDocument({ folder, added: () => {}, openText }, "txt", d)).toBeNull();
+    expect(openText).not.toHaveBeenCalled();
+    expect(errors()).toEqual(["Je mag hier alleen kijken"]);
+  });
+
+  it("de echte aanroep: POST /api/v1/office/new met kind txt", async () => {
+    const request = vi.spyOn(api, "request").mockResolvedValue(made("Nieuw tekstbestand.txt"));
+    const openText = vi.fn();
+    await createDocument({ folder, added: () => {}, openText }, "txt", { create: newDocument, open: vi.fn() });
+    expect(request).toHaveBeenCalledWith("POST", "/api/v1/office/new", { parent_id: "map", kind: "txt" });
+    expect(openText).toHaveBeenCalledTimes(1);
   });
 });

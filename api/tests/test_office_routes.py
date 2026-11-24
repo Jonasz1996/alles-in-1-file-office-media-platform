@@ -130,6 +130,8 @@ STUBS = [
     ("POST", "/api/v1/office/new", {"parent_id": NODE, "kind": "docx", "name": "Nieuw"}),
     ("POST", f"/api/v1/office/files/{NODE}/convert", None),
     ("POST", f"/api/v1/office/files/{NODE}/pdf", None),
+    ("POST", f"/api/v1/office/files/{NODE}/save-as", {"key": "k", "url": "/x", "file_type": "txt"}),
+    ("POST", f"/api/v1/office/files/{NODE}/convert-to", {"format": "txt"}),
     ("GET", f"/api/v1/office/pdf/{NODE}?token=x", None),
 ]
 ADMIN_STUBS = [
