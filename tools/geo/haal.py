@@ -7,6 +7,10 @@ een vaste sha256, en zet het pas op zijn plek als de sha256 klopt:
     python3 -I tools/geo/haal.py --naar DIR          # ophalen wat ontbreekt
     python3 -I tools/geo/haal.py --naar DIR --check  # alleen controleren, niets ophalen
 
+Een netwerkfout (ook TLS, of een download die halverwege afbreekt) krijgt nog drie pogingen,
+zoals curl --retry 3 in install.sh; een verkeerde grootte of sha256 niet, want dan klopt de
+bron zelf niet.
+
 Exit 0 als beide bestanden er goed staan, 1 anders. De app bouwt er places.sqlite van
 (app.cli geo-load, app/geo/load.py); de sha256 hieronder zijn dezelfde als daar (een test
 vergelijkt ze). De bronnen zijn data, geen afhankelijkheid: het pakket reverse_geocoder wordt
@@ -17,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -40,6 +46,17 @@ BRONNEN = (
         "2a2e781b5f69376d922b78fe8978f1350c84fce0ddb07e02c834ecf98b57c75c",
     ),
 )
+
+
+POGINGEN = 4  # één poging en drie nieuwe, zoals curl --retry 3 in install.sh
+WACHT = 5  # seconden voor de tweede poging; daarna telkens het dubbele
+
+# Fouten waarbij een nieuwe poging kan helpen: het netwerk, TLS, een afgebroken download.
+NETWERKFOUTEN = (OSError, http.client.HTTPException)
+
+
+class Onvolledig(OSError):
+    """De verbinding sloot voor het hele bestand er was."""
 
 
 def _sha256(pad: Path) -> str:
@@ -67,11 +84,29 @@ def haal(naar: Path, naam: str, url: str, grootte: int, sha256: str) -> None:
                     raise ValueError(f"{naam}: groter dan {grootte} bytes")
                 h.update(stuk)
                 f.write(stuk)
-        if n != grootte or h.hexdigest() != sha256:
-            raise ValueError(f"{naam}: verkeerde grootte of sha256")
+        if n < grootte:
+            raise Onvolledig(f"{naam}: verbinding sloot na {n} van {grootte} bytes")
+        if h.hexdigest() != sha256:
+            raise ValueError(f"{naam}: verkeerde sha256")
         os.replace(part, naar / naam)
     finally:
         part.unlink(missing_ok=True)
+
+
+def haal_met_pogingen(naar: Path, naam: str, url: str, grootte: int, sha256: str,
+                      pogingen: int = POGINGEN, slaap=time.sleep) -> None:
+    """haal(), met een nieuwe poging na een netwerkfout; een ValueError meteen door."""
+    for poging in range(1, pogingen + 1):
+        try:
+            haal(naar, naam, url, grootte, sha256)
+            return
+        except NETWERKFOUTEN as e:
+            if poging == pogingen:
+                raise
+            wacht = WACHT * 2 ** (poging - 1)
+            print(f"{naam}: poging {poging} mislukt ({e}); over {wacht} s opnieuw",
+                  file=sys.stderr)
+            slaap(wacht)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,9 +125,9 @@ def main(argv: list[str] | None = None) -> int:
             fout = 1
             continue
         try:
-            haal(args.naar, naam, url, grootte, sha256)
+            haal_met_pogingen(args.naar, naam, url, grootte, sha256)
             print(f"{naam}: opgehaald")
-        except (OSError, ValueError) as e:
+        except (*NETWERKFOUTEN, ValueError) as e:
             print(f"{naam}: niet opgehaald ({e})", file=sys.stderr)
             fout = 1
     return fout
