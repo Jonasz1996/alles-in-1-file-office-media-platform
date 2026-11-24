@@ -21,6 +21,9 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
   schakelaar intussen weer op "mij", dan stopt hij: dan is wat er staat weer goed, en leest
   photometa de rest opnieuw. Een nieuwe "uit" zet altijd een nieuwe job klaar, ook als er een
   loopt; de opruimronde (sweep_off) zet hem opnieuw klaar voor wie "uit" heeft en nog rijen heeft.
+  Op PostgreSQL neemt elk stuk eerst het slot van de boom, zoals write(): de DELETE zet tot CHUNK
+  rijen van photo_geo vast in de volgorde van zijn plan, een prullenbak of verplaatsing erboven
+  dezelfde rijen op mpath (40P01; tests/test_pg_photo_rows.py).
 - copied(): heeft een gekopieerd bestand een inhoud met een plek (voor de haak van een kopie).
 - De job "geo.places" (I1, A4): na een nieuwe bouw van places.sqlite (load.start bij de start,
   of geo-load) krijgen de rijen zonder plaats en zonder land die er al stonden die alsnog, uit
@@ -275,6 +278,10 @@ async def run_off(settings: Settings, payload: dict[str, Any]) -> None:
     removed = 0
     while True:
         async with maker() as db:
+            # Op PostgreSQL eerst het slot van de boom, vóór de eerste rij van photo_geo: de
+            # DELETE zet ze vast in de volgorde van zijn plan, een prullenbak of verplaatsing
+            # erboven in die van mpath (40P01; tests/test_pg_photo_rows.py). Op SQLite niets.
+            await lock_tree(db)
             if await location_on(db, user_id):
                 break  # weer "mij": wat er staat mag blijven
             n = await wipe_chunk(db, user_id)

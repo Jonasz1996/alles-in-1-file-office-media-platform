@@ -10,7 +10,7 @@ zoeken op beeld)" in dezelfde README); die hebben hun eigen runbooks: [analyse.m
 en [gezichten.md](gezichten.md).
 Dit runbook gaat over wat het script doet, de reservekopie, de plaatsnamen, de stand lezen, de
 wekelijkse controle, de index herbouwen, zoeken meten, zoeken naast media en office meten,
-terug naar 0.8.0 van `59e0250` en terug naar 0.7.1.
+terug naar 0.8.1 van `ae163ac`, terug naar 0.8.0 van `59e0250` en terug naar 0.7.1.
 
 Alles hieronder gebeurt in de Console van de container (de LXC), als root. `dc` is de functie uit
 de README (Handige commando's): `docker compose` met precies de bestanden van het
@@ -439,6 +439,52 @@ E2E_REAL_DS=http://127.0.0.1:18150 E2E_REAL_DS_SECRET_FILE=/tmp/meet-ds/jwt.secr
 map: media weigert anders elke start (`503 media_busy`, reden `disk`; `DISK_MIN`, Keuze 31), en de
 poort van media faalt. Met `--analyse` gebruikte de meting tot 2,6 GiB, dus begin met ≥ 13 GiB
 vrij. In de sandbox brak de eerste run daarop af (11,69 GiB bij de start, 9,63 GiB in stap 1).
+
+## Terug naar 0.8.1 van `ae163ac`
+
+Werkt 0.8.2 niet goed, ga dan eerst hierheen terug: alles van 0.8.1 blijft, ook de gezichten en
+de beeldindex. Dat gaat ook met de analyse aan. Het zijn deze commando's, in deze volgorde, met de
+volledige commit van 0.8.1 (`ae163ac`):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e 'ae163ac69470343de7bc8d876db1a48e7da9331e^{commit}' && echo "goed: 0.8.1 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/ae163ac69470343de7bc8d876db1a48e7da9331e/infra/single/install.sh -o /root/platform-install-0.8.1.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0012
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=ae163ac69470343de7bc8d876db1a48e7da9331e bash < /root/platform-install-0.8.1.sh
+```
+
+Per stap (zoals bij 0.7.1 hieronder):
+
+1. **Kijken of 0.8.1 er is, en het script in een bestand, vóór je iets stopt.** Zeggen de tweede
+   en de derde regel niet allebei "goed", stop dan.
+2. **Stoppen** (`dc stop platform media`). De container `analyse` mag blijven draaien: die komt
+   niet aan de database.
+3. **Een verse kopie** met het image van nu. Hij zegt
+   `De reservekopie staat in /data/backup/platform-0014-<tijd>.db (… MB).` Zegt hij iets anders,
+   stop dan: zonder deze kopie geen downgrade.
+4. **Het schema terug naar `0012`** met het image van nu, want alleen dat kent 0013 en 0014. Op
+   SQLite doen die twee niets: er gaat niets weg, alleen de revisie gaat terug. `db-downgrade`
+   vraagt toch om "ja", en zegt aan het eind `De database staat nu op revisie 0012.` Zegt het
+   daarna `De WAL is niet leeg: …` (exitcode 3), draai dan
+   `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
+   Zegt `db-downgrade` iets anders, stop dan, zet de kopie van stap 3 terug
+   (`backup/platform-0014-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
+   script van de branch.
+5. **0.8.1 installeren** met het script van `ae163ac`. Het maakt eerst nog een kopie (nu van
+   `0012`; die vervangt de kopie van `0012` van de update naar 0.8.2, en die van `0014` uit stap 3
+   blijft), bouwt het image van 0.8.1 en start het, met de analyse zoals hij stond.
+
+Lukt de downgrade niet, dan kan het ook met de kopie van `0012` die de update naar 0.8.2 maakte
+(`backup/platform-0012-<tijd>.db`, zie "Een kopie terugzetten" hierboven): wat sinds die update in
+de database kwam, is dan weg. Daarna de laatste regel van het blok hierboven (het script van
+0.8.1).
+
+**Weer vooruit.** Het script van de branch, zonder `PLATFORM_SRC_REF` (hetzelfde commando als bij
+"Terug naar 0.7.1" hieronder). De database gaat bij de start weer naar `0014`; op SQLite verandert
+daarbij niets.
 
 ## Terug naar 0.8.0 van `59e0250`
 

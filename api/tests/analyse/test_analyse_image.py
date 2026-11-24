@@ -1,8 +1,9 @@
 """Het blok van de analyse in de Dockerfile en de controle in de job images (fase 6, A0; Keuze 57,
 K2-09, K2-15).
 
-Het image zelf bouwt alleen in CI. Hier: het blok staat direct na `RUN uv sync --frozen --no-dev`
-(die regel blijft zoals hij is), het zet de vijf pakketten met --no-cache in /opt/analyse en nooit
+Het image zelf bouwt alleen in CI. Hier: het blok staat direct na `RUN uv sync --frozen --no-dev
+--no-cache` (sinds 0.8.2 met --no-cache: de cache van uv, ±146 MiB, bleef anders in het image; a0.md
+Open 9), het zet de vijf pakketten met --no-cache in /opt/analyse en nooit
 in /opt/venv, /run/analyse staat in de RUN van media, en de stap in ci.yml kijkt het image na met
 dezelfde vijf versies als uv.lock. Een stand-in met dit blok is in de sandbox gebouwd (a0.md).
 
@@ -25,7 +26,7 @@ from tests.analyse.test_no_numpy_in_app import EXTRA
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-SYNC = "RUN uv sync --frozen --no-dev"
+SYNC = "RUN uv sync --frozen --no-dev --no-cache"
 
 
 def _runs() -> list[str]:
@@ -51,6 +52,21 @@ def test_het_blok_staat_direct_na_uv_sync():
     end = lines.index("COPY api/app ./app")
     assert lines[end - 1] == "" and lines[end - 2].endswith("chmod 0750 /opt/analyse")
     assert "" not in lines[run : end - 1]  # één blok: de RUN loopt door tot vlak voor COPY
+
+
+def test_geen_cache_van_uv_in_de_images():
+    """Elke uv sync en uv pip install in de Dockerfile van het platform en in die van het image
+    api (de job images, context api) draait met --no-cache: anders blijft de cache van uv in het
+    image staan (a0.md, Open 9; install-ci.md)."""
+    for path in (ROOT / "Dockerfile", ROOT / "api" / "Dockerfile"):
+        text = path.read_text(encoding="utf-8").replace("\\\n", " ")
+        runs = [" ".join(line.split()) for line in text.splitlines() if line.startswith("RUN ")]
+        uv = [run for run in runs if re.search(r"\buv (sync|pip install)\b", run)]
+        assert uv, path
+        for run in uv:
+            for part in re.split(r"&&|;", run):
+                if re.search(r"\buv (sync|pip install)\b", part):
+                    assert "--no-cache" in part.split(), (path, part)
 
 
 # Uit de export met hashes de blokken van precies de vijf namen van analyse.txt (veilig F1)

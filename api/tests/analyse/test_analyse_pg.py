@@ -150,3 +150,35 @@ async def test_een_trigger_uit_houdt_de_analyse_uit(settings, caplog):
         assert gezien == [] and uit.analyse_pg_block() == "pg_not_enabled"
     finally:
         config.pg_triggers_seen(s.db_url, False)
+
+
+def _deel(path: Path, kop: str) -> str:
+    """Het stuk van path onder kop, tot de volgende kop van hetzelfde niveau, op één regel."""
+    text = path.read_text(encoding="utf-8")
+    start = text.index(kop + "\n")
+    end = text.find("\n" + kop.split(" ")[0] + " ", start + len(kop))
+    return " ".join(text[start : end if end >= 0 else None].split())
+
+
+def test_het_runbook_zet_de_analyse_pas_aan_met_de_sync_die_wist():
+    """Review golf 4, W4R-1: ClusterForge main zet PLATFORM_ANALYSE_POSTGRES al sinds 26879dd
+    (PR #162), met de analyse aan (de standaard), en wist met de sync van de sleutels nog niet.
+    Krijgt het cluster 0.8.2 vóór PR #163 met de analyse aan, dan blijft na "uit" een sleutel op
+    de andere nodes staan. Dus: de parameter uit in de stap van het platform, pas weer aan na
+    PR #163, en eerst uit voordat ClusterForge terug gaat. De runbooks noemen 26879dd waar ze
+    zeggen waar de variabele vandaan komt."""
+    runbooks = API.parent / "docs" / "runbooks"
+    param = "**Gezichten en zoeken op beeld**"
+    stappen = _deel(runbooks / "cluster.md", "## Van 0.8.1 naar 0.8.2")
+    stap2 = stappen[stappen.index("2. **Het platform**") : stappen.index("3. **De template**")]
+    stap3 = stappen[stappen.index("3. **De template**") : stappen.index("4. **Controle**")]
+    terug = stappen[stappen.index("**Alleen de template slecht**") :]
+    terug = terug[: terug.index("**0.8.2 zelf slecht**")]
+    assert "26879dd" in stappen
+    assert f"{param} uit" in stap2 and "ANALYSE_POSTGRES staat uit" not in stap2
+    assert stap3.index("PR #163") < stap3.index(f"{param} aan")
+    assert "restart-if-changed" in stap3
+    assert terug.index(f"{param} uit") < terug.index("ClusterForge terug")
+    assert "26879dd" in _deel(runbooks / "cluster.md", "## Wat je nooit doet")
+    cluster = _deel(runbooks / "analyse.md", "## In het cluster (PostgreSQL, vanaf 0.8.2)")
+    assert "26879dd" in cluster and "restart-if-changed" in cluster

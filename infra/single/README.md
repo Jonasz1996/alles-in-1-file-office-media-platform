@@ -155,6 +155,28 @@ nooit weg door een volgende update. De kopie heeft geen gezichten en geen beeld 
 na het terugzetten opnieuw), maar verder de hele database: bewaar hem net zo afgeschermd als de
 `.env`. Hoe je hem terugzet, de index herbouwt en zoeken meet: `docs/runbooks/zoeken.md`.
 
+**Terug naar 0.8.1 van `ae163ac`.** Werkt 0.8.2 niet goed, ga dan eerst hierheen terug: alles
+van 0.8.1 blijft, ook met de analyse aan. Het zijn deze commando's, in deze volgorde en met de
+volledige commit van 0.8.1 (`dc` uit Handige commando's hieronder; de uitleg per stap staat in
+`docs/runbooks/zoeken.md`, "Terug naar 0.8.1 van `ae163ac`"):
+
+```bash
+git -C /opt/platform/src fetch -q origin
+git -C /opt/platform/src cat-file -e 'ae163ac69470343de7bc8d876db1a48e7da9331e^{commit}' && echo "goed: 0.8.1 is er"
+curl -fsSL https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform/ae163ac69470343de7bc8d876db1a48e7da9331e/infra/single/install.sh -o /root/platform-install-0.8.1.sh && echo "goed: het script is er"
+dc stop platform media
+dc run --rm --no-deps platform python -m app.cli db-backup
+dc run --rm --no-deps platform python -m app.cli db-downgrade 0012
+PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=ae163ac69470343de7bc8d876db1a48e7da9331e bash < /root/platform-install-0.8.1.sh
+```
+
+Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
+verse kopie (`platform-0014-<tijd>.db`). `db-downgrade` zet op SQLite alleen de revisie terug
+(0013 en 0014 doen daar niets, er gaat niets weg) en vraagt om "ja". Eindigt het met `De WAL is
+niet leeg` (exitcode 3), draai dan `dc run --rm --no-deps platform python -m app.cli db-checkpoint`
+tot het `De WAL is leeg.` zegt. Weer vooruit: het commando van de branch hieronder, zonder
+`PLATFORM_SRC_REF`.
+
 **Terug naar 0.8.0 van `59e0250`.** Werkt 0.8.1 niet goed, ga dan eerst hierheen terug en niet
 naar 0.7.1: alles van 0.8.0 blijft. Dat gaat ook met de analyse aan. Het zijn deze commando's, in
 deze volgorde en met de volledige commit van 0.8.0 (`dc` uit Handige commando's hieronder; de
