@@ -77,6 +77,18 @@ def zonder_reset(waarde):
     return waarde
 
 
+def zonder_082(key: str, answer):
+    """Het antwoord zonder wat 0.8.2 bewust toevoegde: index.capped op /admin/search (hoeveel
+    documenten de index op PostgreSQL inkortte; op SQLite altijd 0)."""
+    if key.split()[1] != "/api/v1/admin/search" or not isinstance(answer, list):
+        return answer
+    status, kind, body = answer
+    if isinstance(body, dict) and isinstance(body.get("index"), dict):
+        index = {k: v for k, v in body["index"].items() if k != "capped"}
+        body = {**body, "index": index}
+    return [status, kind, body]
+
+
 def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     nu = wandel.in_een_nieuw_proces(tmp_path)
     # Elke route van 0.8.0 (292 met hun methoden, behalve de stroom /events) voor niemand, Eva,
@@ -89,7 +101,7 @@ def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     anders = {
         k: {"0.8.0": v, "nu": nu["antwoorden"][k]}
         for k, v in OUD["antwoorden"].items()
-        if zonder_reset(nu["antwoorden"][k]) != v
+        if zonder_reset(zonder_082(k, nu["antwoorden"][k])) != v
         # De beschrijving van de API telt de routes van fase 11 mee
         and k.split()[1] != "/api/openapi.json"
     }

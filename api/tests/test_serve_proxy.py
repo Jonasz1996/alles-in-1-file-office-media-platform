@@ -47,3 +47,14 @@ async def test_het_ip_en_https_van_de_client_via_de_proxy(tmp_path):
     scope = {**scope, "scheme": "http", "client": ("192.168.90.10", 5000)}
     await mw(scope, None, None)
     assert seen == {"client": "192.168.90.10", "scheme": "http"}
+
+
+def test_een_ster_vertrouwt_elk_adres_en_mag_niet(tmp_path):
+    """'*' gelooft de koppen van elke peer (uvicorn: _TrustedHosts(["*"])): dan kan elke browser
+    zijn IP en https zelf kiezen. Alleen de adressen van de proxy (review van PR #6, F8)."""
+    for waarde in ("*", "192.168.102.244, *"):
+        with pytest.raises(ValueError, match="PLATFORM_TRUSTED_PROXIES"):
+            Settings(data_dir=tmp_path, trusted_proxies=waarde)
+    assert Settings(data_dir=tmp_path, trusted_proxies=" 10.0.0.1 ,").trusted_proxy_list() == [
+        "10.0.0.1"
+    ]

@@ -121,7 +121,10 @@ pagina's, de groepen en hun gebied, de lazy plekken (tegen de echte bestanden in
    het tabblad is één lazy chunk, en zo komen de blokken niet in de chunk van `/beheer` zelf.
    Hun teksten staan in de eigen gebieden `photos_faces` en `beeld` (niet in `admin.*`), en
    `Beheer.tsx` laadt die met de tab (`SEARCH_TAB_AREAS`). Z7 houdt de twee regels in
-   `SearchTab.tsx`.
+   `SearchTab.tsx`. Sinds 0.8.2 staan de regels van het blok Gezichten (eerst
+   `photos_faces.admin`) in `admin.search.faces`, naast `admin.search.faceKeys` van P4:
+   `photos_faces` laadt elk scherm van gezichten mee (budget `faces`, 12 kB), en die regels toont
+   alleen `/beheer`. De kop en de zin zonder analyse staan nog in `photos_faces`.
 3. **`failed_by_code` is een lijst `{code, n}`** (`CodeCount[]`) in `AdminFaces` en
    `AdminBeeld`, geen object per code. De lezer van `test_web_contracts.py` kent geen `Record`,
    en een lijst houdt de volgorde van de API. Z0b-api koos hetzelfde (`list[CodeCount]`).

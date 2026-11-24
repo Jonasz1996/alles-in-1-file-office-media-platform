@@ -62,10 +62,7 @@ from tests.test_files import mkdir, put, root
 from tests.test_shares import person, share_with
 from tests.test_user_delete import block_and_delete
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.sqlite_only("meet de FTS5-index van SQLite onder schrijfdruk"),
-]
+pytestmark = pytest.mark.anyio
 
 SEED = 2025
 STAPPEN = 2_000
@@ -438,6 +435,10 @@ async def een_wijziging(w: Wereld) -> None:
 async def de_index_klopt(w: Wereld, waar: str) -> None:
     async with get_engine(w.settings).connect() as conn:
         await conn.run_sync(check_tree)
+        if conn.dialect.name != "sqlite":
+            # PostgreSQL (0014): fts_node gelijk aan wat fts_refresh opnieuw schrijft
+            await conn.run_sync(motoren.check_index)
+            return
     if not motoren.FTS:
         return  # geen FTS-index om met een herbouw te vergelijken (motoren.REASON)
     verschil = await anyio.to_thread.run_sync(lambda: spike.herbouw_verschil(pad(w.settings)))

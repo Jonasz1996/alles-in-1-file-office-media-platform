@@ -230,6 +230,9 @@ class AdminIndex(BaseModel):
     text_done: int
     text_total: int
     failed: int
+    # Documenten die de index op PostgreSQL inkortte (1 MB per tsvector; plan 0.8.2, vraag 8):
+    # wat na de grens komt, is niet vindbaar. FTS5 op SQLite kent die grens niet: altijd 0.
+    capped: int = 0
 
 
 class PerHour(BaseModel):

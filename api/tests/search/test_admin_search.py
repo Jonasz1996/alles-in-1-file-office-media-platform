@@ -81,7 +81,7 @@ async def leeg(settings) -> dict:
     return {
         "engine": motoren.DEFAULT,
         "paused": False,
-        "index": {"names_done": True, "text_done": 0, "text_total": 0, "failed": 0},
+        "index": {"names_done": True, "text_done": 0, "text_total": 0, "failed": 0, "capped": 0},
         "rebuild": None,
         "extract_in_sandbox": settings.media_enabled,
         "per_hour": {"deadline_b": 0, "deadline_c": 0, "busy": 0},
@@ -136,7 +136,13 @@ async def test_tekst_n_van_m_en_mislukt(client, admin, settings):
     await add(settings, *blobs, *rows)
     index = (await client.get(ADMIN, headers=headers)).json()["index"]
     # Zonder skip 6 inhouden; wait en busy staan open
-    assert index == {"names_done": True, "text_done": 4, "text_total": 6, "failed": 2}
+    assert index == {
+        "names_done": True,
+        "text_done": 4,
+        "text_total": 6,
+        "failed": 2,
+        "capped": 0,
+    }
 
 
 async def test_de_tellers_per_uur(client, admin, settings, monkeypatch):

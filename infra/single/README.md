@@ -303,6 +303,23 @@ dan niet tegen de limieten aan.
 Zodra https werkt, gaat `http://<domein>` vanzelf naar `https://`. Via het IP-adres in je LAN
 blijft http werken.
 
+### Achter een reverse proxy (Nginx Proxy Manager)
+
+Doet een reverse proxy zoals Nginx Proxy Manager (NPM) het certificaat, dan laat je het veld
+HTTPS op `/beheer` leeg. Vanaf 0.8.2:
+
+1. Zet in `/opt/platform/.env` het adres van de proxy, bijvoorbeeld
+   `TRUSTED_PROXIES=192.168.102.244`. Een netwerk mag ook (`192.168.102.0/24`), meer adressen
+   met komma's. Daarna `docker compose up -d` in `/opt/platform`.
+2. Maak in NPM een Proxy Host naar `http://<IP van de container>:<PORT>`. Zet **Websockets
+   Support** aan: de editor van office gebruikt een WebSocket. Het certificaat zet je op het
+   tabblad SSL.
+
+Alleen van die adressen gelooft het platform `X-Forwarded-For` en `X-Forwarded-Proto`. Dan
+kloppen het IP van de gebruiker (limieten en log) en https (cookies, adressen en de WebSocket
+van office). `*` mag niet: dan kan elk apparaat zelf zeggen welk IP het heeft. Leeg is de
+standaard: geen proxy, en die koppen tellen nooit.
+
 ## Wat er draait
 
 Zonder `/tank` staat wat hier in `/tank/platform` staat in `/opt/platform/data/platform`

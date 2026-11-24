@@ -154,8 +154,10 @@ Wat `MET_DATABASE=downgrade` doet (vanaf 0.8.2): het **nieuwe** image zet het sc
 `python -m app.cli db-downgrade <revisie van het vorige image> --ja`, in een eigen container
 (`docker run --rm --network host --env-file /etc/clusterforge/platform.env`). Er gaan geen rijen
 verloren: wat na de update geschreven is, blijft. Alleen wat de nieuwere revisies toevoegden,
-gaat weg (van 0.8.2 naar 0.8.1: de zoekindex van 0014; 0.8.1 zoekt op PostgreSQL weer met
-LIKE). Verder gaat het zoals `ja`: eerst wachten tot elke andere node het vorige image heeft,
+gaat weg. Van 0.8.2 naar 0.8.1 zijn dat twee dingen: de zoekindex van 0014 (0.8.1 zoekt op
+PostgreSQL weer met LIKE, alleen op naam) en de plaatsen van foto's van 0013 (het land en de plek
+op de kaart blijven). `db-downgrade` noemt ze allebei. Met een nieuwe update naar 0.8.2 komen ze
+terug: de app bouwt de index opnieuw en zoekt de plaatsen weer op. Verder gaat het zoals `ja`: eerst wachten tot elke andere node het vorige image heeft,
 markering opzij, stoppen, een dump als `voor-terug.dump`, dan de downgrade, de revisie lezen,
 het vorige image terug en starten. Mislukt de downgrade, dan is de database ongewijzigd (één
 transactie), komt de markering terug en draait het nieuwe image weer; de uitvoer noemt dan
@@ -293,6 +295,20 @@ de melding zegt dan hoe je ze weer gelijk zet.
   Dat start niet; het VIP springt door. Draai dan Platform bijwerken.
 - Een image van vóór de eerste Platform bijwerken heeft nog geen bekende commit; het script
   neemt dan de commit uit `/var/lib/clusterforge/platform-image.rev`.
+- **De zoekindex van 0.8.2 vraagt een database met een UTF-8-ctype**, zoals ClusterForge hem
+  maakt (`C.UTF-8`). Met `LC_CTYPE` `C` kent PostgreSQL alleen letters uit ASCII: een woord met
+  een accent, Grieks of Cyrillisch is dan niet te vinden. De app zegt dat bij de start in het
+  log ("de database heeft LC_CTYPE C"). Kijken kan met
+  `SELECT datctype FROM pg_database WHERE datname = current_database();`.
+- **Een frase in een lange tekst op PostgreSQL.** Een tsvector kent hooguit plek 16.383, en per
+  woord hooguit 256 plekken. Na ongeveer 16.000 woorden, of na de 256e keer van een woord, vindt
+  een frase ("…") daar soms niet wat SQLite vindt, of juist iets wat er niet zo staat. Losse
+  woorden vindt de index tot de grens van 1 MB. Een frase loopt wel nooit over twee kolommen
+  (naam, titel, tekst, OCR, meta), net als op SQLite.
+- **Een database die een eerdere 0014 draaide** (een testcluster op de branch vóór de review
+  van PR #6) houdt de oude functies en mist de kolom `capped`: een migratie draait niet twee
+  keer. Zet hem eerst terug met `python -m app.cli db-downgrade 0013 --ja` (met het image van nu)
+  en start dan opnieuw: de app draait 0014 dan opnieuw en bouwt de index.
 
 ## Wat er op een node staat
 

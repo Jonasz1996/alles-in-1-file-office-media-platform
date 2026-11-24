@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import case, delete, exists, func, or_, select
+from sqlalchemy import and_, bindparam, case, delete, exists, func, literal_column, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,19 +138,30 @@ async def matches(
     )
     sel = apply_all(sel, n, params_of(rule), owner)
     if rule.q.strip():
-        engine = await engine_for(settings, await db.connection())
+        conn = await db.connection()
+        engine = await engine_for(settings, conn)
         if engine is LIKE:
             words = fold(rule.q).split()[:MAX_WORDS]
             sel = sel.where(*(n.c.search_name.contains(w, autoescape=True) for w in words))
         else:
             parsed = parse(rule.q)
-            if parsed is not None:
+            if parsed is not None and conn.dialect.name == "sqlite":
+                # SQLite: dezelfde vraag als in 0.8.1 (review van PR #6, F17)
+                whole = n.c.num.in_(
+                    select(FTS_NODE.c.rowid).where(
+                        literal_column("fts_node").op("MATCH")(
+                            bindparam("rule_match", parsed.match)
+                        )
+                    )
+                )
+                pieces = and_(*(func.instr(n.c.search_name, w) > 0 for w in parsed.words))
+                sel = sel.where(or_(whole, pieces))
+            elif parsed is not None:
                 # Alleen de eigen nodes: de OCR van een eigen foto telt mee (FtsMatch met owner)
                 whole = n.c.num.in_(
                     select(FTS_NODE.c.rowid).where(FtsMatch("fts_node", parsed, owner.id))
                 )
-                pieces = AllWordsIn(parsed.words)
-                sel = sel.where(or_(whole, pieces))
+                sel = sel.where(or_(whole, AllWordsIn(parsed.words)))
     sel = sel.order_by(n.c.taken_day.desc(), n.c.taken_at.desc(), n.c.id.desc())
     return list((await db.scalars(sel.limit(MAX_ITEMS + 1))).all())
 

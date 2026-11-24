@@ -617,6 +617,7 @@ def test_de_lezer_ziet_de_vormen_van_de_web(web):
         "text_done": Veld("number", optioneel=False),
         "text_total": Veld("number", optioneel=False),
         "failed": Veld("number", optioneel=False),
+        "capped": Veld("number", optioneel=False),
     }
     assert _interface(web, "search/types.ts", "SearchParams")["limit"] == Veld("number", True)
     assert _delen('{ a: "x" | "y" } | null') == ['{ a: "x" | "y" }', "null"]

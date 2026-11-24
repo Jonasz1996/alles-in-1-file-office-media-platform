@@ -6,8 +6,9 @@ Wat GET /admin/search laat zien (AdminSearch, de vorm van §3.4 en web/src/admin
 - engine: fts of like, zoals een zoekvraag nu zou gaan (LikeFallback zolang een herbouw loopt);
 - paused: het achtergrondwerk (de rijen index en ocr) staat op pauze;
 - index: de namen klaar (geen herbouw bezig), de tekst n van m (de stap text van de analyse,
-  zonder skip) en hoeveel inhouden mislukt zijn (text, hash en ocr; de lijst met sha en code via
-  GET /admin/search/failed);
+  zonder skip), hoeveel inhouden mislukt zijn (text, hash en ocr; de lijst met sha en code via
+  GET /admin/search/failed) en hoeveel documenten de index op PostgreSQL inkortte (capped: te
+  groot voor een tsvector, plan 0.8.2 vraag 8; op SQLite 0);
 - rebuild: een herbouw met zijn voortgang. names en text: de herbouw in stukken van de FTS-index
   (search_state, Keuze 12); hash en geo: de keten van photometa die de pHash (Z3, Keuze 35) of
   de plek, camera en datum (Keuze 25) opnieuw leest. Ook de eerste pHash van alle foto's na een
@@ -45,7 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from anyio import to_thread
-from sqlalchemy import func, select, tuple_, update
+from sqlalchemy import func, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import analysis, errors, events, jobs, photo_hash, photometa, render_meta
@@ -171,7 +172,17 @@ async def _index(db: AsyncSession, rebuilding: bool) -> AdminIndex:
         text_done=total - open_,
         text_total=total,
         failed=int(failed or 0),
+        capped=await _capped(db),
     )
+
+
+async def _capped(db: AsyncSession) -> int:
+    """Hoeveel documenten de index van PostgreSQL (0014) inkortte. Op SQLite geen vraag: 0."""
+    info = await search_engine.read_conn_info(await db.connection())
+    if info.dialect != "postgresql" or not info.fts:
+        return 0
+    found = await db.execute(text("SELECT count(*) FROM fts_node WHERE capped"))
+    return int(found.scalar() or 0)
 
 
 async def _photometa_progress(db: AsyncSession, what: str) -> float:

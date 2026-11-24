@@ -28,6 +28,13 @@ from tests.test_shares import person, share_with
 pytestmark = pytest.mark.anyio
 
 CAMERA = "fabrikant camera x1"  # camera_jpeg(): "Fabrikant" en "  Camera X1 "
+# De tijdsgrens van een zoekvraag hoort niet bij deze tests (test_search_limits en
+# test_search_deadline gaan daarover). Valt een volle ronde van de gc over de objecten van eerdere
+# tests (±1 s in de volle suite, zie frozen_heap in tests/search/test_search_rebuild.py) in een
+# vraag, dan raakt die de grens van 120 ms: een lege, gedeeltelijke pagina (CI, run 45265842105;
+# review van PR #6, F9). Daarom een ruime grens, zoals test_search_churn, en zoek() kijkt
+# partial na.
+RUIM_MS = 60_000
 
 
 @pytest.fixture(params=motoren.params("fts", "like"))
@@ -41,11 +48,12 @@ def motor(request, settings, monkeypatch) -> str:
 def _filters(settings, monkeypatch):
     """Een test eerder in de run kan filters.reset() gedaan hebben (test_contracts.py). De haak
     van de suggesties krijgt geen settings mee en leest places.sqlite via get_settings(), zoals
-    de app (die heeft er één); hier die van de test. Geen grens van de snelheid per gebruiker:
-    het gaat om wat er gevonden wordt."""
+    de app (die heeft er één); hier die van de test. Geen grens van de snelheid per gebruiker en
+    een ruime tijdsgrens (RUIM_MS): het gaat om wat er gevonden wordt."""
     filters_photo.register()
     monkeypatch.setattr(filters_photo, "get_settings", lambda: settings)
     monkeypatch.setattr(limits, "RATE", {"search": 100_000, "suggest": 100_000})
+    monkeypatch.setattr(settings, "search_deadline_ms", RUIM_MS)
 
 
 async def zoek(client, headers, motor: str, **params) -> set[str]:
@@ -53,6 +61,7 @@ async def zoek(client, headers, motor: str, **params) -> set[str]:
     assert r.status_code == 200, (params, r.text)
     page = r.json()
     assert page["engine"] == motor and not page["more"], params
+    assert not page["partial"], params
     return {h["node"]["name"] for h in page["results"]}
 
 
