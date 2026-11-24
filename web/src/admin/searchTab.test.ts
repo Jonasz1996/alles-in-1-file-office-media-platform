@@ -11,6 +11,7 @@ import SearchTab, {
   photosRebuilding,
   POLL_MS,
   progressOf,
+  runs,
   SearchView,
   textFraction,
   withProgress,
@@ -467,5 +468,29 @@ describe("search.progress op de tab (0.8.2, z0-web.md Open 6)", () => {
     expect(searchTabSource).toContain("useServerEvents((event) => {");
     expect(searchTabSource).toContain("const progress = progressOf(event);");
     expect(searchTabSource).toContain("usePolling(adminSearch, POLL_MS)");
+  });
+});
+
+describe("acties die elkaar overlappen in één blok (0.8.2)", () => {
+  it("het blok blijft bezig tot de laatste actie klaar is, ook als de eerste eerder eindigt", () => {
+    const gezet: (string | null)[] = [];
+    const open = runs((key) => gezet.push(key));
+    // De lijst tonen, en "Meer laden" terwijl de lijst nog ververst
+    open.start("list");
+    open.start("more");
+    open.end(); // de lijst is klaar: het blok is nog bezig met "Meer laden"
+    expect(gezet).toEqual(["list", "more"]);
+    open.end(); // "Meer laden" klaar: nu pas niet meer bezig (useFocusAfter geeft de focus terug)
+    expect(gezet).toEqual(["list", "more", null]);
+    // Daarna gewoon weer: één actie, bezig en klaar
+    open.start("retry");
+    open.end();
+    expect(gezet).toEqual(["list", "more", null, "retry", null]);
+  });
+
+  it("useAction zet bezig alleen via runs, niet bij het einde van elke actie", () => {
+    expect(searchTabSource).toContain("const [open] = useState(() => runs(setBusy));");
+    expect(searchTabSource).toContain("open.end();");
+    expect(searchTabSource.split("setBusy(null)").length - 1).toBe(1); // alleen in runs
   });
 });
