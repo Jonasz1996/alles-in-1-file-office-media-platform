@@ -264,6 +264,46 @@ async def closed(editor_client: EditorClient, seconds: float = 5.0) -> None:
 # --- door de tunnel naar de nep-DS ---
 
 
+def via_proxy(request: bytes, proto: str = "https", client: str = "203.0.113.9") -> bytes:
+    """De upgrade zoals Nginx Proxy Manager hem doorgeeft: TLS bij de proxy, http naar de app,
+    met X-Forwarded-Proto en X-Forwarded-For."""
+    extra = f"\r\nX-Forwarded-Proto: {proto}\r\nX-Forwarded-For: {client}\r\n\r\n"
+    return request.replace(b"\r\n\r\n", extra.encode(), 1)
+
+
+async def test_achter_een_vertrouwde_proxy(world, monkeypatch):
+    """PLATFORM_TRUSTED_PROXIES geldt ook voor de tunnel: van een vertrouwd adres tellen
+    X-Forwarded-Proto (https, dus de Origin https://…) en X-Forwarded-For (naar DS), met de regels
+    van uvicorn. Van een ander adres, of zonder de instelling, tellen ze niet: 403 (review van
+    PR #6, F8)."""
+    anna, _, node, _ = await two_writers(world)
+    cfg, cookie = await opened(world, anna, node)
+    key = cfg["document"]["key"]
+    site = "files.example.nl"
+    request = via_proxy(upgrade(0, key, cookie=cookie, host=site, origin=f"https://{site}"))
+    for proxies in ("", "192.0.2.1"):
+        rebind(world, trusted_proxies=proxies)
+        async with raw_ds(world) as ds, public(monkeypatch) as listener:
+            assert await status_of(listener.port, request) == 403, proxies
+            assert ds.heads == []
+    rebind(world, trusted_proxies="192.0.2.1, 127.0.0.0/8")
+    async with raw_ds(world) as ds, public(monkeypatch) as listener:
+        assert await status_of(listener.port, request) == 101
+        sent = ds.heads[0].decode().lower()
+        assert "x-forwarded-proto: https\r\n" in sent
+        assert "x-forwarded-for: 203.0.113.9\r\n" in sent
+        assert f"x-forwarded-host: {site}\r\n" in sent
+        # Een gewone http-upgrade via de proxy kan ook nog (de Origin is dan http)
+        plain = via_proxy(
+            upgrade(0, key, cookie=cookie, host=site, origin=f"http://{site}"), proto="http"
+        )
+        assert await status_of(listener.port, plain) == 101
+        # De proxy zegt https, maar de Origin is http: 403
+        mixed = via_proxy(upgrade(0, key, cookie=cookie, host=site, origin=f"http://{site}"))
+        assert await status_of(listener.port, mixed) == 403
+    rebind(world, trusted_proxies="")
+
+
 @pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=lambda impl: impl.__name__)
 async def test_twee_editors_via_de_tunnel(world, monkeypatch, impl):
     anna, bram, node, _ = await two_writers(world)

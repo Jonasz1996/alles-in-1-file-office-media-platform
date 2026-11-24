@@ -106,6 +106,8 @@ export interface AdminSearch {
     text_done: number;
     text_total: number;
     failed: number;
+    /** Documenten die de index op PostgreSQL inkortte (te groot voor een tsvector); op SQLite 0 */
+    capped: number;
   };
   rebuild: Rebuild | null;
   /** Waar tekst gelezen wordt: in de zandbak (de mediaworker) of erbuiten */

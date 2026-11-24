@@ -7,7 +7,10 @@ M3]. De app zelf heeft verder geen WebSockets (B17): elke andere upgrade krijgt 
 Vóór er iets naar DS gaat, in deze volgorde (een kale HTTP-regel en dicht):
 - het pad: alleen een upgrade naar /office/<versie>/doc/<key>/c/ (Engine.classify met
   upgrade, de klasse SESSION; office ingesteld). Anders 404;
-- Origin: moet er zijn en bij Host en het schema van deze verbinding horen. Anders 403;
+- Origin: moet er zijn en bij Host en het schema van deze verbinding horen. Anders 403. Komt
+  de verbinding van een vertrouwde proxy (PLATFORM_TRUSTED_PROXIES), dan gelden het schema uit
+  X-Forwarded-Proto en de client uit X-Forwarded-For, met de regels van uvicorn (_forwarded):
+  ProxyHeadersMiddleware loopt niet voor deze tunnel, want die is een kaal asyncio-protocol;
 - poort 80: is er een certificaat en is de Host het domein, dan geen upgrade over http (dezelfde
   regel als Edge). 403;
 - de toegang (gate.check met de key): het poort-cookie, lid van de sessie, niet banned, de
@@ -48,6 +51,7 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
+from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 from app.office import engine, gate, keys, proxy, runtime, sessions
 from app.office.engine import PathClass
@@ -196,6 +200,42 @@ def _https_only(host: str) -> bool:
     )
 
 
+_trusted: dict[tuple[str, ...], _TrustedHosts] = {}
+
+
+def _forwarded(
+    proxies: list[str], peer: str | None, headers: list[tuple[bytes, bytes]]
+) -> tuple[str | None, str | None]:
+    """(schema, client) uit X-Forwarded-Proto en X-Forwarded-For, alleen als peer een van de
+    vertrouwde proxy's is; anders (None, None). Dezelfde regels als ProxyHeadersMiddleware van
+    uvicorn (de HTTP-kant): de klasse _TrustedHosts daarvan, Proto alleen http, https, ws of wss,
+    en als client het eerste adres van rechts dat geen vertrouwde proxy is."""
+    if not proxies:
+        return None, None
+    trusted = _trusted.get(tuple(proxies))
+    if trusted is None:
+        trusted = _trusted[tuple(proxies)] = _TrustedHosts(proxies)
+    if peer not in trusted:
+        return None, None
+    proto: bytes | None = None
+    chain: list[bytes] = []
+    for name, value in headers:
+        if name == b"x-forwarded-proto":
+            proto = value
+        elif name == b"x-forwarded-for":
+            chain.append(value)
+    scheme = None
+    if proto is not None:
+        found = proto.decode("latin-1").strip()
+        if found in {"http", "https", "ws", "wss"}:
+            scheme = "https" if found in {"https", "wss"} else "http"
+    client = None
+    if chain:
+        host, _ = trusted.get_trusted_client_address(b", ".join(chain).decode("latin-1"))
+        client = host or None
+    return scheme, client
+
+
 async def _max_editors() -> int:
     app = runtime.app()
     if app is None:
@@ -328,15 +368,19 @@ class Tunnel(asyncio.Protocol):
             return
         host = next((v for k, v in headers if k == b"host"), b"").decode("latin-1")
         origin = next((v for k, v in headers if k == b"origin"), b"").decode("latin-1")
-        secure = self.transport.get_extra_info("sslcontext") is not None
-        scheme = "https" if secure else "http"
+        scheme = "https" if self.transport.get_extra_info("sslcontext") is not None else "http"
+        peer = self.transport.get_extra_info("peername")
+        client = peer[0] if isinstance(peer, tuple) else None
+        # Achter een vertrouwde proxy (TLS bij de proxy): het schema en de client van de browser
+        proxied_scheme, proxied_client = _forwarded(settings.trusted_proxy_list(), client, headers)
+        scheme = proxied_scheme or scheme
+        client = proxied_client or client
         if not same_origin(origin, host, scheme):
             self.refuse(403)
             return
-        if not secure and _https_only(host):
+        if scheme != "https" and _https_only(host):
             self.refuse(403)
             return
-        peer = self.transport.get_extra_info("peername")
         office = urlsplit(settings.office_url)
         try:
             request = rewrite_upgrade(
@@ -344,7 +388,7 @@ class Tunnel(asyncio.Protocol):
                 ds_host=office.netloc,
                 host=host,
                 scheme=scheme,
-                client=peer[0] if isinstance(peer, tuple) else None,
+                client=client,
             )
         except ValueError:
             self.refuse(400)

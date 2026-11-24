@@ -482,11 +482,16 @@ async def test_de_tweede_vraag_stopt_de_eerste_via_de_api(client, admin, setting
     assert r2.json()["partial"] is False
 
 
+@pytest.mark.parametrize("motor", ["fts", "like"])
 @pytest.mark.parametrize("pad", ["/api/v1/search", "/api/v1/search/suggest"])
-@motoren.needs_fts
-async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
+async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad, motor):
     """H4 via de API, met één plek: A loopt, X1 wacht; X2 neemt de plek van X1 over. X1 krijgt
-    meteen 200 met een lege (gedeeltelijke) uitkomst, X2 is na A aan de beurt."""
+    meteen 200 met een lege (gedeeltelijke) uitkomst, X2 is na A aan de beurt. Ook met LIKE
+    (plan 0.8.2 P5 punt 5, vraag 9; review van PR #6, F5): dezelfde rij van 2 tegelijk."""
+    if motor == "fts" and not motoren.FTS:
+        pytest.skip(motoren.REASON)
+    if motor == "like":
+        monkeypatch.setattr(settings, "search_index", "uit")
     monkeypatch.setattr(settings, "search_inflight", 1)
     los = asyncio.Event()
     binnen: list[str] = []
@@ -497,9 +502,9 @@ async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
         await los.wait()
         if kind == "suggest":
             return engines.Suggestions()
-        return engines.SearchPage(results=[], more=False, engine="fts")
+        return engines.SearchPage(results=[], more=False, engine=motor)
 
-    monkeypatch.setattr(engines.FtsEngine, kind, wacht)
+    monkeypatch.setattr(engines.FtsEngine if motor == "fts" else engines.LikeFallback, kind, wacht)
     a, x = await koppen(settings, 2)
     state = limits._now_state()
     ta = asyncio.create_task(client.get(pad, params={"q": "a"}, headers=a))
@@ -511,6 +516,7 @@ async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
     assert r1.status_code == 200, r1.text
     if kind == "search":
         assert r1.json()["results"] == [] and r1.json()["partial"] is True
+        assert r1.json()["engine"] == motor
     else:
         assert r1.json() == {"names": [], "people": [], "places": [], "tags": [], "albums": []}
     assert len(binnen) == 1 and len(state.waiting) == 1
@@ -521,13 +527,23 @@ async def test_overgenomen_via_de_api(client, settings, monkeypatch, pad):
     assert state.running == 0 and not state.waiting
 
 
-@motoren.needs_fts
-async def test_de_snelheid_via_de_api(client, settings, monkeypatch):
+@pytest.mark.parametrize("motor", ["fts", "like", "herbouw"])
+async def test_de_snelheid_via_de_api(client, settings, monkeypatch, motor):
+    """Ook LIKE heeft de grens: met de index uit en tijdens een herbouw (plan 0.8.2 P5 punt 5,
+    vraag 9; review van PR #6, F5). Op beide databases."""
+    if motor != "like" and not motoren.FTS:
+        pytest.skip(motoren.REASON)
+    if motor == "like":
+        monkeypatch.setattr(settings, "search_index", "uit")
+    if motor == "herbouw":
+        async with get_engine(settings).begin() as conn:
+            await conn.execute(text("UPDATE search_state SET cursor = 0 WHERE id = 1"))
     nepklok(monkeypatch)
     (kop,) = await koppen(settings, 1)
     for _ in range(limits.RATE["search"]):
         r = await client.get("/api/v1/search", params={"q": "x"}, headers=kop)
         assert r.status_code == 200, r.text
+        assert r.json()["engine"] == ("fts" if motor == "fts" else "like")
     r = await client.get("/api/v1/search", params={"q": "x"}, headers=kop)
     assert r.status_code == 429 and code_of(r) == "rate_limited", r.text
     assert r.headers["retry-after"] == "1"

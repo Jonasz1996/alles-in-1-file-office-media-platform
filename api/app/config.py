@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     acme_ca_file: str = ""
     # Een reverse proxy ervoor (bijv. Nginx Proxy Manager die het certificaat doet): de adressen
     # of netwerken waarvan de app X-Forwarded-For en -Proto gelooft, komma-gescheiden
-    # (192.168.102.244,192.168.102.0/24). Leeg = geen proxy: die koppen nooit geloven.
+    # (192.168.102.244,192.168.102.0/24). Leeg = geen proxy: die koppen nooit geloven. Geen "*"
+    # (dat zou elk adres vertrouwen). Geldt ook voor de tunnel van office (app/office/tunnel.py).
     trusted_proxies: str = ""
 
     # Tokens
@@ -218,6 +219,21 @@ class Settings(BaseSettings):
     beeld_batch: int = Field(default=16, ge=1, le=16)
     beeld_rebuild_s: float = Field(default=300.0, ge=0)
     beeld_cache: Path | None = None
+
+    @model_validator(mode="after")
+    def _no_star_proxy(self) -> "Settings":
+        """'*' in PLATFORM_TRUSTED_PROXIES gelooft de koppen van elke peer: dan kiest elke
+        browser zelf zijn IP en https (review van PR #6, F8). Alleen de adressen van de proxy."""
+        if "*" in self.trusted_proxy_list():
+            raise ValueError(
+                "PLATFORM_TRUSTED_PROXIES: '*' vertrouwt elk adres; noem de adressen of netwerken "
+                "van de proxy (bijv. 192.168.102.244 of 192.168.102.0/24)"
+            )
+        return self
+
+    def trusted_proxy_list(self) -> list[str]:
+        """De adressen en netwerken uit PLATFORM_TRUSTED_PROXIES; leeg: geen proxy."""
+        return [p.strip() for p in self.trusted_proxies.split(",") if p.strip()]
 
     @model_validator(mode="after")
     def _geo_paths(self) -> "Settings":

@@ -728,8 +728,13 @@ async def test_lijst_van_een_gedeelde_map_zonder_query_per_bestand(client, setup
     assert await statements(f"/api/v1/files/{few}/children") == await statements(
         f"/api/v1/files/{many}/children"
     )
+    # Eerst één keer zonder tellen: wat de app per database onthoudt (de stand van de backfill
+    # in analysis.indexing, 5 s), is dan warm, alleen gedraaid of in de hele suite (review van
+    # PR #6, F15: alleen gedraaid telde hij anders 15)
+    params = {"q": "bestand", "limit": 50}
+    assert (await client.get("/api/v1/search", params=params, headers=anna)).status_code == 200
     with count_queries(settings) as seen:
-        r = await client.get("/api/v1/search", params={"q": "bestand", "limit": 50}, headers=anna)
+        r = await client.get("/api/v1/search", params=params, headers=anna)
     assert (len(r.json()["results"]), r.json()["more"]) == (27, False)
     # Zonder de tijdslimiet van PostgreSQL rond elke vraag (deadline: SAVEPOINT, SET LOCAL en
     # RELEASE): die komen per vraag, niet per bestand

@@ -380,10 +380,10 @@ def test_de_worker_zonder_ffmpeg(media, media_browsers, ffmpeg_count, tmp_path):
         assert refused and refused[-1]["status"] == 503, refused
         assert refused[-1]["out"]["detail"]["code"] == "media_ffmpeg_missing", refused
         expect(overlay.get_by_role("button", name="Downloaden", exact=True)).to_be_visible()
-        # Tab: naar inhoud, de zes items van het menu, het zoekveld bovenaan (fase 6, Z0;
-        # toetsenbord-z0.md), het account, Terug, wat de speler van fase 11 erbij heeft, en dan
-        # Downloaden
-        tab_to(page, "[data-player=download]", presses=20)
+        # Twaalf keer Tab, de stops precies geteld: naar inhoud, de zeven items van het menu (0.8.2:
+        # Dubbel na Prullenbak), het zoekveld bovenaan (fase 6, Z0; toetsenbord-z0.md), het
+        # account, Terug en dan Downloaden
+        tab_to(page, "[data-player=download]", presses=12)
         with page.expect_download() as got:
             page.keyboard.press("Enter")
         data = got.value.path().read_bytes()
