@@ -1054,7 +1054,9 @@ jobs:
     name: Infra (lint, templates en images)
     runs-on: ubuntu-latest
     # Z7: de installatietest van zoeken bouwt het platform drie keer (0.7.1, deze versie en een
-    # commit erbovenop) en gaat terug naar 0.7.1 en weer vooruit
+    # commit erbovenop) en gaat terug naar 0.7.1 en weer vooruit. P10 (0.8.2): daarna dezelfde
+    # weg van 0.8.1 (ae163ac), met de analyse aan en de modellen onbereikbaar. In de laatste
+    # groene run (23-11-2026) duurde --stappen ±8 min en de hele job ±11 min
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -1215,6 +1217,21 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/infra"
           bash infra/single/tests/test_install_search.sh --stappen 2>&1 | tee "$RUNNER_TEMP/infra/installatietest.log"
+      # P10 (0.8.2): 0.8.1 installeren met het script van ae163ac, met de analyse aan (de
+      # standaard) en de modellen onbereikbaar (de nep-curl faalt voor media.githubusercontent.com
+      # en huggingface.co). Dan bijwerken naar deze versie (0014), terug naar 0.8.1 met precies
+      # "Terug naar 0.8.1 van `ae163ac`" uit docs/runbooks/zoeken.md (db-backup, db-downgrade
+      # 0012, het script met PLATFORM_SRC_REF), en weer vooruit. install.sh mag nergens stoppen
+      # op de modellen. Ook na een rode --stappen: dit is een eigen weg
+      - name: De update van 0.8.1 en terug (test_install_search.sh --stappen-081, P10)
+        if: ${{ !cancelled() }}
+        env:
+          INSTALL_TEST_GEO: ${{ runner.temp }}/geo
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/infra/installatietest-081
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/infra"
+          bash infra/single/tests/test_install_search.sh --stappen-081 2>&1 | tee "$RUNNER_TEMP/infra/installatietest-081.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1224,15 +1241,70 @@ jobs:
       - name: Samenvatting
         if: always()
         run: |
-          log="$RUNNER_TEMP/infra/installatietest.log"
-          if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
-            sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+          for m in --stappen --stappen-081; do
+            log="$RUNNER_TEMP/infra/installatietest${m#--stappen}.log"
+            if grep -q '^=== Samenvatting' "$log" 2>/dev/null; then
+              sed -n '/^=== Samenvatting/,/^=== einde samenvatting ===$/p' "$log"
+            else
+              echo "=== Samenvatting (test_install_search.sh $m) ==="
+              echo "(geen samenvatting: de installatietest liep niet of brak af)"
+              echo "=== einde samenvatting ==="
+            fi
+            grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
+          done
+
+  install-update:
+    name: Installatietest van office (test_install_update.sh, fase 4)
+    runs-on: ubuntu-latest
+    # P10 (0.8.2): de installatietest van fase 4 (O6) op een schone runner, met de echte
+    # install.sh, Docker, DS (±3 GB van mirror.gcr.io) en de editor in Chromium: fase 3 (3ccee0a)
+    # installeren, bijwerken naar deze versie, compose up, stop en start met de editor open, een
+    # ander geheim, een geblokkeerde pull, een pin, office uit en weer aan, terug naar fase 3
+    # zoals docs/runbooks/office.md en weer vooruit. Hij bouwt het platform vier keer (±17 min in
+    # de sandbox met een warme build-cache; hier is de cache koud)
+    timeout-minutes: 75
+    env:
+      # Chromium van de stap hieronder; de test (als root) vindt hem via dit pad
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # de test begint bij fase 3 (3ccee0a)
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Chromium voor Playwright (stap S, de echte editor)
+        working-directory: api
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      # Als root, zoals op de LXC: .env (600) en de broncode zijn van root. sudo -E houdt
+      # PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS; PATH voor uv. Root krijgt een eigen cache
+      # van uv: die van setup-uv blijft van de runner (de stap na de job ruimt hem op)
+      - name: Office over een update, terug naar fase 3 en weer vooruit (test_install_update.sh)
+        env:
+          INSTALL_TEST_LOGS: ${{ runner.temp }}/install-update/logs
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/install-update"
+          sudo -E env "PATH=$PATH" "UV_CACHE_DIR=$RUNNER_TEMP/uv-root" \
+            bash infra/single/tests/test_install_update.sh 2>&1 | tee "$RUNNER_TEMP/install-update/test.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: install-update
+          path: ${{ runner.temp }}/install-update
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/install-update/test.log"
+          echo "=== Samenvatting (test_install_update.sh) ==="
+          if grep -qE '^[0-9]+ controles goed, [0-9]+ mislukt\.$' "$log" 2>/dev/null; then
+            grep -E '^[0-9]+ controles goed, [0-9]+ mislukt\.$' "$log"
           else
-            echo "=== Samenvatting (test_install_search.sh --stappen) ==="
-            echo "(geen samenvatting: de installatietest liep niet of brak af)"
-            echo "=== einde samenvatting ==="
+            echo "(geen uitslag: de test liep niet of brak af)"
           fi
           grep -E '^(FOUT|STOP) ' "$log" 2>/dev/null || true
+          echo "=== einde samenvatting ==="
 
   images:
     name: Images bouwen

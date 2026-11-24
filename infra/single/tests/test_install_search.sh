@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Zoeken en foto's in install.sh (bouwontwerp fase 6, Z7; Keuze 29, 52 en 53, §3.10). Twee delen:
 #
-#   bash infra/single/tests/test_install_search.sh             de functies
-#   bash infra/single/tests/test_install_search.sh --stappen   de update en terug, echt
+#   bash infra/single/tests/test_install_search.sh                 de functies
+#   bash infra/single/tests/test_install_search.sh --stappen       de update van 0.7.1 en terug, echt
+#   bash infra/single/tests/test_install_search.sh --stappen-081   de update van 0.8.1 en terug, echt
 #
-# Beide draaien in de job infra van CI; --stappen ook in de sandbox.
+# Alle drie draaien in de job infra van CI; --stappen ook in de sandbox.
 #
 # De functies: install.sh met INSTALL_LIB=1, zoals test_install_media.sh. Er wordt niets
 # geïnstalleerd: docker, curl, install en chown zijn nepfuncties. De reservekopie draait wel echt:
@@ -30,13 +31,17 @@
 # - de eindtekst van §3.10 stap 7, met de plaatsnamen en de reservekopie;
 # - de weg terug naar 0.7.1 en weer vooruit in §3.10, infra/single/README.md en
 #   docs/runbooks/zoeken.md: precies de commando's, in die volgorde, met de volledige hash;
-# - de weg terug naar 0.8.0 van 59e0250 (head 0010) in de README en het runbook, net zo; in beide
-#   blokken de kopie van de head van nu, en in het runbook precies wat db-downgrade zegt dat
-#   weggaat (de teksten van api/app/cli.py);
+# - de weg terug naar 0.8.0 van 59e0250 (head 0010) en naar 0.8.1 van ae163ac (head 0012) in de
+#   README en het runbook, net zo; in elk blok de kopie van de head van nu, en in het runbook
+#   precies wat db-downgrade zegt dat weggaat (de teksten van api/app/cli.py; terug naar 0.8.1
+#   gaat op SQLite niets weg, dus daar geen citaat);
 # - de voorcontrole van --stappen (met een nep-docker; er wordt niets gebouwd): een werkmap die
-#   de test weigert, blijft zoals hij was, en het blok Samenvatting staat altijd als laatste.
+#   de test weigert, blijft zoals hij was, en het blok Samenvatting staat altijd als laatste;
+#   --stappen-081 maakt zijn eigen werkmap van root (1777, zoals /tmp) en weigert een werkmap die
+#   install.sh voor de mappen van de analyse zou weigeren.
 #
-# De installatietest (--stappen) staat onder stappen() hieronder, met zijn eigen uitleg.
+# De installatietests staan onder stappen() (--stappen) en stappen_081() (--stappen-081)
+# hieronder, met hun eigen uitleg.
 #
 # De variabelen en functies komen uit install.sh (shellcheck volgt de bron niet in CI):
 # shellcheck disable=SC2034,SC2153,SC2154
@@ -53,6 +58,10 @@ ROLLBACK_HEAD=0009
 # De weg terug naar 0.8.0 zelf: de laatste commit vóór A0, met migratie 0010 (review A0, uitrol U2)
 BACK080_SHA=59e0250ba63d31c41b92f7ec8430446810db8a74
 BACK080_HEAD=0010
+# De weg terug naar 0.8.1 (release 0.8.2, P10): de commit van 0.8.1, met migratie 0012. 0013 en
+# 0014 van 0.8.2 doen op SQLite niets; db-downgrade 0012 zet daar alleen de revisie terug
+BACK081_SHA=ae163ac69470343de7bc8d876db1a48e7da9331e
+BACK081_HEAD=0012
 BRANCH_NAME=claude/stappenplan-uitwerken-lu4uv3
 SEARCH_LINE="Zoeken op naam werkt meteen. De inhoud wordt nu op de achtergrond gelezen; volg het op /beheer → Zoeken en foto's."
 
@@ -933,14 +942,15 @@ ALS_ROOT
   # Het script komt van de commit zelf (niet van de branch: dan draait het oude script met het
   # oude image), en in een bestand vóór er iets stopt. Daarna weer vooruit met de branch.
   echo
-  echo "== terug naar 0.8.0 en 0.7.1 en weer vooruit: de commando's van §3.10 in het ontwerp, de README en het runbook"
-  out=$(python3 -I - "$ROLLBACK_SHA" "$ROLLBACK_HEAD" "$BACK080_SHA" "$BACK080_HEAD" "$BRANCH_NAME" "$top" <<'PY'
+  echo "== terug naar 0.8.1, 0.8.0 en 0.7.1 en weer vooruit: de commando's van §3.10 in het ontwerp, de README en het runbook"
+  out=$(python3 -I - "$ROLLBACK_SHA" "$ROLLBACK_HEAD" "$BACK080_SHA" "$BACK080_HEAD" "$BRANCH_NAME" "$top" \
+    "$BACK081_SHA" "$BACK081_HEAD" <<'PY'
 import ast
 import pathlib
 import re
 import sys
 
-SHA, HEAD, SHA80, HEAD80, BRANCH, TOP = sys.argv[1:7]
+SHA, HEAD, SHA80, HEAD80, BRANCH, TOP, SHA81, HEAD81 = sys.argv[1:9]
 top = pathlib.Path(TOP)
 RAW = "https://raw.githubusercontent.com/Jonasz1996/alles-in-1-file-office-media-platform"
 # De head van nu: de nieuwste migratie. db-backup noemt zijn kopie daarnaar
@@ -968,6 +978,7 @@ FORWARD = (
 )
 WANT71 = want(SHA, HEAD, "0.7.1") + [FORWARD]
 WANT80 = want(SHA80, HEAD80, "0.8.0")
+WANT81 = want(SHA81, HEAD81, "0.8.1")
 
 # Wat db-downgrade zegt dat weggaat, uit api/app/cli.py zelf (de nieuwste eerst, zoals lost_lines)
 consts = {}
@@ -977,6 +988,9 @@ for node in ast.parse((top / "api/app/cli.py").read_text(encoding="utf-8")).body
             consts[node.targets[0].id] = ast.literal_eval(node.value)
 LOST80 = [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]
 LOST71 = LOST80 + [consts.get("SEARCH_LOST")]
+# Terug naar 0.8.1 haalt 0013 en 0014 weg; op SQLite doen die niets, dus db-downgrade noemt niets
+# (PG_LOST en PG_SEARCH_LOST gelden alleen op PostgreSQL)
+LOST81 = []
 
 
 def section(text, start, ends):
@@ -1017,15 +1031,15 @@ else:
 if None in LOST71:
     problems.append("api/app/cli.py: BEELD_LOST, FACES_LOST of SEARCH_LOST niet gevonden")
 docs = {
-    "README.md": ((top / "infra/single/README.md"), "**Terug naar 0.8.0 van `59e0250`.**", "**Terug naar 0.7.1.**", ("## ", "**Terug naar ")),
-    "zoeken.md": ((top / "docs/runbooks/zoeken.md"), "## Terug naar 0.8.0 van `59e0250`", "## Terug naar 0.7.1", ("## ",)),
+    "README.md": ((top / "infra/single/README.md"), "**Terug naar 0.8.1 van `ae163ac`.**", "**Terug naar 0.8.0 van `59e0250`.**", "**Terug naar 0.7.1.**", ("## ", "**Terug naar ")),
+    "zoeken.md": ((top / "docs/runbooks/zoeken.md"), "## Terug naar 0.8.1 van `ae163ac`", "## Terug naar 0.8.0 van `59e0250`", "## Terug naar 0.7.1", ("## ",)),
 }
-for name, (path, mark80, mark71, ends) in docs.items():
+for name, (path, mark81, mark80, mark71, ends) in docs.items():
     text = path.read_text(encoding="utf-8")
     for i, line in enumerate(text.splitlines()):
         if "PLATFORM_SRC_REF=" in line and "| " in line and "bash" in line.split("PLATFORM_SRC_REF=", 1)[1]:
             problems.append("%s r. %d: PLATFORM_SRC_REF met curl | bash, niet met het bestand" % (name, i + 1))
-    for version, mark, wanted, lost in (("0.8.0", mark80, WANT80, LOST80), ("0.7.1", mark71, WANT71, LOST71)):
+    for version, mark, wanted, lost in (("0.8.1", mark81, WANT81, LOST81), ("0.8.0", mark80, WANT80, LOST80), ("0.7.1", mark71, WANT71, LOST71)):
         part = section(text, mark, ends)
         label = "%s, terug naar %s" % (name, version)
         if part is None:
@@ -1045,7 +1059,7 @@ for name, (path, mark80, mark71, ends) in docs.items():
 print("; ".join(problems) or "ok")
 PY
   ) || out="(geen uitvoer)"
-  check "de commando's terug naar 0.8.0 en 0.7.1 met de volledige hash, in het ontwerp, de README en het runbook ($out)" test "$out" = ok
+  check "de commando's terug naar 0.8.1, 0.8.0 en 0.7.1 met de volledige hash, in het ontwerp, de README en het runbook ($out)" test "$out" = ok
   check "§3.10: de downgrade naar $ROLLBACK_HEAD, niet meer 0008" eval '! sed -n "/^### 3.10 /,/^### 3.11 /p" "$top/docs/fase-6/bouwontwerp.md" | grep -qE "db-downgrade 0008|platform-0008-"'
 
   # De trap van --stappen staat vóór de voorcontrole (de samenvatting komt er altijd) en haalt
@@ -1075,8 +1089,9 @@ NEP
     (cd "$nep/cwd" && env -u INSTALL_LIB -u PLATFORM_ROOT -u INSTALL_TEST_DIR -u INSTALL_TEST_LOGS \
       -u INSTALL_TEST_TO PATH="$nep/bin:$PATH" NEP_ROOT="$nep" INSTALL_TEST_NEED_GB=0 \
       INSTALL_TEST_REPO="$nep/repo" INSTALL_TEST_FROM=0000000000000000000000000000000000000000 \
-      INSTALL_TEST_GEO="$nep/leeg" "$@" bash "$here/test_install_search.sh" --stappen 2>&1)
+      INSTALL_TEST_GEO="$nep/leeg" "$@" bash "$here/test_install_search.sh" "$vmode" 2>&1)
   }
+  local vmode=--stappen
   stopped_with() { [ "$code" = 1 ] && grep -qxF "STOP  $1" <<<"$out"; }
   empty_dir() { [ -d "$1" ] && [ -z "$(ls -A "$1")" ]; }
   gone() { [ -n "$1" ] && [ ! -e "$1" ]; }
@@ -1110,6 +1125,28 @@ NEP
   out=$(vooraf INSTALL_TEST_GEO="$nep/nietleeg" INSTALL_TEST_FROM="$(git -C "$nep/repo" rev-parse HEAD)" \
     INSTALL_TEST_TO="$(git -C "$nep/repo" rev-parse HEAD)") || code=$?
   check "bronnen van plaatsen die niet kloppen: STOP vóór er iets gebeurt" stopped_with "INSTALL_TEST_GEO ($nep/nietleeg) heeft de twee bronnen van plaatsen niet (tools/geo/haal.py --check)"
+
+  # --stappen-081 (P10): de analyse wil een pad van root. Zijn eigen werkmap maakt de test van root
+  # met 1777 (zoals /tmp) en haalt hem daarna weg; een gegeven werkmap die anderen kunnen
+  # schrijven, weigert hij, en die blijft zoals hij was (ook zijn rechten)
+  echo
+  echo "== --stappen-081: een werkmap van root (de analyse), of een STOP; de map van een ander blijft"
+  vmode=--stappen-081
+  mkdir -m 0777 "$nep/open"
+  chmod 0777 "$nep/open"
+  code=0
+  out=$(vooraf INSTALL_TEST_DIR="$nep/open") || code=$?
+  check "door iedereen te schrijven: STOP, exit 1" stopped_with "$nep/open: elk deel van het pad moet van root zijn en niet door anderen te schrijven (of met de sticky bit, zoals /tmp); anders weigert install.sh de mappen van de analyse"
+  check "door iedereen te schrijven: de map blijft, leeg, 777, van wie hij was" \
+    eval 'empty_dir "$nep/open" && [ "$(stat -c "%a %u" "$nep/open")" = "777 $(id -u)" ]'
+  check "door iedereen te schrijven: de samenvatting (--stappen-081) als laatste" \
+    eval 'summary_last && grep -qxF "=== Samenvatting (test_install_search.sh --stappen-081) ===" <<<"$out"'
+  code=0
+  out=$(vooraf) || code=$?
+  own=$(sed -n 's/^== Voorbereiden (.*, werkmap \(\/tmp\/install-search\.[^)]*\))$/\1/p' <<<"$out")
+  check "eigen werkmap: van root met 1777, dus STOP pas bij de versie" stopped_with "versie 0000000000000000000000000000000000000000 staat niet in $nep/repo"
+  check "eigen werkmap: gemaakt (${own:-geen}) en daarna weg" gone "$own"
+  check "eigen werkmap: de samenvatting als laatste" summary_last
 
   einde
 }
@@ -1149,12 +1186,22 @@ NEP
 #   opruimen gaan zoals in test_install_media.sh; het blok "=== Samenvatting" staat altijd als
 #   laatste in het log.
 #
-# Instellingen (alle optioneel): INSTALL_TEST_DIR, _REPO, _FROM (standaard 80d5bb8), _TO
-# (standaard HEAD), _PORT (18680), _HTTPS_PORT (18643), _LOGS, _CA, _UV, _NEED_GB (8) en _GEO.
+# Instellingen (alle optioneel): INSTALL_TEST_DIR, _REPO, _FROM (standaard 80d5bb8; met
+# --stappen-081 ae163ac), _TO (standaard HEAD), _PORT (18680), _HTTPS_PORT (18643), _LOGS, _CA,
+# _UV, _NEED_GB (8) en _GEO.
+#
+# stappen <modus>: --stappen (hierboven) of --stappen-081 (stappen_081, hieronder). Beide delen
+# alles tot en met de hulpjes; daarna de stappen van hun eigen modus.
 # shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
 stappen() {
+  MODE=$1
   REPO_SRC=${INSTALL_TEST_REPO:-$top}
-  FROM=${INSTALL_TEST_FROM:-$ROLLBACK_SHA}
+  if [ "$MODE" = --stappen-081 ]; then
+    # De analyse staat aan zoals sinds 0.8.1 standaard: geen ANALYSE bij een stap
+    FROM=${INSTALL_TEST_FROM:-$BACK081_SHA} OLD_VERSION=0.8.1 STEP_ENV=()
+  else
+    FROM=${INSTALL_TEST_FROM:-$ROLLBACK_SHA} OLD_VERSION=0.7.1 STEP_ENV=(-e ANALYSE=uit)
+  fi
   TO=${INSTALL_TEST_TO:-$(git -C "$REPO_SRC" rev-parse HEAD)}
   PORT=${INSTALL_TEST_PORT:-18680}
   HTTPS_PORT=${INSTALL_TEST_HTTPS_PORT:-18643}
@@ -1202,6 +1249,18 @@ stappen() {
     if id=$(docker image inspect --format '{{.Id}}' platform:local 2>/dev/null); then APP_IDS+=("$id"); fi
   }
   as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+  # Elk deel van een pad van root en niet door anderen te schrijven, tenzij met de sticky bit:
+  # dezelfde regel als analyse_path_ok in install.sh (--stappen-081)
+  root_path() {
+    local rest=${1#/} now="" part
+    while [ -n "$rest" ]; do
+      part=${rest%%/*}
+      if [ "$part" = "$rest" ]; then rest=""; else rest=${rest#*/}; fi
+      now=$now/$part
+      [ ! -L "$now" ] && [ "$(stat -c %u -- "$now")" = 0 ] || return 1
+      [ -z "$(find "$now" -maxdepth 0 -perm /022 ! -perm -1000)" ] || return 1
+    done
+  }
 
   # --- vooraf: niets van een ander raken ----------------------------------------------------
   local tool
@@ -1243,6 +1302,16 @@ stappen() {
   WORK=$(cd "$dir" && pwd -P)
   ROOT=$WORK/platform
   own_project=1
+  if [ "$MODE" = --stappen-081 ]; then
+    # MODELLEN_ROOT en SLEUTELS_ROOT komen in $ROOT. install.sh (analyse_path_ok) wil dat elk deel
+    # van dat pad van root is en niet door anderen te schrijven, tenzij met de sticky bit (zoals
+    # /tmp); anders draait de analyse niet, en toetst deze modus niets. Een werkmap die de test
+    # zelf maakte, wordt dus van root met 1777 (de test schrijft er als zichzelf nog in); een
+    # gegeven werkmap die het niet is, weigert hij (hij blijft zoals hij was)
+    if [ "$work_existed" = 0 ]; then as_root chown root:root "$WORK" && as_root chmod 1777 "$WORK"; fi
+    root_path "$WORK" ||
+      stop "$WORK: elk deel van het pad moet van root zijn en niet door anderen te schrijven (of met de sticky bit, zoals /tmp); anders weigert install.sh de mappen van de analyse"
+  fi
   mkdir -p "$WORK/logs" "$WORK/shim/bin" "$WORK/shim/log" "$WORK/build" "$WORK/net" "$WORK/bestand"
 
   # --- de broncode: 0.7.1, deze versie, en een commit erbovenop (stap 3 en 5) ----------------
@@ -1266,7 +1335,7 @@ stappen() {
   git -C "$WORK/repo.git" update-ref refs/heads/installatietest-van "$FROM"
   git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar "$TO"
   git -C "$WORK/repo.git" update-ref refs/heads/installatietest-naar2 "$TO2"
-  NEW_SH=$WORK/install.sh OLD_SH=$WORK/platform-install-0.7.1.sh
+  NEW_SH=$WORK/install.sh OLD_SH=$WORK/platform-install-$OLD_VERSION.sh
   git -C "$WORK/repo.git" show "$TO:infra/single/install.sh" >"$NEW_SH"
   git -C "$WORK/repo.git" show "$FROM:infra/single/install.sh" >"$OLD_SH"
   printf '[safe]\n\tdirectory = %s\n' "$WORK/repo.git" >"$WORK/gitconfig"
@@ -1464,6 +1533,13 @@ case "$url" in
     fi
     exec cp "$SHIM_NET/${url##*/}" "$out"
     ;;
+  https://media.githubusercontent.com/* | https://huggingface.co/*)
+    # De modellen van de analyse (models.lock) komen in deze test nooit van internet: altijd
+    # zoals zonder netwerk (--stappen-081: de analyse aan, de modellen onbereikbaar)
+    echo "$url" >>"$SHIM_LOG/modellen.log"
+    echo "curl: (6) Could not resolve host (installatietest: de modellen zijn onbereikbaar)" >&2
+    exit 6
+    ;;
 esac
 exec /usr/bin/curl "$@"
 SHIM
@@ -1471,6 +1547,7 @@ SHIM
   : >"$WORK/shim/log/compose.log"
   : >"$WORK/shim/log/runs.log"
   : >"$WORK/shim/log/curl.log"
+  : >"$WORK/shim/log/modellen.log"
 
   # --- hulpjes ------------------------------------------------------------------------------
   cid() {
@@ -1565,7 +1642,7 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     local name=$1 script=$2 rc=0 kv envs=() f
     shift 2
     for kv in "$@"; do envs+=(-e "$kv"); done
-    for f in compose.log runs.log curl.log; do echo "== $name" >>"$WORK/shim/log/$f"; done
+    for f in compose.log runs.log curl.log modellen.log; do echo "== $name" >>"$WORK/shim/log/$f"; done
     echo
     echo "== $name: $(basename "$script") $*"
     timeout 1800 docker run -i --rm --name "$RUNNER_NAME" --network host \
@@ -1573,13 +1650,13 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
       -v "$(command -v docker)":/usr/bin/docker:ro \
       -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro \
       -v "$WORK:$WORK" \
-      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit -e ANALYSE=uit \
+      -e PLATFORM_REPO="$WORK/repo.git" -e PLATFORM_ROOT="$ROOT" -e OFFICE=uit "${STEP_ENV[@]}" \
       -e GIT_CONFIG_GLOBAL="$WORK/gitconfig" -e SHIM_LOG="$WORK/shim/log" -e SHIM_NET="$WORK/net" \
       -e PORT="$PORT" -e HTTPS_PORT="$HTTPS_PORT" -e SHIM_COMPOSE_EXTRA="$SANDBOX_COMPOSE" \
       -e PATH="$WORK/shim/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       "${envs[@]}" "$RUNNER_IMG" bash -s <"$script" >"$WORK/logs/$name.log" 2>&1 || rc=$?
     note_app
-    for f in compose.log runs.log curl.log; do echo "== einde" >>"$WORK/shim/log/$f"; done
+    for f in compose.log runs.log curl.log modellen.log; do echo "== einde" >>"$WORK/shim/log/$f"; done
     if [ "$rc" != 0 ]; then
       echo "install.sh gaf $rc; de laatste regels:"
       tail -n 30 "$WORK/logs/$name.log"
@@ -1605,6 +1682,12 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
     elif [ -f "$d/compose.media-local.yaml" ] && as_root grep -qx 'MEDIA_SANDBOX=uit' "$ROOT/.env"; then
       f+=(-f "$d/compose.media-local.yaml")
     fi
+    if docker container inspect platform-analyse-1 >/dev/null 2>&1; then
+      f+=(-f "$d/compose.analyse.yaml")
+      if [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ]; then
+        f+=(-f "$d/compose.analyse-limits.yaml")
+      fi
+    fi
     [ -z "$SANDBOX_COMPOSE" ] || f+=(-f "$SANDBOX_COMPOSE")
     as_root docker compose --project-directory "$d" --env-file "$ROOT/.env" "${f[@]}" "$@"
   }
@@ -1628,6 +1711,13 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   schema_head=$(head_rev "$TO") || stop "geen migraties gevonden in $TO (api/migrations/versions)"
   printf 'Een bestand dat de update en de weg terug overleeft (installatietest van zoeken).\n' >"$WORK/bestand/notities.txt"
   file_sha=$(sha256sum "$WORK/bestand/notities.txt" | cut -d' ' -f1)
+
+  if [ "$MODE" = --stappen-081 ]; then
+    stappen_081
+    ENDED=1
+    einde
+    return 0
+  fi
 
   # --- 1. 0.7.1 installeren, met het script van 0.7.1 ---------------------------------------
   STAGE=1
@@ -1820,6 +1910,215 @@ print(f"{head[0][0] if len(head) == 1 else head} {ok} {users}")' "$BACKUP_DIR/$1
   einde
 }
 
+# ============================================================================================
+# Deel 3: van 0.8.1 naar deze versie en terug (--stappen-081)
+# ============================================================================================
+
+# De update van één node van 0.8.1 (ae163ac, migratie 0012) naar deze versie (0.8.2, migratie
+# 0014; op SQLite doen 0013 en 0014 niets) en terug, met precies de commando's van "Terug naar
+# 0.8.1 van `ae163ac`" in docs/runbooks/zoeken.md en infra/single/README.md (release 0.8.2, P10).
+# Het harnas is dat van --stappen (stappen() hierboven: de runner, de shims, de images, de werkmap
+# en het opruimen), maar zonder ANALYSE=uit: de analyse staat aan zoals sinds 0.8.1 standaard, en
+# de modellen zijn niet te halen (de shim van curl faalt voor media.githubusercontent.com en
+# huggingface.co, zoals zonder netwerk). install.sh mag daar nooit op stoppen: de app draait, de
+# container analyse ook (met models_missing), en zoeken op beeld is niet geladen.
+#
+#   | Stap | Wat | Wat de test nakijkt |
+#   |---|---|---|
+#   | 1 | 0.8.1 installeren met het script van ae163ac; de analyse standaard aan | exit 0; schema 0012; ANALYSE=aan; beide modellen van gezichten één keer geprobeerd en niet geladen, geen .onnx en geen tijdelijke map; de container analyse op het image van de app, met models_missing; zoeken op beeld niet geladen |
+#   | 2 | bijwerken naar deze versie (de branch) | exit 0; de kopie platform-0012 met het image van 0.8.1, vóór de nieuwe app; schema 0014; de app is deze versie; de analyse op het nieuwe image, met models_missing; plaatsen geladen; het bestand heel |
+#   | 3 | terug naar 0.8.1: precies het runbook | git fetch en cat-file; dc stop platform media (analyse blijft); db-backup (een kopie van 0014); db-downgrade 0012 met "ja", zonder een regel over wat weggaat; het script van ae163ac met PLATFORM_SRC_REF; schema 0012, de app van 0.8.1, de analyse met models_missing, het bestand heel |
+#   | 4 | weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF | exit 0; schema 0014; een nieuwe kopie van 0012 met het image van 0.8.1, die van 0014 blijft; de analyse met models_missing; het bestand heel |
+#
+# De functies hieronder komen uit stappen() (bash: wat een functie definieert, is daarna overal
+# te zien; de locale variabelen van stappen ook, zolang die loopt).
+# shellcheck disable=SC2016  # check … eval '…': eval werkt de uitdrukking pas zelf uit
+stappen_081() {
+  local from_head schema_head file_id file_sha root app1 app2 app3 cid3 media3 copy12 copy14 newest rc who3 v_from v_to
+  from_head=$(head_rev "$FROM") || stop "geen migraties gevonden in $FROM (api/migrations/versions)"
+  schema_head=$(head_rev "$TO") || stop "geen migraties gevonden in $TO (api/migrations/versions)"
+  version_of() { git -C "$WORK/repo.git" show "$1:api/app/__init__.py" | sed -n 's/^__version__ = "\(.*\)"$/\1/p'; }
+  v_from=$(version_of "$FROM") v_to=$(version_of "$TO")
+  app_version() { docker exec "$(cid platform)" python -c 'import app; print(app.__version__)' </dev/null 2>/dev/null; }
+  # De eerste regel van analyse-status in de app, zoals install.sh hem leest
+  analyse_state() { docker exec "$(cid platform)" python -m app.cli analyse-status </dev/null 2>/dev/null | head -n 1 || true; }
+  # wait_analyse <seconden> <begin van die regel>
+  wait_analyse() {
+    local end=$((SECONDS + $1)) now
+    while :; do
+      now=$(analyse_state)
+      case "$now" in "$2"*) return 0 ;; esac
+      if [ "$SECONDS" -ge "$end" ]; then
+        echo "  analyse-status: ${now:-geen antwoord}"
+        return 1
+      fi
+      sleep 3
+    done
+  }
+  # De container analyse draait, op hetzelfde image als de app (platform:local)
+  analyse_on_app_image() {
+    local c
+    c=$(cid analyse) && running "$c" && [ "$(docker inspect --format '{{.Image}}' "$c")" = "$(image_id)" ]
+  }
+  MODELS=$ROOT/modellen
+  no_model_left() {
+    as_root test -d "$MODELS" &&
+      [ -z "$(as_root find "$MODELS" -mindepth 1 \( -name '*.onnx' -o -name '.ophalen.*' -o -name '.beeld.*' \) -print)" ]
+  }
+  # De twee modellen van gezichten (models.lock: van media.githubusercontent.com): één poging per
+  # run, en de shim zegt "geen netwerk"
+  face_tries() { in_step "$1" modellen.log | grep -c '^https://media\.githubusercontent\.com/' || true; }
+  # Wat install.sh over de analyse zegt: aan, beide modellen niet geladen (de reden in de
+  # eindtekst), en zoeken op beeld niet geladen. Nooit fataal
+  analyse_said() {
+    said "$1" "Analyse: aan (modellen in $MODELS)" &&
+      [ "$(grep -c 'kon niet geladen worden; gezichten wachten tot de volgende installatie\.$' "$WORK/logs/$1.log")" = 2 ] &&
+      said_part "$1" "Gezichten (de container analyse): aan, maar niet alle modellen zijn er (" &&
+      said "$1" "Zoeken op beeld: het model is niet geladen. De volgende run probeert het opnieuw."
+  }
+  printf 'Een bestand dat de update naar 0.8.2 en de weg terug naar 0.8.1 overleeft.\n' >"$WORK/bestand/notities.txt"
+  file_sha=$(sha256sum "$WORK/bestand/notities.txt" | cut -d' ' -f1)
+  # De bronnen van plaatsen wel (van het nepnetwerk), zoals bij een gewone 0.8.1
+  net aan
+
+  # --- 1. 0.8.1 installeren, met het script van 0.8.1 en de analyse standaard aan -----------
+  STAGE=1
+  rc=0
+  step 1-van "$OLD_SH" PLATFORM_BRANCH=installatietest-van || rc=$?
+  check "1: het script van $OLD_VERSION stopt niet, ook niet zonder modellen (exit $rc)" test "$rc" = 0
+  [ "$rc" = 0 ] || stop "de installatie van $OLD_VERSION (${FROM:0:12}) lukte niet"
+  check "1: de app draait op poort $PORT" app_up
+  check "1: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
+  check "1: het schema staat op $from_head ($OLD_VERSION)" test "$(db_rev)" = "$from_head"
+  check "1: de app is $v_from (gezien: $(app_version))" test "$(app_version)" = "$v_from"
+  check "1: ANALYSE=aan in .env (de standaard), met een eigen sleutel van 64 hex" eval \
+    '[ "$(env_value ANALYSE)" = aan ] && [[ $(env_value ANALYSE_WORKER_KEY) =~ ^[0-9a-f]{64}$ ]]'
+  check "1: de analyse aan, beide modellen niet geladen, zoeken op beeld niet geladen" analyse_said 1-van
+  check "1: beide modellen één keer geprobeerd, zonder netwerk (gezien: $(face_tries 1-van))" test "$(face_tries 1-van)" = 2
+  check "1: geen model en geen tijdelijke map in $MODELS" no_model_left
+  check "1: de container analyse draait, op het image van de app" analyse_on_app_image
+  check "1: analyse-status: models_missing" wait_analyse 120 "Analyse: models_missing"
+  check "1: nog geen map backup" eval '! as_root test -e "$BACKUP_DIR"'
+  app1=$(image_id)
+  check "1: een beheerder aangemaakt, met 2FA aan" api setup
+  root=$(api get /api/v1/auth/me root_id) || stop "1: /auth/me gaf geen map"
+  file_id=$(api upload "$root" notities.txt "$WORK/bestand/notities.txt") || stop "1: het bestand uploaden lukte niet"
+  check "1: het bestand staat erin" test "$(api sha "$file_id")" = "$file_sha"
+
+  # --- 2. bijwerken naar deze versie --------------------------------------------------------
+  STAGE=2
+  rc=0
+  step 2-bijwerken "$NEW_SH" PLATFORM_BRANCH=installatietest-naar || rc=$?
+  check "2: install.sh stopt niet, ook niet zonder modellen (exit $rc)" test "$rc" = 0
+  check "2: de app draait" app_up
+  check "2: de broncode staat op ${TO:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$TO^{commit}")"
+  check "2: het schema staat op $schema_head (gezien: $(db_rev))" test "$(db_rev)" = "$schema_head"
+  check "2: de app is $v_to (gezien: $(app_version))" test "$(app_version)" = "$v_to"
+  check "2: de reservekopie met het image van $OLD_VERSION (${app1:7:12})" test "$(run_image 2-bijwerken)" = "$app1"
+  check "2: de kopie vóór de nieuwe app (compose run, dan up)" compose_before 2-bijwerken "run --rm --no-deps -T platform python -I -c <tekst> /data/platform.db /data/backup" "up -d --build --remove-orphans platform"
+  copy12=$(backups)
+  check "2: één kopie platform-$from_head-<tijd>.db (gezien: $copy12)" is_copy "$copy12" "$from_head"
+  check "2: de kopie is heel: $from_head, integrity ok, de beheerder (gezien: $(copy_facts "$copy12"))" test "$(copy_facts "$copy12")" = "$from_head ok 1"
+  check "2: de kopie: 600, van de gebruiker van de app (uid 10001, zoals platform.db)" app_file "$BACKUP_DIR/$copy12" 600
+  check "2: de analyse aan, beide modellen niet geladen, zoeken op beeld niet geladen" analyse_said 2-bijwerken
+  check "2: beide modellen opnieuw één keer geprobeerd (gezien: $(face_tries 2-bijwerken))" test "$(face_tries 2-bijwerken)" = 2
+  check "2: geen model en geen tijdelijke map in $MODELS" no_model_left
+  check "2: de container analyse draait, op het nieuwe image" analyse_on_app_image
+  check "2: analyse-status: models_missing" wait_analyse 120 "Analyse: models_missing"
+  check "2: plaatsen geladen" wait_places 300 true
+  check "2: het bestand is er nog, heel" test "$(api sha "$file_id")" = "$file_sha"
+  check "2: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
+  app2=$(image_id)
+
+  # --- 3. terug naar 0.8.1: precies het runbook ---------------------------------------------
+  STAGE=3
+  echo
+  echo "== 3: terug naar $OLD_VERSION (docs/runbooks/zoeken.md, \"Terug naar 0.8.1 van \`ae163ac\`\")"
+  media3=$(cid media)
+  # Na dc stop is er geen app meer om te vragen wie hij is (3.3); dus nu
+  who3=$(app_user) || who3=
+  if as_root env GIT_CONFIG_GLOBAL="$WORK/gitconfig" git -C "$ROOT/src" fetch -q origin &&
+    as_root git -C "$ROOT/src" cat-file -e "$FROM^{commit}"; then
+    ok "3.1: git fetch en cat-file -e '${FROM:0:12}^{commit}' (het script van $OLD_VERSION: $OLD_SH)"
+  else
+    fout "3.1: de commit van $OLD_VERSION is er niet"
+  fi
+  if dc stop platform media >"$WORK/logs/3-stop.log" 2>&1; then ok "3.2: dc stop platform media"; else fout "3.2: dc stop platform media"; fi
+  check "3.2: de container analyse draait nog (die komt niet aan de database)" eval 'running "$(cid analyse)"'
+  if dc run --rm --no-deps -T platform python -m app.cli db-backup </dev/null >"$WORK/logs/3-kopie.log" 2>&1; then
+    ok "3.3: dc run --rm --no-deps platform python -m app.cli db-backup"
+  else
+    fout "3.3: db-backup"
+    tail -n 20 "$WORK/logs/3-kopie.log"
+  fi
+  copy14=$(backups)
+  copy14=${copy14#"$copy12 "}
+  check "3.3: een verse kopie van $schema_head, en de $from_head blijft (gezien: $(backups))" \
+    eval 'is_copy "$copy14" "$schema_head" && [ "$(backups)" = "$copy12 $copy14" ]'
+  check "3.3: het commando zegt waar de kopie staat" grep -qxE "De reservekopie staat in /data/backup/$copy14 \([0-9.]+ MB\)\." "$WORK/logs/3-kopie.log"
+  check "3.3: de verse kopie is heel: $schema_head, integrity ok (gezien: $(copy_facts "$copy14"))" test "$(copy_facts "$copy14")" = "$schema_head ok 1"
+  check "3.3: de kopie: 600, van de gebruiker van de app (gevraagd vóór dc stop: ${who3:-geen})" \
+    app_file "$BACKUP_DIR/$copy14" 600 "${who3:-geen}"
+  if printf 'ja\n' | dc run --rm --no-deps -T platform python -m app.cli db-downgrade "$from_head" >"$WORK/logs/3-downgrade.log" 2>&1; then
+    ok "3.4: dc run --rm --no-deps platform python -m app.cli db-downgrade $from_head (met \"ja\")"
+  else
+    fout "3.4: db-downgrade $from_head"
+    tail -n 20 "$WORK/logs/3-downgrade.log"
+  fi
+  # Op SQLite doen 0013 en 0014 niets: de vraag, en dan geen regel over wat weggaat (PG_LOST en
+  # PG_SEARCH_LOST alleen op PostgreSQL). Zonder terminal staat de uitkomst op de regel van de vraag
+  check "3.4: het commando vraagt om \"ja\", noemt niets dat weggaat, en zegt dat het schema op $from_head staat" eval \
+    'grep -qxF "De database gaat van revisie $schema_head terug naar $from_head. Wat alleen in de nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?" "$WORK/logs/3-downgrade.log" &&
+      grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $from_head." "$WORK/logs/3-downgrade.log" &&
+      ! grep -qE "gaat weg|gaan weg|Weg zijn daarna" "$WORK/logs/3-downgrade.log"'
+  rc=0
+  step 3-terug "$OLD_SH" PLATFORM_BRANCH=installatietest-van PLATFORM_SRC_REF="$FROM" || rc=$?
+  check "3.5: het script van $OLD_VERSION stopt niet (exit $rc)" test "$rc" = 0
+  check "3: de app draait" app_up
+  check "3: de broncode staat op ${FROM:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$FROM^{commit}")"
+  check "3: het schema staat op $from_head" test "$(db_rev)" = "$from_head"
+  check "3: de app is $v_from (gezien: $(app_version))" test "$(app_version)" = "$v_from"
+  check "3: de reservekopie met het image van deze versie (${app2:7:12})" test "$(run_image 3-terug)" = "$app2"
+  newest=$(backups)
+  newest=${newest%" $copy14"}
+  check "3: een nieuwe kopie van $from_head (per head de nieuwste), en de $schema_head blijft (gezien: $(backups))" \
+    eval 'is_copy "$newest" "$from_head" && [[ $newest > $copy12 ]] && [ "$(backups)" = "$newest $copy14" ]'
+  check "3: de analyse aan, beide modellen niet geladen, zoeken op beeld niet geladen" analyse_said 3-terug
+  check "3: de container analyse draait, op het image van $OLD_VERSION" analyse_on_app_image
+  check "3: analyse-status: models_missing" wait_analyse 120 "Analyse: models_missing"
+  check "3: de worker draait weer (een nieuwe container)" eval 'running "$(cid media)" && [ "$(cid media)" != "$media3" ]'
+  check "3: het bestand is er nog, heel" test "$(api sha "$file_id")" = "$file_sha"
+  check "3: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
+  copy12=$newest
+  app3=$(image_id)
+  cid3=$(cid platform)
+
+  # --- 4. weer vooruit: het script van de branch, zonder PLATFORM_SRC_REF --------------------
+  STAGE=4
+  rc=0
+  step 4-vooruit "$NEW_SH" PLATFORM_BRANCH=installatietest-naar || rc=$?
+  check "4: install.sh stopt niet (exit $rc)" test "$rc" = 0
+  check "4: de app draait (een nieuwe container)" eval 'app_up && [ "$(cid platform)" != "$cid3" ]'
+  check "4: de broncode staat op ${TO:0:12}" test "$(src_head)" = "$(git -C "$WORK/repo.git" rev-parse "$TO^{commit}")"
+  check "4: het schema staat op $schema_head (gezien: $(db_rev))" test "$(db_rev)" = "$schema_head"
+  check "4: de app is $v_to (gezien: $(app_version))" test "$(app_version)" = "$v_to"
+  check "4: de reservekopie met het image van $OLD_VERSION (${app3:7:12})" test "$(run_image 4-vooruit)" = "$app3"
+  newest=$(backups)
+  newest=${newest%" $copy14"}
+  check "4: een nieuwe kopie van $from_head, en de $schema_head blijft (gezien: $(backups))" \
+    eval 'is_copy "$newest" "$from_head" && [[ $newest > $copy12 ]] && [ "$(backups)" = "$newest $copy14" ]'
+  check "4: de nieuwe kopie is heel: $from_head, integrity ok (gezien: $(copy_facts "$newest"))" test "$(copy_facts "$newest")" = "$from_head ok 1"
+  check "4: de analyse aan, beide modellen niet geladen, zoeken op beeld niet geladen" analyse_said 4-vooruit
+  check "4: de container analyse draait, op het nieuwe image" analyse_on_app_image
+  check "4: analyse-status: models_missing" wait_analyse 120 "Analyse: models_missing"
+  check "4: plaatsen geladen" wait_places 300 true
+  check "4: het bestand is er nog, heel" test "$(api sha "$file_id")" = "$file_sha"
+  check "4: één image van de app, platform:local (gezien: $(app_images_text))" one_app_image
+  SUMMARY+=("reservekopieën aan het eind: $(backups)")
+  SUMMARY+=("images van de kopie per stap: 2=${app1:7:12} ($OLD_VERSION), 3=${app2:7:12}, 4=${app3:7:12} ($OLD_VERSION)")
+  SUMMARY+=("analyse-status aan het eind: $(analyse_state)")
+}
+
 stappen_opruimen() {
   local rc=$? ids ref i
   set +e
@@ -1872,7 +2171,7 @@ stappen_opruimen() {
   fi
   # Altijd, ook na een STOP of een afgebroken stap: de stap Samenvatting van CI leest dit blok
   echo
-  echo "=== Samenvatting (test_install_search.sh --stappen) ==="
+  echo "=== Samenvatting (test_install_search.sh $MODE) ==="
   [ "${#SUMMARY[@]}" = 0 ] || printf '%s\n' "${SUMMARY[@]}"
   echo "controles: $oks goed, $fails fout"
   if [ "$ENDED" != 1 ]; then
@@ -1884,9 +2183,9 @@ stappen_opruimen() {
 
 case "${1-}" in
   "") functies ;;
-  --stappen) stappen ;;
+  --stappen | --stappen-081) stappen "$1" ;;
   *)
-    echo "Gebruik: $0 [--stappen]" >&2
+    echo "Gebruik: $0 [--stappen | --stappen-081]" >&2
     exit 2
     ;;
 esac

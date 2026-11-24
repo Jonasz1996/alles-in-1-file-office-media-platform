@@ -2,10 +2,12 @@
 # De installatietest in de sandbox (bouwontwerp fase 4, §2 O6, §4.6 punt 3 en §5 stap 4): een
 # installatie uit fase 3 bijwerken naar deze versie, met de echte install.sh, de echte Docker,
 # de echte DS en de echte editor in een browser; daarna terug naar fase 3 zoals het runbook het
-# zegt, en weer vooruit. Niet in CI: hij bouwt het platform vier keer en start DS een paar keer
-# (±17 minuten met een warme build-cache, de eerste keer langer).
+# zegt, en weer vooruit. Hij bouwt het platform vier keer en start DS een paar keer (±17 minuten
+# met een warme build-cache, de eerste keer langer). Sinds 0.8.2 (P10) in CI, in de job
+# install-update op een schone runner. Als root, zoals op de LXC: .env (600) en de broncode zijn
+# van root (in CI met sudo -E, zodat uv, PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS blijven):
 #
-#   bash infra/single/tests/test_install_update.sh
+#   sudo -E env "PATH=$PATH" bash infra/single/tests/test_install_update.sh
 #
 # De stappen: A (fase 3 installeren, een beheerder met 2FA, twee bestanden met een versie), B
 # (bijwerken; /api/v1/office/status zegt starting tot de font-herstart van DS voorbij is, dan
@@ -79,15 +81,23 @@
 #   Docker.
 # - De login van de beheerder (wachtwoord, TOTP-geheim, tokens) staat alleen in de werkmap
 #   (sessie.json, rechten 600), nooit in een log; INSTALL_TEST_LOGS neemt hem niet mee.
+# - Sinds fase 5 en 6 (P10): media staat standaard aan (de mediaworker, compose.media.yaml), en
+#   de analyse ook. Wat de test zelf met compose doet, gaat via dc, de functie uit de README: de
+#   bestanden volgen de containers die er zijn, precies zoals install.sh ze koos. De analyse zet
+#   stap B uit (ANALYSE=uit, en .env onthoudt dat): deze test gaat over office, en haalt geen
+#   modellen. De analyse over een update toetst test_install_search.sh --stappen-081.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# Als root op de checkout van een andere gebruiker (CI: sudo) weigert git die anders ("dubious
+# ownership"). Alleen voor de git-aanroepen op deze checkout en INSTALL_TEST_REPO
+src_git() { git -c safe.directory='*' "$@"; }
 # De hulpjes van de test (e2e/install_api.py, e2e/install_editor.py en de omgeving van api/)
 # komen uit deze checkout; de versies die geïnstalleerd worden uit INSTALL_TEST_REPO
-top=$(git -C "$here" rev-parse --show-toplevel)
+top=$(src_git -C "$here" rev-parse --show-toplevel)
 REPO_SRC=${INSTALL_TEST_REPO:-$top}
 FROM=${INSTALL_TEST_FROM:-3ccee0a}
-TO=${INSTALL_TEST_TO:-$(git -C "$REPO_SRC" rev-parse HEAD)}
+TO=${INSTALL_TEST_TO:-$(src_git -C "$REPO_SRC" rev-parse HEAD)}
 PORT=${INSTALL_TEST_PORT:-18480}
 HTTPS_PORT=${INSTALL_TEST_HTTPS_PORT:-18443}
 DS_SECONDS=${INSTALL_TEST_DS_SECONDS:-900}
@@ -129,6 +139,8 @@ have() { docker image inspect "$1" >/dev/null 2>&1; }
 
 # --- vooraf: niets van een ander raken ------------------------------------------------------
 
+[ "$(id -u)" = 0 ] ||
+  stop "draai deze test als root (sudo -E env \"PATH=\$PATH\" bash $0): .env en de broncode zijn van root, zoals op de LXC"
 for tool in docker git python3 ss curl uv; do
   command -v "$tool" >/dev/null || stop "$tool ontbreekt"
 done
@@ -240,7 +252,7 @@ mkdir -p "$WORK/logs" "$WORK/shim/bin" "$WORK/build"
 # --- de broncode -----------------------------------------------------------------------------
 
 echo "== Voorbereiden ($FROM -> ${TO:0:12}, werkmap $WORK)"
-git clone -q --bare "$REPO_SRC" "$WORK/repo.git"
+src_git clone -q --bare "$REPO_SRC" "$WORK/repo.git"
 for c in "$FROM" "$TO"; do
   git -C "$WORK/repo.git" cat-file -e "$c^{commit}" 2>/dev/null || stop "versie $c staat niet in $REPO_SRC"
 done
@@ -621,14 +633,30 @@ office_volumes() {
 }
 limits=0
 [ "$(docker info --format '{{.MemoryLimit}} {{.CPUCfsQuota}}')" = "true true" ] && limits=1
-compose_args=(--project-directory "$ROOT/src/infra/single" --env-file "$ROOT/.env"
-  -f "$ROOT/src/infra/single/compose.yaml" -f "$ROOT/src/infra/single/compose.office.yaml")
-[ "$limits" = 0 ] || compose_args+=(-f "$ROOT/src/infra/single/compose.office-limits.yaml")
-[ -z "$SANDBOX_COMPOSE" ] || compose_args+=(-f "$SANDBOX_COMPOSE")
-# Zonder office (de functie dc uit de README als er geen container van DS is)
-base_args=(--project-directory "$ROOT/src/infra/single" --env-file "$ROOT/.env"
-  -f "$ROOT/src/infra/single/compose.yaml")
-[ -z "$SANDBOX_COMPOSE" ] || base_args+=(-f "$SANDBOX_COMPOSE")
+# De functie dc uit infra/single/README.md, met de paden van deze test: de compose-bestanden
+# volgen de containers die er zijn (office, media, analyse), zoals install.sh ze koos. Met alleen
+# compose.yaml en office (zoals in fase 4) maakte een losse up de app opnieuw zonder media, en
+# ruimde --remove-orphans de mediaworker op (P10)
+dc() {
+  local d=$ROOT/src/infra/single
+  local f=(-f "$d/compose.yaml")
+  if docker container inspect platform-office-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.office.yaml")
+    [ "$limits" = 0 ] || f+=(-f "$d/compose.office-limits.yaml")
+  fi
+  if docker container inspect platform-media-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.media.yaml")
+    [ "$limits" = 0 ] || f+=(-f "$d/compose.media-limits.yaml")
+  elif [ -f "$d/compose.media-local.yaml" ] && grep -qx 'MEDIA_SANDBOX=uit' "$ROOT/.env"; then
+    f+=(-f "$d/compose.media-local.yaml")
+  fi
+  if docker container inspect platform-analyse-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.analyse.yaml")
+    [ "$limits" = 0 ] || f+=(-f "$d/compose.analyse-limits.yaml")
+  fi
+  [ -z "$SANDBOX_COMPOSE" ] || f+=(-f "$SANDBOX_COMPOSE")
+  docker compose --project-directory "$d" --env-file "$ROOT/.env" "${f[@]}" "$@"
+}
 
 # Eén run van install.sh in de runner. Het script komt via stdin (zoals curl | bash).
 step() {
@@ -734,7 +762,8 @@ check "A: verslag.docx staat in Werk, zonder versie" test "$(api count "/api/v1/
 
 # --- B. Bijwerken naar deze versie, DS alleen van de mirror -----------------------------------
 
-step b-bijwerken PLATFORM_SRC_REF="$TO" SHIM_DS=geen-hub || fout "B: install.sh gaf een fout"
+# ANALYSE=uit één keer: install.sh schrijft het in .env, en elke volgende run houdt het
+step b-bijwerken PLATFORM_SRC_REF="$TO" SHIM_DS=geen-hub ANALYSE=uit || fout "B: install.sh gaf een fout"
 # Meteen na install.sh (DS is net gestart): inloggen met 2FA, en dan elke seconde
 # /api/v1/office/status, op de achtergrond, tot ok (review ontwerp-2)
 check "B: de beheerder logt in met wachtwoord en 2FA-code" api login
@@ -745,6 +774,8 @@ check "B: de broncode staat op ${TO:0:12}" test "$(git -C "$ROOT/src" rev-parse 
 check "B: de beheerder bestaat nog (setup niet meer nodig)" grep -q '"setup_required":false' <<<"$(curl -fsS -m 5 "http://127.0.0.1:$PORT/api/v1/auth/status")"
 check "B: de vijf regels van fase 3 staan er nog" test "$(head -n 5 "$ROOT/.env")" = "$(cat "$WORK/env-fase3")"
 check "B: OFFICE=aan in .env" test "$(env_value OFFICE)" = aan
+check "B: ANALYSE=uit in .env (de volgende runs halen geen modellen)" test "$(env_value ANALYSE)" = uit
+check "B: de mediaworker draait (media staat standaard aan)" running "$(cid media)"
 check "B: OFFICE_JWT_SECRET is 64 hex-tekens" is_hex64 "$(env_value OFFICE_JWT_SECRET)"
 check "B: OFFICE_LINK_SECRET is 64 hex-tekens" is_hex64 "$(env_value OFFICE_LINK_SECRET)"
 check "B: twee verschillende geheimen" test "$(env_value OFFICE_JWT_SECRET)" != "$(env_value OFFICE_LINK_SECRET)"
@@ -752,6 +783,7 @@ check "B: .env heeft rechten 600" test "$(stat -c %a "$ROOT/.env")" = 600
 sha256sum "$ROOT/.env" | cut -d' ' -f1 >"$WORK/env-b.sha"
 office=$(cid office)
 app=$(cid platform)
+media=$(cid media)
 check "B: DS draait" running "$office"
 check "B: DS op de tag van Docker Hub" test "$(image_of "$office")" = "$DS_DEFAULT"
 check "B: die tag wijst naar de digest van install.sh" grep -q "@$digest\$" <<<"$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$DS_DEFAULT")"
@@ -828,7 +860,7 @@ fresh_sha=$(api sha "$fresh" || true)
 
 echo
 echo "== B2: een losse docker compose up -d (zonder OFFICE_IMAGE, zoals na een herstart met de hand)"
-if env -u OFFICE_IMAGE docker compose "${compose_args[@]}" up -d >"$WORK/logs/b2-compose.log" 2>&1; then
+if (unset OFFICE_IMAGE && dc up -d) >"$WORK/logs/b2-compose.log" 2>&1; then
   ok "B2: compose up -d lukt"
 else
   fout "B2: compose up -d lukt"
@@ -836,6 +868,7 @@ else
 fi
 check "B2: DS niet opnieuw gemaakt" test "$(cid office)" = "$office"
 check "B2: de app niet opnieuw gemaakt" test "$(cid platform)" = "$app"
+check "B2: de mediaworker niet opnieuw gemaakt" test "$(cid media)" = "$media"
 check "B2: niets opgehaald" bash -c "! grep -qiE 'pull' '$WORK/logs/b2-compose.log'"
 check "B2: niets vervangen" bash -c "! grep -qiE 'recreat' '$WORK/logs/b2-compose.log'"
 
@@ -871,7 +904,7 @@ else
   # Zoals de README en het runbook: dc, met precies de bestanden van install.sh. Compose stopt DS
   # eerst (depends_on); DS slaat bij een nette stop alles op, de app draait dan nog
   t0=$(date +%s.%N)
-  if docker compose "${compose_args[@]}" stop >"$WORK/logs/s-stop.log" 2>&1; then
+  if dc stop >"$WORK/logs/s-stop.log" 2>&1; then
     ok "S: docker compose stop lukt"
   else
     fout "S: docker compose stop lukt"
@@ -890,7 +923,7 @@ else
   editor_pid=""
   check "S: de browser sloot zonder fout" test "$rc" = 0
   # Weer starten met dezelfde containers, zoals na een herstart van de LXC
-  if docker compose "${compose_args[@]}" start >"$WORK/logs/s-start.log" 2>&1; then
+  if dc start >"$WORK/logs/s-start.log" 2>&1; then
     ok "S: docker compose start lukt"
   else
     fout "S: docker compose start lukt"
@@ -923,7 +956,7 @@ echo "== K: een ander OFFICE_JWT_SECRET voor alleen de app, dan terug"
 # dan staan, met het oude geheim
 cp -p "$ROOT/.env" "$WORK/env-k"
 sed -i "s|^OFFICE_JWT_SECRET=.*|OFFICE_JWT_SECRET=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')|" "$ROOT/.env"
-if docker compose "${compose_args[@]}" up -d --remove-orphans platform >"$WORK/logs/k-fout.log" 2>&1; then
+if dc up -d --remove-orphans platform >"$WORK/logs/k-fout.log" 2>&1; then
   ok "K: de app opnieuw gemaakt met het andere geheim"
 else
   fout "K: de app opnieuw gemaakt met het andere geheim"
@@ -937,7 +970,7 @@ check "K: dan kan er niet bewerkt worden (editing false)" test "$(api get /api/v
 check "K: /api/v1/admin/office zegt misconfigured" test "$(api get /api/v1/admin/office state)" = misconfigured
 check "K: /beheer meldt office_misconfigured" api notice office_misconfigured
 mv "$WORK/env-k" "$ROOT/.env"
-if docker compose "${compose_args[@]}" up -d --remove-orphans platform >"$WORK/logs/k-terug.log" 2>&1; then
+if dc up -d --remove-orphans platform >"$WORK/logs/k-terug.log" 2>&1; then
   ok "K: terug: de app weer met het geheim uit .env"
 else
   fout "K: terug: de app weer met het geheim uit .env"
@@ -948,6 +981,7 @@ check "K: de app en DS weer hetzelfde geheim" secrets_match "$(cid platform)" "$
 check "K: de app draait" app_comes_up
 check "K: /api/v1/office/status zegt weer ok" api wait ok "$DS_SECONDS"
 check "K: geen melding office_misconfigured meer" no_notice office_misconfigured
+check "K: de mediaworker draait nog (geen wees voor --remove-orphans)" test "$(cid media)" = "$media"
 app=$(cid platform)
 
 # --- C. Nog een keer, zonder wijziging -------------------------------------------------------
@@ -1030,12 +1064,12 @@ step r-office-uit PLATFORM_SRC_REF="$TO" OFFICE=uit || fout "R2: install.sh gaf 
 check "R2: DS is weg" no_office
 check "R2: de app draait (nog deze versie, zonder office)" app_up
 # 4. De app stoppen en het schema terug naar 0006 (dc is nu zonder office: er is geen DS meer)
-if docker compose "${base_args[@]}" stop platform >"$WORK/logs/r3-stop.log" 2>&1; then
+if dc stop platform >"$WORK/logs/r3-stop.log" 2>&1; then
   ok "R3: dc stop platform"
 else
   fout "R3: dc stop platform"
 fi
-if printf 'ja\n' | docker compose "${base_args[@]}" run --rm --no-deps -T platform \
+if printf 'ja\n' | dc run --rm --no-deps -T platform \
   python -m app.cli db-downgrade 0006 >"$WORK/logs/r3-downgrade.log" 2>&1; then
   ok "R3: dc run --rm --no-deps platform python -m app.cli db-downgrade 0006 (met \"ja\")"
 else
