@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
 from PIL import Image
 from sqlalchemy import update
 
-from app import analysis, previews, render
+from app import analysis, previews, render, security
 from app.analysis import Step
 from app.extract import step as extract_step
 from app.models import Analysis, BlobText, User
@@ -378,10 +380,15 @@ async def test_vijftig_verzoeken_tegelijk(client, admin, settings, monkeypatch):
     assert seen.started <= 20
 
 
-async def test_hooguit_twintig_per_seconde_per_gebruiker(client, admin, settings):
+async def test_hooguit_twintig_per_seconde_per_gebruiker(client, admin, settings, monkeypatch):
     jonas, _ = admin
     node_id = await upload_pdf(client, jonas, "verslag.pdf", pdf_tekst(1))
     doc = await document(client, jonas, node_id)
+    # De 21 verzoeken vallen in dezelfde seconde, hoe traag de runner ook is: de klok van de
+    # limieten loopt alleen als de test hem verzet (run 195 op PostgreSQL: de twintig duurden
+    # langer dan het venster van een seconde)
+    klok = [time.monotonic()]
+    monkeypatch.setattr(security, "time", SimpleNamespace(monotonic=lambda: klok[0]))
     for _ in range(pages_words.WORDS_PER_SECOND):
         await words(client, doc, node_id, 1)
     r = await words(client, doc, node_id, 1, 429)
@@ -391,7 +398,7 @@ async def test_hooguit_twintig_per_seconde_per_gebruiker(client, admin, settings
     await share_with(client, jonas, node_id, user_id=anna_id, permission="read")
     await words(client, await document(client, anna, node_id), node_id, 1)
     # Na een seconde mag het weer
-    await asyncio.sleep(1.05)
+    klok[0] += 1.05
     await words(client, doc, node_id, 1)
 
 
