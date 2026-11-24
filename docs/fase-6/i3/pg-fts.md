@@ -71,7 +71,8 @@ de vraag splitst ook op leestekens (`app/search/query.py`).
   `query_canceled` (57014). Dan gaat het savepoint terug, telt de grens als geraakt, en blijft
   de transactie eromheen bruikbaar. Stopt een nieuwere vraag van dezelfde gebruiker deze
   (Keuze 13), dan stuurt de app `pg_cancel_backend` via een andere verbinding uit de pool, elke
-  50 ms tot het blok klaar is.
+  50 ms tot het blok klaar is. Is het blok klaar, dan wacht de app eerst op een annulering die
+  nog onderweg is, voor de verbinding iets anders stuurt (`test_deadline_pg.py`).
 - **LIKE gaat ook door `limits.admit`**: met de index uit of tijdens een herbouw dezelfde
   snelheid per gebruiker en dezelfde 2 tegelijk (F5, plan punt 5). Ook op SQLite.
 
