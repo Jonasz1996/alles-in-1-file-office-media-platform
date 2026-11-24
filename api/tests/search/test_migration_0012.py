@@ -15,6 +15,7 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 
 from app import cli
 from app import migrate as migrate_mod
@@ -26,6 +27,9 @@ from tests.search.gezichten import fill_beeld, fill_faces, marks, rows
 from tests.search.migratie import NOW, data, fill_0009, migrate, settings_at
 from tests.search.test_migration_0010 import objects, xcolumns
 from tests.test_migration_0007 import schema as schema_of
+
+# De nieuwste migratie (na 0012 komen er nog: 0015 van de Nextcloud-apps)
+HEAD = ScriptDirectory.from_config(migrate_mod.alembic_config("sqlite://")).get_current_head()
 
 pytestmark = pytest.mark.anyio
 
@@ -253,7 +257,7 @@ async def test_de_migratie_bij_het_starten_maakt_zelf_de_wal_leeg(tmp_path):
     await migrate_mod.upgrade(settings)
     async with get_engine(settings).connect() as conn:
         found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
-        assert found.scalars().all() == ["0014"]  # de head; 0013 en 0014 doen niets op SQLite
+        assert found.scalars().all() == [HEAD]
     assert _wal(settings) == 0
 
 
@@ -349,4 +353,4 @@ async def test_0010_naar_0012_op_100000_nodes(tmp_path):
     async with get_engine(settings).connect() as conn:
         assert (await conn.exec_driver_sql("SELECT count(*) FROM beeld_owner")).scalar() == 0
         found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
-        assert found.scalars().all() == ["0014"]  # de head; 0013 en 0014 doen niets op SQLite
+        assert found.scalars().all() == [HEAD]

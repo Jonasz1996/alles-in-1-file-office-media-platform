@@ -35,6 +35,9 @@ NIEUW = {
     "face_person": 0,
     "face_scan": 0,
     "node_origin": 2,
+    # Fase 7, migratie 0015 (de Nextcloud-apps): de wandeling koppelt niets
+    "app_password": 0,
+    "nc_login_flow": 0,
 }
 
 

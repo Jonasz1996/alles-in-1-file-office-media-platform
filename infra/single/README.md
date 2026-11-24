@@ -171,7 +171,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
-verse kopie (`platform-0014-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+verse kopie (`platform-0015-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
 gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
 vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
 `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
@@ -204,7 +204,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9c
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
 script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
 oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
-nu is (`platform-0014-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+nu is (`platform-0015-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
 gezichten, wie welk bestand uploadde, de zoekindex, de plekken van foto's, de hashes voor
 duplicaten, de personen die je met de hand benoemde en de regels van slimme albums) en vraagt om
 "ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,

@@ -104,9 +104,10 @@ INSTELLINGEN = "GET /api/v#/me/photo-settings"
 # schakelaar en het raster verbergt; gezichten (X2b) lezen faces_available uit
 # GET /me/photo-settings, dat met de analyse uit false is. Geen van beide toont iets: de bomen zijn
 # gelijk. ANTWOORD zegt wat die routes in deze wandeling antwoorden.
+APPS = "GET /api/v#/account/app-passwords"
 ERBIJ: dict[str, list[str]] = {
-    "eva /account": [BEELD],
-    "jonas /account": [BEELD],
+    "eva /account": [BEELD, APPS],
+    "jonas /account": [BEELD, APPS],
     f"eva {VIEWER}": [INSTELLINGEN, BEELD],
     "eva /fotos/personen": [INSTELLINGEN],
     "eva /fotos/personen/{persoon}": [INSTELLINGEN],
@@ -115,7 +116,7 @@ ERBIJ: dict[str, list[str]] = {
     "gijs /zoeken?q=strand&mode=image": [BEELD],
     "jonas /zoeken?q=strand&mode=image": [BEELD],
 }
-ANTWOORD = {BEELD: {501}, INSTELLINGEN: {200}}
+ANTWOORD = {BEELD: {501}, INSTELLINGEN: {200}, APPS: {200}}
 # Wat de web van 0.8.1 (I2) met de analyse uit anders toont dan die van 0.8.0, per pagina, precies:
 # (regel van 0.8.0, regel van nu). Gezichten en zoeken op beeld zeggen dat ze op deze server niet
 # draaien, en op /beheer waar de beheerder ziet waarom, in plaats van "komt later"
@@ -159,6 +160,32 @@ ERIN: dict[str, tuple[str, list[str]]] = {
     "gijs /account": ('- region "Meldingen"', OVER),
     "jonas /account": ('- region "Meldingen"', OVER),
 }
+# Fase 7 (Nextcloud-apps, docs/fase-7/nextcloud-en-truenas.md): /account toont voor wie geen gast is
+# "Apps en synchronisatie", vóór "Over dit platform" (web/src/Account.tsx, AppPasswords).
+
+
+def apps(email: str) -> list[str]:
+    return [
+        '  - region "Apps en synchronisatie":',
+        '    - heading "Apps en synchronisatie" [level=#]',
+        "    - paragraph: Koppel de Nextcloud-app (Windows, Mac, Linux, Android, iOS) met je "
+        "serveradres; de app opent zelf een inlogpagina. Voor rclone, TrueNAS of een andere "
+        "WebDAV-client maak je hier een app-wachtwoord.",
+        "    - paragraph:",
+        '      - text: "Serveradres voor de Nextcloud-app:"',
+        "      - code: http://#.#.#.#:#",
+        '      - text: "WebDAV-adres:"',
+        f"      - code: http://#.#.#.#:#/remote.php/dav/files/{email}/",
+        "    - paragraph: Nog geen gekoppelde apps.",
+        "    - text: Naam (bijv. TrueNAS of rclone)",
+        '    - textbox "Naam (bijv. TrueNAS of rclone)"',
+        '    - button "App-wachtwoord maken" [disabled]',
+    ]
+
+
+APPS_ERIN = {"eva /account": apps("eva@voorbeeld.nl"), "jonas /account": apps("jonas@voorbeeld.nl")}
+
+
 # Wat de web van 0.8.2 erbij toont: de link Dubbel (/dubbel) in het hoofdmenu, direct na
 # Prullenbak, voor wie eigen bestanden heeft (niet voor de gast, en zonder login is er geen menu;
 # web/src/App.tsx). Met of zonder de analyse: /dubbel was er al in 0.8.0, alleen via /fotos. Op
@@ -428,6 +455,9 @@ def met_081(key: str, boom: list[str]) -> list[str]:
     if key in MENU_082:
         i = plekken[0] + 2
         boom = boom[:i] + DUBBEL + boom[i:]
+    if key in APPS_ERIN:
+        i = boom.index(OVER[0])
+        boom = boom[:i] + APPS_ERIN[key] + boom[i:]
     return boom
 
 
