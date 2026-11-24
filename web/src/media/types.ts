@@ -121,6 +121,23 @@ export interface PlaybackProgressEvent {
   /** Het tabblad of apparaat dat de stand gaf: een speler negeert zijn eigen origin */
   origin: string;
   updated_at: string;
+  /** Het profiel van de stand ("" = het account zelf; fase 11, stap 7) */
+  profile?: string;
+}
+
+/** Een mediaprofiel (fase 11, stap 7); id "self" is het account zelf. */
+export interface MediaProfile {
+  id: string;
+  name: string;
+  max_age: number | null;
+  has_pin: boolean;
+}
+
+export interface MediaProfiles {
+  current: string;
+  max_age: number | null;
+  can_manage: boolean;
+  profiles: MediaProfile[];
 }
 
 /** media.library, naar wie de bibliotheek ziet. */
@@ -176,15 +193,22 @@ export interface Library {
   scanned_at: string | null;
   /** Online opzoeken (Keuze 39) */
   online: boolean;
+  /** Kopieën in het cluster (0019): 1, 2 of 3; null is de standaard van het cluster */
+  copies?: Copies | null;
 }
 
+/** Kopieën in het cluster per bibliotheek (replicatie per bibliotheek, 0019) */
+export type Copies = 1 | 2 | 3;
+
 /** POST /api/v1/media/libraries → 201 Library | 403 media_not_owner | 409 media_library_nested
- * | 422 media_library_not_folder | 422 media_library_limit */
+ * | 422 media_library_not_folder | 422 media_library_limit. copies alleen voor een beheerder
+ * (anders 403 admin_only) */
 export interface LibraryIn {
   root_id: string;
   kind: LibraryKind;
   name?: string;
   online?: boolean;
+  copies?: Copies | null;
 }
 
 /** PATCH /api/v1/media/libraries/{id} → 200 Library */
@@ -193,6 +217,8 @@ export interface LibraryPatch {
   online?: boolean;
   /** "nl-NL" */
   language?: string;
+  /** null: de standaard van het cluster; alleen een beheerder (anders 403 admin_only) */
+  copies?: Copies | null;
 }
 
 /** Het soort item (media_item.kind). */
@@ -244,6 +270,24 @@ export interface MediaHome {
   next_up: Card[];
   /** Nieuw toegevoegd */
   recent: Card[];
+  /** Onlangs verschenen: films van dit en vorig jaar (fase 11, stap 7) */
+  released: Card[];
+  /** Per bibliotheek het laatst toegevoegd (fase 11, stap 7) */
+  library_rows: LibraryRow[];
+}
+
+/** De collectie van een film uit TMDB (fase 11, stap 7) */
+export interface Collection {
+  id: number;
+  name: string;
+  cards: Card[];
+}
+
+export interface LibraryRow {
+  library_id: string;
+  name: string;
+  kind: LibraryKind;
+  cards: Card[];
 }
 
 /** GET /api/v1/media/libraries/{id}/items: de query. */
@@ -501,6 +545,8 @@ export interface PlayOut {
   chapters: Chapter[];
   /** Het begin van de aftiteling (Keuze 30) */
   credits_ms?: number | null;
+  /** De intro [begin, eind] in ms (fase 11, stap 7) */
+  intro_ms?: number[] | null;
   trick?: TrickInfo | null;
   /** "e<i>": een geforceerd beeldspoor dat niet vanzelf aangaat (Keuze 29) */
   forced_available?: string | null;
@@ -827,6 +873,9 @@ export interface MediaAdmin {
   notices: { code: MediaNotice; params: Record<string, unknown>; text: string }[];
   /** M0-hotfix van M10 (additief): hoe vaak een native speler opnieuw laadde (M4) */
   native_reloads?: number;
+  /** Replicatie per bibliotheek: staat PLATFORM_BLOB_SPLIT aan, en de standaard van het cluster */
+  blob_split?: boolean;
+  blob_default_copies?: number;
 }
 
 /** POST /api/v1/admin/media/cache/clear (body) */

@@ -28,11 +28,20 @@ export function makeOrigin(fill: (bytes: Uint8Array<ArrayBuffer>) => unknown = (
 /** De origin van dit tabblad. */
 export const ORIGIN = makeOrigin();
 
+/** Het profiel dat hier kijkt ("" = het account zelf), zodra media/profiles het weet; null:
+ * nog onbekend (dan telt elk event). Een stand van een ander profiel telt hier niet. */
+let activeProfile: string | null = null;
+
+export function setActiveProfile(apiId: string | null): void {
+  activeProfile = apiId === null ? null : apiId === "self" ? "" : apiId;
+}
+
 /** Het event als het van een ander tabblad of apparaat komt en klopt; anders null. */
 export function progressOf(e: ServerEvent, own: string = ORIGIN): PlaybackProgressEvent | null {
   if (e.type !== "playback.progress") return null;
   const d = e.data;
   if (typeof d.node_id !== "string" || typeof d.origin !== "string" || d.origin === own) return null;
+  if (activeProfile !== null && typeof d.profile === "string" && d.profile !== activeProfile) return null;
   if (typeof d.position_ms !== "number" || typeof d.duration_ms !== "number" || typeof d.watched !== "boolean") {
     return null;
   }

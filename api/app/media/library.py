@@ -10,6 +10,9 @@
   verbeteren (Keuze 43).
 - Weghalen haalt alleen de rijen van media weg (CASCADE naar media_item en media_show); de
   bestanden blijven.
+- Kopieën in het cluster (copies, app/blobsplit.py): alleen een beheerder zet ze, bij het maken
+  of wijzigen (403 admin_only voor een ander), en vanaf /beheer ook bij de bibliotheek van een
+  ander (set_copies).
 
 Een gast is een gebruiker met minder rechten: hij ziet een gedeelde bibliotheek, maar maakt er
 zelf geen (zijn eigen map mag hij niet eens openen: files.get_access geeft 403 guest).
@@ -25,7 +28,7 @@ from sqlalchemy import Integer, func, literal, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import access, errors
+from app import access, blobsplit, errors
 from app.media import errors as media_errors
 from app.media.types import Library, LibraryIn, LibraryPatch
 from app.models import MediaItem, MediaLibrary, Node, User
@@ -149,6 +152,7 @@ def view(found: Seen, count: int | None = None) -> Library:
         scan_state=lib.scan_state,  # type: ignore[arg-type]
         scanned_at=lib.scanned_at,
         online=lib.online,
+        copies=lib.copies,  # type: ignore[arg-type]
     )
 
 
@@ -186,6 +190,8 @@ async def create(session: AsyncSession, user: User, body: LibraryIn) -> Seen:
                 if grant is None:
                     raise not_found()
             raise media_errors.not_owner()
+        if body.copies is not None:
+            admin_only(user)
         if node.kind != "dir" or await trashed_roots(session, [node.id]):
             raise media_errors.library_not_folder()
         mine = await session.scalar(
@@ -203,6 +209,7 @@ async def create(session: AsyncSession, user: User, body: LibraryIn) -> Seen:
             kind=body.kind,
             name=(body.name or node.name or FALLBACK_NAME)[:255],
             online=bool(body.online),
+            copies=body.copies,
             scan_state="queued",
         )
         session.add(library)
@@ -217,15 +224,25 @@ async def create(session: AsyncSession, user: User, body: LibraryIn) -> Seen:
         await scanner.queue_full(session, library.id)
         await session.commit()
     scanner.activate()
+    if library.copies is not None:
+        blobsplit.kick()
     return Seen(library, "owner")
 
 
 async def update(
     session: AsyncSession, user: User, library_id: uuid.UUID, body: LibraryPatch
 ) -> Seen:
-    """Naam, taal of online opzoeken wijzigen: alleen de eigenaar."""
+    """Naam, taal of online opzoeken wijzigen: alleen de eigenaar. De kopieën: alleen een
+    beheerder (die eigenaar is; anders via /beheer, set_copies)."""
     found = await get_seen(session, user, library_id, "owner")
     lib = found.library
+    if "copies" in body.model_fields_set:
+        admin_only(user)
+        changed = lib.copies != body.copies
+        lib.copies = body.copies
+        await session.commit()
+        if changed:
+            blobsplit.kick()
     if body.name is not None:
         lib.name = body.name[:255]
     if body.online is not None:
@@ -236,11 +253,36 @@ async def update(
     return found
 
 
+def admin_only(user: User) -> None:
+    """De kopieën in het cluster zijn van de beheerder: 403 admin_only voor ieder ander."""
+    if user.role != "admin":
+        raise errors.fail(403, "admin_only", "Alleen voor beheerders")
+
+
+async def set_copies(
+    session: AsyncSession, library_id: uuid.UUID, copies: int | None
+) -> MediaLibrary | None:
+    """De kopieën van een bibliotheek, vanaf /beheer (ook die van een ander). None als de
+    bibliotheek er niet is. De volgende ronde van blobsplit verhuist de inhoud."""
+    lib = await session.get(MediaLibrary, library_id)
+    if lib is None:
+        return None
+    changed = lib.copies != copies
+    lib.copies = copies
+    await session.commit()
+    if changed:
+        blobsplit.kick()
+    return lib
+
+
 async def delete(session: AsyncSession, user: User, library_id: uuid.UUID) -> None:
     """Alleen de rijen van media weg (CASCADE); de bestanden blijven."""
     found = await get_seen(session, user, library_id, "owner")
+    copies = found.library.copies
     await session.delete(found.library)
     await session.commit()
+    if copies is not None:
+        blobsplit.kick()  # de inhoud gaat terug naar de standaard
 
 
 async def watchers(session: AsyncSession, library: MediaLibrary) -> set[uuid.UUID]:

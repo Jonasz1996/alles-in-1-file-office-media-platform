@@ -48,3 +48,14 @@ export function useViewerParam(): [string | null, (id: string | null) => void] {
 
   return [value, set];
 }
+
+/**
+ * De bestanden voor de viewer: wat de lijst toont (shown, gefilterd en gesorteerd), plus het
+ * bestand dat open moet (viewing) als het filter dat verbergt maar het wel in de map staat (all).
+ * Zo opent een nieuw tekstbestand ook als het niet bij de zoekwoorden past (review txt, punt 5);
+ * het komt achteraan.
+ */
+export function withViewing(shown: readonly string[], all: readonly string[], viewing: string | null): readonly string[] {
+  if (viewing === null || shown.includes(viewing) || !all.includes(viewing)) return shown;
+  return [...shown, viewing];
+}

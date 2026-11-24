@@ -75,15 +75,22 @@ async def _ask(server: client.DocServer, params: dict) -> dict:
 
 
 async def convert(
-    settings: Settings, src_url: str, ext: str, key: str, title: str, out: Path, limit: int
+    settings: Settings,
+    src_url: str,
+    ext: str,
+    key: str,
+    title: str,
+    out: Path,
+    limit: int,
+    output: str = "pdf",
 ) -> None:
-    """Zet de bron op src_url (soort ext) om naar PDF in out. ConvertError bij elke fout; dan
-    staat out er niet."""
+    """Zet de bron op src_url (soort ext) om naar output (standaard PDF) in out. ConvertError
+    bij elke fout; dan staat out er niet."""
     params = {
         "async": True,
         "filetype": ext,
         "key": key,
-        "outputtype": "pdf",
+        "outputtype": output,
         "title": title,
         "url": src_url,
     }
@@ -98,8 +105,8 @@ async def convert(
     if scope.cancelled_caught:
         raise ConvertError(TIMEOUT, "retry")
     file_url = answer.get("fileUrl")
-    file_type = answer.get("fileType", "pdf")
-    if not isinstance(file_url, str) or str(file_type).lower() != "pdf":
+    file_type = answer.get("fileType", output)
+    if not isinstance(file_url, str) or str(file_type).lower() != output:
         raise ConvertError(BAD_RESULT, "failed")
     try:
         target = urls.rewrite(settings, file_url, key=key, kind="conv")

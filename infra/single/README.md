@@ -171,8 +171,9 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=ae163ac6947
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
-verse kopie (`platform-0014-<tijd>.db`). `db-downgrade` zet op SQLite alleen de revisie terug
-(0013 en 0014 doen daar niets, er gaat niets weg) en vraagt om "ja". Eindigt het met `De WAL is
+verse kopie (`platform-0019-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de keuze voor
+kopieën per bibliotheek, het logboek van de account-resets en de gevolgde films en series van
+0.8.3; 0013 en 0014 doen op SQLite niets) en vraagt om "ja". Eindigt het met `De WAL is
 niet leeg` (exitcode 3), draai dan `dc run --rm --no-deps platform python -m app.cli db-checkpoint`
 tot het `De WAL is leeg.` zegt. Weer vooruit: het commando van de branch hieronder, zonder
 `PLATFORM_SRC_REF`.
@@ -193,8 +194,8 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
-verse kopie (`platform-0014-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
-gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
+verse kopie (`platform-0019-<tijd>.db`). `db-downgrade` noemt wat er weggaat (wat 0.8.3 bijbracht,
+de beeldindex, de gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
 vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
 `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
 Weer vooruit: het commando van de branch hieronder, zonder `PLATFORM_SRC_REF`.
@@ -226,7 +227,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9c
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
 script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
 oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
-nu is (`platform-0014-<tijd>.db`). `db-downgrade` noemt wat er weggaat (de beeldindex, de
+nu is (`platform-0019-<tijd>.db`). `db-downgrade` noemt wat er weggaat (wat 0.8.3 bijbracht, de beeldindex, de
 gezichten, wie welk bestand uploadde, de zoekindex, de plekken van foto's, de hashes voor
 duplicaten, de personen die je met de hand benoemde en de regels van slimme albums) en vraagt om
 "ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
@@ -634,18 +635,41 @@ aan: het script van 0.8.0 haalt de container weg, en de modellen, de sleutels en
 weer vooruit wordt er niets opnieuw gehaald. Meer, ook wat elke melding betekent:
 `docs/runbooks/analyse.md`.
 
-## 2FA kwijt
+## Kan niet inloggen (wachtwoord of 2FA kwijt)
 
-Ben je je telefoon én je herstelcodes kwijt, dan kan een andere beheerder je 2FA uitzetten
-op `/beheer`. Ben je de enige beheerder, doe het dan in de console van de container:
+Wie zijn wachtwoord, zijn telefoon met de authenticator-app of zijn herstelcodes kwijt is, klikt op
+de inlogpagina op **Wachtwoord vergeten of kan niet inloggen?** en vult zijn login (het
+e-mailadres) in. De server geeft dan een **code** zoals `RESET-7KQ2-M9XD-4TNB-H3VA`, 24 uur
+geldig. Die code is willekeurig en hoort bij een openstaand reset-verzoek in de database (alleen
+de hash staat er): niemand kan zelf een code voor een naam verzinnen. Het antwoord is voor elke
+login hetzelfde, ook zonder account; dat ziet pas de beheerder. De gebruiker geeft de code aan de
+beheerder, die hem in één commando plakt, in de console van de container:
 
 ```bash
-cd /opt/platform/src/infra/single
-docker compose --env-file /opt/platform/.env exec platform python -m app.cli reset-2fa jij@voorbeeld.nl
+docker exec -it $(docker ps -qf label=com.docker.compose.service=platform) python -m app.cli reset-account RESET-7KQ2-M9XD-4TNB-H3VA
 ```
 
-Daarna log je in met alleen je wachtwoord en zet je 2FA opnieuw aan. Hetzelfde helpt als je
-2FA geblokkeerd is na te veel foute codes.
+De CLI zoekt het verzoek op, toont voor welk account het is en meteen het tijdelijke wachtwoord.
+Een onbekende, verlopen of al gebruikte code, of een login zonder account, meldt hij zonder iets
+te veranderen. Een beheerder kan in plaats van de code ook het e-mailadres geven.
+
+Dat zet 2FA uit (met de herstelcodes en een blokkade na foute codes), meldt het account overal af
+en toont een **tijdelijk wachtwoord** dat één uur werkt (`--minuten 30` voor korter, hoogstens
+1440). Bij het inloggen kiest de gebruiker eerst een eigen wachtwoord en zet daarna 2FA opnieuw
+aan; tot dan kan het account niets anders. Bestanden, mappen, versies, delingen en instellingen
+blijven zoals ze waren. Elke reset komt in het logboek: `python -m app.cli reset-log` toont de
+laatste 50, met wanneer het tijdelijke wachtwoord gebruikt en vervangen werd. Is het verlopen, dan
+zegt de inlogpagina dat, en vraagt de gebruiker een nieuwe code.
+
+Is alleen 2FA weg en weet je je wachtwoord nog, dan kan het ook met `reset-2fa` (zonder tijdelijk
+wachtwoord), of door een andere beheerder op `/beheer`. Hetzelfde helpt als je 2FA geblokkeerd is
+na te veel foute codes.
+
+In het cluster (ClusterForge) is het hetzelfde commando, op de node waar het platform draait
+(alleen daar geeft `docker ps -qf label=com.docker.compose.service=platform` een id). Draai het in
+de Proxmox-console van die node, niet als ClusterForge-commando: dan komt het tijdelijke
+wachtwoord in het logboek van ClusterForge. Draait het cluster een versie zonder `reset-account`,
+gebruik dan `infra/cluster/noodreset.py` (de uitleg staat bovenaan dat script).
 
 ## Back-up
 

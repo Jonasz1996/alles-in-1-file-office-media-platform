@@ -28,6 +28,10 @@ export default {
   totp_setup_required: {
     en: "Turn on two-factor authentication for your account first.",
   },
+  password_change_required: { en: "Choose your own password for your account first." },
+  temp_password_expired: {
+    en: "Your temporary password has expired. Ask your system administrator to reset your account again.",
+  },
   totp_required: { en: "Enter the code from your authenticator app" },
   totp_invalid: { en: "The code is incorrect" },
   totp_locked: { en: "Too many failed attempts. Please try again later." },

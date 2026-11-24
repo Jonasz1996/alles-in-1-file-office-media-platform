@@ -16,6 +16,8 @@ export interface User {
   totp_enabled: boolean;
   /** 2FA is verplicht en staat voor deze gebruiker nog niet aan: alleen 2FA aanzetten werkt. */
   totp_setup_required: boolean;
+  /** Tijdelijk wachtwoord (app.cli reset-account): eerst een eigen wachtwoord kiezen */
+  password_change_required?: boolean;
   /** Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is (ISO-tijd). */
   totp_locked_until: string | null;
   /** De taal die bij het account hoort; null = die van het apparaat. Oudere servers sturen hem niet. */
@@ -338,6 +340,32 @@ export interface LastRefresh {
   error?: ApiError | null;
 }
 
+/** Fase 11, stap 7: het token van het gekozen mediaprofiel (wie kijkt), per toestel bewaard.
+ * Gaat mee als X-Media-Profile met elk verzoek naar /api/v1/media; de server kijkt het na. */
+const MEDIA_PROFILE_KEY = "media.profile.v1";
+let mediaProfile: string | null | undefined;
+
+export function mediaProfileToken(): string | null {
+  if (mediaProfile === undefined) {
+    try {
+      mediaProfile = localStorage.getItem(MEDIA_PROFILE_KEY);
+    } catch {
+      mediaProfile = null;
+    }
+  }
+  return mediaProfile;
+}
+
+export function setMediaProfileToken(token: string | null): void {
+  mediaProfile = token;
+  try {
+    if (token) localStorage.setItem(MEDIA_PROFILE_KEY, token);
+    else localStorage.removeItem(MEDIA_PROFILE_KEY);
+  } catch {
+    /* zonder opslag: alleen voor dit tabblad */
+  }
+}
+
 export class Api {
   private token: string | null = null;
   private refreshing: Promise<User | null> | null = null;
@@ -380,6 +408,10 @@ export class Api {
     const headers = new Headers(init.headers);
     const hadToken = this.token !== null;
     if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    if (path.startsWith("/api/v1/media")) {
+      const profile = mediaProfileToken();
+      if (profile) headers.set("X-Media-Profile", profile);
+    }
     const res = await fetchOrNetworkError(this.fetchFn, path, { ...init, headers, credentials: "same-origin" });
     if (res.status === 401 && retry && this.token && (await this.refresh())) {
       return this.raw(path, init, false);
@@ -398,6 +430,8 @@ export class Api {
         this.onLoggedOut();
       }
       const error = errorFromBody(res.status, body);
+      // password_change_required hoeft hier niet: reset-account trekt alle logins in, dus wie een
+      // tijdelijk wachtwoord heeft, logt opnieuw in en /auth/me zegt het dan al
       if (res.status === 403 && error.code === "totp_setup_required") this.onSetupRequired();
       throw error;
     }

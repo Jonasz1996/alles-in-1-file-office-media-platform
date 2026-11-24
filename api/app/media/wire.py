@@ -87,6 +87,8 @@ class Op(StrEnum):
     # zonder ARGS voor een opdracht antwoordt not_built.
     TEXT = "text"
     OCR = "ocr"
+    # Fase 11, stap 7: de vingerafdruk van de audio voor intro overslaan (ops/fingerprint.py)
+    FINGERPRINT = "fingerprint"
 
 
 class WorkClass(StrEnum):

@@ -97,7 +97,7 @@ async def test_de_kopie_van_0012_zonder_gezichten_en_beeld(tmp_path, hoe):
             leeg.mkdir()
             target = _install(source, folder, leeg)
 
-    assert target.parent == folder and target.name.startswith("platform-0014-")
+    assert target.parent == folder and target.name.startswith("platform-0019-")
     assert sorted(p.name for p in folder.iterdir()) == [target.name]  # geen .part of journaal
     data = target.read_bytes()
     assert b"MERKTEKEN" not in data  # geen vector, geen tekst, ook niet in vrije pagina's
@@ -109,7 +109,7 @@ async def test_de_kopie_van_0012_zonder_gezichten_en_beeld(tmp_path, hoe):
         assert kopie.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert kopie.execute("PRAGMA foreign_key_check").fetchall() == []
         assert kopie.execute("SELECT version_num FROM alembic_version").fetchall() == [
-            ("0014",)
+            ("0019",)
         ]  # de head
 
     # De database zelf: precies wat er was, met de merktekens

@@ -567,6 +567,8 @@ async def overview(app, session: AsyncSession, settings: Settings) -> MediaAdmin
         config=MediaPolicy.effective(config, settings).model_dump(mode="json"),
         notices=notices,
         native_reloads=native_reloads(),
+        blob_split=settings.blob_split,
+        blob_default_copies=settings.blob_default_copies,
     )
     tmdb = await tmdb_status(session, settings)
     await session.close()  # klaar met de database vóór het tellen van de cache (regel 8)

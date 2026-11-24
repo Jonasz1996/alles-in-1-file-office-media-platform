@@ -28,10 +28,21 @@ import {
   type Where,
 } from "../keys";
 import { spans } from "../mse";
+import { introSkip } from "../intro";
 import { COUNTDOWN_S, cardTime, clock } from "../next";
 import { loadProgress, Reporter, type ProgressSink } from "../playback";
 import { failureOffer, type Notice, type StopReason } from "../session";
 import { waitVtt } from "../subs";
+import { canvasSize, containRect, Upscaler, worth } from "../upscale";
+import {
+  clampOffset,
+  offsetText,
+  type SavedOffset,
+  savedOffset,
+  shiftCues,
+  SUB_MENU_STEP_MS,
+  SUB_STEP_MS,
+} from "../subshift";
 import {
   audioLabel,
   autoSubtitle,
@@ -83,6 +94,7 @@ type VttState = "ready" | "pending" | "failed";
 
 const VOLUME_KEY = "player.volume.v1";
 const AUTONEXT_KEY = "player.autonext.v1";
+const UPSCALE_KEY = "player.upscale.v1";
 const IDLE_MS = 3000;
 
 function readStore<T>(key: string, fallback: T, ok: (v: unknown) => v is T): T {
@@ -179,6 +191,14 @@ export default function Player(props: PlayerProps): JSX.Element {
   const [vtt, setVtt] = useState<Record<string, VttState>>({});
   const [menu, setMenu] = useState<MenuKind | null>(null);
   const [info, setInfo] = useState(false);
+  // Upscaling in de speler (fase 11, stap 5a): aan tenzij de kijker het uitzette
+  const [sharpWanted, setSharpWanted] = useState(() =>
+    readStore(UPSCALE_KEY, true, (v): v is boolean => typeof v === "boolean"),
+  );
+  const [sharpOn, setSharpOn] = useState(false);
+  const [sharpBroken, setSharpBroken] = useState(false);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const cueBox = useRef<HTMLDivElement>(null);
   const [idle, setIdle] = useState(false);
   const [full, setFull] = useState(false);
   const [say, setSay] = useState("");
@@ -400,10 +420,156 @@ export default function Player(props: PlayerProps): JSX.Element {
     const v = video.current;
     if (!v) return;
     for (const el of v.querySelectorAll<HTMLTrackElement>("track[data-id]")) {
-      const mode = el.dataset.id === sub ? "showing" : "disabled";
+      const mode = el.dataset.id === sub ? (sharpOn ? "hidden" : "showing") : "disabled";
       if (el.track.mode !== mode) el.track.mode = mode;
     }
   });
+
+  // --- de timing van de ondertitel (fase 11, stap 4): bewaard per video en ondertitel ---
+  const [saved, setSaved] = useState<SavedOffset[]>([]);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setSaved([]);
+    let gone = false;
+    api
+      .request<SavedOffset[]>("GET", `/api/v1/media/sub-offset/${encodeURIComponent(nodeId)}`)
+      .then((rows) => {
+        if (!gone) setSaved(rows);
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [nodeId]);
+  const subLabel = sub ? labelOf(sub) : "";
+  const offsetNow = sub ? savedOffset(saved, sub, subLabel) : 0;
+  useEffect(() => {
+    const v = video.current;
+    if (!v || !sub) return;
+    const el = [...v.querySelectorAll<HTMLTrackElement>("track[data-id]")].find((x) => x.dataset.id === sub);
+    if (!el) return;
+    const apply = () => shiftCues(el.track.cues, offsetNow);
+    apply();
+    el.addEventListener("load", apply);
+    return () => el.removeEventListener("load", apply);
+  }, [sid, sub, offsetNow, selectedState, texts.length]);
+  const shiftSub = (by: number) => {
+    if (!sub) return;
+    const id = sub;
+    const label = subLabel;
+    const to = clampOffset(offsetNow + by);
+    setSaved((rows) => [...rows.filter((r) => r.sub_id !== id), { sub_id: id, label, offset_ms: to }]);
+    announce(t("player.subtitles.offset", { offset: offsetText(to, locale()) }));
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void api
+        .request<void>("PUT", `/api/v1/media/sub-offset/${encodeURIComponent(nodeId)}`, {
+          sub_id: id,
+          label,
+          offset_ms: to,
+        })
+        .catch(() => {});
+    }, 800);
+  };
+
+  // --- upscaling: het beeld via WebGL op het canvas; alleen op /kijken ---
+  const sharpActive = sharpWanted && !sharpBroken && where === "watch";
+  useEffect(() => {
+    const v = video.current;
+    const c = canvas.current;
+    if (!sharpActive || !v || !c) {
+      setSharpOn(false);
+      return;
+    }
+    const up = Upscaler.create(c);
+    if (!up) {
+      setSharpBroken(true);
+      return;
+    }
+    let stopped = false;
+    let on = false;
+    let handle = 0;
+    type RVFC = HTMLVideoElement & {
+      requestVideoFrameCallback?(cb: () => void): number;
+      cancelVideoFrameCallback?(h: number): void;
+    };
+    const rv = v as RVFC;
+    const frame = () => {
+      if (stopped) return;
+      const size = canvasSize(c.clientWidth, c.clientHeight, window.devicePixelRatio || 1);
+      if (c.width !== size.w || c.height !== size.h) {
+        c.width = size.w;
+        c.height = size.h;
+      }
+      const good = worth(v.videoWidth, v.videoHeight, size.w, size.h);
+      if (good && !up.draw(v, containRect(v.videoWidth, v.videoHeight, size.w, size.h))) {
+        stopped = true;
+        setSharpOn(false);
+        setSharpBroken(true);
+        return;
+      }
+      if (good !== on) {
+        on = good;
+        setSharpOn(good);
+      }
+      schedule();
+    };
+    const schedule = () => {
+      handle = rv.requestVideoFrameCallback ? rv.requestVideoFrameCallback(frame) : requestAnimationFrame(frame);
+    };
+    // Na zoeken of pauze komt er geen nieuw beeld: dan ook tekenen (bijv. na een andere grootte)
+    const redraw = () => requestAnimationFrame(frame);
+    v.addEventListener("seeked", redraw);
+    window.addEventListener("resize", redraw);
+    schedule();
+    return () => {
+      stopped = true;
+      if (rv.cancelVideoFrameCallback) rv.cancelVideoFrameCallback(handle);
+      cancelAnimationFrame(handle);
+      v.removeEventListener("seeked", redraw);
+      window.removeEventListener("resize", redraw);
+      up.dispose();
+      setSharpOn(false);
+    };
+  }, [sharpActive, sid]);
+
+  // Met upscaling ligt het canvas over de <video>: de ondertitel tonen we dan zelf
+  useEffect(() => {
+    const v = video.current;
+    const boxEl = cueBox.current;
+    if (!v || !boxEl || !sharpOn || !sub) {
+      boxEl?.replaceChildren();
+      return;
+    }
+    const el = [...v.querySelectorAll<HTMLTrackElement>("track[data-id]")].find((x) => x.dataset.id === sub);
+    if (!el) return;
+    const show = () => {
+      const cues = el.track.activeCues;
+      const parts: Node[] = [];
+      for (let i = 0; cues && i < cues.length; i++) {
+        const cue = cues[i] as VTTCue;
+        const line = document.createElement("span");
+        line.className = "player-cue";
+        if (typeof cue.getCueAsHTML === "function") line.append(cue.getCueAsHTML());
+        else line.textContent = cue.text;
+        parts.push(line);
+      }
+      boxEl.replaceChildren(...parts);
+    };
+    show();
+    el.track.addEventListener("cuechange", show);
+    return () => {
+      el.track.removeEventListener("cuechange", show);
+      boxEl.replaceChildren();
+    };
+  }, [sharpOn, sub, sid, selectedState, offsetNow]);
+
+  const chooseSharp = (on: boolean) => {
+    setSharpWanted(on);
+    setSharpBroken(false);
+    writeStore(UPSCALE_KEY, on);
+    announce(on ? t("player.upscale.on") : t("player.upscale.off"));
+  };
 
   const onTrackError = (id: string) => {
     // Een <track> die toch 202 kreeg (de ondertitel werd opnieuw gemaakt): wachten
@@ -461,6 +627,8 @@ export default function Player(props: PlayerProps): JSX.Element {
   const v0 = video.current;
   const duration = out ? out.duration_ms / 1000 : v0 && Number.isFinite(v0.duration) ? v0.duration : 0;
   const cardAt = next && !next.part ? cardTime(duration, out?.credits_ms) : null;
+  // Fase 11, stap 7: intro overslaan
+  const skipTo = introSkip(time, out?.intro_ms);
 
   useEffect(() => {
     if (cardAt === null) return;
@@ -575,6 +743,10 @@ export default function Player(props: PlayerProps): JSX.Element {
     return t("player.subtitles.burnForced");
   }
 
+  function burnNowKey(): boolean {
+    return !!ctl.current?.choice.burn;
+  }
+
   const cancelCard = () => setCard("cancelled");
 
   const escape = () => {
@@ -635,6 +807,12 @@ export default function Player(props: PlayerProps): JSX.Element {
         else chooseSub(to);
         break;
       }
+      case "subEarlier":
+        shiftSub(-SUB_STEP_MS);
+        break;
+      case "subLater":
+        shiftSub(SUB_STEP_MS);
+        break;
       case "audio": {
         const to = nextAudio(audioTracks, ctl.current?.choice.audio);
         if (to !== null) chooseAudio(to);
@@ -670,6 +848,9 @@ export default function Player(props: PlayerProps): JSX.Element {
       case "info":
         setInfo((x) => !x);
         break;
+      case "upscale":
+        chooseSharp(!sharpWanted);
+        break;
       case "escape":
         escape();
         break;
@@ -684,6 +865,9 @@ export default function Player(props: PlayerProps): JSX.Element {
         return audioTracks.length > 1;
       case "subtitles":
         return subs.length > 0;
+      case "subEarlier":
+      case "subLater":
+        return !!sub && !burnNowKey();
       case "pip":
         return pipAvailable(video.current);
       case "prevChapter":
@@ -764,6 +948,31 @@ export default function Player(props: PlayerProps): JSX.Element {
           : { key: s.id, label: subtitleLabel(s, loc, w), checked: sub === s.id && !burnNow, select: () => chooseSub(s.id) },
       ),
   ];
+  if (sub && !burnNow) {
+    subChoices.push(
+      {
+        key: "earlier",
+        label: t("player.subtitles.earlier", { offset: offsetText(-SUB_MENU_STEP_MS, loc) }),
+        hint: offsetNow ? t("player.subtitles.offsetNow", { offset: offsetText(offsetNow, loc) }) : undefined,
+        checked: false,
+        select: () => shiftSub(-SUB_MENU_STEP_MS),
+      },
+      {
+        key: "later",
+        label: t("player.subtitles.later", { offset: offsetText(SUB_MENU_STEP_MS, loc) }),
+        checked: false,
+        select: () => shiftSub(SUB_MENU_STEP_MS),
+      },
+    );
+    if (offsetNow) {
+      subChoices.push({
+        key: "reset",
+        label: t("player.subtitles.resetOffset"),
+        checked: false,
+        select: () => shiftSub(-offsetNow),
+      });
+    }
+  }
   const forced = out?.forced_available;
   if (forced && !subs.some((s) => s.id === forced)) {
     subChoices.push({
@@ -788,6 +997,24 @@ export default function Player(props: PlayerProps): JSX.Element {
     checked: q === qualityNow,
     select: () => chooseQuality(q),
   }));
+
+  if (where === "watch") {
+    qualityChoices.push(
+      {
+        key: "upscale-on",
+        label: t("player.upscale.choiceOn"),
+        hint: sharpBroken ? t("player.upscale.unavailable") : sharpOn ? t("player.upscale.active") : undefined,
+        checked: sharpWanted,
+        select: () => chooseSharp(true),
+      },
+      {
+        key: "upscale-off",
+        label: t("player.upscale.choiceOff"),
+        checked: !sharpWanted,
+        select: () => chooseSharp(false),
+      },
+    );
+  }
 
   const button = (icon: PlayerIconName, label: string, onClick: () => void, extra: Record<string, unknown> = {}) => (
     <button type="button" className="player-button" aria-label={label} title={label} onClick={onClick} {...extra}>
@@ -924,6 +1151,14 @@ export default function Player(props: PlayerProps): JSX.Element {
               />
             ))}
       </video>
+      <canvas
+        ref={canvas}
+        className={`player-canvas${sharpOn ? " player-canvas-on" : ""}`}
+        aria-hidden
+        onClick={toggle}
+        onDoubleClick={toggleFull}
+      />
+      <div ref={cueBox} className="player-cues" hidden={!sharpOn || !sub} aria-hidden />
 
       {where === "watch" && (
         <div className="player-top">
@@ -952,6 +1187,12 @@ export default function Player(props: PlayerProps): JSX.Element {
         <p className="player-notice" role="status">
           {noticeText}
         </p>
+      )}
+
+      {skipTo !== null && (
+        <button type="button" className="btn player-skip-intro" data-skip-intro="" onClick={() => seek(skipTo)}>
+          {t("player.skipIntro")}
+        </button>
       )}
 
       {card === "shown" && next && (
@@ -1051,7 +1292,8 @@ export default function Player(props: PlayerProps): JSX.Element {
           <span className="player-spacer" />
           {subs.length > 0 && menuButton("subtitles", "cc", t("player.subtitles.label"))}
           {audioTracks.length > 1 && menuButton("audio", "speech", t("player.audio.label"))}
-          {(out?.quality.options.length ?? 0) > 1 && menuButton("quality", "settings", t("player.quality.label"))}
+          {((out?.quality.options.length ?? 0) > 1 || where === "watch") &&
+            menuButton("quality", "settings", t("player.quality.label"))}
           {button("info", t("player.info.title"), () => setInfo((x) => !x), { "aria-pressed": info })}
           {pipAvailable(v as PipVideo | null) && button("pip", t("player.pip"), togglePip)}
           {button(full ? "unfull" : "fullscreen", full ? t("player.exitFullscreen") : t("player.fullscreen"), toggleFull)}

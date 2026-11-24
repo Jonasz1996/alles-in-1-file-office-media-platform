@@ -15,11 +15,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session as OrmSession
 
-from app import errors, jobs, totp, userdelete
+from app import errors, jobs, resetcode, totp, userdelete
 from app.config import Settings, get_settings
 from app.db import Session
 from app.media import sessions as media_sessions
-from app.models import Job, Node, RecoveryCode, RefreshToken, User, Version
+from app.models import (
+    AccountReset,
+    Job,
+    Node,
+    RecoveryCode,
+    RefreshToken,
+    ResetRequest,
+    User,
+    Version,
+)
 from app.office import gate as office_gate
 from app.office import runtime as office_runtime
 from app.office import tunnel as office_tunnel
@@ -29,6 +38,7 @@ from app.security import (
     CurrentUser,
     LoggedInUser,
     Policy,
+    RateLimiter,
     SecurityConfig,
     TokenFamily,
     access_token,
@@ -80,6 +90,8 @@ class UserOut(BaseModel):
     totp_enabled: bool = False
     # 2FA is verplicht en staat voor deze gebruiker nog niet aan: alleen 2FA aanzetten werkt
     totp_setup_required: bool = False
+    # Het wachtwoord is tijdelijk (app.cli reset-account): eerst een eigen wachtwoord kiezen
+    password_change_required: bool = False
     # Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is
     totp_locked_until: datetime | None = None
     # Taal van de web-app voor dit account ("nl" of "en"); null = wat het apparaat kiest
@@ -139,6 +151,16 @@ class Login(BaseModel):
     # Code uit de authenticator-app of een herstelcode, als 2FA aan staat
     code: str | None = Field(default=None, max_length=32)
     device: str = Field(default="", max_length=200)
+
+
+class ResetAsk(BaseModel):
+    # Wat de gebruiker invult als login (het e-mailadres); niet gecontroleerd, zie reset_request
+    login: str = Field(min_length=1, max_length=320)
+
+
+class ResetCode(BaseModel):
+    code: str
+    expires_at: datetime
 
 
 class TotpSetup(BaseModel):
@@ -207,6 +229,7 @@ async def user_out(
         root_id=user.root_id,
         totp_enabled=user.totp_secret is not None,
         totp_setup_required=policy.require_2fa and user.totp_secret is None,
+        password_change_required=user.password_temp_until is not None,
         totp_locked_until=locked_until(user),
         locale=user.locale,
         disabled=user.disabled_at is not None,
@@ -568,6 +591,12 @@ async def login(
     password_ok = await check_password(user.password_hash if user else None, body.password)
     if user is None or not password_ok:
         raise errors.fail(401, "bad_credentials", "E-mailadres of wachtwoord klopt niet")
+    # Een tijdelijk wachtwoord (reset-account) werkt maar even. Pas na het juiste wachtwoord
+    # gemeld, dus het verraadt niet of een account bestaat.
+    if user.password_temp_until is not None:
+        if aware(user.password_temp_until) <= datetime.now(UTC):
+            raise errors.fail(401, "temp_password_expired", TEMP_PASSWORD_EXPIRED)
+        await temp_password_used(session, user)
     # Wat hier klopte, moet nog gelden als de tokens worden uitgegeven (zie issue_tokens):
     # een beheerder die intussen een nieuw wachtwoord instelde, logt deze login ook uit.
     verified = (user.password_hash, user.totp_secret)
@@ -587,6 +616,48 @@ async def login(
     # Zonder naam van de app: een label als "Firefox op Windows" voor het sessie-overzicht
     device = body.device.strip() or device_label(request.headers.get("user-agent"))
     return await issue_tokens(session, settings, request, response, user, device, verified=verified)
+
+
+# "Wachtwoord vergeten of kan niet inloggen?": per IP 5 verzoeken per kwartier, en hoogstens
+# zoveel openstaande verzoeken samen (de oudste gaan eerst weg)
+reset_request_limiter = RateLimiter(limit=5, window_seconds=900)
+RESET_REQUESTS_MAX = 1000
+
+
+@router.post("/auth/reset-request")
+async def reset_request(body: ResetAsk, request: Request, session: Session) -> ResetCode:
+    """Een code voor de beheerder, die er met `app.cli reset-account <code>` een tijdelijk
+    wachtwoord mee maakt. Voor elke login hetzelfde antwoord en hetzelfde werk: of het account
+    bestaat, kijkt pas de CLI na. Zo verraadt dit niet welke e-mailadressen er zijn."""
+    ip = client_ip(request)
+    reset_request_limiter.check(ip)
+    now = datetime.now(UTC)
+    await session.execute(
+        delete(ResetRequest).where(
+            or_(ResetRequest.expires_at <= now, ResetRequest.used_at.is_not(None))
+        )
+    )
+    open_requests = await session.scalar(select(func.count()).select_from(ResetRequest)) or 0
+    if open_requests >= RESET_REQUESTS_MAX:
+        oldest = (
+            select(ResetRequest.id)
+            .order_by(ResetRequest.created_at)
+            .limit(open_requests - RESET_REQUESTS_MAX + 1)
+        )
+        await session.execute(delete(ResetRequest).where(ResetRequest.id.in_(oldest)))
+    code = resetcode.new_code()
+    expires_at = now + timedelta(hours=resetcode.VALID_HOURS)
+    session.add(
+        ResetRequest(
+            token_hash=resetcode.code_hash(code),
+            login=body.login.strip().lower()[:320],
+            ip=ip[:45],
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+    log.info("reset-verzoek aangemaakt vanaf %s (geldig tot %s)", ip, expires_at.isoformat())
+    return ResetCode(code=code, expires_at=expires_at)
 
 
 @router.post("/auth/refresh")
@@ -663,6 +734,33 @@ async def refresh(
         await session.commit()
         raise errors.fail(403, "account_disabled", ACCOUNT_DISABLED)
     return await issue_tokens(session, settings, request, response, user, row.device, row.family)
+
+
+TEMP_PASSWORD_EXPIRED = (
+    "Je tijdelijke wachtwoord is verlopen. Vraag je systeembeheerder om je account opnieuw te "
+    "resetten."
+)
+
+
+async def temp_password_used(session: AsyncSession, user: User) -> None:
+    """Zet in het logboek van de resets wanneer het tijdelijke wachtwoord voor het eerst
+    gebruikt werd (de laatste reset van dit account). Commit zelf."""
+    latest = (
+        select(AccountReset.id)
+        .where(AccountReset.user_id == user.id)
+        .order_by(AccountReset.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    result = await session.execute(
+        update(AccountReset)
+        .where(AccountReset.id == latest, AccountReset.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount:
+        log.warning("Gebruiker %s meldde zich aan met een tijdelijk wachtwoord", user.id)
+    await session.commit()
 
 
 async def not_logged_in(session: AsyncSession, message: str) -> HTTPException:
@@ -1134,13 +1232,20 @@ async def end_other_sessions(user: CurrentUser, family: TokenFamily, session: Se
 async def change_password(
     body: PasswordChange,
     request: Request,
-    user: CurrentUser,
+    user: LoggedInUser,
     family: TokenFamily,
     session: Session,
+    policy: Policy,
 ) -> None:
     """Nieuw wachtwoord, met het huidige en (als 2FA aan staat) een code. Een fout telt mee
     voor dezelfde blokkade als bij 2FA (zie FREE_ATTEMPTS): ook met alleen een sessie kun
-    je het wachtwoord zo niet raden. Daarna zijn alle andere sessies uitgelogd."""
+    je het wachtwoord zo niet raden. Daarna zijn alle andere sessies uitgelogd.
+
+    Na reset-account (tijdelijk wachtwoord) mag dit ook nog zonder 2FA: eerst een eigen
+    wachtwoord, dan 2FA opnieuw. Anders vraagt verplichte 2FA eerst 2FA (zoals CurrentUser)."""
+    temp = user.password_temp_until is not None
+    if not temp and policy.require_2fa and user.totp_secret is None:
+        raise errors.fail(403, "totp_setup_required", "Zet eerst 2FA aan voor je account.")
     check_new_password(body.new_password)
     if body.new_password == body.current_password:
         raise errors.fail(422, "password_unchanged", "Kies een ander wachtwoord dan je huidige")
@@ -1166,7 +1271,7 @@ async def change_password(
     result = await session.execute(
         update(User)
         .where(User.id == user.id, User.password_hash == old_hash)
-        .values(password_hash=new_hash)
+        .values(password_hash=new_hash, password_temp_until=None)
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:
@@ -1175,6 +1280,13 @@ async def change_password(
             409,
             "password_changed_elsewhere",
             "Je wachtwoord is net ergens anders gewijzigd; log opnieuw in",
+        )
+    if temp:
+        await session.execute(
+            update(AccountReset)
+            .where(AccountReset.user_id == user.id, AccountReset.changed_at.is_(None))
+            .values(changed_at=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
         )
     await revoke_other_logins(session, user.id, family)
     await session.commit()
@@ -1207,7 +1319,7 @@ async def admin_set_password(
     result = await session.execute(
         update(User)
         .where(User.id == user_id)
-        .values(password_hash=password_hash)
+        .values(password_hash=password_hash, password_temp_until=None)
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:

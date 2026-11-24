@@ -7,6 +7,8 @@ POST   /api/v1/admin/media/bench              → 202 Accepted | 409 media_bench
 DELETE /api/v1/admin/media/sessions/{id}      → 204 | 404
 POST   /api/v1/admin/media/retry              → {retried}
 POST   /api/v1/admin/media/libraries/{id}/scan → 202 (M10: opnieuw scannen, ook van een ander)
+PATCH  /api/v1/admin/media/libraries/{id}      LibraryCopiesIn → AdminLibrary (kopieën in het
+                                              cluster, ook van een ander) | 404
 POST   /api/v1/admin/media/cache/clear        CacheClearIn → 204
 PUT    /api/v1/admin/media/tmdb               TmdbKeyIn → 204 | 422 media_provider_auth
 DELETE /api/v1/admin/media/tmdb               → 204
@@ -44,9 +46,11 @@ from app.media import importer, loadtest, runtime
 from app.media.state import media_state
 from app.media.types import (
     Accepted,
+    AdminLibrary,
     CacheClearIn,
     ImportIn,
     ImportSource,
+    LibraryCopiesIn,
     LoadtestIn,
     LoadtestView,
     MediaAdmin,
@@ -112,6 +116,27 @@ async def rescan_library(
     if not await media_admin.rescan(session, library_id):
         raise errors.fail(404, "not_found", "Die bibliotheek is er niet (meer)")
     return {"library_id": str(library_id)}
+
+
+@router.patch("/libraries/{library_id}", response_model=AdminLibrary)
+async def library_copies(
+    library_id: uuid.UUID,
+    body: LibraryCopiesIn,
+    admin: AdminUser,
+    request: Request,
+    session: Session,
+):
+    """Kopieën in het cluster van een bibliotheek, ook die van een ander (replicatie per
+    bibliotheek, app/blobsplit.py). Werkt pas met PLATFORM_BLOB_SPLIT; zonder bewaart het de
+    keuze alleen."""
+    on(request)
+    from app.media import library as media_library
+
+    lib = await media_library.set_copies(session, library_id, body.copies)
+    if lib is None:
+        raise errors.fail(404, "not_found", "Die bibliotheek is er niet (meer)")
+    views = await media_admin.library_views(session)
+    return next(v for v in views if v.id == library_id)
 
 
 @router.post("/cache/clear", status_code=204)

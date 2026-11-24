@@ -8,6 +8,7 @@ import { api, type FileNode } from "../api";
 import type {
   CheckpointOut,
   ConvertOut,
+  ConvertToIn,
   NewDocumentIn,
   OfficeAdmin,
   OfficeAdminIn,
@@ -15,6 +16,7 @@ import type {
   OfficeStatus,
   PdfLink,
   RetryOut,
+  SaveAsIn,
   SessionIn,
   SessionOut,
 } from "./types";
@@ -67,9 +69,21 @@ export function pdfLink(id: string): Promise<PdfLink> {
 
 // --- O4: nieuw document ---
 
-/** POST /office/new: een leeg docx, xlsx of pptx in een map. */
+/** POST /office/new: een leeg docx, xlsx, pptx of txt in een map. */
 export function newDocument(body: NewDocumentIn): Promise<FileNode> {
   return api.request<FileNode>("POST", `${BASE}/new`, body);
+}
+
+// --- een kopie in een ander formaat ---
+
+/** POST /office/files/{id}/save-as: de kopie van "Kopie opslaan als" naast het origineel. */
+export function saveAs(id: string, body: SaveAsIn): Promise<FileNode> {
+  return api.request<FileNode>("POST", file(id, "/save-as"), body);
+}
+
+/** POST /office/files/{id}/convert-to: een omgezette kopie in dezelfde map. */
+export function convertTo(id: string, body: ConvertToIn): Promise<FileNode> {
+  return api.request<FileNode>("POST", file(id, "/convert-to"), body);
 }
 
 // --- O5: beheer ---

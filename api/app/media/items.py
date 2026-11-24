@@ -35,11 +35,13 @@ from app.config import Settings
 from app.media import analysis, names, subtitles
 from app.media import chapters as media_chapters
 from app.media.library import Seen, get_seen
+from app.media.library import seen as seen_libraries
 from app.media.providers.http import printable
 from app.media.types import (
     Card,
     CardPage,
     CardProgress,
+    Collection,
     Item,
     ItemPart,
     Probe,
@@ -52,6 +54,7 @@ from app.media.types import (
 from app.models import (
     Blob,
     Job,
+    MediaFacts,
     MediaItem,
     MediaLibrary,
     MediaProbe,
@@ -353,10 +356,24 @@ class Reader:
     bibliotheek via een deling ziet (review golf 3, S4). De bibliotheek zelf ziet de vrager al
     (get_seen); wat eronder ligt en niet in de prullenbak, mag hij dus ook zien."""
 
-    def __init__(self, session: AsyncSession, settings: Settings, user: User):
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        user: User,
+        *,
+        profile: str | None = None,
+        max_age: int | None = None,
+    ):
+        from app.media import viewer as media_viewer
+
         self.session = session
         self.settings = settings
         self.user = user
+        # Fase 11, stap 7: wie kijkt (het profiel van deze vraag, uit viewer.resolve)
+        now = media_viewer.current()
+        self.profile = profile if profile is not None else now.profile
+        self.max_age = max_age if profile is not None else now.max_age
         self.secret = previews.url_key(settings)
         self.exp = previews.expiry(period=previews.url_period(settings))
         self._roots: dict[uuid.UUID, uuid.UUID] = {}
@@ -396,7 +413,54 @@ class Reader:
             return []
         roots = await self.roots_of(i.library_id for i in items)
         ok = await self.inside({i.node_id: roots.get(i.library_id) for i in items})
-        return [i for i in items if i.node_id in ok]
+        found = [i for i in items if i.node_id in ok]
+        if self.max_age is not None:
+            found = await self.allowed(found)
+        return found
+
+    # Fase 11, stap 7: het kinderslot. Met een grens (max_age) alleen films en afleveringen met
+    # een kijkwijzer uit TMDB (media_facts) die er niet boven ligt; zonder bekende kijkwijzer
+    # niet (veilig). Muziek en eigen video's (kind video) tellen niet; extra's niet met een grens.
+    RATED = frozenset({"movie", "episode", "extra"})
+
+    async def _ages(self, keys: set[tuple[str, str]]) -> dict[tuple[str, str], int | None]:
+        if not keys:
+            return {}
+        numbers = {n for _, n in keys}
+        rows = await self.session.scalars(select(MediaFacts).where(MediaFacts.tmdb_id.in_(numbers)))
+        return {(f.kind, f.tmdb_id): f.age for f in rows if (f.kind, f.tmdb_id) in keys}
+
+    def _fits(self, age: int | None) -> bool:
+        return age is not None and self.max_age is not None and age <= self.max_age
+
+    async def allowed(self, items: list[MediaItem]) -> list[MediaItem]:
+        from app.arr.facts import tmdb_number
+
+        rated = [i for i in items if i.kind in self.RATED]
+        if not rated:
+            return items
+        show_ids = {i.show_id for i in rated if i.kind == "episode" and i.show_id}
+        shows: dict[uuid.UUID, MediaShow] = {}
+        if show_ids:
+            rows = await self.session.scalars(select(MediaShow).where(MediaShow.id.in_(show_ids)))
+            shows = {s.id: s for s in rows}
+        key: dict[uuid.UUID, tuple[str, str] | None] = {}
+        for i in rated:
+            if i.kind == "movie":
+                n = tmdb_number(i.ids)
+                key[i.node_id] = ("movie", n) if n else None
+            elif i.kind == "episode" and i.show_id in shows:
+                n = tmdb_number(shows[i.show_id].ids)
+                key[i.node_id] = ("tv", n) if n else None
+            else:
+                key[i.node_id] = None
+        ages = await self._ages({k for k in key.values() if k is not None})
+        return [
+            i
+            for i in items
+            if i.kind not in self.RATED
+            or ((k := key.get(i.node_id)) is not None and self._fits(ages.get(k)))
+        ]
 
     async def art_nodes(
         self, wanted: dict[uuid.UUID, tuple[uuid.UUID | None, uuid.UUID]]
@@ -449,7 +513,7 @@ class Reader:
         rows = await self.session.scalars(
             select(PlaybackState).where(
                 PlaybackState.user_id == self.user.id,
-                PlaybackState.profile == "",
+                PlaybackState.profile == self.profile,
                 PlaybackState.node_id.in_(node_ids),
             )
         )
@@ -482,7 +546,7 @@ class Reader:
         # geïmporteerd: progress importeert deze module
         from app.media import progress as media_progress
 
-        return media_progress.overlay(self.user.id, out)
+        return media_progress.overlay(media_progress.Who(self.user.id, self.profile), out)
 
     @staticmethod
     def card(item: MediaItem, poster: str | None, state: PlaybackState | None) -> Card:
@@ -508,7 +572,14 @@ class Reader:
         zonder map staat er zolang ze afleveringen heeft)."""
         roots = await self.roots_of(s.library_id for s in shows)
         ok = await self.inside({s.folder_id: roots.get(s.library_id) for s in shows if s.folder_id})
-        return [s for s in shows if s.folder_id is None or s.folder_id in ok]
+        found = [s for s in shows if s.folder_id is None or s.folder_id in ok]
+        if self.max_age is not None and found:
+            from app.arr.facts import tmdb_number
+
+            keys = {s.id: ("tv", n) for s in found if (n := tmdb_number(s.ids))}
+            ages = await self._ages(set(keys.values()))
+            found = [s for s in found if s.id in keys and self._fits(ages.get(keys[s.id]))]
+        return found
 
     async def show_cards(self, shows: list[MediaShow]) -> list[Card]:
         arts = await self.art_nodes({s.id: (self.art_node(s.art, "poster"), s.library_id)
@@ -670,6 +741,80 @@ async def recent(reader: Reader, library_ids: list[uuid.UUID], limit: int = RECE
         .limit(limit)
     )
     return await reader.cards(await reader.visible(list(rows.all())))
+
+
+async def released(reader: Reader, library_ids: list[uuid.UUID], limit: int = RECENT) -> list[Card]:
+    """Onlangs verschenen (fase 11, stap 7): films van dit jaar en vorig jaar, de nieuwste
+    eerst (zonder datum van verschijnen telt het jaar uit de bibliotheek)."""
+    if not library_ids:
+        return []
+    rows = await reader.session.scalars(
+        select(MediaItem)
+        .where(
+            MediaItem.library_id.in_(library_ids),
+            MediaItem.present.is_(True),
+            MediaItem.kind == "movie",
+            MediaItem.extra.is_(None),
+            MediaItem.year >= now().year - 1,
+        )
+        .order_by(MediaItem.year.desc(), MediaItem.added_at.desc(), MediaItem.node_id.desc())
+        .limit(limit)
+    )
+    return await reader.cards(await reader.visible(list(rows.all())))
+
+
+async def library_rows(
+    reader: Reader, libraries: list[MediaLibrary], limit: int = RECENT
+) -> list[tuple[MediaLibrary, list[Card]]]:
+    """Per bibliotheek met films, series of video's een rij: wat er het laatst bij kwam (bij
+    series de serie, niet de aflevering)."""
+    out: list[tuple[MediaLibrary, list[Card]]] = []
+    for library in libraries:
+        if library.kind == "music":
+            continue
+        cards = (await page(reader, library, None, "added", None, limit)).items
+        if cards:
+            out.append((library, cards))
+    return out
+
+
+async def collection(reader: Reader, node_id: uuid.UUID) -> Collection | None:
+    """De collectie van een film (uit TMDB, via media_facts) met de andere delen die de vrager
+    ziet, op jaar; None zonder collectie of zonder andere delen."""
+    from app.arr.facts import tmdb_number
+
+    item, _, _ = await visible_item(reader, node_id)
+    number = tmdb_number(item.ids) if item.kind == "movie" else None
+    if number is None:
+        return None
+    facts = await reader.session.get(MediaFacts, ("movie", number))
+    if facts is None or facts.collection_id is None:
+        return None
+    members = list(
+        await reader.session.scalars(
+            select(MediaFacts.tmdb_id).where(
+                MediaFacts.kind == "movie", MediaFacts.collection_id == facts.collection_id
+            )
+        )
+    )
+    libraries = [s.library.id for s in await seen_libraries(reader.session, reader.user)]
+    rows = await reader.session.scalars(
+        select(MediaItem)
+        .where(
+            MediaItem.library_id.in_(libraries),
+            MediaItem.kind == "movie",
+            MediaItem.present.is_(True),
+            MediaItem.extra.is_(None),
+            MediaItem.node_id != item.node_id,
+            MediaItem.ids["tmdb"].as_string().in_(members),
+        )
+        .order_by(func.coalesce(MediaItem.year, 9999), MediaItem.sort_title, MediaItem.node_id)
+        .limit(RECENT)
+    )
+    cards = await reader.cards(await reader.visible(list(rows.all())))
+    if not cards:
+        return None
+    return Collection(id=facts.collection_id, name=facts.collection_name or "", cards=cards)
 
 
 async def can_write(session: AsyncSession, user: User, node: Node) -> bool:

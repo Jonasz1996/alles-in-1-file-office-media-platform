@@ -809,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
 # triggers letterlijk gelijk zijn aan die in een database op head.
 DDL = (
     # tabel user
-    "CREATE TABLE user (\n\tid CHAR(32) NOT NULL, \n\temail VARCHAR(320) NOT NULL, \n\tdisplay_name VARCHAR(100) NOT NULL, \n\tpassword_hash VARCHAR(255) NOT NULL, \n\trole VARCHAR(16) NOT NULL, \n\tquota_bytes BIGINT NOT NULL, \n\troot_id CHAR(32), \n\tcreated_at DATETIME NOT NULL, totp_secret VARCHAR(64), totp_pending VARCHAR(64), totp_last_step BIGINT DEFAULT '0' NOT NULL, totp_failures INTEGER DEFAULT '0' NOT NULL, totp_locked_until DATETIME, locale VARCHAR(5), disabled_at DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (email)\n)",
+    "CREATE TABLE user (\n\tid CHAR(32) NOT NULL, \n\temail VARCHAR(320) NOT NULL, \n\tdisplay_name VARCHAR(100) NOT NULL, \n\tpassword_hash VARCHAR(255) NOT NULL, \n\trole VARCHAR(16) NOT NULL, \n\tquota_bytes BIGINT NOT NULL, \n\troot_id CHAR(32), \n\tcreated_at DATETIME NOT NULL, totp_secret VARCHAR(64), totp_pending VARCHAR(64), totp_last_step BIGINT DEFAULT '0' NOT NULL, totp_failures INTEGER DEFAULT '0' NOT NULL, totp_locked_until DATETIME, locale VARCHAR(5), disabled_at DATETIME, password_temp_until DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (email)\n)",
     # tabel blob
     "CREATE TABLE blob (\n\tsha256 VARCHAR(64) NOT NULL, \n\tsize BIGINT NOT NULL, \n\tref_count INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, mime VARCHAR(255), preview VARCHAR(16), preview_meta JSON, taken_at DATETIME, meta_version INTEGER DEFAULT '0' NOT NULL, render_version INTEGER DEFAULT '0' NOT NULL, pdf_state VARCHAR(8), pdf_version INTEGER DEFAULT '0' NOT NULL, \n\tPRIMARY KEY (sha256)\n)",
     # tabel node

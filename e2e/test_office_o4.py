@@ -29,9 +29,10 @@ NEW = "/api/v1/office/new"
 ROWS = "#inhoud [role=grid] [role=row]"
 
 
+# Tekstbestand staat er sinds 0.8.3 altijd onderaan (ook zonder office; web/src/office/newItems.ts)
 MENU = {
-    "nl": ["Map", "Document", "Werkblad", "Presentatie"],
-    "en": ["Folder", "Document", "Spreadsheet", "Presentation"],
+    "nl": ["Map", "Document", "Werkblad", "Presentatie", "Tekstbestand"],
+    "en": ["Folder", "Document", "Spreadsheet", "Presentation", "Text file"],
 }
 
 
@@ -93,8 +94,8 @@ def test_nieuw_document_met_alleen_het_toetsenbord(office: Office, office_browse
     """In het Nederlands: O opent het menu Nieuw met de focus op Map; ↓ naar Document en Enter
     maakt "Nieuw document.docx" en opent de editor. Alt+Shift+Q en Enter sluiten: terug naar de
     map, waar het bestand staat; de nep-DS stuurt status 4 en er is geen versie. In het Engels:
-    Tab naar de knop New, ↑ opent het menu onderaan (Presentation), nog eens ↑ naar Spreadsheet
-    en Enter maakt "New spreadsheet.xlsx"."""
+    Tab naar de knop New, ↑ opent het menu onderaan (Text file), ↑ naar Presentation, nog eens ↑
+    naar Spreadsheet en Enter maakt "New spreadsheet.xlsx"."""
     anna = create_user(office.server, office.admin, name="Anna nieuw")
     folder = mkdir(office, anna, "Werk")
     page = office_browsers.context_as(anna, service_workers="block").new_page()
@@ -125,7 +126,7 @@ def test_nieuw_document_met_alleen_het_toetsenbord(office: Office, office_browse
     callback(office, key, 4)
     assert versions(office, anna, node["id"]) == []
 
-    # --- Engels: Tab naar de knop, ↑, ↑, Enter ---
+    # --- Engels: Tab naar de knop, ↑, ↑, ↑, Enter ---
     office.server.call(anna, "PATCH", "/api/v1/auth/me", json={"locale": "en"}, expect=200)
     page.goto(f"/map/{folder}")
     # De app herlaadt één keer naar het Engels (applyAccountLocale), ná de load waar goto op
@@ -137,6 +138,8 @@ def test_nieuw_document_met_alleen_het_toetsenbord(office: Office, office_browse
     page.keyboard.press("ArrowUp")
     menu = page.get_by_role("menu", name="New", exact=True)
     expect(menu.get_by_role("menuitem")).to_have_text(menu_text("en"))
+    expect(menu.get_by_role("menuitem", name="Text file", exact=True)).to_be_focused()
+    page.keyboard.press("ArrowUp")
     expect(menu.get_by_role("menuitem", name="Presentation", exact=True)).to_be_focused()
     page.keyboard.press("ArrowUp")
     expect(menu.get_by_role("menuitem", name="Spreadsheet", exact=True)).to_be_focused()
@@ -195,6 +198,8 @@ def test_nieuw_via_het_contextmenu_van_de_map(office: Office, office_browsers) -
     expect(sub.get_by_role("menuitem")).to_have_text(menu_text("nl"))
     expect(sub.get_by_role("menuitem", name="Map", exact=True)).to_be_focused()
     page.keyboard.press("End")
+    expect(sub.get_by_role("menuitem", name="Tekstbestand", exact=True)).to_be_focused()
+    page.keyboard.press("ArrowUp")
     expect(sub.get_by_role("menuitem", name="Presentatie", exact=True)).to_be_focused()
     node, key = choose(page, "Enter")
     assert node["name"] == "Nieuwe presentatie (1).pptx"

@@ -23,6 +23,9 @@ zoeken op beeld) in het cluster. De stappen van 0.8.1 naar 0.8.2 en terug staan 
 [Van 0.8.1 naar 0.8.2](#van-081-naar-082). De sleutels van gezichten:
 [De sleutels van gezichten](#de-sleutels-van-gezichten).
 
+Het aantal kopieën per bibliotheek (bv. Films x2, Series x3) en wat daarvoor in SeaweedFS en de
+template moet: [replicatie.md](replicatie.md).
+
 ClusterForge zelf open je op http://192.168.113.154:8080 (het VIP van ClusterForge, ook
 `clusterforge.jbogaert.be`). `platform-ctl.sh` hieronder is
 `/usr/local/lib/clusterforge/platform-ctl.sh` op een node.

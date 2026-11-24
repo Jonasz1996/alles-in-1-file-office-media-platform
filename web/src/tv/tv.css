@@ -1,0 +1,23 @@
+/* De tv-stand (fase 11, stap 9; tv.ts): op 3 m afstand groter, en een focus die je ziet. */
+html.tv {
+  font-size: 125%;
+}
+
+html.tv :focus,
+html.tv :focus-visible {
+  outline: 4px solid #ffd24a;
+  outline-offset: 3px;
+}
+
+html.tv a:focus img {
+  transform: scale(1.06);
+  transition: transform 0.12s ease-out;
+}
+
+/* Scrollbalken zijn op een tv niet te bedienen */
+html.tv ::-webkit-scrollbar {
+  display: none;
+}
+html.tv * {
+  scrollbar-width: none;
+}

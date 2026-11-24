@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Server, inloggen en de map om te synchroniseren
+Exec=platform-desktop --instellingen
+StartupWMClass=platform-desktop
+Icon=platform-desktop
+Name=Platform-instellingen
+Terminal=false
+Type=Application
+X-Purism-FormFactor=Workstation;Mobile;

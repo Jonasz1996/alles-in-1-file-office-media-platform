@@ -1,7 +1,8 @@
 """Hulpmiddelen voor de tests van migratie 0013 (PostgreSQL, release 0.8.2, P2;
 docs/fase-6/i3/pg-0013.md).
 
-- boom(): twee gebruikers en een boom van Eva, via de factories (dus op SQLite en PostgreSQL).
+- boom(): twee gebruikers en een boom van Eva, via de factories (dus op SQLite en PostgreSQL);
+  de gebruikers met een core-INSERT, zodat het ook op een oude revisie werkt.
 - nalopen(): de Python-referentie check_tree van tests/search/migratie.py (dezelfde als bij de
   triggers van SQLite) op deze database.
 - fill(): fase6_fill() van 0013, met de aantallen per soort.
@@ -17,7 +18,8 @@ import sqlalchemy as sa
 
 from app.config import Settings
 from app.db import get_engine
-from tests.factories import create_file, create_folder, create_user, maker
+from app.models import Node, User
+from tests.factories import PASSWORD, _hash, create_file, create_folder, maker
 from tests.search.migratie import check_tree
 
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -33,13 +35,34 @@ FILES = {
 }
 
 
+async def _old_user(session, email: str) -> User:
+    """Een gebruiker met hoofdmap, zonder de ORM-rij van User te laden of in te voegen: de
+    database staat hier op een oude revisie (0012), en een INSERT of SELECT via de ORM noemt
+    elke kolom van nu (zoals password_temp_until van 0018). De core-INSERT noemt alleen de
+    gegeven kolommen en die met een standaardwaarde. Geeft een losse User met id en root_id."""
+    user_id = uuid.uuid4()
+    await session.execute(
+        sa.insert(User).values(
+            id=user_id,
+            email=email,
+            display_name=email.split("@")[0].capitalize(),
+            password_hash=_hash(PASSWORD),
+        )
+    )
+    root = Node(owner_id=user_id, name="", kind="dir")
+    session.add(root)
+    await session.flush()
+    await session.execute(sa.update(User).where(User.id == user_id).values(root_id=root.id))
+    return User(id=user_id, email=email, root_id=root.id)
+
+
 async def boom(settings: Settings) -> dict[str, uuid.UUID]:
     """Eva en Bram, elk met een hoofdmap. Bij Eva: werk/verslagen/verslag.docx, vakantie (in de
     prullenbak) met strand.jpg en diep/schelp.jpg, los.txt (in de prullenbak) en notities.txt.
     Geeft de id's per naam (eva, bram, root, bram_root en de mappen en bestanden)."""
     async with maker(settings)() as session:
-        eva = await create_user(session, "eva@example.nl")
-        bram = await create_user(session, "bram@example.nl")
+        eva = await _old_user(session, "eva@example.nl")
+        bram = await _old_user(session, "bram@example.nl")
         assert eva.root_id is not None and bram.root_id is not None
         ids = {"eva": eva.id, "bram": bram.id, "root": eva.root_id, "bram_root": bram.root_id}
         werk = await create_folder(session, eva, name="werk")

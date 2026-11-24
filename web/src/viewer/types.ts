@@ -23,4 +23,7 @@ export interface ViewerProps {
   /** Aan het begin (-1) of eind (1) van items: de ouder kan er meer bij laden */
   onNeedMore?(direction: 1 | -1): void;
   source?: ViewerSource;
+  /** Dit bestand (id) meteen bewerken als het tekst is: een nieuw tekstbestand (0.8.3, Nieuw →
+   * Tekstbestand). De ouder haalt het weg zodra de viewer iets anders toont. */
+  editText?: string | null;
 }

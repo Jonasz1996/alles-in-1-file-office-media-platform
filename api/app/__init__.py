@@ -1,4 +1,4 @@
 """De kern-API van het platform."""
 
 # Gelijk houden met version in pyproject.toml (en web/package.json)
-__version__ = "0.8.2"
+__version__ = "0.8.3"

@@ -7,7 +7,13 @@
 - de bron haalt hij op bij url, met het download-JWT en Want-Repr-Digest, zoals een document.
   Geen 200, of een Repr-Digest die niet klopt: -4. Zonder Repr-Digest gaat het gewoon door
   (digest_none in de opname);
-- alleen naar PDF: een andere outputtype geeft -3 (docx naar doc), of -7 voor pptx en ppt;
+- naar PDF, en (voor "Omzetten" en "Opslaan als") binnen een groep naar wat DS daar kan maken:
+  tekst (docx, doc, odt, rtf, docm, txt) naar docx, odt, rtf of txt; werkblad (xlsx, xls, ods,
+  xlsm, csv) naar xlsx, ods of csv; dia (pptx, ppt, odp, pptm) naar pptx of odp. Een andere
+  outputtype geeft -3 (docx naar doc), of -7 voor pptx en ppt. Zo'n uitvoer is geen echt
+  bestand: txt is de tekst van de alinea's (van een docx) of de bron zelf (tekst), docx een
+  kleine docx met de regels van de bron, de rest een paar herkenbare bytes. Hij staat onder
+  /cache/files/data/conv_<key>_<n>/output.<ext>/output.<ext> (de algemene route van de kern);
 - de key is een cache: dezelfde key geeft het antwoord van de eerste keer, ook voor een andere
   bron [gemeten]. Een fout ook, behalve -4 en -10 (NOT_KEPT): die bewaart de echte niet
   [gemeten in de review van fase 4, sync en async: na -4 omdat de bron 404 gaf, en na -10,
@@ -47,9 +53,18 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import pdf, protocol
+from . import docx, pdf, protocol
 
 MAX_PAGES = 50
+# Waar een bron behalve naar PDF nog heen kan (de groepen van "Omzetten")
+OUTPUTS: list[tuple[frozenset[str], frozenset[str]]] = [
+    (
+        frozenset({"docx", "doc", "odt", "rtf", "docm", "txt"}),
+        frozenset({"docx", "odt", "rtf", "txt"}),
+    ),
+    (frozenset({"xlsx", "xls", "ods", "xlsm", "csv"}), frozenset({"xlsx", "ods", "csv"})),
+    (frozenset({"pptx", "ppt", "odp", "pptm"}), frozenset({"pptx", "odp"})),
+]
 STEM = re.compile(r"[^A-Za-z0-9_-]+")
 # Fouten die DS niet onder de key bewaart [gemeten]: dezelfde key wordt daarna opnieuw omgezet
 NOT_KEPT = {-4, -10}
@@ -82,6 +97,26 @@ def pages_of(filetype: str, content: bytes) -> int:
         else:
             return 1
     return min(MAX_PAGES, max(1, len(found)))
+
+
+def can_make(filetype: str, output: str) -> bool:
+    """Kan de nep deze bron naar dit formaat (niet PDF) omzetten?"""
+    return any(filetype in sources and output in outputs for sources, outputs in OUTPUTS)
+
+
+def made(filetype: str, output: str, content: bytes) -> bytes:
+    """De nep-uitvoer van een omzetting die niet naar PDF gaat."""
+    if filetype in ("docx", "docm"):
+        lines = docx.paragraphs(content)
+    elif filetype in ("txt", "csv"):
+        lines = content.decode("utf-8", "replace").splitlines()
+    else:
+        lines = []
+    if output in ("txt", "csv"):
+        return "\n".join(lines).encode() if lines or filetype in ("docx", "docm") else content
+    if output == "docx":
+        return docx.make_docx(lines)
+    return f"nep-{output} uit {filetype}".encode()
 
 
 class Conversions:
@@ -181,7 +216,7 @@ class Conversions:
             return {"error": self.fail.pop(0)}
         filetype = str(params.get("filetype") or "").lower()
         output = str(params.get("outputtype") or "").lower()
-        if output != "pdf":  # alleen PDF; docx naar doc -3, pptx naar ppt -7 (§3.6)
+        if output != "pdf" and not can_make(filetype, output):  # docx naar doc -3 (§3.6)
             return {"error": -7 if filetype in ("pptx", "ppt") else -3}
         url = params["url"]
         token = protocol.download_token(self.fake.secret, url)
@@ -199,6 +234,13 @@ class Conversions:
             return {"error": -4}
         if self.hold is not None:  # de bron is binnen; DS is nu "bezig"
             await self.hold.wait()
+        if output != "pdf":
+            folder = self.fake.next_part(f"conv_{'ander' if self.wrong_key else job.key}")
+            name = f"output.{output}"
+            self.fake.files[folder] = {name: made(filetype, output, r.content)}
+            path = f"/cache/files/data/{folder}/{name}/{name}"
+            link = protocol.secure_link(base, self.fake.link_secret, path, job.key, name)
+            return {"fileUrl": link, "fileType": output, "percent": 100, "endConvert": True}
         pages = self.pages or pages_of(filetype, r.content)
         title = str(params.get("title") or "output")
         output = b"geen pdf" if self.not_pdf else pdf.make_pdf(pages, title)

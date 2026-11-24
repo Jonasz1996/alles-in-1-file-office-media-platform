@@ -208,6 +208,47 @@ async def test_wijzigen_en_weghalen_alleen_de_eigenaar(people, client):
     assert (await client.delete(f"{URL}/{uuid.uuid4()}", headers=p["jonas"])).status_code == 404
 
 
+async def test_kopieen_in_het_cluster_alleen_voor_beheerders(people, client, monkeypatch):
+    """Replicatie per bibliotheek (0019): een beheerder zet copies bij het maken en wijzigen;
+    null zet de standaard terug, weglaten verandert niets. Voor een gewone gebruiker 403
+    admin_only, ook als hij eigenaar is."""
+    from app import blobsplit
+
+    p = people
+    kicks: list[int] = []
+    monkeypatch.setattr(blobsplit, "kick", lambda: kicks.append(1))
+    r = await make(client, p["jonas"], p["films"], copies=2)
+    assert r.status_code == 201, r.text
+    lib = r.json()["id"]
+    assert r.json()["copies"] == 2 and kicks == [1]
+    async with maker(p["settings"])() as session:
+        assert (await session.get(MediaLibrary, uuid.UUID(lib))).copies == 2
+    r = await client.patch(f"{URL}/{lib}", json={"name": "Films"}, headers=p["jonas"])
+    assert r.json()["copies"] == 2  # weglaten: niets
+    r = await client.patch(f"{URL}/{lib}", json={"copies": None}, headers=p["jonas"])
+    assert r.status_code == 200 and r.json()["copies"] is None
+    r = await client.patch(f"{URL}/{lib}", json={"copies": 3}, headers=p["jonas"])
+    assert r.json()["copies"] == 3
+    assert [x["copies"] for x in (await client.get(URL, headers=p["jonas"])).json()] == [3]
+    r = await client.patch(f"{URL}/{lib}", json={"copies": 5}, headers=p["jonas"])
+    assert r.status_code == 422
+    assert len(kicks) == 3
+
+    # Bas maakt zijn eigen bibliotheek: zonder copies goed, met copies 403
+    top = (await root(client, p["bas"]))["folder"]["id"]
+    own = await mkdir(client, p["bas"], top, "Series")
+    r = await make(client, p["bas"], own, kind="shows", copies=1)
+    assert r.status_code == 403 and code(r) == "admin_only"
+    r = await make(client, p["bas"], own, kind="shows")
+    assert r.status_code == 201 and r.json()["copies"] is None
+    mine = r.json()["id"]
+    r = await client.patch(f"{URL}/{mine}", json={"copies": None}, headers=p["bas"])
+    assert r.status_code == 403 and code(r) == "admin_only"
+    # Weghalen van een bibliotheek met een keuze wekt blobsplit (terug naar de standaard)
+    assert (await client.delete(f"{URL}/{lib}", headers=p["jonas"])).status_code == 204
+    assert len(kicks) == 4
+
+
 async def test_opnieuw_scannen_wie_mag_schrijven(people, client):
     p = people
     lib = (await make(client, p["jonas"], p["films"])).json()["id"]
@@ -297,9 +338,27 @@ async def test_home_met_net_toegevoegd(people, client):
     home = r.json()
     assert [(x["id"], x["item_count"]) for x in home["libraries"]] == [(lib, 2)]
     assert sorted(c["title"] for c in home["recent"]) == ["Een", "Twee"]
+    # Fase 11, stap 7: een rij per bibliotheek; Onlangs verschenen alleen recente jaren
+    [row] = home["library_rows"]
+    assert row["library_id"] == lib and row["kind"] == "movies"
+    assert sorted(c["title"] for c in row["cards"]) == ["Een", "Twee"]
+    assert home["released"] == []
     # Bas ziet niets
     r = await client.get("/api/v1/media/home", headers=p["bas"])
     assert r.json()["libraries"] == [] and r.json()["recent"] == []
+    assert r.json()["library_rows"] == [] and r.json()["released"] == []
+
+
+async def test_home_onlangs_verschenen(people, client):
+    p = people
+    await make(client, p["jonas"], p["films"])
+    year = media_items.now().year
+    await upload(client, p["jonas"], p["films"], f"Nieuw ({year}).mkv")
+    await upload(client, p["jonas"], p["films"], f"Vorig ({year - 1}).mkv")
+    await upload(client, p["jonas"], p["films"], "Oud (1999).mkv")
+    await scan(p["settings"])
+    home = (await client.get("/api/v1/media/home", headers=p["jonas"])).json()
+    assert [c["title"] for c in home["released"]] == ["Nieuw", "Vorig"]
 
 
 async def test_het_item_met_wat_de_analyse_al_weet(people, client):

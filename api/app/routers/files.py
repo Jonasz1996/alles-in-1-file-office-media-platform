@@ -565,7 +565,7 @@ async def describe(
                 kind=node.kind,
                 mime=node.mime,
                 size=node.size,
-                etag=f'"{node.blob_id or node.id.hex}"',
+                etag=node_etag(node.id, node.blob_id),
                 created_at=_utc(node.created_at),
                 modified_at=_utc(node.modified_at),
                 deleted_at=None if deleted_at is None else _utc(deleted_at),
@@ -1266,6 +1266,45 @@ async def receive_body(
         ) from e
 
 
+CONTENT_CHANGED = {
+    "message": "Het bestand is intussen veranderd; laad het opnieuw of sla toch op",
+    "code": "content_changed",
+}
+
+
+def node_etag(node_id: uuid.UUID, blob_id: str | None) -> str:
+    """De etag van de inhoud van een bestand (NodeOut.etag)."""
+    return f'"{blob_id or node_id.hex}"'
+
+
+def _etags(if_match: str | None) -> set[str] | None:
+    """De etags in een If-Match-header; None: geen controle (zonder header, of "*")."""
+    if if_match is None:
+        return None
+    tags = {t.strip().removeprefix("W/") for t in if_match.split(",") if t.strip()}
+    return None if not tags or "*" in tags else tags
+
+
+def _unchanged(
+    node_id: uuid.UUID,
+    expected: set[str],
+    then: Callable[[AsyncSession], Awaitable] | None,
+) -> Callable[[AsyncSession], Awaitable]:
+    """Een guard voor place_file: de inhoud is nog die van If-Match (anders 412), en daarna
+    de guard then (mag de gebruiker er nog in?)."""
+
+    async def check(session: AsyncSession) -> None:
+        blob_id = await session.scalar(
+            select(Node.blob_id).where(Node.id == node_id).execution_options(populate_existing=True)
+        )
+        if node_etag(node_id, blob_id) not in expected:
+            raise errors.fail(412, **CONTENT_CHANGED)
+        if then is not None:
+            await then(session)
+
+    return check
+
+
 @router.put("/files/{node_id}/content")
 async def replace_content(
     node_id: uuid.UUID,
@@ -1275,11 +1314,17 @@ async def replace_content(
     blobs: Store,
     settings: Annotated[Settings, Depends(get_settings)],
     content_length: Annotated[int | None, Header()] = None,
+    if_match: Annotated[str | None, Header()] = None,
 ) -> NodeOut:
     """Nieuwe inhoud voor dit bestand, in één keer (de vorige blijft bewaard als versie). Met
     schrijfrecht op het bestand zelf: zo kan ook wie alleen dit ene bestand met zich gedeeld
     kreeg (de map erboven ziet hij niet) er een nieuwe versie van zetten. Het blijft van de
-    eigenaar en kost diens quotum."""
+    eigenaar en kost diens quotum.
+    If-Match (0.8.3, tekst bewerken in de viewer): de etag van de inhoud waar de wijziging op
+    voortbouwt (zoals NodeOut.etag). Is de inhoud intussen een andere, dan 412 content_changed en
+    verandert er niets; gecontroleerd onder de sloten, vlak voor het neerzetten. "*" of zonder:
+    altijd."""
+    expected = _etags(if_match)
     found = await get_tree_access(session, user, node_id, "write")
     node = found.node
     if node.kind != "file":
@@ -1291,7 +1336,8 @@ async def replace_content(
     tmp, sha, size = await receive_body(
         session, settings, blobs, request, owner, user, content_length
     )
-    guard = None if found.owner else writable(user.id, node.id)
+    access = None if found.owner else writable(user.id, node.id)
+    guard = access if expected is None else _unchanged(node.id, expected, access)
     try:
         node = await place_file(
             session,

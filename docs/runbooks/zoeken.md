@@ -463,18 +463,29 @@ Per stap (zoals bij 0.7.1 hieronder):
 2. **Stoppen** (`dc stop platform media`). De container `analyse` mag blijven draaien: die komt
    niet aan de database.
 3. **Een verse kopie** met het image van nu. Hij zegt
-   `De reservekopie staat in /data/backup/platform-0014-<tijd>.db (… MB).` Zegt hij iets anders,
+   `De reservekopie staat in /data/backup/platform-0019-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
-4. **Het schema terug naar `0012`** met het image van nu, want alleen dat kent 0013 en 0014. Op
-   SQLite doen die twee niets: er gaat niets weg, alleen de revisie gaat terug. `db-downgrade`
-   vraagt toch om "ja", en zegt aan het eind `De database staat nu op revisie 0012.` Zegt het
+4. **Het schema terug naar `0012`** met het image van nu, want alleen dat kent 0013 tot en met
+   0019. Op SQLite doen 0013 en 0014 niets; wat sinds 0.8.3 (0016, 0018 en 0019) bijkwam, gaat
+   weg. `db-downgrade` zegt:
+
+   > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
+   > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
+   > laat een ronde lopen: een oudere versie kijkt daar niet.
+   > Het logboek van de account-resets en de openstaande reset-codes gaan weg. Een tijdelijk
+   > wachtwoord dat nog niet gewijzigd is, blijft werken als gewoon wachtwoord: reset dat account
+   > daarna opnieuw.
+   > De gevolgde films en series, de verzoeken en de geschiedenis van de downloads en ondertitels
+   > gaan weg. Je bibliotheken en bestanden blijven.
+
+   en vraagt om "ja". Aan het eind: `De database staat nu op revisie 0012.` Zegt het
    daarna `De WAL is niet leeg: …` (exitcode 3), draai dan
    `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
    Zegt `db-downgrade` iets anders, stop dan, zet de kopie van stap 3 terug
-   (`backup/platform-0014-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
+   (`backup/platform-0019-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
    script van de branch.
 5. **0.8.1 installeren** met het script van `ae163ac`. Het maakt eerst nog een kopie (nu van
-   `0012`; die vervangt de kopie van `0012` van de update naar 0.8.2, en die van `0014` uit stap 3
+   `0012`; die vervangt de kopie van `0012` van de update naar 0.8.2, en die van `0019` uit stap 3
    blijft), bouwt het image van 0.8.1 en start het, met de analyse zoals hij stond.
 
 Lukt de downgrade niet, dan kan het ook met de kopie van `0012` die de update naar 0.8.2 maakte
@@ -510,11 +521,19 @@ Per stap (zoals bij 0.7.1 hieronder):
    en de derde regel niet allebei "goed", stop dan.
 2. **Stoppen** (`dc stop platform media`).
 3. **Een verse kopie** met het image van nu. Hij zegt
-   `De reservekopie staat in /data/backup/platform-0014-<tijd>.db (… MB).` Zegt hij iets anders,
+   `De reservekopie staat in /data/backup/platform-0019-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
-4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 tot en met 0014.
+4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 tot en met 0019.
    `db-downgrade` zegt wat er weggaat:
 
+   > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
+   > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
+   > laat een ronde lopen: een oudere versie kijkt daar niet.
+   > Het logboek van de account-resets en de openstaande reset-codes gaan weg. Een tijdelijk
+   > wachtwoord dat nog niet gewijzigd is, blijft werken als gewoon wachtwoord: reset dat account
+   > daarna opnieuw.
+   > De gevolgde films en series, de verzoeken en de geschiedenis van de downloads en ondertitels
+   > gaan weg. Je bibliotheken en bestanden blijven.
    > De beeldindex gaat weg. Je foto's blijven.
    > De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk
    > bestand uploadde. Je foto's blijven.
@@ -526,7 +545,7 @@ Per stap (zoals bij 0.7.1 hieronder):
    met `docker ps` of platform en media echt stilstaan, en draai dan
    `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
    Zegt `db-downgrade` iets anders, stop dan, zet de kopie van stap 3 terug
-   (`backup/platform-0014-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
+   (`backup/platform-0019-<tijd>.db`, zie "Een kopie terugzetten" hierboven) en draai het gewone
    script van de branch.
 5. **0.8.0 installeren** met het script van `59e0250`. Het maakt eerst nog een kopie (nu van
    `0010`; die vervangt de kopie van `0010` van de update naar de branch, en die van `0014` uit
@@ -570,16 +589,24 @@ Per stap:
 2. **Stoppen** (`dc stop platform media`), zodat niets meer naar de nieuwe tabellen schrijft.
 3. **Een verse kopie** van de database zoals hij nu is, op `0014`, met het image van nu
    (`db-backup`, dezelfde kopie als die van het script). Hij zegt
-   `De reservekopie staat in /data/backup/platform-0014-<tijd>.db (… MB).` (in de Console is dat
+   `De reservekopie staat in /data/backup/platform-0019-<tijd>.db (… MB).` (in de Console is dat
    `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
    vervangt de vorige kopie van `0014`; die van `0009`, `0010`, `0012` en `0013` (als die er is)
    blijven.
-4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0014.
+4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0019.
    `db-downgrade` vraagt eerst, als die er zijn, naar album-items die uit een regel van een slim
    album komen en niet gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden
    ineens gedeeld zijn. Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het
    wat er weggaat:
 
+   > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
+   > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
+   > laat een ronde lopen: een oudere versie kijkt daar niet.
+   > Het logboek van de account-resets en de openstaande reset-codes gaan weg. Een tijdelijk
+   > wachtwoord dat nog niet gewijzigd is, blijft werken als gewoon wachtwoord: reset dat account
+   > daarna opnieuw.
+   > De gevolgde films en series, de verzoeken en de geschiedenis van de downloads en ondertitels
+   > gaan weg. Je bibliotheken en bestanden blijven.
    > De beeldindex gaat weg. Je foto's blijven.
    > De gezichten gaan weg: wat de analyse vond, met de voorstellen en de groepen, en wie welk
    > bestand uploadde. Je foto's blijven.
@@ -591,7 +618,7 @@ Per stap:
    `De database staat nu op revisie 0009.` Zegt het daarna `De WAL is niet leeg: …` (exitcode 3),
    draai dan eerst `dc run --rm --no-deps platform python -m app.cli db-checkpoint`, zoals bij
    0.8.0 hierboven. Zegt `db-downgrade` iets anders, stop dan, en zet de kopie van
-   stap 3 terug (`backup/platform-0014-<tijd>.db`, zie "Een kopie terugzetten" hierboven). Blijf
+   stap 3 terug (`backup/platform-0019-<tijd>.db`, zie "Een kopie terugzetten" hierboven). Blijf
    dan op 0.8.0: het gewone script van de branch ("Weer vooruit" hieronder), niet dat van 0.7.1.
    Zo ben je niets kwijt.
 5. **0.7.1 installeren** met het script van 0.7.1. Het bouwt het image van 0.7.1 en start het.

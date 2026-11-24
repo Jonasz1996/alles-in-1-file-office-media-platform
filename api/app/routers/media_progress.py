@@ -23,13 +23,16 @@ from app.config import Settings, get_settings
 from app.db import Session
 from app.media import items as media_items
 from app.media import progress, runtime
+from app.media import viewer as media_viewer
 from app.media.library import get_seen
 from app.media.types import ProgressBatchIn, ProgressBatchOut, ProgressIn
 from app.models import MediaItem, MediaShow, Node, User
 from app.routers import files
 from app.security import CurrentUser
 
-router = APIRouter(prefix="/api/v1/media/progress", tags=["media"])
+router = APIRouter(
+    prefix="/api/v1/media/progress", tags=["media"], dependencies=[Depends(media_viewer.resolve)]
+)
 
 Config = Annotated[Settings, Depends(get_settings)]
 RETRY_AFTER = "5"  # seconden, de grens op ticks
@@ -107,7 +110,8 @@ async def save(
     node = await readable(session, user, node_id)
     sha = node.blob_id
     await session.commit()  # geen transactie open bij het slot van de gebruiker
-    outcome = await progress.put(settings, user.id, node_id, sha, body)
+    who = progress.Who(user.id, media_viewer.current().profile)
+    outcome = await progress.put(settings, who, node_id, sha, body)
     if outcome == "rate_limited":
         raise errors.fail(
             429, "rate_limited", "Te veel ticks", headers={"Retry-After": RETRY_AFTER}
@@ -132,5 +136,6 @@ async def batch(
         assert body.show_id is not None  # ProgressBatchIn: een van beide
         node_ids = await episodes(session, settings, user, body.show_id, body.season)
     await session.commit()
-    updated = await progress.batch(settings, user.id, node_ids, body.watched)
+    who = progress.Who(user.id, media_viewer.current().profile)
+    updated = await progress.batch(settings, who, node_ids, body.watched)
     return ProgressBatchOut(updated=updated)

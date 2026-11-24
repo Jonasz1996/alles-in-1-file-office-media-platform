@@ -136,6 +136,14 @@ def test_een_onbekende_soort():
         blank.blank("odt", "nl")  # type: ignore[arg-type]
 
 
+def test_een_leeg_tekstbestand():
+    """txt (POST /office/new ook zonder office): geen bytes, en een eigen naam per taal."""
+    assert blank.KINDS == ("docx", "xlsx", "pptx", "txt")
+    assert blank.blank("txt", "nl") == b"" and blank.blank("txt", "en") == b""
+    assert blank.default_name("txt", "nl") == "Nieuw tekstbestand.txt"
+    assert blank.default_name("txt", "en-GB") == "New text file.txt"
+
+
 def test_de_namen_in_de_taal_van_de_gebruiker():
     assert [blank.default_name(k, "nl") for k in KINDS] == [
         "Nieuw document.docx",

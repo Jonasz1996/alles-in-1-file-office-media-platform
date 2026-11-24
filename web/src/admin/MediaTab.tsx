@@ -47,6 +47,15 @@ import { Field } from "../ui/Field";
 import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
+import ArrBlock from "./ArrBlock";
+import CleanupBlock from "./CleanupBlock";
+import KidsLockBlock from "./KidsLockBlock";
+import { CopiesNote, CopiesSelect, copiesSaved, setLibraryCopies } from "./LibraryCopies";
+import StatsBlock from "./StatsBlock";
+import RequestsSettings from "./RequestsSettings";
+import SubsBlock from "./SubsBlock";
+import UpscaleBlock from "./UpscaleBlock";
+import WantedBlock from "./WantedBlock";
 import { usePolling } from "./usePolling";
 
 // --- wat de tests los toetsen (admin/media.test.ts) ----------------------------------------------
@@ -246,6 +255,14 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <Libraries a={a} reload={reload} />
       <Cache a={a} reload={reload} />
       <Providers a={a} reload={reload} />
+      <ArrBlock />
+      <WantedBlock libraries={a.libraries} />
+      <SubsBlock />
+      <RequestsSettings libraries={a.libraries} />
+      <UpscaleBlock />
+      <KidsLockBlock />
+      <StatsBlock />
+      <CleanupBlock />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />
@@ -634,6 +651,7 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
   const heading = useRef<HTMLHeadingElement>(null);
   const act = useAction(reload, heading);
   const missing = (lib: MediaAdmin["libraries"][number]) => missingProvider(lib, a.providers);
+  const defaultCopies = a.blob_default_copies ?? 3;
   return (
     <section aria-labelledby="admin-media-libraries">
       <Head id="admin-media-libraries" title={t("admin.media.libraries.title")} heading={heading} />
@@ -652,6 +670,7 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                 <th className="wide-only">{t("admin.media.libraries.scanned")}</th>
                 <th className="wide-only">{t("admin.media.libraries.errors")}</th>
                 <th className="wide-only">{t("admin.media.libraries.low")}</th>
+                <th>{t("admin.media.libraries.copies")}</th>
                 <th>
                   <span className="sr-only">{t("admin.media.libraries.rescan")}</span>
                 </th>
@@ -678,6 +697,20 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                   <td className="wide-only">{fmt.number(lib.errors)}</td>
                   <td className="wide-only">{fmt.number(lib.low_confidence)}</td>
                   <td>
+                    <CopiesSelect
+                      lib={lib}
+                      defaultCopies={defaultCopies}
+                      disabled={act.busy !== null}
+                      onSave={(copies) => {
+                        act.press();
+                        void act.run(`${lib.id}:copies`, async () => {
+                          await setLibraryCopies(lib.id, copies);
+                          return copiesSaved(lib.name, copies, defaultCopies, a.blob_split ?? false);
+                        });
+                      }}
+                    />
+                  </td>
+                  <td>
                     <Button
                       busy={act.busy === lib.id}
                       disabled={act.busy !== null && act.busy !== lib.id}
@@ -699,6 +732,7 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
           </table>
         </div>
       )}
+      {a.libraries.length > 0 && <CopiesNote split={a.blob_split ?? false} defaultCopies={defaultCopies} />}
     </section>
   );
 }

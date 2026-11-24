@@ -31,6 +31,7 @@ from app.db import Session
 from app.media import items as media_items
 from app.media import library as media_library
 from app.media import music, playlists, runtime
+from app.media import viewer as media_viewer
 from app.media.types import (
     AlbumDetail,
     AlbumPage,
@@ -45,7 +46,9 @@ from app.media.types import (
 )
 from app.security import CurrentUser
 
-router = APIRouter(prefix="/api/v1/media", tags=["media"])
+router = APIRouter(
+    prefix="/api/v1/media", tags=["media"], dependencies=[Depends(media_viewer.resolve)]
+)
 
 Config = Annotated[Settings, Depends(get_settings)]
 

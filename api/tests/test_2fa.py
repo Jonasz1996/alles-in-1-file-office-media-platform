@@ -528,3 +528,114 @@ async def test_cli_zet_2fa_uit_voor_de_laatste_beheerder(client, admin, settings
     result = await cli(settings, "reset-2fa", "niemand@example.nl", python=["-OO"])
     assert result.returncode == 1
     assert "geen account" in result.stderr.decode()
+
+
+@pytest.mark.anyio
+async def test_reset_account_tijdelijk_wachtwoord_dan_eigen_wachtwoord_dan_2fa(
+    client, admin, settings
+):
+    """reset-account: 2FA uit, een tijdelijk wachtwoord dat alleen een eigen wachtwoord kiezen
+    toelaat, daarna (met verplichte 2FA) 2FA opnieuw. Elke reset staat in account_reset."""
+    from app import cli as cli_mod
+    from app.models import AccountReset
+
+    headers, tokens = admin
+    await enable(client, headers)
+    app.state.security = SecurityPolicy(security.SecurityConfig(require_2fa=True))
+
+    assert await cli_mod.reset_account(settings, "niemand@example.nl") is None
+    done = await cli_mod.reset_account(settings, " JONAS@example.nl ")
+    assert done is not None and done.email == ADMIN["email"]
+    row = await user_row(settings)
+    assert row.totp_secret is None and row.password_temp_until is not None
+    assert (await refresh(client, tokens)).status_code == 401  # alle logins ingetrokken
+    assert (await login(client)).status_code == 401  # het oude wachtwoord werkt niet meer
+
+    r = await login(client, {"email": ADMIN["email"], "password": done.password})
+    assert r.status_code == 200, r.text
+    temp = bearer(r.json())
+    me = (await client.get("/api/v1/auth/me", headers=temp)).json()
+    assert me["password_change_required"] is True
+    r = await client.get("/api/v1/files/root", headers=temp)
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "password_change_required"
+
+    body = {"current_password": done.password, "new_password": "mijn-eigen-wachtwoord"}
+    r = await client.post("/api/v1/auth/password", json=body, headers=temp)
+    assert r.status_code == 204, r.text
+    me = (await client.get("/api/v1/auth/me", headers=temp)).json()
+    assert me["password_change_required"] is False and me["totp_setup_required"] is True
+    await enable(client, temp, password="mijn-eigen-wachtwoord")
+
+    async with async_sessionmaker(get_engine(settings))() as session:
+        log = (await session.scalars(select(AccountReset))).all()
+    assert len(log) == 1 and log[0].used_at is not None and log[0].changed_at is not None
+
+
+@pytest.mark.anyio
+async def test_reset_account_tijdelijk_wachtwoord_verloopt(client, admin, settings):
+    from app import cli as cli_mod
+
+    done = await cli_mod.reset_account(settings, ADMIN["email"], minutes=60)
+    assert done is not None
+    async with async_sessionmaker(get_engine(settings))() as session:
+        await session.execute(
+            update(User)
+            .where(User.email == ADMIN["email"])
+            .values(password_temp_until=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+    r = await login(client, {"email": ADMIN["email"], "password": done.password})
+    assert r.status_code == 401 and r.json()["detail"]["code"] == "temp_password_expired"
+    # Een fout wachtwoord zegt gewoon bad_credentials: niets over een reset
+    r = await login(client, {"email": ADMIN["email"], "password": "helemaal-fout-123"})
+    assert r.json()["detail"]["code"] == "bad_credentials"
+
+
+@pytest.mark.anyio
+async def test_reset_verzoek_code_van_de_inlogpagina(client, admin, settings):
+    """De inlogpagina geeft voor elke login een code, hetzelfde antwoord of het account nu
+    bestaat of niet. Alleen een code die de server uitgaf werkt, en maar één keer."""
+    from app import cli as cli_mod
+    from app import resetcode
+    from app.models import ResetRequest
+
+    asked = await client.post("/api/v1/auth/reset-request", json={"login": "JONAS@example.nl"})
+    nobody = await client.post("/api/v1/auth/reset-request", json={"login": "niemand@x.nl"})
+    assert asked.status_code == nobody.status_code == 200
+    assert asked.json().keys() == nobody.json().keys() == {"code", "expires_at"}
+    code = asked.json()["code"]
+    assert resetcode.normalize(code) == code and code != nobody.json()["code"]
+    # Alleen de hash staat in de database
+    async with async_sessionmaker(get_engine(settings))() as session:
+        rows = (await session.scalars(select(ResetRequest))).all()
+    assert len(rows) == 2 and all(code not in r.token_hash for r in rows)
+
+    # Een verzonnen code werkt niet, ook niet in de vorm van een echte
+    with pytest.raises(cli_mod.ResetRefused, match="onbekend"):
+        await cli_mod.reset_account(settings, resetcode.new_code())
+    # Geen account achter de login: de beheerder hoort het pas hier
+    with pytest.raises(cli_mod.ResetRefused, match="geen account"):
+        await cli_mod.reset_account(settings, nobody.json()["code"])
+
+    # Kleine letters en spaties mogen
+    done = await cli_mod.reset_account(settings, code.lower().replace("-", " "))
+    assert done is not None and done.email == ADMIN["email"]
+    r = await login(client, {"email": ADMIN["email"], "password": done.password})
+    assert r.status_code == 200, r.text
+    with pytest.raises(cli_mod.ResetRefused, match="al gebruikt"):
+        await cli_mod.reset_account(settings, code)
+
+
+@pytest.mark.anyio
+async def test_reset_verzoek_verlopen_code(client, settings):
+    from app import cli as cli_mod
+    from app.models import ResetRequest
+
+    r = await client.post("/api/v1/auth/reset-request", json={"login": ADMIN["email"]})
+    async with async_sessionmaker(get_engine(settings))() as session:
+        await session.execute(
+            update(ResetRequest).values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+    with pytest.raises(cli_mod.ResetRefused, match="verlopen"):
+        await cli_mod.reset_account(settings, r.json()["code"])

@@ -3,7 +3,8 @@ gebeurtenissen. Frozen na O0: alleen de hotfix-lane verandert ze.
 
 Foutcodes (web/src/i18n/errors/office.ts): office_off, office_unavailable, office_format,
 office_too_large, office_unsafe, office_busy, office_too_many {max}, office_gate, office_token,
-office_convert_failed {code}, pdf_pending, office_owner_gone, office_misconfigured. Bestaande
+office_convert_failed {code}, pdf_pending, office_owner_gone, office_misconfigured, en (0.8.3,
+"Opslaan als" en "Omzetten") office_convert_to_failed {code}. Bestaande
 codes blijven: not_found, read_only, trashed, not_a_file, album, no_room, folder_not_found,
 guest, rate_limited.
 
@@ -19,6 +20,13 @@ from pydantic import BaseModel, Field
 OfficeHealth = Literal["off", "starting", "ok", "down", "misconfigured"]
 PdfState = Literal["pending", "ready", "failed", "none", "unsafe", "ask"]
 OfficeKind = Literal["docx", "xlsx", "pptx"]
+# Wat POST /office/new maakt: de kantoorsoorten, plus een leeg tekstbestand (dat werkt ook
+# zonder office: de web-app bewerkt tekst zelf)
+NewKind = Literal["docx", "xlsx", "pptx", "txt"]
+# Waarnaar "Kopie opslaan als" en "Omzetten" mogen schrijven (wat DS kan maken)
+SAVE_AS_FORMATS: list[str] = [
+    "docx", "odt", "rtf", "txt", "pdf", "xlsx", "ods", "csv", "pptx", "odp",
+]  # fmt: skip
 
 # Wat de editor bewerkt en wat "Nieuw" maakt (Keuze 23 en 24), en de grens van DS zelf
 # (maxDownloadBytes)
@@ -118,7 +126,26 @@ class NewDocumentIn(BaseModel):
     """POST /api/v1/office/new -> 201 NodeOut"""
 
     parent_id: uuid.UUID
-    kind: OfficeKind
+    kind: NewKind
+    name: str | None = Field(default=None, max_length=255)
+
+
+class SaveAsIn(BaseModel):
+    """POST /api/v1/office/files/{id}/save-as -> 201 NodeOut: "Kopie opslaan als" in de editor
+    (onRequestSaveAs van DS). url is het adres dat DS gaf (al omgezet naar file_type)."""
+
+    key: str = Field(max_length=128)
+    url: str = Field(max_length=4096)
+    file_type: str = Field(max_length=16)
+    title: str | None = Field(default=None, max_length=255)
+
+
+class ConvertToIn(BaseModel):
+    """POST /api/v1/office/files/{id}/convert-to -> 201 NodeOut: een omgezette kopie in dezelfde
+    map (bijv. bij hernoemen naar een andere extensie). name: de naam van de kopie (de extensie
+    moet bij format passen); zonder naam de stam van het origineel met de nieuwe extensie."""
+
+    format: str = Field(max_length=16)
     name: str | None = Field(default=None, max_length=255)
 
 

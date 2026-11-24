@@ -82,6 +82,47 @@ class User(Base):
     locale: Mapped[str | None] = mapped_column(String(5), nullable=True)
     # Geblokkeerd door een beheerder: kan niets meer, ook niet met een uitgegeven token
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Gezet door `app.cli reset-account`: het wachtwoord is tijdelijk en werkt tot dit moment.
+    # Zolang het gezet is, kan de gebruiker alleen zijn wachtwoord wijzigen (zie
+    # security.current_user); daarna gaat het terug op None.
+    password_temp_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AccountReset(Base):
+    """Logboek van de resets met `app.cli reset-account`: één rij per reset. Bewust zonder
+    foreign key, zodat de rij blijft als het account later verwijderd wordt."""
+
+    __tablename__ = "account_reset"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    email: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Eerste aanmelding met het tijdelijke wachtwoord, en het moment dat de gebruiker er een
+    # eigen wachtwoord voor in de plaats zette
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResetRequest(Base):
+    """Een openstaand verzoek van "Wachtwoord vergeten of kan niet inloggen?": de inlogpagina
+    geeft een willekeurige code en bewaart hier alleen de sha256 ervan, met de ingevulde login.
+    De beheerder geeft de code aan `app.cli reset-account`. Of het account bestaat, kijkt pas de
+    CLI na: zo is het antwoord voor elke login hetzelfde, en kan niemand een code voor een
+    willekeurige naam verzinnen."""
+
+    __tablename__ = "reset_request"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    login: Mapped[str] = mapped_column(String(320))
+    ip: Mapped[str] = mapped_column(String(45), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RecoveryCode(Base):
@@ -523,6 +564,7 @@ class MediaLibrary(Base):
     __table_args__ = (
         UniqueConstraint("root_id", name="uq_media_library_root"),
         Index("ix_media_library_owner", "owner_id"),
+        CheckConstraint("copies IS NULL OR copies IN (1, 2, 3)", name="ck_media_library_copies"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -538,6 +580,9 @@ class MediaLibrary(Base):
     scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     item_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Kopieën in het cluster (0019, app/blobsplit.py): 1, 2 of 3; None is de standaard van het
+    # cluster (PLATFORM_BLOB_DEFAULT_COPIES). Alleen een beheerder zet het
+    copies: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MediaProbe(Base):
@@ -628,6 +673,256 @@ class MediaAlbum(Base):
     match_state: Mapped[str] = mapped_column(String(8), default="local", server_default="local")
     track_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class ArrWanted(Base):
+    """Fase 11: een film of serie die de app volgt (wat Radarr en Sonarr "monitored" noemen).
+    De app zoekt hem (stap 3) voor de bibliotheek library_id met het kwaliteitsprofiel profile
+    (een sleutel van arr.score.BUILTIN). seasons: de gevolgde seizoenen van een serie, of NULL
+    voor alle. Weg met de bibliotheek (CASCADE); de bestanden blijven."""
+
+    __tablename__ = "arr_wanted"
+    __table_args__ = (
+        UniqueConstraint("library_id", "kind", "tmdb_id", name="uq_arr_wanted_title"),
+        CheckConstraint("kind IN ('movie', 'show')", name="ck_arr_wanted_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(8))
+    tmdb_id: Mapped[int] = mapped_column(Integer)
+    imdb_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    title: Mapped[str] = mapped_column(String(500))
+    # De oorspronkelijke titel (de releases heten meestal zo, niet naar de Nederlandse titel)
+    original_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    runtime_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE"), index=True
+    )
+    profile: Mapped[str] = mapped_column(String(32), default="hd-1080p")
+    seasons: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    monitored: Mapped[bool] = mapped_column(Boolean, default=True)
+    added_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Wanneer de app hem laatst zocht (stap 3); NULL: nog nooit
+    searched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArrGrab(Base):
+    """Fase 11, stap 3: een release die de app koos en aan qBittorrent gaf, met zijn staat.
+    state: downloading | importing | imported | failed. Een mislukte (failed) staat op de zwarte
+    lijst: dezelfde guid kiest de app voor deze titel nooit meer. qBittorrent kent hem aan de tag
+    platform-<id>. season/episode: NULL voor een film; episode NULL bij een seizoenspakket."""
+
+    __tablename__ = "arr_grab"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('downloading', 'importing', 'imported', 'failed')",
+            name="ck_arr_grab_state",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    wanted_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("arr_wanted.id", ondelete="CASCADE"), index=True
+    )
+    season: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episode: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    release: Mapped[str] = mapped_column(String(500))
+    indexer: Mapped[str] = mapped_column(String(200))
+    guid: Mapped[str] = mapped_column(String(1000))
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    quality: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(16), default="downloading")
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArrRequest(Base):
+    """Fase 11, stap 6: een verzoek van een gezinslid om een film of serie. state: pending (wacht
+    op een beheerder) | approved (de app volgt hem: wanted_id) | declined (reason) | available
+    (het eerste bestand staat in de bibliotheek). Een beheerder, of iemand die vanzelf goedkeuring
+    krijgt, slaat pending over."""
+
+    __tablename__ = "arr_request"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'approved', 'declined', 'available')",
+            name="ck_arr_request_state",
+        ),
+        CheckConstraint("kind IN ('movie', 'show')", name="ck_arr_request_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(8))
+    tmdb_id: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(500))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seasons: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    state: Mapped[str] = mapped_column(String(10), default="pending")
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    wanted_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("arr_wanted.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArrCleanup(Base):
+    """Fase 11, stap 8: een film of serie die volgens de opruimregels weg mag (app.arr.cleanup).
+    Eerst op de lijst "binnenkort weg" tot due_at; kept: een beheerder hield hem tegen (blijft
+    dan altijd staan); done_at: naar de prullenbak gegaan. kind: movie (target = node van de
+    film) | show (target = id van de serie)."""
+
+    __tablename__ = "arr_cleanup"
+    __table_args__ = (UniqueConstraint("kind", "target_id", name="uq_arr_cleanup_target"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(8))
+    target_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("media_library.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(String(32))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    kept: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ArrUpscale(Base):
+    """Fase 11, stap 5c: een video die de upscaler (eigen container op de node met de RTX 3060
+    Ti) vooraf met AI vergroot. state: queued | running | done | failed | cancelled.
+    segments_*: stukken van 30 s (de upscaler meldt ze; hervatten gaat per stuk).
+    result_node_id: de tweede versie naast het origineel ("<naam> - AI 4K.mkv")."""
+
+    __tablename__ = "arr_upscale"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued', 'running', 'done', 'failed', 'cancelled')",
+            name="ck_arr_upscale_state",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), index=True
+    )
+    state: Mapped[str] = mapped_column(String(10), default="queued")
+    scale: Mapped[int] = mapped_column(Integer, default=2)
+    segments_done: Mapped[int] = mapped_column(Integer, default=0)
+    segments_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    result_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArrSubtitle(Base):
+    """Fase 11, stap 4: per video en taal wat OpenSubtitles opleverde. state: found (gezet als
+    los bestand naast de video, sub_node_id) | none (niets gevonden; opnieuw na een tijd, die
+    groeit met tries). lang zoals OpenSubtitles hem kent (nl, en, pt-br)."""
+
+    __tablename__ = "arr_subtitle"
+    __table_args__ = (CheckConstraint("state IN ('found', 'none')", name="ck_arr_subtitle_state"),)
+
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    lang: Mapped[str] = mapped_column(String(8), primary_key=True)
+    state: Mapped[str] = mapped_column(String(8))
+    tries: Mapped[int] = mapped_column(Integer, default=0)
+    tried_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    file_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    release: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sub_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("node.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class SubOffset(Base):
+    """Fase 11, stap 4: de timing van een ondertitel die een gebruiker verschoof, per video en
+    ondertitel (het id uit de sessie, e<index> of x<i>, met zijn label: verandert de lijst, dan
+    past het label niet meer en geldt de verschuiving niet). offset_ms > 0: later tonen."""
+
+    __tablename__ = "media_sub_offset"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("node.id", ondelete="CASCADE"), primary_key=True
+    )
+    sub_id: Mapped[str] = mapped_column(String(8), primary_key=True)
+    label: Mapped[str] = mapped_column(String(255))
+    offset_ms: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaProfile(Base):
+    """Fase 11, stap 7: een profiel binnen een account (wie kijkt: eigen voortgang en gezien).
+    id "" is het account zelf (alleen een rij als er een pincode of leeftijdsgrens op staat);
+    een ander profiel heeft een uuid als tekst (playback_state.profile). max_age: het
+    kinderslot (de hoogste kijkwijzer die mag; NULL = alles). pin_hash: argon2 van de pincode."""
+
+    __tablename__ = "media_profile"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(40))
+    max_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaIntro(Base):
+    """Fase 11, stap 7: de intro van een aflevering (app.media.intro), per inhoud (blob): een
+    ander bestand wordt opnieuw bekeken. start_ms/end_ms NULL: geen intro gevonden."""
+
+    __tablename__ = "media_intro"
+
+    blob_sha: Mapped[str] = mapped_column(String(64), primary_key=True)
+    start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MediaFacts(Base):
+    """Fase 11, stap 7: wat TMDB over een film of serie weet en de bibliotheek niet bewaart: de
+    collectie (alle delen van een filmreeks) en de kijkwijzer (age: de minimumleeftijd, 0 =
+    alle leeftijden; NULL = onbekend). Per TMDB-id, zodat twee kopieën het één keer vragen.
+    kind: movie | tv. fetched_at: na 30 dagen opnieuw."""
+
+    __tablename__ = "media_facts"
+    __table_args__ = (Index("ix_media_facts_collection", "collection_id"),)
+
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    tmdb_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    collection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    collection_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class MediaItem(Base):

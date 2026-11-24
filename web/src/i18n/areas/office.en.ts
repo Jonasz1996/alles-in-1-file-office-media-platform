@@ -35,6 +35,9 @@ const en: Translation<typeof nl> = {
       error_status: "The editor could not store the document. Your work is still in the editor.",
     },
   },
+  saveAs: {
+    done: "Saved as {name}",
+  },
   toast: {
     unsaved: {
       no_room: "{name} was not saved: there is no storage left. The administrator can restore it once there is room.",

@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import uvicorn
@@ -510,6 +511,25 @@ class World:
         path = f"/cache/files/data/{part}/{name}/{name}"
         return protocol.secure_link(
             "https://cloud.example/office", self.fake.link_secret, path, key, name
+        )
+
+    def stage_saveas(self, key: str, content: bytes, ext: str, title: str) -> str:
+        """Zet een kopie klaar zoals DS bij "Kopie opslaan als" (onRequestSaveAs): de map van de
+        key plus een eigen stuk van DS, output.<ext>, en als laatste deel de titel met
+        procentcodes. Het adres op de host van de browser, met /office ervoor. De handtekening
+        gaat over het gedecodeerde pad, zoals nginx hem controleert ($uri)."""
+        self._parts += 1
+        part = f"{key}c{self._parts}x_{self._parts}"
+        name = f"output.{ext}"
+        self.fake.files[part] = {name: content}
+        self.fake.titled.add(part)
+        path = f"/cache/files/data/{part}/{name}/{title}"
+        expires = int(time.time()) + protocol.LINK_SECONDS
+        md5 = protocol.link_md5(self.fake.link_secret, path, expires)
+        encoded = f"/cache/files/data/{part}/{name}/{quote(title)}"
+        return (
+            f"https://cloud.example/office{encoded}?md5={md5}&expires={expires}"
+            f"&shardkey={key}&filename={quote(title)}"
         )
 
     def saved_fields(

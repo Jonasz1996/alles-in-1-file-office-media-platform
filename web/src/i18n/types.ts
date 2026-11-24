@@ -19,6 +19,7 @@ import type photosMap from "./areas/photos_map.nl";
 import type photosPeople from "./areas/photos_people.nl";
 import type player from "./areas/player.nl";
 import type publicArea from "./areas/public.nl";
+import type reset from "./areas/reset.nl";
 import type pwa from "./areas/pwa.nl";
 import type search from "./areas/search.nl";
 import type sharing from "./areas/sharing.nl";
@@ -61,7 +62,9 @@ export type Area =
   // Fase 6 (X1): tekst in beeld (OCR)
   | "ocr"
   // Fase 6 (I2): de pagina /over (bronnen en licenties)
-  | "about";
+  | "about"
+  // "Kan niet inloggen?" (app.cli reset-account)
+  | "reset";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -118,6 +121,7 @@ export interface Dictionaries {
   player: typeof player;
   music: typeof music;
   search: typeof search;
+  reset: typeof reset;
   photos_map: typeof photosMap;
   dupes: typeof dupes;
   photos_people: typeof photosPeople;

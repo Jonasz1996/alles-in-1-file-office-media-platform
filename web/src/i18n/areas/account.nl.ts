@@ -3,6 +3,10 @@ export default {
   title: "Account",
   required2fa: "Op dit platform is 2FA verplicht.",
   required2faText: "Zet het hieronder aan; daarna kun je bij je bestanden.",
+  tempPassword: "Je account is gereset.",
+  tempPasswordText:
+    "Kies eerst een eigen wachtwoord. Daarna zet je 2FA opnieuw aan, en kun je weer bij je bestanden.",
+  tempPasswordCurrent: "Tijdelijk wachtwoord",
   storage: {
     title: "Opslag",
     label: "Gebruikt",
