@@ -233,13 +233,22 @@ class _PgCancel:
     """PostgreSQL: wat Timer voor SQLite is bij Stop (Keuze 13). now() stopt de vraag die op de
     verbinding loopt met pg_cancel_backend via een andere verbinding uit de pool, en herhaalt dat
     elke HERHAAL_MS tot het blok klaar is (zoals interrupt(): tussen twee vragen doet een
-    annulering niets)."""
+    annulering niets).
+
+    Een pg_cancel_backend die al onderweg is, voert PostgreSQL toch uit: de taak annuleren haalt
+    hem niet terug. Kwam hij aan terwijl het volgende statement op de verbinding liep (de RELEASE
+    van het savepoint, of een vraag na het blok), dan stopte hij dat. Daarom wacht finish() op
+    een die onderweg is (hooguit WACHT_S), vóór de verbinding verder gaat: komt hij aan terwijl
+    de verbinding op een statement wacht, dan negeert PostgreSQL hem
+    (tests/search/test_deadline_pg.py)."""
 
     def __init__(self, engine: Any, pid: int) -> None:
         self.engine = engine
         self.pid = pid
         self._task: asyncio.Task | None = None
         self._klaar = False
+        self._stil = asyncio.Event()  # er is geen pg_cancel_backend onderweg
+        self._stil.set()
 
     def now(self) -> None:
         if self._task is None and not self._klaar:
@@ -251,7 +260,15 @@ class _PgCancel:
         while not self._klaar:
             try:
                 async with self.engine.connect() as other:
-                    await other.execute(text("SELECT pg_cancel_backend(:pid)"), {"pid": self.pid})
+                    if self._klaar:
+                        return
+                    self._stil.clear()
+                    try:
+                        await other.execute(
+                            text("SELECT pg_cancel_backend(:pid)"), {"pid": self.pid}
+                        )
+                    finally:
+                        self._stil.set()
             except Exception:  # noqa: BLE001 - de grens van statement_timeout blijft
                 log.debug("pg_cancel_backend lukte niet")
             await asyncio.sleep(PG_HERHAAL_MS / 1000)
@@ -260,6 +277,18 @@ class _PgCancel:
         self._klaar = True
         if self._task is not None:
             self._task.cancel()
+
+    async def finish(self) -> None:
+        """Geen nieuwe pg_cancel_backend meer, en wachten op een die onderweg is; dan done()."""
+        self._klaar = True
+        try:
+            if self._task is not None:
+                async with asyncio.timeout(WACHT_S):
+                    await self._stil.wait()
+        except TimeoutError:
+            log.debug("pg_cancel_backend bleef onderweg")
+        finally:
+            self.done()
 
 
 @asynccontextmanager
@@ -282,6 +311,7 @@ async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline
             await conn.execute(text(f"SET LOCAL statement_timeout = {max(1, int(ms))}"))
             yield d
         except exc.DBAPIError as e:
+            await cancel.finish()  # niets meer stoppen, ook de rollback niet
             if getattr(e.orig, "sqlstate", None) != "57014" and "canceling statement" not in str(e):
                 await nested.rollback()
                 raise
@@ -289,9 +319,10 @@ async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline
             await nested.rollback()
             return
         except BaseException:
+            await cancel.finish()
             await nested.rollback()
             raise
-        cancel.done()  # het blok is klaar: niets meer stoppen
+        await cancel.finish()  # het blok is klaar: niets meer stoppen
         # SET LOCAL geldt na de release van het savepoint tot het eind van de transactie
         await conn.execute(text("SET LOCAL statement_timeout TO DEFAULT"))
         await nested.commit()
