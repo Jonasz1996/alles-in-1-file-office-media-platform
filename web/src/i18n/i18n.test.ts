@@ -56,6 +56,8 @@ const AREAS: Area[] = [
   "ocr",
   // Fase 6 (I2)
   "about",
+  // Kan niet inloggen? (reset-account)
+  "reset",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */

@@ -9,6 +9,17 @@ geblokkeerd houdt (zie FREE_ATTEMPTS in app/routers/auth.py). Het zet 2FA uit, h
 blokkade op en trekt alle logins van dat account in. Daarna log je in met alleen het
 wachtwoord en zet je 2FA opnieuw aan.
 
+    docker exec -it <container> python -m app.cli reset-account <code> [--minuten 60]
+    docker exec <container> python -m app.cli reset-log
+
+reset-account is er voor wie niet meer binnenkan (wachtwoord en/of 2FA kwijt). De gebruiker
+klikt op de inlogpagina op "Wachtwoord vergeten of kan niet inloggen?", vult de login in en
+krijgt een code (RESET-XXXX-XXXX-XXXX-XXXX, 24 uur geldig) die de beheerder hier plakt. Het zet
+2FA uit zoals reset-2fa, en geeft een tijdelijk wachtwoord dat standaard een uur werkt. Bij de
+eerste aanmelding moet de gebruiker een eigen wachtwoord kiezen en daarna 2FA opnieuw
+aanzetten. In plaats van de code kan ook een e-mailadres. Elke reset komt in de tabel
+account_reset (reset-log toont ze) en in het log.
+
 make-admin is er voor als er geen (actieve) beheerder meer is om het via /beheer te doen: het
 maakt het account beheerder en heft een blokkade op. Niet voor een account dat al wordt
 verwijderd (een taak user.delete staat klaar of loopt): die taak zou gewoon doorgaan.
@@ -136,10 +147,14 @@ Allebei: alleen aantallen of namen van tabellen, nooit een sleutel of een pad.
 import argparse
 import asyncio
 import json
+import logging
+import secrets
 import sqlite3
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -149,9 +164,9 @@ from alembic.script import ScriptDirectory
 from alembic.util import CommandError
 from fastapi import HTTPException
 from sqlalchemy import delete, func, make_url, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app import backup, previews
+from app import backup, previews, resetcode
 from app.analyse import pgcheck
 from app.arr import cli as arr_cli
 from app.beeld import cli as beeld_cli
@@ -160,11 +175,14 @@ from app.db import get_engine
 from app.geo import load as geo_load
 from app.migrate import alembic_config
 from app.migrate import checkpoint as wal_checkpoint
-from app.models import AlbumItem, User
+from app.models import AccountReset, AlbumItem, ResetRequest, User
 from app.people.faces import keycheck
-from app.routers.auth import being_deleted, reset_totp
+from app.routers.auth import aware, being_deleted, reset_totp
 from app.search import bench as search_bench
 from app.search import benchlos
+from app.security import new_password_hash
+
+log = logging.getLogger("app.cli")
 
 
 class BeingDeleted(Exception):
@@ -182,6 +200,170 @@ async def reset_2fa(settings: Settings, email: str) -> bool:
             return False
         await reset_totp(session, user, keep=None)
         return True
+
+
+# Hoe lang een tijdelijk wachtwoord van reset-account werkt, standaard en hoogstens (minuten)
+RESET_MINUTES = 60
+RESET_MAX_MINUTES = 24 * 60
+
+
+@dataclass
+class AccountResetDone:
+    email: str
+    password: str
+    expires_at: datetime
+    disabled: bool
+
+
+class ResetRefused(Exception):
+    """reset-account kon niet: de code is onbekend, verlopen of al gebruikt, of er is geen
+    account voor die login. De tekst is voor de beheerder."""
+
+
+def temp_password() -> str:
+    """16 tekens uit een alfabet zonder lettertekens die op elkaar lijken (0/O, 1/l/I), in
+    groepjes van vier: makkelijk over te typen of voor te lezen. ±93 bits."""
+    alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    chars = "".join(secrets.choice(alphabet) for _ in range(16))
+    return "-".join(chars[i : i + 4] for i in range(0, 16, 4))
+
+
+async def _login_from_code(session: AsyncSession, code: str) -> str:
+    """De login van het openstaande verzoek met deze code; het verzoek telt dan als gebruikt."""
+    request = await session.scalar(
+        select(ResetRequest).where(ResetRequest.token_hash == resetcode.code_hash(code))
+    )
+    if request is None or request.used_at is not None:
+        raise ResetRefused(
+            f"De code {code} is onbekend of al gebruikt. Laat de gebruiker op de inlogpagina "
+            "een nieuwe code vragen."
+        )
+    now = datetime.now(UTC)
+    if aware(request.expires_at) <= now:
+        raise ResetRefused(
+            f"De code {code} is verlopen (op {_when(request.expires_at)}). Laat de gebruiker "
+            "op de inlogpagina een nieuwe code vragen."
+        )
+    request.used_at = now
+    return request.login
+
+
+async def reset_account(
+    settings: Settings, target: str, minutes: int = RESET_MINUTES
+) -> AccountResetDone | None:
+    """2FA uit (met herstelcodes en blokkade), een tijdelijk wachtwoord dat `minutes` minuten
+    werkt en bij de eerste aanmelding gewijzigd moet worden, alle logins ingetrokken, en een rij
+    in het logboek account_reset. Raakt alleen de aanmelding van dit account: geen bestanden,
+    mappen, delingen of andere accounts.
+
+    target is een code van de inlogpagina (RESET-XXXX-...; zie ResetRequest), of een
+    e-mailadres. Een code die onbekend, verlopen of gebruikt is, of die bij een login zonder
+    account hoort: ResetRefused. Een e-mailadres zonder account: None."""
+    code = resetcode.normalize(target)
+    password = temp_password()
+    password_hash = await new_password_hash(password)
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as session:
+        email = await _login_from_code(session, code) if code else target
+        user = await session.scalar(
+            select(User).where(func.lower(User.email) == email.strip().lower())
+        )
+        if user is None:
+            if code is None:
+                return None
+            # Het verzoek is gebruikt: dezelfde code nog eens geeft dan "al gebruikt"
+            await session.commit()
+            raise ResetRefused(
+                f"De code {code} hoort bij de login '{email}', maar daar is geen account "
+                "voor. Vraag de gebruiker met welk e-mailadres die inlogt, en laat daarmee een "
+                "nieuwe code vragen."
+            )
+        expires_at = datetime.now(UTC) + timedelta(minutes=minutes)
+        user.password_hash = password_hash
+        user.password_temp_until = expires_at
+        session.add(AccountReset(user_id=user.id, email=user.email, expires_at=expires_at))
+        # reset_totp commit alles samen: 2FA uit, herstelcodes weg, logins ingetrokken, en
+        # het verzoek gebruikt
+        await reset_totp(session, user, keep=None)
+        log.warning(
+            "reset-account: account %s (%s) gereset vanaf de commandoregel (%s); tijdelijk "
+            "wachtwoord geldig tot %s",
+            user.email,
+            user.id,
+            "met een code van de inlogpagina" if code else "op e-mailadres",
+            expires_at.isoformat(timespec="minutes"),
+        )
+        return AccountResetDone(user.email, password, expires_at, user.disabled_at is not None)
+
+
+async def reset_log(settings: Settings, limit: int = 50) -> list[AccountReset]:
+    maker = async_sessionmaker(get_engine(settings), expire_on_commit=False)
+    async with maker() as session:
+        rows = await session.scalars(
+            select(AccountReset).order_by(AccountReset.created_at.desc()).limit(limit)
+        )
+        return list(rows)
+
+
+def _when(moment: datetime | None) -> str:
+    if moment is None:
+        return "-"
+    return aware(moment).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _reset_account(settings: Settings, target: str, minutes: int) -> int:
+    if not 1 <= minutes <= RESET_MAX_MINUTES:
+        print(f"--minuten moet tussen 1 en {RESET_MAX_MINUTES} liggen.", file=sys.stderr)
+        return 2
+
+    async def run() -> AccountResetDone | None:
+        try:
+            return await reset_account(settings, target, minutes)
+        finally:
+            await get_engine(settings).dispose()
+
+    try:
+        done = asyncio.run(run())
+    except ResetRefused as refused:
+        print(str(refused), file=sys.stderr)
+        return 1
+    if done is None:
+        print(f"Er is geen account met e-mailadres {target}.", file=sys.stderr)
+        return 1
+    print(f"Account {done.email} is gereset.")
+    print()
+    print(f"    Tijdelijk wachtwoord: {done.password}")
+    print()
+    print(f"Het werkt tot {_when(done.expires_at)} (over {minutes} minuten). Na het aanmelden")
+    print("moet de gebruiker meteen een eigen wachtwoord kiezen en daarna 2FA opnieuw")
+    print("aanzetten. 2FA, de herstelcodes en alle logins van dit account zijn ingetrokken.")
+    print("Bestanden, mappen, delingen en instellingen blijven zoals ze waren.")
+    print("Geef het wachtwoord persoonlijk door, niet via mail of chat.")
+    if done.disabled:
+        print()
+        print("Let op: dit account is geblokkeerd door een beheerder. Zo kan het niet inloggen;")
+        print("hef de blokkade op op /beheer, of met: python -m app.cli make-admin <e-mail>.")
+    return 0
+
+
+def _reset_log(settings: Settings) -> int:
+    async def run() -> list[AccountReset]:
+        try:
+            return await reset_log(settings)
+        finally:
+            await get_engine(settings).dispose()
+
+    rows = asyncio.run(run())
+    if not rows:
+        print("Nog geen resets.")
+        return 0
+    print(f"{'gereset':16}  {'verloopt':16}  {'aangemeld':16}  {'gewijzigd':16}  account")
+    for row in rows:
+        print(
+            f"{_when(row.created_at):16}  {_when(row.expires_at):16}  {_when(row.used_at):16}  "
+            f"{_when(row.changed_at):16}  {row.email}"
+        )
+    return 0
 
 
 async def make_admin(settings: Settings, email: str) -> bool:
@@ -281,6 +463,8 @@ BEELD_REVISION = "0012"
 PG_REVISION = "0013"
 # De revisie van mediabeheer (fase 11): de lijst van gevolgde films en series
 ARR_REVISION = "0016"
+# De revisie van account resetten (tijdelijk wachtwoord en het logboek van de resets)
+RESET_REVISION = "0018"
 # De zoekindex op PostgreSQL (0.8.2, P5): op SQLite doet hij niets
 PG_SEARCH_REVISION = "0014"
 
@@ -367,6 +551,14 @@ FACES_LOST = (
 )
 
 
+# Wat een downgrade die 0018 weghaalt, kwijtmaakt
+RESET_LOST = (
+    "Het logboek van de account-resets en de openstaande reset-codes gaan weg. Een tijdelijk "
+    "wachtwoord dat nog niet gewijzigd is, blijft werken als gewoon wachtwoord: reset dat "
+    "account daarna opnieuw."
+)
+
+
 # Wat een downgrade die 0016 weghaalt, kwijtmaakt (fase 11)
 ARR_LOST = (
     "De gevolgde films en series, de verzoeken en de geschiedenis van de downloads en "
@@ -394,6 +586,8 @@ def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
     de database is PostgreSQL (0013 en 0014 doen alleen daar iets)."""
     lines = []
+    if RESET_REVISION in removed:
+        lines.append(RESET_LOST)
     if ARR_REVISION in removed:
         lines.append(ARR_LOST)
     if postgres and PG_SEARCH_REVISION in removed:
@@ -769,6 +963,21 @@ def main(argv: list[str] | None = None) -> int:
         "reset-2fa", help="2FA uitzetten voor een account waarvan de telefoon kwijt is"
     )
     reset.add_argument("email", help="e-mailadres van het account")
+    account = commands.add_parser(
+        "reset-account",
+        help="2FA uitzetten en een tijdelijk wachtwoord geven (voor wie niet meer binnenkan)",
+    )
+    account.add_argument(
+        "code",
+        help="de code van de inlogpagina (RESET-XXXX-XXXX-XXXX-XXXX), of een e-mailadres",
+    )
+    account.add_argument(
+        "--minuten",
+        type=int,
+        default=RESET_MINUTES,
+        help=f"zo lang werkt het tijdelijke wachtwoord (standaard {RESET_MINUTES})",
+    )
+    commands.add_parser("reset-log", help="de laatste 50 account-resets tonen")
     promote = commands.add_parser(
         "make-admin", help="een account beheerder maken (en een blokkade opheffen)"
     )
@@ -853,6 +1062,10 @@ def main(argv: list[str] | None = None) -> int:
         return beeld_cli.run(settings, args)
     if args.command in SEARCH_STUBS or args.command in ANALYSE_STUBS:
         return _stub(args.command)
+    if args.command == "reset-account":
+        return _reset_account(settings, args.code, args.minuten)
+    if args.command == "reset-log":
+        return _reset_log(settings)
     if args.command == keycheck.COMMAND:
         return keycheck.run(settings, args.opruimen)
     if args.command == keycheck.WIPE_COMMAND:

@@ -41,3 +41,27 @@
   margin: var(--space-2) 0 0;
   font-size: var(--text-s);
 }
+
+.login-reset p {
+  margin: var(--space-2) 0;
+}
+
+/* Het commando voor de beheerder: op één regel te kopiëren, en scrollen als het niet past */
+.login-command {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  white-space: pre;
+  font-size: var(--text-s);
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  border-radius: var(--radius-s, 6px);
+  user-select: all;
+}
+
+/* De code voor de systeembeheerder: groot, in één stuk te selecteren */
+.login-code {
+  margin: var(--space-2) 0;
+  font-size: var(--text-l, 1.25rem);
+  letter-spacing: 0.05em;
+  user-select: all;
+}

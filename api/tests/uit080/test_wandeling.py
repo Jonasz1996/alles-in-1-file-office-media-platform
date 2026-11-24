@@ -46,6 +46,9 @@ NIEUW = {
     "media_intro": 0,
     "media_profile": 0,
     "media_sub_offset": 0,
+    # Het logboek van account resetten (0018): de wandeling reset niemand
+    "account_reset": 0,
+    "reset_request": 0,
 }
 
 # De routes die fase 11 toevoegt (na 0.8.0)
@@ -62,6 +65,8 @@ FASE11 = (
     "/api/v1/admin/media/profiles",
     "/api/v1/media/sub-offset/",
     "/api/v1/media/items/{node_id}/collection",
+    # Account resetten: de code van "Wachtwoord vergeten of kan niet inloggen?"
+    "/api/v1/auth/reset-request",
 )
 
 
@@ -92,6 +97,19 @@ ERBIJ_082 = (
     ),
 )
 OPENAPI = "GET /api/openapi.json"
+
+
+def zonder_reset(waarde):
+    """Account resetten (0018) zet in elke gebruiker het veld password_change_required (hier altijd
+    false): zonder dat veld moet een antwoord gelijk zijn aan dat van 0.8.0."""
+    if isinstance(waarde, dict):
+        return {k: zonder_reset(v) for k, v in waarde.items() if k != "password_change_required"}
+    if isinstance(waarde, list):
+        return [zonder_reset(v) for v in waarde]
+    # Een lijst bewaart elke vorm als tekst (wandel.vorm, json.dumps met sort_keys)
+    if isinstance(waarde, str) and waarde.startswith("{") and "password_change_required" in waarde:
+        return json.dumps(zonder_reset(json.loads(waarde)), sort_keys=True)
+    return waarde
 
 
 def _sha(uit: Any) -> str:
@@ -148,7 +166,7 @@ def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     anders = {
         k: {"verwacht": v, "nu": nu["antwoorden"][k]}
         for k, v in verwacht.items()
-        if nu["antwoorden"][k] != v and not k.startswith(OPENAPI)
+        if zonder_reset(nu["antwoorden"][k]) != v and not k.startswith(OPENAPI)
     }
     assert anders == {}
     # De stand erna: dezelfde jobs (geen in de rij analyse), Setting en bestanden onder de

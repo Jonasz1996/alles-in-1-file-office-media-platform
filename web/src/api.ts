@@ -16,6 +16,8 @@ export interface User {
   totp_enabled: boolean;
   /** 2FA is verplicht en staat voor deze gebruiker nog niet aan: alleen 2FA aanzetten werkt. */
   totp_setup_required: boolean;
+  /** Tijdelijk wachtwoord (app.cli reset-account): eerst een eigen wachtwoord kiezen */
+  password_change_required?: boolean;
   /** Na te veel foute codes: tot wanneer de tweede factor geblokkeerd is (ISO-tijd). */
   totp_locked_until: string | null;
   /** De taal die bij het account hoort; null = die van het apparaat. Oudere servers sturen hem niet. */
@@ -428,6 +430,8 @@ export class Api {
         this.onLoggedOut();
       }
       const error = errorFromBody(res.status, body);
+      // password_change_required hoeft hier niet: reset-account trekt alle logins in, dus wie een
+      // tijdelijk wachtwoord heeft, logt opnieuw in en /auth/me zegt het dan al
       if (res.status === 403 && error.code === "totp_setup_required") this.onSetupRequired();
       throw error;
     }

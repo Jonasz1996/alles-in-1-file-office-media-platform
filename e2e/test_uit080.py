@@ -416,9 +416,18 @@ def viewer(page: Page, verkeer: Verkeer) -> dict[str, Any]:
     return {"boom": boom(dialoog), "api": verkeer.neem()}
 
 
+# Onder het inlogformulier staat sinds reset-account (app.cli) de knop "Wachtwoord vergeten of
+# kan niet inloggen?" in plaats van de zin van 0.8.0; op elke inlogpagina hetzelfde.
+VERGETEN_080 = "  - paragraph: Wachtwoord vergeten? Vraag je beheerder om een nieuw wachtwoord."
+KAN_NIET = ["  - paragraph:", '    - button "Wachtwoord vergeten of kan niet inloggen?"']
+
+
 def met_081(key: str, boom: list[str]) -> list[str]:
     """De boom van 0.8.0 met precies wat 0.8.1 anders toont (ANDERS) en erbij toont (ERIN), en
     wat 0.8.2 erbij toont (MENU_082)."""
+    if VERGETEN_080 in boom:
+        i = boom.index(VERGETEN_080)
+        boom = boom[:i] + KAN_NIET + boom[i + 1 :]
     for regel, nieuw in ANDERS.get(key, []):
         assert boom.count(regel) == 1, (key, regel)
         boom = [nieuw if r == regel else r for r in boom]
