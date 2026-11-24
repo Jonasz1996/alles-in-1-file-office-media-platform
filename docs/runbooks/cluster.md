@@ -141,18 +141,38 @@ de app na de herstart niet: zie hieronder.
 
 In twee stappen, zodat elke stap apart terug kan: eerst het platform, dan de template.
 
+**Eerst dit, over de analyse.** ClusterForge `main` zet `PLATFORM_ANALYSE_POSTGRES=true` al sinds
+`26879dd` (PR #162 van ClusterForge), in `/etc/clusterforge/platform-analyse.yaml`. Dat geldt
+zodra de parameter **Gezichten en zoeken op beeld** aan staat, en dat is de standaard. De sync
+van de sleutels met wissen (achter `sleutels-klaar`) komt pas met PR #163. Start 0.8.2 met de
+analyse aan en de oude sync, dan blijft na "uit" de sleutel van een gebruiker op de andere nodes
+staan: zijn gezichten zijn dan niet echt weg. Daarom staat de parameter uit van stap 2 tot
+stap 3. Met een ClusterForge van vóór `26879dd` is dat niet nodig, maar ook niet verkeerd.
+
+ClusterForge herstart het platform niet als alleen een parameter verandert (alleen de gewijzigde
+bestanden gaan naar de nodes). Daarvoor is `platform-ctl.sh restart-if-changed`: draai het als
+los commando op het hele cluster. Het doet alleen iets op de node waar het platform draait, en
+alleen als er iets veranderde: eerst een dump, dan de herstart.
+
 1. **Vooraf** zoals hierboven. Gaat de analyse aan: 12 GB RAM of meer per node (16 is beter).
-2. **Het platform**: Versie = de commit van 0.8.2, **Toepassen**, dan **Platform bijwerken**
-   (zie [Bijwerken](#bijwerken)). De app migreert 0012 → 0013 → 0014. 0013 duurt seconden;
-   0014 vult de zoekindex, bij een grote bibliotheek enkele minuten. Controle: de browser,
-   `platform-ctl.sh status`, en `/beheer` → Zoeken toont de index van PostgreSQL. De analyse
-   staat nog uit: `/beheer` zegt "ANALYSE_POSTGRES staat uit". Zo hoort het.
-3. **De template**: ClusterForge bijwerken naar de versie met de template van 0.8.2 (PR #163 van
-   ClusterForge, Jonas voegt hem samen), dan het cluster → **Toepassen**. Dat brengt
-   `PLATFORM_ANALYSE_POSTGRES=true` (alleen met de analyse aan), de sync van de sleutels met
-   wissen achter `sleutels-klaar`, de grenzen van de containers en `BindsTo=keepalived`. De stap
-   "platform herstarten na een wijziging" herstart het platform op de node met het VIP; daarna
-   staat de analyse aan.
+2. **Het platform**: **Wijzigen…** → Versie = de commit van 0.8.2 en **Gezichten en zoeken op
+   beeld** uit → **Toepassen**. Dan **Platform bijwerken** (zie [Bijwerken](#bijwerken)). Dat
+   herstart het platform met 0.8.2 en de analyse uit. De app migreert 0012 → 0013 → 0014. 0013
+   duurt seconden; 0014 vult de zoekindex, bij een grote bibliotheek enkele minuten. Controle:
+   de browser, `platform-ctl.sh status`, en `/beheer` → Zoeken toont de index van PostgreSQL.
+   Bij Gezichten zegt `/beheer` "Analyse: uit (ANALYSE=uit)". Zo hoort het. Er gaat niets
+   verloren: 0.8.1 draaide de analyse op PostgreSQL nog niet.
+   Staat PR #163 al op het cluster, dan mag de parameter aan blijven. Kijken kan met een los
+   commando: `grep -c sleutels-klaar /usr/local/lib/clusterforge/platform-ctl.sh` geeft dan op
+   elke node meer dan 0.
+3. **De template**: ClusterForge bijwerken naar de versie met PR #163 (Jonas voegt hem samen).
+   Neem eerst een dump (**Dump nu**, zoals in "Vooraf"): het **Toepassen** hierna herstart het
+   platform op de node met het VIP zonder dump (de unit van de mount verandert). Dan het cluster
+   → **Toepassen**, met de parameter nog uit. Dat brengt de sync van de sleutels met wissen
+   achter `sleutels-klaar`, de grenzen van de containers en `BindsTo=keepalived`. Daarna
+   **Wijzigen…** → **Gezichten en zoeken op beeld** aan → **Toepassen**, en
+   `platform-ctl.sh restart-if-changed` (zie boven). Nu staat de analyse aan, met
+   `PLATFORM_ANALYSE_POSTGRES=true` en de sync die wist.
 4. **Controle**: op de node met het VIP `platform-ctl.sh compose exec -T platform python -m
    app.cli analyse-status` (eerste regel `Analyse: ok`, met de grenzen). Een gebruiker zet
    gezichten aan (Account → Foto's). De app maakt zijn sleutel bij het eerste gezicht dat de scan
@@ -162,9 +182,12 @@ In twee stappen, zodat elke stap apart terug kan: eerst het platform, dan de tem
 
 Terug, van de laatste stap naar de eerste:
 
-- **Alleen de template slecht** (stap 3): ClusterForge terug naar de vorige versie en het
-  cluster → **Toepassen**. `PLATFORM_ANALYSE_POSTGRES` valt weg; het platform herstart met de
-  analyse uit. Er gaat niets verloren.
+- **Alleen de template slecht** (stap 3): eerst **Wijzigen…** → **Gezichten en zoeken op beeld**
+  uit → **Toepassen**, en `platform-ctl.sh restart-if-changed`: het platform herstart met de
+  analyse uit. Pas daarna ClusterForge terug naar de vorige versie en het cluster →
+  **Toepassen**. In die volgorde: ClusterForge `main` zet `PLATFORM_ANALYSE_POSTGRES` zelf
+  (`26879dd`), met de sync die niet wist. Er gaat niets verloren: de gezichten, de vectoren en
+  de sleutels blijven.
 - **0.8.2 zelf slecht**: **Platform terug** met `MET_DATABASE=downgrade` (eerste keus; zie
   [Terugzetten](#terugzetten)). Het image van 0.8.2 zet de database eerst terug naar 0012; wat
   sinds de update in de database kwam, blijft. Weg zijn de zoekindex (0014) en de plaatsen van
@@ -378,8 +401,9 @@ de melding zegt dan hoe je ze weer gelijk zet.
   start het platform ook op een node zonder VIP: twee platformen op dezelfde data en database.
 - **Images opruimen** op een node van het platform (zie "Vooraf"): het wist
   `cf-platform:vorige`.
-- **`PLATFORM_ANALYSE_POSTGRES` zelf aanzetten** zonder de template van 0.8.2. Met de sync van
-  0.8.1 (zonder wissen) blijft een sleutel na "uit" op de andere nodes staan.
+- **0.8.2 met Gezichten en zoeken op beeld aan, zonder PR #163.** ClusterForge `main` zet
+  `PLATFORM_ANALYSE_POSTGRES` dan al (sinds `26879dd`), maar de sync van de sleutels wist niet:
+  na "uit" blijft een sleutel op de andere nodes staan. Zet de variabele ook niet zelf aan.
 
 ## Bekende grenzen
 

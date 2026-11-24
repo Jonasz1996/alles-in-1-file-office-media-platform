@@ -213,17 +213,22 @@ gebruik je op de node met het VIP `platform-ctl.sh compose` (zie
 `platform-ctl.sh compose exec -T platform python -m app.cli analyse-status`.
 
 - **Op PostgreSQL staat de analyse alleen aan met `PLATFORM_ANALYSE_POSTGRES=true`**, en met de
-  triggers van migratie 0013. De template van 0.8.2 (PR #163 van ClusterForge) zet die variabele,
-  alleen met de analyse aan. Zonder zegt `analyse-status`
+  triggers van migratie 0013. ClusterForge `main` zet die variabele al sinds `26879dd` (PR #162
+  van ClusterForge), alleen met de analyse aan. De sync van de sleutels met wissen komt pas met
+  PR #163. Daarom staat **Gezichten en zoeken op beeld** uit zolang PR #163 niet op het cluster
+  staat: anders blijft een sleutel na "uit" op de andere nodes staan (de stappen:
+  [cluster.md](cluster.md#van-081-naar-082)). Zet de variabele ook niet zelf aan. Met de analyse
+  aan maar zonder de variabele (een ClusterForge van vóór `26879dd`) zegt `analyse-status`
   `down (op PostgreSQL staat de analyse uit tot ANALYSE_POSTGRES=true …)` en `/beheer`
-  "ANALYSE_POSTGRES staat uit". Zet hem niet zelf aan met een oudere template: die synchroniseert
-  de sleutels zonder wissen, en dan blijft een sleutel na "uit" op de andere nodes staan.
+  "ANALYSE_POSTGRES staat uit".
 - **De sleutels staan per node.** De sync `platform-sleutels` zet ze van de node met het VIP op
   de andere, met wissen, alleen achter `platform-ctl.sh sleutels-klaar`
   ([cluster.md](cluster.md#de-sleutels-van-gezichten)).
-- **Uit in het cluster**: de parameter **Gezichten en zoeken op beeld** uit en **Toepassen**.
-  `PLATFORM_ANALYSE_POSTGRES` valt weg, de container analyse start niet meer, en het platform
-  herstart op de node met het VIP. Daarna doet de app wat hierboven bij "Uit nadat hij aan
+- **Uit in het cluster**: de parameter **Gezichten en zoeken op beeld** uit en **Toepassen**,
+  dan `platform-ctl.sh restart-if-changed` als los commando op het hele cluster (ClusterForge
+  herstart het platform niet zelf na een andere parameter). Het platform herstart op de node met
+  het VIP, met eerst een dump; `PLATFORM_ANALYSE_POSTGRES` valt weg en de container analyse start
+  niet meer. Daarna doet de app wat hierboven bij "Uit nadat hij aan
   stond" staat. Er wordt niets gewist: de gezichten, de vectoren van beeld en de sleutels blijven,
   ook op de andere nodes. Wil je ze kwijt, wis ze dan eerst met de analyse aan, zoals hierboven.
 - **De rij `analyse` draait alleen op de node met het VIP.** De eerste ronde: ±2,2 tot 2,5 uur
