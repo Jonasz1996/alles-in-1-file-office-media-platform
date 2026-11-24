@@ -273,7 +273,7 @@ class FtsMatch(ColumnElement):
     _traverse_internals = [
         ("table_name", _T.dp_string),
         ("against", _T.dp_plain_obj),
-        ("expr", _T.dp_clauseelement),
+        ("sqlite_match", _T.dp_clauseelement),
         ("q", _T.dp_clauseelement),
         ("owner", _T.dp_clauseelement),
         ("words", _T.dp_clauseelement_list),
@@ -287,14 +287,16 @@ class FtsMatch(ColumnElement):
         self.q: Any = None
         self.owner: Any = None
         self.words: list[Any] = []
+        # SQLite: de MATCH zelf, al bij het maken (de parameter gaat zo mee in de sleutel)
+        expr = parsed.match if table_name == "fts_node" else parsed.names
+        name = literal_column(table_name)
+        self.sqlite_match = name.op("MATCH")(bindparam(f"{table_name}_expr", expr))
         if table_name == "fts_node":
-            self.expr = bindparam("fts_node_expr", parsed.match)
             # Dezelfde naam als in FtsRank, met dezelfde waarde (dezelfde parsed)
             self.q = bindparam("fts_node_q", parsed.tsquery())
             if owner is not None:
                 self.owner = bindparam("fts_node_owner", owner, type_=Uuid())
         else:
-            self.expr = bindparam(f"{table_name}_expr", parsed.names)
             long_words = [w for w in parsed.words if len(w) >= 3]
             self.words = [
                 bindparam(f"fts_name_w{i}", "%" + _like_escape(w) + "%")
@@ -313,7 +315,7 @@ class FtsMatch(ColumnElement):
 def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
     t = element.table_name
     if compiler.dialect.name == "sqlite":
-        found = literal_column(t).op("MATCH")(element.expr)
+        found = element.sqlite_match
         if element.against is not None:
             found = found.self_group(against=element.against)
         return compiler.process(found, **kw)
