@@ -106,7 +106,7 @@ async def test_twee_probes_tegelijk_geven_geen_integrityerror(settings, maker, s
     """Play (probe_now) en de job media.analyse proben dezelfde sha tegelijk: allebei lezen ze
     geen rij en doen ze een INSERT. De tweede gaf IntegrityError (play: 500, de speler gaf het
     op; e2e M7, CI-run 45456011161). Hier schrijft de ander precies tussen het lezen en de
-    commit; save_probe slaagt en zijn probe staat er."""
+    commit; save_probe slaagt, en de rij van de ander (dezelfde inhoud) blijft zoals hij was."""
     other = Probe(duration_ms=1000, blob_sha=sha)
     mine = Probe(duration_ms=2000, blob_sha=sha)
     raced = False
@@ -129,7 +129,7 @@ async def test_twee_probes_tegelijk_geven_geen_integrityerror(settings, maker, s
     await analysis.save_probe(racing, sha, mine)
     assert raced
     row = await stored(maker, sha)
-    assert row is not None and row.duration_ms == 2000
+    assert row is not None and row.duration_ms == 1000
 
 
 async def test_een_oude_failed_met_een_fout_van_de_worker_wordt_opnieuw_geprobet(

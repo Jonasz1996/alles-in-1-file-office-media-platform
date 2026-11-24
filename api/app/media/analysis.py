@@ -131,27 +131,28 @@ async def save_probe(maker: async_sessionmaker[AsyncSession], sha: str, probe: P
     values = _row(probe, sha)
     # Play (probe_now) en de job media.analyse proben dezelfde sha soms tegelijk: allebei geen
     # rij, allebei een INSERT, en de tweede kreeg IntegrityError (play: 500, de speler gaf het
-    # op). Dan nog één keer, nu over de rij van de ander heen.
-    for attempt in range(2):
-        async with maker() as session:
-            row = await session.get(MediaProbe, sha)
-            if row is None:
-                session.add(MediaProbe(**values))
-            else:
-                for key, value in values.items():
-                    setattr(row, key, value)
-                row.keyframes = None
-                row.keyframes_state = "none"
-                row.max_gop_ms = None
-                row.subs_state = row.trick_state = row.audio_state = "none"
-                row.trick = row.audio = None
-            try:
-                await session.commit()
-            except IntegrityError:
-                if row is not None or attempt:
-                    raise
-                continue
-            return
+    # op). De rij van de ander is een probe van dezelfde inhoud: die blijft, met wat de job er
+    # intussen al aan toevoegde (keyframes, trick, ...); overschrijven zou dat weer op none zetten
+    async with maker() as session:
+        row = await session.get(MediaProbe, sha)
+        if row is None:
+            session.add(MediaProbe(**values))
+        else:
+            for key, value in values.items():
+                setattr(row, key, value)
+            row.keyframes = None
+            row.keyframes_state = "none"
+            row.max_gop_ms = None
+            row.subs_state = row.trick_state = row.audio_state = "none"
+            row.trick = row.audio = None
+        try:
+            await session.commit()
+        except IntegrityError:
+            if row is not None:
+                raise
+            await session.rollback()
+            if await session.get(MediaProbe, sha) is None:
+                raise
 
 
 async def load(maker: async_sessionmaker[AsyncSession], sha: str) -> Probe | None:
