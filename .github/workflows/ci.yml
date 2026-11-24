@@ -78,6 +78,29 @@ jobs:
       - name: DejaVu Sans voor de scans van OCR (X1)
         run: sudo apt-get install -y --no-install-recommends fonts-dejavu-core
       - run: uv sync --frozen
+      # Het log van de service komt aan het eind van de job. log_checkpoints staat aan sinds PG 15
+      # en elke CREATE DATABASE van de tests geeft er twee regels: ±4500 regels, zodat de uitslag
+      # van pytest (-rf) buiten de laatste 5000 regels van het joblog viel (24-11-2026). Alleen die
+      # regels gaan uit; ERROR, FATAL en de rest van het log blijven
+      - name: Geen checkpoint-regels in het log van PostgreSQL
+        run: |
+          uv run python - <<'EOF'
+          import asyncio
+
+          import asyncpg
+
+
+          async def main():
+              conn = await asyncpg.connect("postgresql://platform:platform@127.0.0.1:5432/postgres")
+              try:
+                  await conn.execute("ALTER SYSTEM SET log_checkpoints = off")
+                  await conn.execute("SELECT pg_reload_conf()")
+              finally:
+                  await conn.close()
+
+
+          asyncio.run(main())
+          EOF
       # faulthandler_timeout: een test die vastloopt, laat na 10 minuten zijn stacks zien (geen
       # plugin voor een tijdslimiet; de job zelf stopt na 60 minuten)
       - run: >-
@@ -144,6 +167,29 @@ jobs:
                   await conn.execute("CREATE ROLE kopie LOGIN PASSWORD 'kopie' NOSUPERUSER")
                   await conn.execute("GRANT kopie TO eigenaar")
                   print(await conn.fetchval("SELECT version()"))
+              finally:
+                  await conn.close()
+
+
+          asyncio.run(main())
+          EOF
+      # Het log van de service komt aan het eind van de job. log_checkpoints staat aan sinds PG 15
+      # en elke CREATE DATABASE van de tests geeft er twee regels: ±4500 regels, zodat de uitslag
+      # van pytest (-rf) buiten de laatste 5000 regels van het joblog viel (24-11-2026). Alleen die
+      # regels gaan uit; ERROR, FATAL en de rest van het log blijven
+      - name: Geen checkpoint-regels in het log van PostgreSQL
+        run: |
+          uv run python - <<'EOF'
+          import asyncio
+
+          import asyncpg
+
+
+          async def main():
+              conn = await asyncpg.connect("postgresql://platform:platform@127.0.0.1:5432/postgres")
+              try:
+                  await conn.execute("ALTER SYSTEM SET log_checkpoints = off")
+                  await conn.execute("SELECT pg_reload_conf()")
               finally:
                   await conn.close()
 
