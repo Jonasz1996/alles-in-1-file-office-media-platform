@@ -25,7 +25,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY api/pyproject.toml api/uv.lock ./
-RUN uv sync --frozen --no-dev
+# --no-cache: anders blijft de cache van uv (de wheels en hun uitgepakte kopie, ±146 MiB) in
+# /root/.cache/uv in het image staan (a0.md, Open 9). /opt/venv zelf is er niet anders door
+RUN uv sync --frozen --no-dev --no-cache
 
 # Analyse (fase 6, Keuze 57): de extra `analyse` staat NIET in /opt/venv, maar in /opt/analyse
 # (0750 root:analyse). Alleen de kinderen van de worker zetten die map in sys.path. Voor 10001 en

@@ -1648,6 +1648,20 @@ jobs:
           tags: platform:ci
           cache-from: type=gha,scope=platform
           cache-to: type=gha,mode=max,scope=platform,ignore-error=true
+      # 0.8.2 (P10; a0.md, Open 9): uv sync draait in de Dockerfile met --no-cache; de cache van
+      # uv (±146 MiB) staat niet meer in het image. uv export in het blok van de analyse mag de
+      # map nog aanmaken, maar zonder wheels: hooguit 1 MiB. De grootte van het image in het log
+      - name: Geen cache van uv in het image
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        run: |
+          docker image inspect --format '{{.Size}}' platform:ci | awk '{ printf "platform:ci: %.0f MiB\n", $1 / 1048576 }'
+          docker run --rm --user root --network none platform:ci sh -c '
+            d=/root/.cache/uv
+            if [ ! -e "$d" ]; then echo "geen $d"; exit 0; fi
+            kb=$(du -sk "$d" | cut -f1)
+            echo "$d: $kb KiB: $(ls -A "$d" | tr "\n" " ")"
+            [ "$kb" -le 1024 ]
+          '
       - name: De modellen van models.lock (cache op de sha256 van de lock)
         uses: actions/cache@v4
         with:
@@ -1668,6 +1682,39 @@ jobs:
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         with:
           python-version: "3.12"
+      # 0.8.2 (P10; x2a.md Afwijkingen 12, bouwontwerp §4.6): laag 2 ook in het echte image.
+      # test_analyse_kinderen.py als analyse (10003), zonder netwerk en alleen-lezen. De kinderen
+      # starten dan uit python-tekst (0711 van root) en vinden numpy alleen in /opt/analyse (0750
+      # root:analyse), zoals in de LXC; in api-analyse komt numpy uit het venv. pytest zit niet in
+      # het image: pytest, pluggy, iniconfig en pygments komen met hun sha256 uit uv.lock in een
+      # map van de runner, alleen-lezen erbij; het image zelf verandert niet. Een vaste telling:
+      # overgeslagen is rood
+      - name: De kinderen van de worker in het image (test_analyse_kinderen.py)
+        if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
+        working-directory: api
+        env:
+          KINDEREN_TESTS: "15"
+        run: |
+          set -o pipefail
+          uit="$RUNNER_TEMP/analyse-image/kinderen.txt"
+          mkdir -p "$RUNNER_TEMP/analyse-image" "$RUNNER_TEMP/pytest-in-image"
+          uv export --frozen --only-group dev --no-emit-project --no-header --no-annotate \
+            | awk '/^[a-z]/ { mee = $1 ~ /^(pytest|pluggy|iniconfig|pygments)==/ } mee' \
+            > "$RUNNER_TEMP/pytest-in-image.txt"
+          test "$(grep -c '^[a-z]' "$RUNNER_TEMP/pytest-in-image.txt")" -eq 4
+          uv pip install --no-cache --python 3.12 --no-deps --require-hashes \
+            --target "$RUNNER_TEMP/pytest-in-image" -r "$RUNNER_TEMP/pytest-in-image.txt"
+          docker run --rm --user analyse --network none --read-only --tmpfs /tmp \
+            -e PYTHONPATH=/opt/analyse:/opt/pytest -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD/tests:/srv/tests:ro" -v "$PWD/tests_analyse:/srv/tests_analyse:ro" \
+            -v "$RUNNER_TEMP/pytest-in-image:/opt/pytest:ro" platform:ci \
+            python -m pytest -q -p no:cacheprovider -rs tests_analyse/test_analyse_kinderen.py \
+            | tee "$uit"
+          laatste="$(tail -n 1 "$uit")"
+          if ! grep -Eq "^$KINDEREN_TESTS passed(, [0-9]+ warnings?)? in [0-9.]+s" <<< "$laatste"; then
+            echo "::error::test_analyse_kinderen.py in het image: \"$laatste\"; verwacht precies $KINDEREN_TESTS passed"
+            exit 1
+          fi
       - name: De echte scan in de e2e (test_zoek_gezichten_echt.py, X2b)
         if: ${{ !cancelled() && steps.bouw.outcome == 'success' }}
         working-directory: api
@@ -1752,6 +1799,12 @@ jobs:
           echo "=== kort ==="
           echo "X2a de container analyse (test_analyse_container.sh):"
           sed 's/^/  /' "$RUNNER_TEMP/analyse-image/analyse.txt" 2> /dev/null || echo "  liep niet"
+          echo "X2a laag 2 in het image (test_analyse_kinderen.py):"
+          if [ -f "$RUNNER_TEMP/analyse-image/kinderen.txt" ]; then
+            tail -n 1 "$RUNNER_TEMP/analyse-image/kinderen.txt" | sed 's/^/  /'
+          else
+            echo "  liep niet"
+          fi
           echo "X2b de echte scan in de e2e (test_zoek_gezichten_echt.py):"
           if [ -f "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" ]; then
             tail -n 1 "$RUNNER_TEMP/analyse-image/gezichten-echt.txt" | sed 's/^/  /'

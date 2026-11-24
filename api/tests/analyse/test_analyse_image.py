@@ -1,8 +1,9 @@
 """Het blok van de analyse in de Dockerfile en de controle in de job images (fase 6, A0; Keuze 57,
 K2-09, K2-15).
 
-Het image zelf bouwt alleen in CI. Hier: het blok staat direct na `RUN uv sync --frozen --no-dev`
-(die regel blijft zoals hij is), het zet de vijf pakketten met --no-cache in /opt/analyse en nooit
+Het image zelf bouwt alleen in CI. Hier: het blok staat direct na `RUN uv sync --frozen --no-dev
+--no-cache` (sinds 0.8.2 met --no-cache: de cache van uv, ±146 MiB, bleef anders in het image; a0.md
+Open 9), het zet de vijf pakketten met --no-cache in /opt/analyse en nooit
 in /opt/venv, /run/analyse staat in de RUN van media, en de stap in ci.yml kijkt het image na met
 dezelfde vijf versies als uv.lock. Een stand-in met dit blok is in de sandbox gebouwd (a0.md).
 
@@ -25,7 +26,7 @@ from tests.analyse.test_no_numpy_in_app import EXTRA
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-SYNC = "RUN uv sync --frozen --no-dev"
+SYNC = "RUN uv sync --frozen --no-dev --no-cache"
 
 
 def _runs() -> list[str]:
