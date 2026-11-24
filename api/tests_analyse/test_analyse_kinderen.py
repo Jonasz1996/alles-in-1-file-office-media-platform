@@ -337,11 +337,21 @@ async def test_de_grenzen_en_nice_per_kind(paar):
     assert (wire.CHILDREN[Child.WERK].nice, wire.CHILDREN[Child.ZOEKEN].nice) == (19, 0)
 
 
+def _eigen_analyse_map(extra):
+    """In het image staan numpy en onnxruntime alleen in /opt/analyse: met een lege map zou het kind
+    stoppen bij de import. Daar wordt het een eigen naam voor dezelfde map; de controle blijft
+    gelijk."""
+    if os.path.isdir(kids.ANALYSE_PATH):
+        extra.symlink_to(kids.ANALYSE_PATH, target_is_directory=True)
+    else:
+        extra.mkdir()
+    return extra
+
+
 async def test_opt_analyse_alleen_in_het_pad_van_een_kind(tmp_path, modellen):
     """Keuze 57: de map met de vijf pakketten komt achteraan in sys.path van een kind, nooit in
     dat van pid 1."""
-    extra = tmp_path / "opt-analyse"
-    extra.mkdir()
+    extra = _eigen_analyse_map(tmp_path / "opt-analyse")
     sock = tmp_path / "run" / "w.sock"
     config = server.Config(
         socket=sock, models=modellen.root, key="k" * 64, built=BUILT,
