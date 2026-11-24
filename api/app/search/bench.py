@@ -35,16 +35,17 @@ import itertools
 import json
 import math
 import random
+import re
 import sqlite3
 import sys
 import time
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # alleen voor de typen: de app pas bij draaien (zie boven)
     from app.config import Settings
@@ -912,10 +913,17 @@ def analyse_klaar(con: sqlite3.Connection) -> int:
     return _Schrijver(con).rijen(ANALYSE_SQL, rijen)
 
 
-def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkomst:
+def maak(
+    data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD, database_url: str = ""
+) -> Uitkomst:
     """Een nieuwe database in data_dir (platform.db) via de echte migratie, gevuld met de boom
     van dit plan. Bestaat er al een database, dan komt de boom erbij (de migratie doet dan
-    niets meer)."""
+    niets meer).
+
+    database_url: een lege PostgreSQL-database (postgresql+asyncpg://…) in plaats van
+    platform.db, voor de meting op PostgreSQL (job zoek-perf-pg). Dezelfde migratie (tot en met
+    0014), dezelfde boom en dezelfde INSERTs via _PgCon: de triggers van 0013 en 0014 zetten num,
+    mpath, dead en de zoekindex. Daarna VACUUM ANALYZE, wat autovacuum na zo'n lading ook doet."""
     import asyncio
 
     from app.config import Settings
@@ -925,9 +933,9 @@ def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkoms
 
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
-    # Altijd het eigen bestand: met PLATFORM_DATABASE_URL (PostgreSQL, het cluster) zou de
+    # Altijd een eigen database: met PLATFORM_DATABASE_URL (PostgreSQL, het cluster) zou de
     # migratie hieronder anders de database van de app raken, niet platform.db in data_dir
-    settings = Settings(data_dir=data_dir, database_url="")
+    settings = Settings(data_dir=data_dir, database_url=database_url)
 
     async def migreer() -> None:
         await upgrade(settings)
@@ -936,14 +944,129 @@ def maak(data_dir: Path, plan: Plan, *, wachtwoord: str = WACHTWOORD) -> Uitkoms
     klok = time.monotonic()
     asyncio.run(migreer())
     migratie = time.monotonic() - klok
-    con = sqlite3.connect(data_dir / "platform.db")
+    con: Any = _PgCon(database_url) if database_url else sqlite3.connect(data_dir / "platform.db")
     try:
         uit = vul(con, plan, wachtwoord_hash=hash_password(wachtwoord), blob_standaard=app_blob())
         analyse_klaar(con)
+        if database_url:
+            klok = time.monotonic()
+            con.execute("VACUUM ANALYZE")
+            uit.seconden["analyze"] = time.monotonic() - klok
     finally:
         con.close()
     uit.seconden = {"migratie": migratie, **uit.seconden}
     return uit
+
+
+_INSERT = re.compile(r"INSERT INTO (\S+) \(([^)]*)\) VALUES \((.*)\)", re.DOTALL)
+
+
+class _PgCon:
+    """Genoeg van sqlite3.Connection voor vul() en analyse_klaar() op PostgreSQL (asyncpg, met
+    een eigen event loop): dezelfde SQL met ?, dezelfde rijen. executemany wordt één INSERT per
+    stuk met unnest van tekst-arrays, elke kolom gecast naar zijn type in de database: de
+    waarden zijn die van SQLite (tijden als tekst in UTC, 0 en 1, ids als hex). De triggers per
+    rij lopen zoals bij gewone INSERTs. PRAGMA is alleen voor SQLite en doet hier niets."""
+
+    def __init__(self, url: str) -> None:
+        import asyncio
+
+        import asyncpg
+
+        self.isolation_level: str | None = None
+        self._loop = asyncio.new_event_loop()
+        dsn = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        # De tijden zijn UTC zonder zone, zoals _tijd ze schrijft
+        self._con = self._loop.run_until_complete(
+            asyncpg.connect(dsn, server_settings={"timezone": "UTC"})
+        )
+        self._typen: dict[str, dict[str, str]] = {}
+
+    def _run(self, coro: Any) -> Any:
+        return self._loop.run_until_complete(coro)
+
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> _PgRijen:
+        if sql.startswith("PRAGMA"):
+            return _PgRijen([])
+        if not sql.startswith("SELECT"):
+            # BEGIN, COMMIT en ROLLBACK van _Schrijver, VACUUM: zonder parameters
+            if params:
+                raise ValueError(f"alleen SELECT met parameters: {sql[:60]}")
+            self._run(self._con.execute(sql))
+            return _PgRijen([])
+        found = self._run(self._con.fetch(_dollars(sql), *params))
+        return _PgRijen([tuple(r) for r in found])
+
+    def executemany(self, sql: str, rijen: Sequence[Sequence[Any]]) -> None:
+        m = _INSERT.fullmatch(sql)
+        if m is None:
+            raise ValueError(f"alleen INSERT INTO t (…) VALUES (…): {sql[:60]}")
+        tabel, kolommen = m[1], [k.strip() for k in m[2].split(",")]
+        waarden = [w.strip() for w in m[3].split(",")]
+        typen = self._kolomtypen(tabel)
+        delen, arrays = [], []
+        for kolom, waarde in zip(kolommen, waarden, strict=True):
+            if waarde == "?":
+                arrays.append(len(arrays))
+                delen.append(f"u.c{len(arrays) - 1}::{typen[kolom]}")
+            else:
+                delen.append(f"({waarde})::{typen[kolom]}")
+        kolom_tekst = [[_als_tekst(rij[i]) for rij in rijen] for i in arrays]
+        bron = ", ".join(f"${i + 1}::text[]" for i in arrays)
+        namen = ", ".join(f"c{i}" for i in arrays)
+        self._run(
+            self._con.execute(
+                f"INSERT INTO {tabel} ({', '.join(kolommen)}) SELECT {', '.join(delen)} "
+                f"FROM unnest({bron}) AS u({namen})",
+                *kolom_tekst,
+            )
+        )
+
+    def _kolomtypen(self, tabel: str) -> dict[str, str]:
+        if tabel not in self._typen:
+            found = self._run(
+                self._con.fetch(
+                    "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+                    "WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped",
+                    tabel,
+                )
+            )
+            self._typen[tabel] = {naam: typ for naam, typ in found}
+        return self._typen[tabel]
+
+    def close(self) -> None:
+        try:
+            self._run(self._con.close())
+        finally:
+            self._loop.close()
+
+
+@dataclass
+class _PgRijen:
+    rijen: list[tuple]
+
+    def fetchall(self) -> list[tuple]:
+        return self.rijen
+
+    def fetchone(self) -> tuple | None:
+        return self.rijen[0] if self.rijen else None
+
+
+def _dollars(sql: str) -> str:
+    """? wordt $1, $2, … (geen ? binnen een tekst in de SQL van deze module)."""
+    teller = itertools.count(1)
+    return re.sub(r"\?", lambda _: f"${next(teller)}", sql)
+
+
+def _als_tekst(waarde: Any) -> str | None:
+    if waarde is None or isinstance(waarde, str):
+        return waarde
+    if isinstance(waarde, bool):
+        return "true" if waarde else "false"
+    if isinstance(waarde, bytes | bytearray | memoryview):
+        # bytea als tekst zou "b'…'" worden: de boom schrijft geen bytes, en zo blijft dat zo
+        raise TypeError("bytes horen niet in de boom van de bench")
+    return str(waarde)
 
 
 def main(argv: list[str] | None = None) -> int:

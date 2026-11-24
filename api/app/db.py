@@ -96,16 +96,29 @@ async def lock_tree(session: AsyncSession) -> None:
     een opnamedatum): anders zet hij ze vast in een andere volgorde dan een verplaatsing erboven
     (die gaat op volgorde van mpath), en dan stopt PostgreSQL er één met 40P01 (review PG13-1).
     Neem het vóór de eerste rij van node in de transactie. Op SQLite niets: daar is maar één
-    schrijver. Heeft deze transactie het slot al, dan geen tweede statement."""
+    schrijver. Heeft deze transactie het slot al, dan geen tweede statement. Een savepoint dat
+    terugrolt, laat een slot dat erin genomen is los: dan vraagt de volgende aanroep het opnieuw
+    (tests/test_pg_tree_lock.py)."""
     if session.get_bind().dialect.name != "postgresql":
         return
     sync = getattr(session, "sync_session", None)  # None: een nagemaakte sessie (tests)
-    held = sync.get_transaction() if sync is not None else None
-    if held is not None and session.info.get("tree_lock") is held:
+    if sync is not None and _tree_lock_held(sync, session.info.get("tree_lock")):
         return
     await session.execute(text("SELECT node_lock_tree()"))
     if sync is not None:
-        session.info["tree_lock"] = sync.get_transaction()
+        session.info["tree_lock"] = sync.get_nested_transaction() or sync.get_transaction()
+
+
+def _tree_lock_held(sync, taken) -> bool:
+    """Is taken (de transactie of het savepoint waarin lock_tree het slot nam) de transactie van
+    nu of een erboven? Dan geldt het slot nog. Een savepoint dat terugrolde of klaar is, staat
+    niet meer in die rij: dan opnieuw (een tweede keer hetzelfde slot kan altijd)."""
+    current = sync.get_nested_transaction() or sync.get_transaction()
+    while current is not None:
+        if current is taken:
+            return True
+        current = current.parent
+    return False
 
 
 # --- De WAL leegmaken ------------------------------------------------------------------------

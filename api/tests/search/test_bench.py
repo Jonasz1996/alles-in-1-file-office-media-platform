@@ -209,6 +209,47 @@ async def test_de_backfill_van_z2_heeft_niets_te_doen(boom):
         await engine.dispose()
 
 
+@pytest.mark.pg
+@pytest.mark.anyio
+async def test_dezelfde_boom_op_postgresql(boom, tmp_path, database_url):
+    """zoek-perf-pg (0.8.2, P5 punt 8): maak() met database_url schrijft dezelfde boom in een
+    lege PostgreSQL-database (_PgCon: dezelfde INSERTs, als unnest per stuk). De triggers van
+    0013 en 0014 zetten num, pad en dead, en de zoekindex is wat de bron geeft (fts_rows); de
+    regels van NUL gelden ook hier, en de tellingen zijn die van SQLite."""
+    import asyncio
+
+    _, op_sqlite = boom
+    data = tmp_path / "data"
+    uit = await asyncio.to_thread(bench.maak, data, KLEIN, database_url=database_url)
+    assert uit.tellingen == op_sqlite.tellingen
+    assert uit.gebruikers.keys() == op_sqlite.gebruikers.keys() and "analyze" in uit.seconden
+    settings = Settings(data_dir=data, jwt_secret="test" * 8, database_url=database_url)
+    MADE.append(settings)
+    async with get_engine(settings).connect() as conn:
+
+        async def een(sql: str) -> int:
+            return (await conn.exec_driver_sql(sql)).scalar_one()
+
+        assert await conn.run_sync(check_tree) == uit.tellingen["nodes"]
+        for naam, sql in NUL.items():
+            assert await een(sql) == 0, naam
+        assert await een("SELECT count(*) FROM fts_node") == uit.tellingen["nodes"]
+        verschil = (
+            "SELECT count(*) FROM (SELECT rowid, tsv, otsv, capped FROM "
+            "fts_rows(ARRAY(SELECT num::bigint FROM node)) EXCEPT "
+            "SELECT rowid, tsv, otsv, capped FROM fts_node) AS x"
+        )
+        assert await een(verschil) == 0
+        assert await een("SELECT sum(length(body)) FROM blob_text") == uit.tellingen["tekens"]
+        assert await een("SELECT count(*) FROM photo_geo") == uit.tellingen["gps"]
+        assert await een("SELECT count(*) FROM search_state WHERE cursor IS NOT NULL") == 0
+        email = uit.gebruikers["b00"]["email"]
+        hashed = await conn.execute(
+            sa.text('SELECT password_hash FROM "user" WHERE email = :e'), {"e": email}
+        )
+        assert verify_password(hashed.scalar_one(), bench.WACHTWOORD)
+
+
 def test_kort_voor_het_einde_van_een_log(boom):
     _, uit = boom
     regels = uit.kort().splitlines()
