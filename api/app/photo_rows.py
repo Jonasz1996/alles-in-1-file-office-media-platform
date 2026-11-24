@@ -36,7 +36,8 @@ elke functie die foto's leest aan own_live of own_live_geo houdt. Wat foto's lee
   NULL; op zee blijft dat zo. Met de controle van write() in dezelfde statement: de node is een
   bestand van de eigenaar van de rij, en die heeft locatie niet op "uit". Loopt er nog een run
   van photometa die vóór de bouw begon, dan wacht hij (Defer): die kan zijn plaats nog zonder
-  places.sqlite opgezocht hebben en de rijen pas na dit stuk schrijven.
+  places.sqlite opgezocht hebben en de rijen pas na dit stuk schrijven. Op PostgreSQL neemt het
+  stuk eerst het slot van de boom, zoals write().
 
 Nooit een plek, een plaats of een eigenaar in het log: alleen aantallen.
 """
@@ -468,6 +469,10 @@ async def run_places(settings: Settings, payload: dict[str, Any]) -> None:
         return
     async with maker() as db:
         if found:
+            # Op PostgreSQL eerst het slot van de boom, zoals write(): elke rij zet een rij van
+            # photo_geo vast, op volgorde van node_id, en een prullenbak of verplaatsing erboven
+            # doet dat in een andere volgorde (40P01; tests/test_pg_photo_rows.py)
+            await lock_tree(db)
             if dbdialect.is_pg(db):
                 # asyncpg geeft bij executemany geen aantal (rowcount -1): per rij, dan klopt
                 # rows= in geo_places_done ook op PostgreSQL

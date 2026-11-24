@@ -3,7 +3,9 @@ test zelf maakt (tests/geo/bronnen.py). Een verkeerde sha256 of een kapot bestan
 plaatsen, en de app start gewoon."""
 
 import contextlib
+import hashlib
 import importlib.util
+import io
 import logging
 import sqlite3
 from pathlib import Path
@@ -52,6 +54,79 @@ def test_de_bronnen_zijn_dezelfde_als_in_tools_geo():
     )
     assert (load.LANDEN.grootte, load.PLAATSEN.grootte) == (13_287_234, 2_246_559)
     assert "/v5.1.2/" in load.LANDEN.url and load.NE_VERSIE == "v5.1.2"
+
+
+def test_haal_probeert_opnieuw_na_een_netwerkfout(tmp_path, monkeypatch):
+    """Een TLS-fout en een afgebroken download krijgen een nieuwe poging, met wachten ertussen
+    (CI 24-11-2026: files.pythonhosted.org brak de TLS-verbinding af)."""
+    haal = _haal()
+    inhoud = b"plaats,land\n" * 100
+    antwoorden = [OSError("EOF occurred in violation of protocol"), inhoud[:10], inhoud]
+    pogingen = []
+
+    def urlopen(url, timeout):
+        pogingen.append(url)
+        volgende = antwoorden.pop(0)
+        if isinstance(volgende, Exception):
+            raise volgende
+        return io.BytesIO(volgende)
+
+    monkeypatch.setattr(haal.urllib.request, "urlopen", urlopen)
+    wachten = []
+    haal.haal_met_pogingen(
+        tmp_path,
+        "b.csv",
+        "https://bron.invalid/b",
+        len(inhoud),
+        hashlib.sha256(inhoud).hexdigest(),
+        slaap=wachten.append,
+    )
+    assert (tmp_path / "b.csv").read_bytes() == inhoud
+    assert len(pogingen) == 3 and wachten == [haal.WACHT, 2 * haal.WACHT]
+    assert [p.name for p in tmp_path.iterdir()] == ["b.csv"]
+
+
+def test_haal_stopt_na_de_laatste_poging(tmp_path, monkeypatch):
+    haal = _haal()
+    pogingen = []
+
+    def urlopen(url, timeout):
+        pogingen.append(url)
+        raise OSError("geen verbinding")
+
+    monkeypatch.setattr(haal.urllib.request, "urlopen", urlopen)
+    wachten = []
+    with pytest.raises(OSError, match="geen verbinding"):
+        haal.haal_met_pogingen(
+            tmp_path, "b.csv", "https://bron.invalid/b", 8, "0" * 64, slaap=wachten.append
+        )
+    assert len(pogingen) == haal.POGINGEN == 4
+    assert wachten == [haal.WACHT, 2 * haal.WACHT, 4 * haal.WACHT]
+    assert not list(tmp_path.iterdir())
+
+
+def test_haal_geeft_een_verkeerde_bron_geen_nieuwe_poging(tmp_path, monkeypatch):
+    """Een verkeerde sha256 of een te groot bestand: de bron klopt niet, opnieuw helpt niet."""
+    haal = _haal()
+    for inhoud, fout in ((b"x" * 8, "verkeerde sha256"), (b"x" * 9, "groter dan 8 bytes")):
+        pogingen = []
+        monkeypatch.setattr(
+            haal.urllib.request,
+            "urlopen",
+            lambda url, timeout, inhoud=inhoud, pogingen=pogingen: (
+                pogingen.append(url) or io.BytesIO(inhoud)
+            ),
+        )
+        with pytest.raises(ValueError, match=fout):
+            haal.haal_met_pogingen(
+                tmp_path,
+                "b.csv",
+                "https://bron.invalid/b",
+                8,
+                "0" * 64,
+                slaap=lambda s: pytest.fail("geen nieuwe poging bij een verkeerde bron"),
+            )
+        assert len(pogingen) == 1 and not list(tmp_path.iterdir())
 
 
 async def test_bouwt_plaatsen_en_landen(settings, plaatsen):

@@ -340,7 +340,8 @@ class AdminFaces(BaseModel):
     quality: AnalyseQuality | None
     # Eigenaren met versleutelde gezichten zonder sleutel (0.8.2): "sleutel ontbreekt"; alleen het
     # aantal (app.cli sleutels-check zegt meer). Wel in het antwoord, niet in de OpenAPI: die blijft
-    # gelijk aan die van 0.8.0 (tests/uit080/test_wandeling.py; met de analyse uit is faces None)
+    # gelijk aan die van 0.8.0, op ERBIJ_082 na, velden buiten de analyse zoals AdminIndex.capped
+    # (tests/uit080/test_wandeling.py; met de analyse uit is faces None)
     keys_missing: SkipJsonSchema[int] = 0
 
 

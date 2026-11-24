@@ -228,9 +228,10 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     total = begin["index"]["text_total"]
     assert total > 0
     assert begin["engine"] == "fts" and begin["paused"] is False and begin["rebuild"] is None
-    # De mislukte telt als gedaan: alleen wat nog wacht of loopt, telt niet
+    # De mislukte telt als gedaan: alleen wat nog wacht of loopt, telt niet. capped (wat de index
+    # op PostgreSQL inkortte, migratie 0014) is op SQLite altijd 0.
     assert begin["index"] == {
-        "names_done": True, "text_done": total, "text_total": total, "failed": 1,
+        "names_done": True, "text_done": total, "text_total": total, "failed": 1, "capped": 0,
     }  # fmt: skip
     engine = page.locator('[data-search="engine"]')
     names = page.locator('[data-search="names"]')
@@ -381,7 +382,7 @@ def test_de_tab_met_alleen_het_toetsenbord(beheer: Beheer, browsers: Browsers) -
     )
     assert eind["engine"] == "fts" and eind["paused"] is False
     assert eind["index"] == {
-        "names_done": True, "text_done": total, "text_total": total, "failed": 0,
+        "names_done": True, "text_done": total, "text_total": total, "failed": 0, "capped": 0,
     }  # fmt: skip
     expect(page.locator('[data-search="rebuild"]')).to_have_count(0, timeout=20_000)
     expect(engine).to_have_text("FTS5 (snel)")

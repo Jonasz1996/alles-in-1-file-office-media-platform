@@ -72,7 +72,8 @@ link nooit).
 | een persoon wissen | de gezichten met ja op die persoon worden "niet tonen", zonder vector | — |
 | een foto definitief wissen | zijn gezichten | — |
 
-- De database staat op `secure_delete`: gewiste rijen worden overschreven, ook in de WAL.
+- De database staat op `secure_delete`: gewiste rijen worden overschreven, ook in de WAL. Dat is
+  SQLite; op PostgreSQL (het cluster) is het anders, zie [In het cluster](#in-het-cluster).
 - Heeft iemand op dat moment de database open om te lezen, dan zegt `/beheer` "wissen wacht op
   een lezer"; de job probeert het opnieuw tot het lukt. Een herstart halverwege maakt het af.
 
@@ -215,6 +216,29 @@ gezichten (0011) en beeld (0012) weg; de sleutels en de modellen blijven op hun 
 wie er op een foto staat (`photo_person`, van 0010) blijven ook, net als de schakelaar gezichten
 per gebruiker. Weer vooruit begint met lege tabellen: wie gezichten aan had, krijgt bij de
 volgende ronde (elk uur) een nieuwe scan.
+
+## In het cluster
+
+Op PostgreSQL in het cluster van ClusterForge (vanaf 0.8.2; de analyse daar:
+[analyse.md](analyse.md#in-het-cluster-postgresql-vanaf-082)):
+
+- **De sleutels staan op elke node** in `/var/lib/cf-platform/sleutels/gezichten`, niet op de
+  gedeelde data. De sync `platform-sleutels` zet ze elke minuut van de node met het VIP op de
+  andere nodes, met wissen, alleen als `platform-ctl.sh sleutels-klaar` slaagt
+  ([cluster.md](cluster.md#de-sleutels-van-gezichten)).
+- **"uit" door een gebruiker** wist eerst de sleutel op de node met het VIP, dan de rijen. Binnen
+  een minuut haalt de sync de sleutel ook van de andere nodes. Faalt `sleutels-klaar` (bijvoorbeeld
+  omdat een andere eigenaar zijn sleutel mist), dan blijft hij daar staan tot dat is opgelost:
+  kijk na "uit" of de sync groen is.
+- **Wissen zonder `secure_delete`.** Alleen "uit", "verbieden" en een gebruiker wissen halen de
+  sleutel weg; elke oude kopie van een vector is dan onleesbaar. Bij "niet tonen" (en terug),
+  "Niet benoemde gezichten wissen", een persoon wissen en een foto definitief wissen blijft de
+  sleutel. De oude versleutelde vector kan dan nog een tijd bestaan: in oude versies van de rij
+  (tot `VACUUM`), in de WAL, op de replica's en in de dumps van ClusterForge. Een besluit daarover
+  is nog open ([w2.md](../fase-6/i3/w2.md), open punt 7).
+- **Back-ups.** De dump van het platform (`platform-ctl.sh db-backup`) maakt de tabellen van
+  gezichten leeg. De dumps van de database-component van ClusterForge doen dat niet: daar staan
+  de vectoren in, versleuteld. De sleutels zitten in geen enkele dump.
 
 ## De wet (AVG)
 
