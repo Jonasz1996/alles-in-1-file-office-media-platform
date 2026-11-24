@@ -17,6 +17,8 @@ export type PlayerAction =
   | "mute"
   | "fullscreen"
   | "subtitles"
+  | "subEarlier"
+  | "subLater"
   | "audio"
   | "pip"
   | "prevChapter"
@@ -26,6 +28,7 @@ export type PlayerAction =
   | "end"
   | "next"
   | "info"
+  | "upscale"
   | "escape";
 
 export const DIGITS: readonly Combo[] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
@@ -42,6 +45,8 @@ export const KEYMAP: Readonly<Record<PlayerAction, readonly Combo[]>> = {
   mute: ["m"],
   fullscreen: ["f"],
   subtitles: ["c"],
+  subEarlier: ["g"],
+  subLater: ["h"],
   audio: ["a"],
   pip: ["p"],
   prevChapter: ["pageup"],
@@ -51,6 +56,7 @@ export const KEYMAP: Readonly<Record<PlayerAction, readonly Combo[]>> = {
   end: ["end"],
   next: ["n"],
   info: ["i"],
+  upscale: ["u"],
   escape: ["escape"],
 };
 

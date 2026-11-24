@@ -47,6 +47,14 @@ import { Field } from "../ui/Field";
 import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
+import ArrBlock from "./ArrBlock";
+import CleanupBlock from "./CleanupBlock";
+import KidsLockBlock from "./KidsLockBlock";
+import StatsBlock from "./StatsBlock";
+import RequestsSettings from "./RequestsSettings";
+import SubsBlock from "./SubsBlock";
+import UpscaleBlock from "./UpscaleBlock";
+import WantedBlock from "./WantedBlock";
 import { usePolling } from "./usePolling";
 
 // --- wat de tests los toetsen (admin/media.test.ts) ----------------------------------------------
@@ -246,6 +254,14 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <Libraries a={a} reload={reload} />
       <Cache a={a} reload={reload} />
       <Providers a={a} reload={reload} />
+      <ArrBlock />
+      <WantedBlock libraries={a.libraries} />
+      <SubsBlock />
+      <RequestsSettings libraries={a.libraries} />
+      <UpscaleBlock />
+      <KidsLockBlock />
+      <StatsBlock />
+      <CleanupBlock />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />

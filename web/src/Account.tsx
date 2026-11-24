@@ -101,6 +101,9 @@ export function Account({
             <p>
               <Link to="/over">{t("about.account.link")}</Link>
             </p>
+            <p>
+              <Link to="/apps">{t("about.apps.link")}</Link>
+            </p>
           </section>
         </>
       )}

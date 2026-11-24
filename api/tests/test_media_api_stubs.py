@@ -17,6 +17,7 @@ from app.main import app
 from app.media import types as t
 from app.media.loadtest import LoadtestPlay, LoadtestPlayIn
 from app.media.state import MediaState
+from app.routers import media_profiles, media_stats, media_suboffset
 from tests.test_files import put, root
 from tests.test_public import new_link, open_link
 
@@ -53,6 +54,15 @@ ENDPOINTS = [
     ("GET", "/api/v1/media/home", None, "user", None, t.MediaHome, None),
     ("GET", "/api/v1/media/libraries/{library_id}/items", None, "user", None, t.CardPage, None),
     ("GET", "/api/v1/media/items/{node_id}", None, "user", None, t.Item, None),
+    (
+        "GET",
+        "/api/v1/media/items/{node_id}/collection",
+        None,
+        "user",
+        None,
+        t.Collection | None,
+        None,
+    ),
     ("GET", "/api/v1/media/shows/{show_id}", None, "user", None, t.ShowDetail, None),
     # M3: afspelen
     ("GET", "/api/v1/media/{node_id}/codecs", None, "user", None, t.CodecsOut, None),
@@ -99,6 +109,74 @@ ENDPOINTS = [
         t.ProgressBatchIn,
         t.ProgressBatchOut,
         None,
+    ),
+    # Fase 11, stap 4: de timing van een ondertitel (eigen tests in tests/arr/test_subs.py)
+    (
+        "GET",
+        "/api/v1/media/sub-offset/{node_id}",
+        None,
+        "user",
+        None,
+        list[media_suboffset.SubOffsetOut],
+        None,
+    ),
+    (
+        "PUT",
+        "/api/v1/media/sub-offset/{node_id}",
+        {"sub_id": "x0", "label": "Nederlands", "offset_ms": 500},
+        "user",
+        media_suboffset.SubOffsetIn,
+        None,
+        204,
+    ),
+    # Fase 11, stap 7: profielen (eigen tests in tests/test_media_profiles.py)
+    ("GET", "/api/v1/media/profiles", None, "user", None, media_profiles.ProfilesOut, None),
+    (
+        "POST",
+        "/api/v1/media/profiles",
+        {"name": "Kinderen"},
+        "user",
+        media_profiles.ProfileIn,
+        media_profiles.ProfileOut,
+        201,
+    ),
+    (
+        "PATCH",
+        "/api/v1/media/profiles/{pid}",
+        {"name": "Kinderen"},
+        "user",
+        media_profiles.ProfilePatch,
+        media_profiles.ProfileOut,
+        None,
+    ),
+    ("DELETE", "/api/v1/media/profiles/{pid}", None, "user", None, None, 204),
+    (
+        "POST",
+        "/api/v1/media/profiles/{pid}/select",
+        {"pin": None},
+        "user",
+        media_profiles.SelectIn,
+        media_profiles.SelectOut,
+        None,
+    ),
+    ("GET", "/api/v1/admin/media/stats", None, "admin", None, media_stats.MediaStats, None),
+    (
+        "GET",
+        "/api/v1/admin/media/profiles",
+        None,
+        "admin",
+        None,
+        list[media_profiles.AccountLimit],
+        None,
+    ),
+    (
+        "PUT",
+        "/api/v1/admin/media/profiles/{user_id}",
+        {"max_age": 12},
+        "admin",
+        media_profiles.AdminLimitIn,
+        None,
+        204,
     ),
     # M8: koppelen
     (
@@ -285,7 +363,8 @@ VALUES = {"sha": SHA, "size": "w342", "key": "abba"}
 
 def url_of(path: str) -> str:
     url = path
-    for name in ("library_id", "node_id", "show_id", "album_id", "playlist_id", "item_id"):
+    for name in ("library_id", "node_id", "show_id", "album_id", "playlist_id", "item_id", "pid",
+                 "user_id"):  # fmt: skip
         url = url.replace("{" + name + "}", ID)
     url = url.replace("{session_id}", ID)
     for name, value in VALUES.items():
@@ -359,10 +438,21 @@ BUILT = {
     ("GET", "/api/v1/media/home"),
     ("GET", "/api/v1/media/libraries/{library_id}/items"),
     ("GET", "/api/v1/media/items/{node_id}"),
+    ("GET", "/api/v1/media/items/{node_id}/collection"),
     ("GET", "/api/v1/media/shows/{show_id}"),
     # M7 (M0-hotfix, alleen deze test; de eigen tests in test_media_progress_api.py)
     ("PUT", "/api/v1/media/progress/{node_id}"),
     ("POST", "/api/v1/media/progress/batch"),
+    ("GET", "/api/v1/media/sub-offset/{node_id}"),
+    ("PUT", "/api/v1/media/sub-offset/{node_id}"),
+    ("GET", "/api/v1/media/profiles"),
+    ("POST", "/api/v1/media/profiles"),
+    ("PATCH", "/api/v1/media/profiles/{pid}"),
+    ("DELETE", "/api/v1/media/profiles/{pid}"),
+    ("POST", "/api/v1/media/profiles/{pid}/select"),
+    ("GET", "/api/v1/admin/media/stats"),
+    ("GET", "/api/v1/admin/media/profiles"),
+    ("PUT", "/api/v1/admin/media/profiles/{user_id}"),
     # M9 (M0-hotfix, alleen deze test): test_media_music.py en test_media_playlists.py
     ("GET", "/api/v1/media/libraries/{library_id}/albums"),
     ("GET", "/api/v1/media/albums/{album_id}"),
@@ -446,6 +536,7 @@ def test_de_gebeurtenissen_van_paragraaf_3_4():
         "watched",
         "origin",
         "updated_at",
+        "profile",  # fase 11, stap 7
     }
     assert fields["media.library"] == {"library_id", "scan_state", "item_count"}
     assert fields["media.item"] == {"node_id", "library_id"}

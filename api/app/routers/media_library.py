@@ -11,6 +11,7 @@ POST   /api/v1/media/libraries/{id}/scan       → 202
 GET    /api/v1/media/home                      → MediaHome
 GET    /api/v1/media/libraries/{id}/items      ?type=&sort=&cursor=&limit=60 → CardPage
 GET    /api/v1/media/items/{node_id}           → Item
+GET    /api/v1/media/items/{node_id}/collection → Collection | null (fase 11)
 GET    /api/v1/media/shows/{show_id}           → ShowDetail
 """
 
@@ -31,19 +32,24 @@ from app.media import (
 )
 from app.media import items as media_items
 from app.media import library as media_library
+from app.media import viewer as media_viewer
 from app.media.types import (
     ITEMS_PAGE,
     CardPage,
+    Collection,
     Item,
     Library,
     LibraryIn,
     LibraryPatch,
+    LibraryRow,
     MediaHome,
     ShowDetail,
 )
 from app.security import CurrentUser
 
-router = APIRouter(prefix="/api/v1/media", tags=["media"])
+router = APIRouter(
+    prefix="/api/v1/media", tags=["media"], dependencies=[Depends(media_viewer.resolve)]
+)
 
 Config = Annotated[Settings, Depends(get_settings)]
 
@@ -97,21 +103,31 @@ async def scan_library(
 
 
 @router.get("/home", response_model=MediaHome)
-async def home(user: CurrentUser, request: Request, session: Session):
+async def home(user: CurrentUser, request: Request, session: Session, settings: Config):
     """De start: bibliotheken, en de drie rijen van M7 (Verder kijken, Volgende aflevering en Net
-    toegevoegd; die laatste is items.recent van hier, met de stand uit het geheugen erover). Bij
+    toegevoegd; die laatste is items.recent van hier, met de stand uit het geheugen erover), en
+    sinds fase 11 Onlangs verschenen en een rij per bibliotheek. Bij
     het samenvoegen van golf 4: de eigen terugval voor Net toegevoegd (uit de tijd van de stub
     van M7, die lege rijen gaf) is weg."""
     runtime.require(request)
     found = await media_library.seen(session, user)
     ids = [s.library.id for s in found]
     counts = await media_library.counts(session, ids)
-    rows = await progress.home_rows(session, user.id, ids)
+    viewer = media_viewer.current()
+    who = progress.Who(user.id, viewer.profile)
+    rows = await progress.home_rows(session, who, ids, viewer.max_age)
+    reader = media_items.Reader(session, settings, user)
+    per_library = await media_items.library_rows(reader, [s.library for s in found])
     return MediaHome(
         libraries=[media_library.view(s, counts.get(s.library.id, 0)) for s in found],
         continue_=rows.get("continue") or [],
         next_up=rows.get("next_up") or [],
         recent=rows.get("recent") or [],
+        released=await media_items.released(reader, ids),
+        library_rows=[
+            LibraryRow(library_id=lib.id, name=lib.name, kind=lib.kind, cards=cards)
+            for lib, cards in per_library
+        ],
     )
 
 
@@ -139,6 +155,15 @@ async def item(
 ):
     runtime.require(request)
     return await media_items.detail(media_items.Reader(session, settings, user), node_id)
+
+
+@router.get("/items/{node_id}/collection", response_model=Collection | None)
+async def item_collection(
+    node_id: uuid.UUID, user: CurrentUser, request: Request, session: Session, settings: Config
+):
+    """De andere delen van de filmreeks (fase 11, stap 7), of null."""
+    runtime.require(request)
+    return await media_items.collection(media_items.Reader(session, settings, user), node_id)
 
 
 @router.get("/shows/{show_id}", response_model=ShowDetail)

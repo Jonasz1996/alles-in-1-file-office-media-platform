@@ -118,6 +118,14 @@ class FrameArgs(_Args):
     width: int = Field(default=640, ge=16, le=3840)
 
 
+class FingerprintArgs(_Args):
+    """Fase 11, stap 7: Chromaprint van het begin van één audiospoor (intro overslaan)."""
+
+    demuxer: Demuxer
+    audio_index: Index = 0  # het hoeveelste audiospoor (-map 0:a:N)
+    seconds: int = Field(default=600, ge=10, le=900)
+
+
 class MetaArgs(_Args):
     """Wat render_meta nu met ffprobe leest (opnametijd, plaats, maat)."""
 
@@ -297,6 +305,7 @@ ARGS: dict[Op, type[_Args]] = {
     Op.SYNTH: SynthArgs,
     Op.TEXT: TextArgs,
     Op.OCR: OcrArgs,
+    Op.FINGERPRINT: FingerprintArgs,
 }
 
 
@@ -324,7 +333,7 @@ def work_class(op: Op, args: _Args) -> WorkClass:
         return WorkClass.TRANSCODE if args.mode == "transcode" else WorkClass.REMUX
     if op == Op.REMUX_AUDIO:
         return WorkClass.REMUX
-    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT, Op.OCR):
+    if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT, Op.OCR, Op.FINGERPRINT):
         return WorkClass.BACKGROUND
     if op == Op.KEYFRAMES and isinstance(args, KeyframesArgs) and args.fallback:
         return WorkClass.BACKGROUND
@@ -378,7 +387,7 @@ def fd_layout(op: Op, args: _Args) -> Layout:
     if op == Op.SUBS:
         assert isinstance(args, SubsArgs)
         return Layout(1, 1 if args.loose else 3 * len(args.tracks))
-    if op in (Op.FRAME, Op.SPRITES, Op.REMUX_AUDIO):
+    if op in (Op.FRAME, Op.SPRITES, Op.REMUX_AUDIO, Op.FINGERPRINT):
         return Layout(1, 1)
     if op == Op.TEXT:
         assert isinstance(args, TextArgs)

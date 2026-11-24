@@ -53,6 +53,11 @@ previews-recheck is "Alles nalopen" van /beheer → Taken: elke foto, video en a
 zonder (complete) preview gaat opnieuw in de rij, ook een mislukte of een waarvan het bestand
 op schijf ontbreekt. De draaiende app pakt het binnen enkele seconden op (docs/fotos-indexeren.md).
 
+Mediabeheer (fase 11, app/arr/cli.py): qBittorrent en Prowlarr vooraf instellen en koppelen,
+vóór hun containers starten (install.sh met ARR=aan; nooit een geheim in de uitvoer):
+
+    python -m app.cli arr-koppel [--qbit-url …] [--prowlarr-url …] [--downloads /downloads]
+
 Media (fase 5), elk een dunne aanroep van een functie in app/media (de pakketten bouwen ze; tot
 dan zegt een stub dat media uit staat):
 
@@ -148,6 +153,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import backup, previews
 from app.analyse import pgcheck
+from app.arr import cli as arr_cli
 from app.beeld import cli as beeld_cli
 from app.config import Settings, get_settings
 from app.db import get_engine
@@ -273,6 +279,8 @@ FACES_REVISION = "0011"
 BEELD_REVISION = "0012"
 # De revisie van PostgreSQL (0.8.2): op SQLite doet hij niets
 PG_REVISION = "0013"
+# De revisie van mediabeheer (fase 11): de lijst van gevolgde films en series
+ARR_REVISION = "0016"
 # De zoekindex op PostgreSQL (0.8.2, P5): op SQLite doet hij niets
 PG_SEARCH_REVISION = "0014"
 
@@ -359,6 +367,13 @@ FACES_LOST = (
 )
 
 
+# Wat een downgrade die 0016 weghaalt, kwijtmaakt (fase 11)
+ARR_LOST = (
+    "De gevolgde films en series, de verzoeken en de geschiedenis van de downloads en "
+    "ondertitels gaan weg. Je bibliotheken en bestanden blijven."
+)
+
+
 # Wat een downgrade die 0013 weghaalt op PostgreSQL kwijtmaakt (review PG13-2): place_id past
 # daarna niet meer (48 bits in int32) en wordt NULL; met 0.8.2 komt hij terug (0013 zet de job
 # geo.places dan opnieuw klaar)
@@ -379,6 +394,8 @@ def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
     de database is PostgreSQL (0013 en 0014 doen alleen daar iets)."""
     lines = []
+    if ARR_REVISION in removed:
+        lines.append(ARR_LOST)
     if postgres and PG_SEARCH_REVISION in removed:
         lines.append(PG_SEARCH_LOST)
     if postgres and PG_REVISION in removed:
@@ -810,6 +827,7 @@ def main(argv: list[str] | None = None) -> int:
         keycheck.WIPE_COMMAND, help="de tabellen die een kopie van de database leeg moet maken"
     )
     search_bench.parsers(commands)
+    arr_cli.parsers(commands)
     benchlos.parsers(commands)
     geo_load.parsers(commands)
     beeld_cli.parsers(commands)
@@ -823,6 +841,8 @@ def main(argv: list[str] | None = None) -> int:
         pgcheck.check_cli(settings)
     if args.command in MEDIA_COMMANDS:
         return _media(settings, args)
+    if args.command in arr_cli.COMMANDS:
+        return arr_cli.run(settings, args)
     if args.command in search_bench.COMMANDS:
         return search_bench.run(settings, args)
     if args.command == benchlos.COMMAND:

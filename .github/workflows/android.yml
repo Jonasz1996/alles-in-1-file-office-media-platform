@@ -1,0 +1,65 @@
+name: Android-app
+
+# Fase 11, stap 10: de Android-app (apps/android) bouwen. Het resultaat is een APK die je onder
+# Actions → deze run → Artifacts downloadt, en die een beheerder op het platform zet
+# (<data>/apps/platform-android.apk; de downloadpagina /apps biedt hem dan aan).
+on:
+  push:
+    paths:
+      - "apps/android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: APK bouwen
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Debug-APK
+        # Maven Central geeft soms 429 (te veel verzoeken): dan na een minuut nog eens
+        run: ./gradlew --no-daemon assembleDebug || (sleep 60 && ./gradlew --no-daemon assembleDebug)
+      - name: Release-APK (alleen met de sleutel in de geheimen van het repo)
+        if: ${{ env.KEYSTORE_B64 != '' }}
+        env:
+          PLATFORM_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PLATFORM_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PLATFORM_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          PLATFORM_KEYSTORE="$RUNNER_TEMP/release.jks" ./gradlew --no-daemon assembleRelease
+      - name: Namen voor de downloadpagina
+        run: |
+          mkdir -p out
+          # Voor het platform: de ondertekende release als die er is, anders de debug-APK
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk out/platform-android.apk
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk out/platform-android.apk
+          fi
+      - name: In de release "clients" zetten (het platform haalt ze daar op)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view clients >/dev/null 2>&1 || gh release create clients --prerelease \
+            --title "Client-apps" --notes "De gebouwde apps; het platform haalt ze zelf op voor /apps." \
+            --target "${{ github.sha }}" || true
+          gh release upload clients out/platform-android.apk --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-android
+          path: apps/android/out/*.apk
+          retention-days: 30

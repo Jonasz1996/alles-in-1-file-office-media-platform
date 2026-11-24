@@ -72,13 +72,25 @@ def tab_to(page: Any, selector: str, presses: int = 40) -> None:
     een pagina gaat Tab eerst langs de balk (naar inhoud, tot acht items van het menu, het
     zoekveld, het account), en die groeit met het menu (0.8.2: Dubbel). Met 12 haalde "Verder op"
     op een item het niet meer. Een test die de stops precies telt, geeft presses mee (M10)."""
+    seen: list[str] = []
     for _ in range(presses):
         page.keyboard.press("Tab")
         if page.evaluate(
             "(s) => !!document.activeElement && document.activeElement.matches(s)", selector
         ):
             return
-    raise AssertionError(f"{selector} niet bereikt met Tab; focus op {focused_text(page)!r}")
+        seen.append(page.evaluate(FOCUSED_JS))
+    raise AssertionError(f"{selector} niet bereikt met Tab; de focus ging langs {seen}")
+
+
+# Wat de focus heeft, kort: tag, aria-label of tekst, en data-player (voor een melding)
+FOCUSED_JS = """() => {
+  const e = document.activeElement;
+  if (!e) return "";
+  const name = e.getAttribute("aria-label") || (e.textContent || "").trim().slice(0, 30);
+  const mark = e.getAttribute("data-player");
+  return e.tagName.toLowerCase() + (mark ? `[${mark}]` : "") + (name ? ` ${name}` : "");
+}"""
 
 
 def menu_to(page: Any, label: str, presses: int = 30) -> None:

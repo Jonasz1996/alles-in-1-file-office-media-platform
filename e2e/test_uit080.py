@@ -153,6 +153,10 @@ OVER = [
     "    - paragraph:",
     '      - link "Bronnen en licenties":',
     "        - /url: /over",
+    # Fase 11: de downloadpagina van de client-apps (web/src/Account.tsx)
+    "    - paragraph:",
+    '      - link "Apps voor je tv en telefoon":',
+    "        - /url: /apps",
 ]
 ERIN: dict[str, tuple[str, list[str]]] = {
     "eva /account": ('- region "Meldingen"', OVER),

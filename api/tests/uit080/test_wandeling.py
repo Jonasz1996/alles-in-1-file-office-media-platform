@@ -35,7 +35,34 @@ NIEUW = {
     "face_person": 0,
     "face_scan": 0,
     "node_origin": 2,
+    # De tabellen van fase 11 (0016): de wandeling maakt er geen rijen in
+    "arr_cleanup": 0,
+    "arr_grab": 0,
+    "arr_request": 0,
+    "arr_subtitle": 0,
+    "arr_upscale": 0,
+    "arr_wanted": 0,
+    "media_facts": 0,
+    "media_intro": 0,
+    "media_profile": 0,
+    "media_sub_offset": 0,
 }
+
+# De routes die fase 11 toevoegt (na 0.8.0)
+FASE11 = (
+    "/api/v1/admin/arr",
+    "/api/v1/arr/",
+    "/api/v1/apps",
+    "/api/v1/media/profiles",
+    "/api/v1/media/stats",
+    "/api/v1/media/collections",
+    "/api/v1/media/subtitles",
+    "/api/v1/upscaler",
+    "/api/v1/admin/media/stats",
+    "/api/v1/admin/media/profiles",
+    "/api/v1/media/sub-offset/",
+    "/api/v1/media/items/{node_id}/collection",
+)
 
 
 class Erbij(NamedTuple):
@@ -73,7 +100,7 @@ def _sha(uit: Any) -> str:
     return "sha256:" + hashlib.sha256(tekst.encode()).hexdigest()
 
 
-def met_082(oud: dict[str, Any]) -> dict[str, Any]:
+def met_082(oud: dict[str, Any], openapi: bool = True) -> dict[str, Any]:
     """De antwoorden van 0.8.0 met precies ERBIJ_082 erbij.
 
     Van de OpenAPI bewaart de wandeling alleen de sha256 van de vorm (wandel.GROOT). Die van 0.8.0
@@ -96,6 +123,8 @@ def met_082(oud: dict[str, Any]) -> dict[str, Any]:
         schema = doc["components"]["schemas"][e.schema]
         assert schema["properties"].pop(naam) == e.openapi, e
         assert naam not in schema.get("required", []), e
+    if not openapi:
+        return verwacht
     zonder = [200, "application/json", _sha(wandel.vorm(doc))]
     for wie in wandel.WIE:
         sleutel = f"{OPENAPI} {wie}"
@@ -110,12 +139,16 @@ def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     # de gast Gijs en de beheerder Jonas: geen route erbij of eraf, en elk antwoord gelijk, op
     # precies ERBIJ_082 na
     assert len(OUD["antwoorden"]) == 291 * len(wandel.WIE)
-    assert set(nu["antwoorden"]) == set(OUD["antwoorden"])
-    verwacht = met_082(OUD["antwoorden"])
+    # Fase 11 (mediabeheer, client-apps) voegt routes toe; die van 0.8.0 blijven er allemaal
+    assert set(OUD["antwoorden"]) <= set(nu["antwoorden"])
+    erbij = {k.split()[1] for k in set(nu["antwoorden"]) - set(OUD["antwoorden"])}
+    assert {p for p in erbij if not p.startswith(FASE11)} == set()
+    # De OpenAPI telt de routes van fase 11 mee: die vergelijkt de wandeling hier niet
+    verwacht = met_082(OUD["antwoorden"], openapi=False)
     anders = {
         k: {"verwacht": v, "nu": nu["antwoorden"][k]}
         for k, v in verwacht.items()
-        if nu["antwoorden"][k] != v
+        if nu["antwoorden"][k] != v and not k.startswith(OPENAPI)
     }
     assert anders == {}
     # De stand erna: dezelfde jobs (geen in de rij analyse), Setting en bestanden onder de
@@ -123,7 +156,12 @@ def test_elke_route_en_de_stand_zoals_in_080(tmp_path):
     oud, stand = OUD["stand"], nu["stand"]
     assert stand["jobs"] == oud["jobs"] == ["preview queued", "preview queued",
                                             "preview.recheck queued"]  # fmt: skip
-    assert stand["setting"] == oud["setting"] == ["https", "security"]
+    # arr_settings: de wandeling roept ook de routes van fase 11 aan (bv. als beheerder een
+    # koppeling vergeten), en die schrijven de instellingen van mediabeheer
+    assert [k for k in stand["setting"] if k != "arr_settings"] == oud["setting"]
+    assert oud["setting"] == ["https", "security"]
     assert stand["bestanden"] == oud["bestanden"]
-    assert {t: n for t, n in stand["rijen"].items() if t in oud["rijen"]} == oud["rijen"]
+    rijen = {t: n for t, n in stand["rijen"].items() if t in oud["rijen"]}
+    rijen["setting"] -= "arr_settings" in stand["setting"]
+    assert rijen == oud["rijen"]
     assert {t: n for t, n in stand["rijen"].items() if t not in oud["rijen"]} == NIEUW

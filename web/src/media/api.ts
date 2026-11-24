@@ -14,6 +14,9 @@ import type {
   AlbumCard,
   AlbumsQuery,
   Artist,
+  Collection,
+  MediaProfile,
+  MediaProfiles,
   ArtistDetail,
   CacheClearIn,
   CodecsOut,
@@ -103,6 +106,35 @@ export function listItems(libraryId: string, q: ItemsQuery = {}): Promise<Page<C
 /** GET /media/items/{node_id} */
 export function getItem(nodeId: string): Promise<Item> {
   return api.request<Item>("GET", `${MEDIA}/items/${seg(nodeId)}`);
+}
+
+/** GET /media/items/{node_id}/collection: de andere delen van de filmreeks (fase 11) */
+export function getCollection(nodeId: string): Promise<Collection | null> {
+  return api.request<Collection | null>("GET", `${MEDIA}/items/${seg(nodeId)}/collection`);
+}
+
+/** Fase 11, stap 7: profielen (wie kijkt) */
+export function getProfiles(): Promise<MediaProfiles> {
+  return api.request<MediaProfiles>("GET", `${MEDIA}/profiles`);
+}
+
+export function createProfile(body: { name: string; max_age?: number | null; pin?: string | null }): Promise<MediaProfile> {
+  return api.request<MediaProfile>("POST", `${MEDIA}/profiles`, body);
+}
+
+export function updateProfile(
+  id: string,
+  body: { name?: string; max_age?: number | null; clear_age?: boolean; pin?: string | null; clear_pin?: boolean },
+): Promise<MediaProfile> {
+  return api.request<MediaProfile>("PATCH", `${MEDIA}/profiles/${seg(id)}`, body);
+}
+
+export function deleteProfile(id: string): Promise<void> {
+  return api.request<void>("DELETE", `${MEDIA}/profiles/${seg(id)}`);
+}
+
+export function selectProfile(id: string, pin?: string): Promise<{ token: string }> {
+  return api.request<{ token: string }>("POST", `${MEDIA}/profiles/${seg(id)}/select`, { pin: pin || null });
 }
 
 /** GET /media/shows/{show_id} */

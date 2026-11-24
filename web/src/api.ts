@@ -338,6 +338,32 @@ export interface LastRefresh {
   error?: ApiError | null;
 }
 
+/** Fase 11, stap 7: het token van het gekozen mediaprofiel (wie kijkt), per toestel bewaard.
+ * Gaat mee als X-Media-Profile met elk verzoek naar /api/v1/media; de server kijkt het na. */
+const MEDIA_PROFILE_KEY = "media.profile.v1";
+let mediaProfile: string | null | undefined;
+
+export function mediaProfileToken(): string | null {
+  if (mediaProfile === undefined) {
+    try {
+      mediaProfile = localStorage.getItem(MEDIA_PROFILE_KEY);
+    } catch {
+      mediaProfile = null;
+    }
+  }
+  return mediaProfile;
+}
+
+export function setMediaProfileToken(token: string | null): void {
+  mediaProfile = token;
+  try {
+    if (token) localStorage.setItem(MEDIA_PROFILE_KEY, token);
+    else localStorage.removeItem(MEDIA_PROFILE_KEY);
+  } catch {
+    /* zonder opslag: alleen voor dit tabblad */
+  }
+}
+
 export class Api {
   private token: string | null = null;
   private refreshing: Promise<User | null> | null = null;
@@ -380,6 +406,10 @@ export class Api {
     const headers = new Headers(init.headers);
     const hadToken = this.token !== null;
     if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    if (path.startsWith("/api/v1/media")) {
+      const profile = mediaProfileToken();
+      if (profile) headers.set("X-Media-Profile", profile);
+    }
     const res = await fetchOrNetworkError(this.fetchFn, path, { ...init, headers, credentials: "same-origin" });
     if (res.status === 401 && retry && this.token && (await this.refresh())) {
       return this.raw(path, init, false);

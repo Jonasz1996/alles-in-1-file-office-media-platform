@@ -21,6 +21,14 @@ export default {
     valueText: "{time} van {duration}",
     chapter: "Hoofdstuk: {title}",
   },
+  upscale: {
+    on: "Upscaling aan",
+    off: "Upscaling uit",
+    choiceOn: "Upscaling: scherper beeld",
+    choiceOff: "Upscaling uit",
+    active: "bezig op dit toestel",
+    unavailable: "kan niet op dit toestel",
+  },
   quality: {
     label: "Kwaliteit",
     auto: "Auto",
@@ -51,6 +59,11 @@ export default {
     pending: "Ondertitel wordt voorbereid…",
     failed: "Deze ondertitel lukt niet",
     unknown: "Onbekende taal",
+    offset: "Ondertitel {offset}",
+    offsetNow: "nu {offset}",
+    earlier: "Ondertitel eerder ({offset})",
+    later: "Ondertitel later ({offset})",
+    resetOffset: "Timing van de ondertitel terugzetten",
   },
   chapters: {
     untitled: "Hoofdstuk {n}",
@@ -73,6 +86,7 @@ export default {
     download: "Downloaden",
     hdrRaw: "HDR toch afspelen (kleuren kunnen afwijken)",
   },
+  skipIntro: "Intro overslaan",
   next: {
     title: "Volgende aflevering",
     part: "Volgend deel",
@@ -127,6 +141,8 @@ export default {
     mute: "Geluid uit of aan",
     fullscreen: "Volledig scherm",
     subtitles: "Ondertitels aan of uit",
+    subEarlier: "Ondertitel 0,1 s eerder",
+    subLater: "Ondertitel 0,1 s later",
     audio: "Volgend audiospoor",
     pip: "Beeld-in-beeld",
     prevChapter: "Vorig hoofdstuk",
@@ -136,6 +152,7 @@ export default {
     end: "Naar het eind",
     next: "Volgende aflevering",
     info: "Info",
+    upscale: "Upscaling aan of uit",
     escape: "Volledig scherm uit, de kaart annuleren of terug",
   },
 } as const;

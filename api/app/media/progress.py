@@ -40,7 +40,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from datetime import UTC
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -65,7 +65,20 @@ log = logging.getLogger("platform.media")
 
 ROWS = ("continue", "next_up", "recent")
 
-PROFILE = ""  # fase 5: altijd de gebruiker zelf (Vraag 6)
+PROFILE = ""  # de gebruiker zelf (fase 5, Vraag 6); fase 11: een ander profiel heeft zijn id
+
+
+class Who(NamedTuple):
+    """Wie kijkt: een gebruiker en zijn profiel (fase 11, stap 7). Elke stand hoort bij één."""
+
+    user_id: uuid.UUID
+    profile: str = PROFILE
+
+
+def who_of(value: uuid.UUID | Who) -> Who:
+    return value if isinstance(value, Who) else Who(value, PROFILE)
+
+
 WATCHED_SHARE = 0.9  # gezien vanaf 90 %
 END_MARGIN_MS = 3 * 60_000  # minder dan 3 minuten van het eind ...
 LONG_MS = 10 * 60_000  # ... alleen bij items langer dan 10 minuten
@@ -189,6 +202,7 @@ class Entry:
     duration_ms: int = 0
     watched: bool = False
     play_count: int = 0
+    profile: str = PROFILE
     audio: int | None = None
     subtitle: str | None = None
     blob_sha: str | None = None
@@ -209,6 +223,7 @@ class Entry:
         e = cls(
             user_id=row.user_id,
             node_id=row.node_id,
+            profile=row.profile or PROFILE,
             position_ms=row.position_ms or 0,
             duration_ms=row.duration_ms or 0,
             watched=bool(row.watched),
@@ -356,10 +371,11 @@ class Store:
         self.background = background
         self.tick_every = TICK_EVERY
         self.write_every = WRITE_EVERY
-        self.entries: dict[uuid.UUID, dict[uuid.UUID, Entry]] = {}
-        self.locks: dict[uuid.UUID, asyncio.Lock] = {}
-        self.last_write: dict[uuid.UUID, float] = {}
-        self.due: dict[uuid.UUID, float] = {}
+        # Per Who (gebruiker en profiel); een gewone uuid is het profiel van de gebruiker zelf
+        self.entries: dict[Who, dict[uuid.UUID, Entry]] = {}
+        self.locks: dict[Who, asyncio.Lock] = {}
+        self.last_write: dict[Who, float] = {}
+        self.due: dict[Who, float] = {}
         self.info: dict[str, tuple[int | None, int | None]] = {}
         self.writes = 0  # schrijfacties (transacties), voor de tests
         self.closed = False
@@ -368,18 +384,18 @@ class Store:
 
     # In het geheugen
 
-    def lock(self, user_id: uuid.UUID) -> asyncio.Lock:
-        return self.locks.setdefault(user_id, asyncio.Lock())
+    def lock(self, user_id: uuid.UUID | Who) -> asyncio.Lock:
+        return self.locks.setdefault(who_of(user_id), asyncio.Lock())
 
     def size(self) -> int:
         return sum(len(by) for by in self.entries.values())
 
-    def snapshot(self, user_id: uuid.UUID) -> dict[uuid.UUID, View]:
+    def snapshot(self, user_id: uuid.UUID | Who) -> dict[uuid.UUID, View]:
         """De standen van deze gebruiker in het geheugen (nieuwer dan of gelijk aan de
         database). Zonder await, dus in één keer."""
-        return {n: View.of(e) for n, e in self.entries.get(user_id, {}).items()}
+        return {n: View.of(e) for n, e in self.entries.get(who_of(user_id), {}).items()}
 
-    async def _entries(self, user_id: uuid.UUID, node_ids: list[uuid.UUID]) -> list[Entry]:
+    async def _entries(self, user_id: Who, node_ids: list[uuid.UUID]) -> list[Entry]:
         """Met het slot: de standen van deze bestanden, wat ontbreekt uit de database (één
         query per 500)."""
         by = self.entries.setdefault(user_id, {})
@@ -394,7 +410,11 @@ class Store:
             e = by.get(n)
             if e is None:
                 row = rows.get(n)
-                e = Entry.from_row(row) if row is not None else Entry(user_id, n)
+                e = (
+                    Entry.from_row(row)
+                    if row is not None
+                    else Entry(user_id.user_id, n, profile=user_id.profile)
+                )
                 by[n] = e
             e.touched = now
             out.append(e)
@@ -419,9 +439,10 @@ class Store:
     # De vragen
 
     async def put(
-        self, user_id: uuid.UUID, node_id: uuid.UUID, sha: str | None, body: ProgressIn
+        self, user_id: uuid.UUID | Who, node_id: uuid.UUID, sha: str | None, body: ProgressIn
     ) -> Outcome:
         """Een PUT van de speler. De aanroeper heeft geen transactie open."""
+        user_id = who_of(user_id)
         info = await self.media_info(sha)
         async with self.lock(user_id):
             [e] = await self._entries(user_id, [node_id])
@@ -447,8 +468,11 @@ class Store:
         self._evict_if_full()
         return "ok"
 
-    async def batch(self, user_id: uuid.UUID, node_ids: list[uuid.UUID], watched: bool) -> int:
+    async def batch(
+        self, user_id: uuid.UUID | Who, node_ids: list[uuid.UUID], watched: bool
+    ) -> int:
         """Gezien markeren of niet gezien: hoeveel standen veranderden. Schrijft meteen."""
+        user_id = who_of(user_id)
         if not node_ids:
             return 0
         async with self.lock(user_id):
@@ -463,11 +487,12 @@ class Store:
         return len(changed)
 
     async def file_replaced(
-        self, user_id: uuid.UUID, node_id: uuid.UUID, sha: str, duration_ms: int | None
+        self, user_id: uuid.UUID | Who, node_id: uuid.UUID, sha: str, duration_ms: int | None
     ) -> bool:
         """Keuze 36 (review golf 4, K2): is de stand van een ander bestand (andere blob, en de
         duur meer dan 5 % anders), dan positie 0 voor de nieuwe inhoud, meteen geschreven en als
         event. Gezien en play_count blijven. De aanroeper heeft geen transactie open."""
+        user_id = who_of(user_id)
         async with self.lock(user_id):
             [e] = await self._entries(user_id, [node_id])
             if not replaced(e.blob_sha, e.duration_ms, sha, duration_ms):
@@ -488,10 +513,11 @@ class Store:
             watched=e.watched,
             origin=origin,
             updated_at=e.updated_at,
+            profile=e.profile,
         )
         events.publish([e.user_id], EVENT_PROGRESS, event_data(EVENT_PROGRESS, data))
 
-    async def _after_change(self, user_id: uuid.UUID, urgent: bool) -> None:
+    async def _after_change(self, user_id: Who, urgent: bool) -> None:
         """Met het slot: meteen schrijven (pauze, stoppen, einde, gezien, of de vorige keer is
         10 s geleden), of de schrijver op de achtergrond laten wachten tot het mag."""
         last = self.last_write.get(user_id, -math.inf)
@@ -503,7 +529,7 @@ class Store:
 
     # Schrijven
 
-    async def _write(self, user_id: uuid.UUID) -> None:
+    async def _write(self, user_id: Who) -> None:
         """Met het slot: alles wat van deze gebruiker nog niet in de database staat, in één
         transactie. Een bestand (of gebruiker) dat intussen weg is, valt eruit. Faalt de
         transactie anders, dan elke stand apart (review golf 4, S2): een stand die ook alleen
@@ -530,7 +556,7 @@ class Store:
         self.last_write[user_id] = self.clock()
         self.writes += 1
 
-    async def _save(self, user_id: uuid.UUID, dirty: list[Entry]) -> None:
+    async def _save(self, user_id: Who, dirty: list[Entry]) -> None:
         try:
             await self._upsert(user_id, dirty)
         except IntegrityError:
@@ -538,7 +564,7 @@ class Store:
             if dirty:
                 await self._upsert(user_id, dirty)
 
-    async def _one_by_one(self, user_id: uuid.UUID, dirty: list[Entry]) -> list[Entry]:
+    async def _one_by_one(self, user_id: Who, dirty: list[Entry]) -> list[Entry]:
         """Na een fout van de hele transactie: elke stand apart. Een fout in de waarden van één
         stand: die stand weg uit het geheugen. Een andere fout (de database) gaat omhoog."""
         by = self.entries.get(user_id, {})
@@ -556,22 +582,24 @@ class Store:
             done.append(e)
         return done
 
-    async def _upsert(self, user_id: uuid.UUID, dirty: list[Entry]) -> None:
+    async def _upsert(self, user_id: Who, dirty: list[Entry]) -> None:
         async with self.maker() as session:
             rows = await _rows(session, user_id, [e.node_id for e in dirty])
             for e in dirty:
                 row = rows.get(e.node_id)
                 if row is None:
-                    row = PlaybackState(user_id=user_id, profile=PROFILE, node_id=e.node_id)
+                    row = PlaybackState(
+                        user_id=user_id.user_id, profile=user_id.profile, node_id=e.node_id
+                    )
                     session.add(row)
                 e.fill(row)
             await session.commit()
 
-    async def _still_there(self, user_id: uuid.UUID, dirty: list[Entry]) -> list[Entry]:
+    async def _still_there(self, user_id: Who, dirty: list[Entry]) -> list[Entry]:
         """Na een IntegrityError: welke bestanden en de gebruiker er nog zijn. De rest gaat uit
         het geheugen (hun rijen ruimt de database zelf op, ON DELETE CASCADE)."""
         async with self.maker() as session:
-            if await session.get(User, user_id) is None:
+            if await session.get(User, user_id.user_id) is None:
                 self.entries.pop(user_id, None)
                 return []
             ids = [e.node_id for e in dirty]
@@ -587,7 +615,8 @@ class Store:
                 by.pop(e.node_id, None)
         return [e for e in dirty if e.node_id in alive]
 
-    async def flush_user(self, user_id: uuid.UUID) -> None:
+    async def flush_user(self, user_id: uuid.UUID | Who) -> None:
+        user_id = who_of(user_id)
         async with self.lock(user_id):
             await self._write(user_id)
 
@@ -669,15 +698,16 @@ class Store:
 
 
 async def _rows(
-    session: AsyncSession, user_id: uuid.UUID, node_ids: Iterable[uuid.UUID]
+    session: AsyncSession, user_id: uuid.UUID | Who, node_ids: Iterable[uuid.UUID]
 ) -> dict[uuid.UUID, PlaybackState]:
+    user_id = who_of(user_id)
     ids = list(dict.fromkeys(node_ids))
     out: dict[uuid.UUID, PlaybackState] = {}
     for start in range(0, len(ids), CHUNK):
         found = await session.scalars(
             select(PlaybackState).where(
-                PlaybackState.user_id == user_id,
-                PlaybackState.profile == PROFILE,
+                PlaybackState.user_id == user_id.user_id,
+                PlaybackState.profile == user_id.profile,
                 PlaybackState.node_id.in_(ids[start : start + CHUNK]),
             )
         )
@@ -784,13 +814,14 @@ async def check_replaced(
             settled = probe is not None and probe.version >= analysis.PROBE_VERSION
             duration = probe.duration_ms if probe is not None else None
             ready = settled and probe is not None and probe.state == "ready"
-            users = set(
-                await session.scalars(
-                    select(PlaybackState.user_id).where(
-                        PlaybackState.node_id == node_id, PlaybackState.profile == PROFILE
+            users = {
+                Who(u, p)
+                for u, p in await session.execute(
+                    select(PlaybackState.user_id, PlaybackState.profile).where(
+                        PlaybackState.node_id == node_id
                     )
                 )
-            )
+            }
         if sha is None:
             continue  # weg, of geen bestand meer
         users.update(u for u, by in live.entries.items() if node_id in by)
@@ -843,13 +874,17 @@ async def stop() -> None:
 
 
 async def put(
-    settings: Settings, user_id: uuid.UUID, node_id: uuid.UUID, sha: str | None, body: ProgressIn
+    settings: Settings,
+    user_id: uuid.UUID | Who,
+    node_id: uuid.UUID,
+    sha: str | None,
+    body: ProgressIn,
 ) -> Outcome:
     return await store(settings).put(user_id, node_id, sha, body)
 
 
 async def batch(
-    settings: Settings, user_id: uuid.UUID, node_ids: list[uuid.UUID], watched: bool
+    settings: Settings, user_id: uuid.UUID | Who, node_ids: list[uuid.UUID], watched: bool
 ) -> int:
     return await store(settings).batch(user_id, node_ids, watched)
 
@@ -884,7 +919,7 @@ def _overlay_all(cards: list[Card], views: dict[uuid.UUID, View]) -> list[Card]:
     return [_overlay(c, views.get(c.node_id)) if c.node_id else c for c in cards]
 
 
-def overlay(user_id: uuid.UUID, cards: list[Card]) -> list[Card]:
+def overlay(user_id: uuid.UUID | Who, cards: list[Card]) -> list[Card]:
     """De kaarten van de Reader van M2 (een bibliotheek, de pagina van een item en van een
     serie) met de stand uit het geheugen erover: die is tot 10 s nieuwer dan de database (een
     tik of een sprong wacht op zijn beurt). Zonder geheugen (media uit, of nog niets gemeld)
@@ -933,7 +968,7 @@ async def _swapped(
 
 async def _continue(
     reader: media_items.Reader,
-    user_id: uuid.UUID,
+    user_id: Who,
     library_ids: list[uuid.UUID],
     memory: dict[uuid.UUID, View],
 ) -> list[Card]:
@@ -942,8 +977,8 @@ async def _continue(
     rows = await session.scalars(
         select(PlaybackState)
         .where(
-            PlaybackState.user_id == user_id,
-            PlaybackState.profile == PROFILE,
+            PlaybackState.user_id == user_id.user_id,
+            PlaybackState.profile == user_id.profile,
             PlaybackState.watched.is_(False),
             PlaybackState.position_ms > RESUME_MS,
         )
@@ -966,7 +1001,7 @@ async def _continue(
 
 async def _active_shows(
     session: AsyncSession,
-    user_id: uuid.UUID,
+    user_id: Who,
     library_ids: list[uuid.UUID],
     memory: dict[uuid.UUID, View],
 ) -> list[uuid.UUID]:
@@ -981,8 +1016,8 @@ async def _active_shows(
         select(MediaItem.show_id, func.max(PlaybackState.updated_at))
         .join(MediaItem, MediaItem.node_id == PlaybackState.node_id)
         .where(
-            PlaybackState.user_id == user_id,
-            PlaybackState.profile == PROFILE,
+            PlaybackState.user_id == user_id.user_id,
+            PlaybackState.profile == user_id.profile,
             PlaybackState.updated_at >= cutoff,
             *episode,
         )
@@ -1003,7 +1038,7 @@ async def _active_shows(
 
 async def _next_up(
     reader: media_items.Reader,
-    user_id: uuid.UUID,
+    user_id: Who,
     library_ids: list[uuid.UUID],
     memory: dict[uuid.UUID, View],
     skip: set[uuid.UUID],
@@ -1049,17 +1084,22 @@ async def _next_up(
 
 
 async def home_rows(
-    session: AsyncSession, user_id: uuid.UUID, library_ids: list[uuid.UUID]
+    session: AsyncSession,
+    user_id: uuid.UUID | Who,
+    library_ids: list[uuid.UUID],
+    max_age: int | None = None,
 ) -> dict[str, list[Card]]:
     """Verder kijken, Volgende aflevering en Net toegevoegd voor /media/home, met de stand uit
     het geheugen erover (die is tot 10 s nieuwer dan de database). Alleen wat de gebruiker nu
     mag lezen: de bibliotheken die hij ziet (library_ids) en wat nog onder hun map ligt, niet
     in de prullenbak (Reader.visible)."""
     out: dict[str, list[Card]] = {row: [] for row in ROWS}
-    user = await session.get(User, user_id)
+    user_id = who_of(user_id)
+    user = await session.get(User, user_id.user_id)
     if user is None or not library_ids:
         return out
-    reader = media_items.Reader(session, runtime.settings(), user)
+    reader = media_items.Reader(session, runtime.settings(), user, profile=user_id.profile)
+    reader.max_age = max_age
     live = current()
     memory = live.snapshot(user_id) if live is not None else {}
     out["continue"] = await _continue(reader, user_id, library_ids, memory)

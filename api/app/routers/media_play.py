@@ -51,8 +51,10 @@ from app.media import (
     trick,
 )
 from app.media import errors as media_errors
+from app.media import items as media_items
 from app.media import profile as profiles
 from app.media import public as media_public
+from app.media import viewer as media_viewer
 from app.media.state import MediaPolicy, MediaState, media_policy, media_state
 from app.media.types import (
     AudioTrack,
@@ -442,6 +444,17 @@ def need_tonemap(state: MediaState, plan: Plan) -> None:
         raise media_errors.hdr("no_tonemap", True)
 
 
+async def _intro(settings: Settings, sha: str) -> list[int] | None:
+    """De intro van deze inhoud [begin, eind] in ms (app.media.intro), of None."""
+    from app.models import MediaIntro
+
+    async with maker(settings)() as session:
+        row = await session.get(MediaIntro, sha)
+    if row is None or row.start_ms is None or row.end_ms is None:
+        return None
+    return [row.start_ms, row.end_ms]
+
+
 async def start(
     request: Request,
     session: AsyncSession,
@@ -465,6 +478,7 @@ async def start(
     check_probe(probe)
     probe = await index_now(settings, probe, sha, deadline)
     await queue_analysis(settings, sha, found.library_id, probe, probed, found.kind)
+    intro = await _intro(settings, sha)  # fase 11, stap 7
 
     choice = body.choice()
     if choice.audio is not None and decide.pick_audio(probe, choice.audio) is None:
@@ -568,6 +582,7 @@ async def start(
         tracks=tracks,
         chapters=chapters.items(probe),  # M5: op volgorde, binnen de duur, zonder lege
         credits_ms=chapters.credits_ms(probe),  # M5
+        intro_ms=intro,
         trick=trick_info(probe, settings),
         forced_available=plan.forced_available,
         quality=QualityInfo(
@@ -605,6 +620,21 @@ async def codecs(
     )
 
 
+async def _kid_safe(session, settings, user, watcher, node_id: uuid.UUID) -> None:
+    """Fase 11, stap 7: met een kinderslot geen film of aflevering boven de grens (404, zoals
+    de bibliotheek hem ook niet toont)."""
+    if not watcher.restricted:
+        return
+    item = await session.get(MediaItem, node_id)
+    if item is None:
+        return  # een los bestand, niet uit een bibliotheek
+    reader = media_items.Reader(
+        session, settings, user, profile=watcher.profile, max_age=watcher.max_age
+    )
+    if not await reader.allowed([item]):
+        raise not_found()
+
+
 @router.post("/{node_id}/play", response_model=PlayOut)
 async def play(
     node_id: uuid.UUID,
@@ -614,9 +644,11 @@ async def play(
     request: Request,
     session: Session,
     settings: Annotated[Settings, Depends(get_settings)],
+    watcher: Annotated[media_viewer.Viewer, Depends(media_viewer.resolve)],
 ):
     runtime.require(request)
     node = await readable_file(session, user, node_id)
+    await _kid_safe(session, settings, user, watcher, node_id)
     viewer = Viewer(user=user, family=family)
     found = await gather(request, session, settings, viewer, node)
     return await start(request, session, settings, viewer, body, found)

@@ -18,7 +18,7 @@ import pytest
 from app import events
 from app.main import app
 from app.media import progress, runtime
-from app.media.progress import Entry, Store
+from app.media.progress import Entry, Store, Who
 from app.media.types import Chapter, Probe, ProgressIn
 from app.models import PlaybackState
 from tests.test_files import put, root
@@ -80,7 +80,7 @@ class World:
             return await session.get(PlaybackState, (self.user_id, "", node))
 
     def entry(self, node) -> Entry:
-        return self.store.entries[self.user_id][node]
+        return self.store.entries[Who(self.user_id)][node]
 
 
 async def files(client, headers, settings, count: int) -> list[uuid.UUID]:
@@ -391,7 +391,7 @@ async def test_een_bestand_dat_weg_is_valt_eruit(world):
     world.clock.advance(1)
     await world.put(real, 6 * MIN, event="pause")
     assert (await world.row(real)).position_ms == 360_000
-    assert ghost not in world.store.entries[world.user_id]
+    assert ghost not in world.store.entries[Who(world.user_id)]
 
 
 async def test_wat_lang_niet_gebruikt_is_gaat_uit_het_geheugen(world):
@@ -399,7 +399,7 @@ async def test_wat_lang_niet_gebruikt_is_gaat_uit_het_geheugen(world):
     await world.put(node, 5 * MIN, event="pause")
     world.clock.advance(progress.IDLE_S + 1)
     await world.store.flush_due()
-    assert world.user_id not in world.store.entries
+    assert Who(world.user_id) not in world.store.entries
     # En komt terug uit de database
     world.clock.advance(1)
     assert await world.put(node, 6 * MIN) == "ok"
@@ -511,7 +511,7 @@ async def test_de_volgorde_houdt_bij_willekeurige_puts(world):
         event = rng.choice(["tick", "tick", "pause", "seek", "stop", "end"])
         position = rng.uniform(0, 62 * MIN)
         before = dataclass_copy(world.entry(node)) if node in world.store.entries.get(
-            world.user_id, {}) else None  # fmt: skip
+            Who(world.user_id), {}) else None  # fmt: skip
         outcome = await world.put(
             node, position, origin=origin, seq=max(0, seqs[origin]), started=started, event=event
         )
@@ -575,6 +575,7 @@ async def test_het_event_gaat_alleen_naar_de_gebruiker_zelf(world):
             "watched": False,
             "origin": "tab-1",
             "updated_at": world.clock.now().isoformat().replace("+00:00", "Z"),
+            "profile": "",
         }
         assert theirs.queue.empty()
         # Wat niet telt, geeft geen event

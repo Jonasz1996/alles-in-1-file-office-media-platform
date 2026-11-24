@@ -82,6 +82,8 @@ export const routes: readonly RouteDef[] = [
   // Fase 6 (I2, Keuze 29 en K1-13): de bronnen en licenties. Voor iedereen die is ingelogd, ook een
   // gast, en met de analyse aan of uit; een eigen chunk zonder aanroepen (about/AboutPage.tsx)
   route("/over", () => import("./about/AboutPage"), ["about"], "about.title", null),
+  // Fase 11, stap 9: de downloadpagina voor de client-apps (about/AppsPage.tsx)
+  route("/apps", () => import("./about/AppsPage"), ["about"], "about.apps.title", "account"),
   // De editor (fase 4, Keuze 32): een eigen pagina, zodat herladen en Terug werken. Zonder office
   // is hij er niet (de pagina zegt dan "niet gevonden", zoals in fase 3)
   route("/bewerken/:id", () => import("./office/EditorPage"), ["office"], "office.title", null),
@@ -92,6 +94,10 @@ export const routes: readonly RouteDef[] = [
   route("/media/bibliotheek/:id", () => import("./media/Library"), media, "media.library", "media"),
   route("/media/item/:node", () => import("./media/ItemPage"), media, "media.item", "media"),
   route("/media/serie/:id", () => import("./media/ShowPage"), media, "media.show", "media"),
+  // Fase 11, stap 6: een film of serie vragen (media/RequestsPage.tsx)
+  route("/media/verzoeken", () => import("./media/RequestsPage"), media, "media.requests.title", "media"),
+  // Fase 11, stap 9: het begin van de app voor de LG webOS-tv (tv/TvStart.tsx, tv/tv.ts)
+  route("/tv", () => import("./tv/TvStart"), media, "media.title", "media"),
   route("/kijken/:node", () => import("./player/WatchPage"), watch, "player.title", "media"),
   route("/muziek", () => import("./music/MusicHome"), music, "music.title", "music"),
   route("/muziek/album/:id", () => import("./music/AlbumPage"), music, "music.album", "music"),

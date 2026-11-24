@@ -22,6 +22,14 @@ const en: Translation<typeof nl> = {
     valueText: "{time} of {duration}",
     chapter: "Chapter: {title}",
   },
+  upscale: {
+    on: "Upscaling on",
+    off: "Upscaling off",
+    choiceOn: "Upscaling: sharper picture",
+    choiceOff: "Upscaling off",
+    active: "running on this device",
+    unavailable: "not possible on this device",
+  },
   quality: {
     label: "Quality",
     auto: "Auto",
@@ -52,6 +60,11 @@ const en: Translation<typeof nl> = {
     pending: "Preparing subtitles…",
     failed: "These subtitles failed",
     unknown: "Unknown language",
+    offset: "Subtitle {offset}",
+    offsetNow: "now {offset}",
+    earlier: "Subtitle earlier ({offset})",
+    later: "Subtitle later ({offset})",
+    resetOffset: "Reset subtitle timing",
   },
   chapters: {
     untitled: "Chapter {n}",
@@ -74,6 +87,7 @@ const en: Translation<typeof nl> = {
     download: "Download",
     hdrRaw: "Play HDR anyway (colours may be off)",
   },
+  skipIntro: "Skip intro",
   next: {
     title: "Next episode",
     part: "Next part",
@@ -128,6 +142,8 @@ const en: Translation<typeof nl> = {
     mute: "Mute or unmute",
     fullscreen: "Full screen",
     subtitles: "Subtitles on or off",
+    subEarlier: "Subtitle 0.1 s earlier",
+    subLater: "Subtitle 0.1 s later",
     audio: "Next audio track",
     pip: "Picture-in-picture",
     prevChapter: "Previous chapter",
@@ -137,6 +153,7 @@ const en: Translation<typeof nl> = {
     end: "Go to the end",
     next: "Next episode",
     info: "Info",
+    upscale: "Upscaling on or off",
     escape: "Exit full screen, cancel the card or go back",
   },
 };

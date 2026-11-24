@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Alleen de lokale pagina's van de app (ui/) mogen de commando's gebruiken; het platform zelf (een ander adres) niet.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

@@ -739,21 +739,55 @@ gebruiken; de app zit niets in de weg, maar levert ook geen lijst met bronnen me
 Volgorde: kan starten na fase 5; bouwen pas als fase 6 (zoeken en foto's) klaar is.
 Afspelen op de TV blijft fase 9.
 
-Deel A: de Plex-ervaring (bovenop fase 5)
+Bouwvolgorde (Jonas, 17-11-2026): het hoeft niet op Plex te lijken, Jellyfin-achtig mag ook.
+Wat telt: torrents downloaden en films kijken met upscaling en ondertitels. Daarom eerst deel
+B (de keten van zoeken tot importeren), dan de ondertitels en de upscaling, dan de verzoeken,
+en de Home met rijen, profielen en intro overslaan (deel A) als laatste. In stappen:
 
-- [ ] Home met rijen: Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
+1. Bouwstenen: releasenamen, profielen, Torznab, qBittorrent (klaar, 17-11-2026)
+2. Database (migratie 0016), instellingen op `/beheer`, containers voor qBittorrent en
+   Prowlarr (los en in ClusterForge), titels volgen en de kalender
+3. De keten: zoeken, kiezen, downloaden, vastgelopen vervangen, uitpakken, importeren
+4. Ondertitels: OpenSubtitles en timing verschuiven
+5. Upscaling bij het afspelen (zie hieronder)
+6. Verzoeken en meldingen
+7. Home met rijen, collecties, activiteit, profielen, kinderslot, intro overslaan
+8. Opruimregels, de stappen voor ClusterForge (`docs/fase-11/clusterforge.md`) en de eindtest
+   (opruimregels en stappen klaar, 23-11-2026; de eindtest doet Jonas)
+9. Eigen app voor de LG webOS-tv (de speler van het platform, met upscaling en ondertitels,
+   te bedienen met de afstandsbediening) en een downloadpagina op het platform voor de
+   client-apps (gebouwd 23-11-2026: `/apps`, `apps/webos`, de tv-stand in `web/src/tv/`)
+10. Later: Android-app, met media zoals Plex of Jellyfin en sync zoals de Nextcloud-app
+11. Later, misschien: apps voor Linux en Windows, met alle functies (media en sync)
+
+- [ ] Upscaling bij het afspelen. Twee lagen: (a) in de speler zelf, met een eigen
+  WebGL-shader (scherper opschalen en randen verfijnen, zoals FSR 1 of Anime4K doen) die op
+  de grafische kaart van het kijktoestel draait; de server heeft er dus geen GPU voor nodig,
+  en een knop in de speler zet hem aan of uit. (b) Op de server, bij een transcode, een
+  betere schaler van ffmpeg (lanczos) naar de resolutie van het scherm; AI-upscaling vooraf
+  ('s nachts, voor films die je aanduidt) op de RTX 3060 Ti; die kaart draait ook elk uur
+  een AI-verslag van Jonas, dus de upscaling wijkt: lage voorrang, pauze rond het verslag en
+  een grens op het videogeheugen. De UHD 630 (VM's) en de RTX 3080 Ti (gamestream) gebruikt
+  het platform nooit; omzetten tijdens het kijken blijft op de processor (Jonas, 17-11-2026). Op een TV-app (fase 9) geldt alleen (b)
+  tot de TV zelf shaders kan
+
+Deel A: de Plex- of Jellyfin-ervaring (bovenop fase 5)
+
+- [x] Home met rijen (klaar 23-11-2026, de cast op de titelpagina nog niet): Verder kijken, Volgende aflevering, Nieuw toegevoegd, Onlangs
   verschenen, en per bibliotheek; titelpagina's met samenvatting, cast, seizoenen en
   "ook in deze collectie"; collecties (bijv. alle delen van een filmreeks) uit TMDB
 
-- [ ] Profielen per account en kinderslot: wie kijkt (eigen voortgang en "gezien"),
+- [x] Profielen per account en kinderslot (klaar 23-11-2026; pincode per profiel, grens per
+  account op `/beheer`): wie kijkt (eigen voortgang en "gezien"),
   leeftijdsgrens per profiel op de kijkwijzer uit TMDB. De kolom `profile` staat al klaar
   sinds fase 5 (B45, Vraag 6)
 
-- [ ] Intro en aftiteling overslaan: zelf herkennen door de audio-vingerafdruk van
+- [x] Intro en aftiteling overslaan (klaar 23-11-2026; nog te testen op echte series): zelf herkennen door de audio-vingerafdruk van
   afleveringen in hetzelfde seizoen te vergelijken (ffmpeg in de mediaworker), met de
   knop "Intro overslaan" in de speler; volgende aflevering automatisch na de aftiteling
 
-- [ ] Activiteit en statistieken (wat Tautulli doet): nu bezig met wie, welk apparaat,
+- [x] Activiteit en statistieken (klaar 23-11-2026, uit de kijkvoortgang; het apparaat alleen
+  bij wie nu kijkt) (wat Tautulli doet): nu bezig met wie, welk apparaat,
   direct play of transcode; geschiedenis per gebruiker; meest bekeken; op `/beheer` →
   Media. Bouwt op de afspeelsessies uit fase 5
 
@@ -769,9 +803,12 @@ Deel B: mediabeheer (wat de *arr-apps doen)
   persoon; een limiet per week; melding als het klaarstaat
 
 - [ ] Bronnen (Prowlarr, Jackett): eenmaal toevoegen op `/beheer`, daarna per bibliotheek
-  kiezen waar ze gebruikt worden. Zelf gebouwde clients voor de open standaarden Newznab
-  (usenet) en Torznab (torrents); RSS elke 15 minuten nalopen plus gericht zoeken; test-
-  knop en foutteller per bron. Geen FlareSolverr: een bron die dat nodig heeft valt af
+  kiezen waar ze gebruikt worden. Alleen torrents (keuze van Jonas, zie onder): een zelf
+  gebouwde client voor de open standaard Torznab; RSS elke 15 minuten nalopen plus gericht
+  zoeken; testknop en foutteller per bron. Geen usenet en dus geen Newznab. De sites zelf
+  bereikt de app via Prowlarr als bronnenbrug in een eigen container ernaast (keuze van
+  Jonas, 17-11-2026): sites voeg je één keer toe in Prowlarr, en de app zoekt via de
+  Torznab-adressen die Prowlarr per site geeft. Geen FlareSolverr: een bron die dat nodig heeft valt af
 
 - [ ] Kwaliteit en voorkeuren (de profielen van Sonarr en Radarr, plus wat Recyclarr en
   Profilarr synchroniseren): de bestandsnaam-parser uit fase 5 uitgebreid voor
@@ -781,8 +818,9 @@ Deel B: mediabeheer (wat de *arr-apps doen)
   ingebouwd, zodat er niets te synchroniseren valt
 
 - [ ] Downloaders: downloads uitbesteden aan een downloadprogramma en de voortgang
-  volgen. Hoe, is een open vraag aan Jonas (zie onder); de app praat er via één eigen
-  interface mee, zodat een ander programma of een eigen downloader later in te prikken is
+  volgen. Een bestaand programma in een eigen container ernaast (besloten, zie onder); de
+  app praat er via één eigen interface mee, zodat een ander programma of een eigen
+  downloader later in te prikken is
 
 - [ ] Vastgelopen downloads (Cleanuparr, Huntarr): geen voortgang na X uur, of een
   release die niet uit te pakken of niet af te spelen is: weg ermee, op een zwarte lijst,
@@ -813,15 +851,14 @@ Niet in deze fase: boeken en strips (Readarr, Mylar en dergelijke), het automati
 doordelen van torrents (cross-seed), muziek van streamingdiensten (deemix) en
 kijkgeschiedenis naar Trakt; die kunnen later als aparte backlogpunten.
 
-Open vragen voor Jonas (de rest volgt de vaste keuzes):
+Keuzes en open vragen voor Jonas (de rest volgt de vaste keuzes):
 
-1. Downloaders: koppelen aan een bestaand downloadprogramma (qBittorrent of Transmission
-   voor torrents, SABnzbd of NZBGet voor usenet) in een eigen container ernaast, of ook
-   de downloader zelf bouwen? Voorstel: koppelen, want een eigen BitTorrent- en
-   usenet-client is maanden extra werk en moeilijk veilig te krijgen; de interface laat
-   een eigen downloader later toe.
-2. Welke soorten bronnen: alleen usenet, alleen torrents of allebei? Dit bepaalt welke
-   client er als eerste komt.
+1. Downloaders, besloten door Jonas op 15-11-2026: een bestaand downloadprogramma
+   koppelen, in een eigen container ernaast, door de app volledig aangestuurd. De downloader zelf
+   bouwen we niet; de interface laat een eigen downloader later nog toe.
+2. Soort bronnen, besloten door Jonas op 16-11-2026: alleen torrents, geen usenet. De
+   downloader wordt dus qBittorrent (via zijn web-API); SABnzbd en NZBGet vallen af.
+   Transmission kan later via dezelfde interface als iemand dat liever heeft.
 3. Mogen gezinsleden zonder goedkeuring aanvragen, of keurt de beheerder alles goed?
    Voorstel: goedkeuren door de beheerder, per persoon aan te zetten.
 
@@ -875,8 +912,10 @@ Wat de API al in fase 2 en 5 moet hebben voor de apps:
 - Afspeelinfo-endpoint dat direct play, remux of transcode teruggeeft
   met de HLS-URL
 
-Volgorde: eerst LG TV (kleinste, hergebruikt de web-player en bewijst de
-media-API), dan Windows (sync), dan Android.
+Volgorde (Jonas, 23-11-2026): eerst LG TV (kleinste, hergebruikt de web-player en bewijst
+de media-API), samen met een downloadpagina op het platform voor alle client-apps; dan
+Android (media en sync); daarna eventueel Linux en Windows, met alle functies. Zie fase 11,
+stappen 9 tot 11.
 
 ## Extra features (backlog)
 

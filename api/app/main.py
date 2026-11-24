@@ -24,9 +24,10 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from app import __version__, errors, events, jobs, photometa, previews
+from app import __version__, client_fetch, errors, events, jobs, photometa, previews
 from app.analyse import monitor as analyse_monitor
 from app.analyse import pgcheck as analyse_pgcheck
+from app.arr import engine as arr_engine
 from app.certs import CertManager
 from app.config import Settings, get_settings
 from app.extract import step as extract_step  # noqa: F401 - registreert de stap text (Z2)
@@ -44,15 +45,21 @@ from app.office.proxy import OfficeProxy
 from app.office.state import OfficeState
 from app.routers import (
     admin,
+    admin_arr,
     admin_media,
     admin_office,
     admin_search,
     albums,
     albums_rule,
     archive,
+    arr_cleanup,
+    arr_requests,
+    arr_upscale,
+    arr_wanted,
     auth,
     batch,
     beeld,
+    client_apps,
     duplicates,
     files,
     folder_tree,
@@ -63,7 +70,10 @@ from app.routers import (
     media_match,
     media_music,
     media_play,
+    media_profiles,
     media_progress,
+    media_stats,
+    media_suboffset,
     media_subs,
     memories,
     myshares,
@@ -536,6 +546,25 @@ async def lifespan(app: FastAPI):
     # De analyse (fase 6, Keuze 59): zonder PLATFORM_ANALYSE_ENABLED gebeurt hier niets (geen
     # taak, geen socket; de stand is off)
     analyse_monitor.start(settings)
+    # Mediabeheer (fase 11): elke minuut een ronde; zonder Prowlarr en qBittorrent doet die niets.
+    # Alleen met media aan, want de import van een download is die van media
+    arr_task = (
+        asyncio.create_task(arr_engine.loop(settings), name="mediabeheer")
+        if settings.media_enabled
+        else None
+    )
+    # De client-apps van GitHub naar data/apps (fase 11, stap 9-11); alleen in productie
+    clients_task = (
+        asyncio.create_task(client_fetch.loop(settings), name="client-apps")
+        if settings.environment == "production"
+        else None
+    )
+    # Films en series naar blobs-media/ (2 kopieën in het cluster); alleen met PLATFORM_BLOB_SPLIT
+    split_task = None
+    if settings.blob_split:
+        from app import blobsplit
+
+        split_task = asyncio.create_task(blobsplit.loop(settings), name="blobsplit")
     log.info("Platform %s gestart (%s), data in %s", __version__, settings.mode, settings.data_dir)
     with _streams_end_on_signal(app):
         yield
@@ -549,6 +578,12 @@ async def lifespan(app: FastAPI):
     media_runtime.unbind()
     await analyse_monitor.stop()  # na de rijen: een taak van de rij analyse leest de stand
     cleaner.cancel()
+    if arr_task is not None:
+        arr_task.cancel()
+    if clients_task is not None:
+        clients_task.cancel()
+    if split_task is not None:
+        split_task.cancel()
     await certs.stop()
     log.info("Platform %s gestopt", __version__)
 
@@ -615,6 +650,19 @@ app.include_router(media_progress.router)
 app.include_router(media_match.router)
 app.include_router(media_music.router)
 app.include_router(admin_media.router)
+app.include_router(admin_arr.router)
+app.include_router(arr_wanted.router)
+app.include_router(arr_requests.router)
+app.include_router(arr_requests.admin_router)
+app.include_router(arr_cleanup.router)
+app.include_router(client_apps.router)
+app.include_router(arr_upscale.router)
+app.include_router(arr_upscale.admin_router)
+app.include_router(arr_upscale.worker_router)
+app.include_router(media_suboffset.router)
+app.include_router(media_profiles.router)
+app.include_router(media_profiles.admin_router)
+app.include_router(media_stats.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
 app.include_router(stream_audio.router)
@@ -657,7 +705,10 @@ async def health() -> Status:
 
 
 @app.get("/api/v1/info", tags=["systeem"])
-async def info(settings: Annotated[Settings, Depends(get_settings)]) -> Info:
+async def info(settings: Annotated[Settings, Depends(get_settings)], response: Response) -> Info:
+    # Openbaar en zonder geheimen: de tv-app (een lokale pagina op de tv, fase 11 stap 9)
+    # kijkt hiermee of er op een adres een platform draait
+    response.headers["Access-Control-Allow-Origin"] = "*"
     return Info(
         name=settings.app_name,
         version=__version__,
