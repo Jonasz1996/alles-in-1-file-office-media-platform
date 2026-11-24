@@ -66,6 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Alias, Join
+from sqlalchemy.sql.visitors import InternalTraversal
 from sqlalchemy.types import NullType
 
 from app import errors
@@ -250,23 +251,57 @@ def alias() -> Any:
 
 TS_WEIGHTS = "'{0.05, 0.1, 0.6, 1.0}'"  # D (meta), C (tekst, OCR), B (titel), A (naam)
 
+# De cache van SQLAlchemy (zoals in 0.8.1 voor elke zoekvraag): de stukken hieronder maken hun
+# parameters zelf, bij het maken, en noemen in _traverse_internals alleen hun vorm: de tabel,
+# of er een eigenaar is, waartegen ze groeperen, en de parameters zelf. Van een parameter telt in
+# de sleutel alleen de naam en het type, nooit de waarde. Twee vragen met dezelfde vorm delen zo
+# één gecompileerde SQL, en een andere vorm (een woord meer bij fts_name, een eigenaar of niet,
+# meer bereiken) heeft een andere sleutel. De compileerfuncties gebruiken alleen die parameters:
+# een parameter die pas bij het compileren ontstaat, zou bij een treffer in de cache de waarde van
+# de eerste vraag houden. Per dialect een eigen naam als de waarde anders is (without en
+# without_nums): SQLAlchemy koppelt de parameters bij een treffer op hun naam.
+_T = InternalTraversal
+
 
 class FtsMatch(ColumnElement):
     """De treffer op hele woorden (fts_node) of op stukken van namen (fts_name).
 
     SQLite: `fts_node MATCH :fts_node_expr` (of fts_name). PostgreSQL: fts_node.tsv @@ de
     tsquery, en voor de eigen nodes van owner ook otsv (met de OCR van een eigen foto; Keuze 16
-    en 25a); fts_name: elk woord van ≥ 3 tekens in search_name (LIKE, met de trigram-index)."""
+    en 25a); fts_name: elk woord van ≥ 3 tekens in search_name (LIKE)."""
 
-    inherit_cache = False
+    _traverse_internals = [
+        ("table_name", _T.dp_string),
+        ("against", _T.dp_plain_obj),
+        ("sqlite_match", _T.dp_clauseelement),
+        ("q", _T.dp_clauseelement),
+        ("owner", _T.dp_clauseelement),
+        ("words", _T.dp_clauseelement_list),
+    ]
     # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
     type = NullType()
 
     def __init__(self, table_name: str, parsed: Parsed, owner: uuid.UUID | None = None) -> None:
         self.table_name = table_name
-        self.parsed = parsed
-        self.owner = owner
         self.against: Any = None
+        self.q: Any = None
+        self.owner: Any = None
+        self.words: list[Any] = []
+        # SQLite: de MATCH zelf, al bij het maken (de parameter gaat zo mee in de sleutel)
+        expr = parsed.match if table_name == "fts_node" else parsed.names
+        name = literal_column(table_name)
+        self.sqlite_match = name.op("MATCH")(bindparam(f"{table_name}_expr", expr))
+        if table_name == "fts_node":
+            # Dezelfde naam als in FtsRank, met dezelfde waarde (dezelfde parsed)
+            self.q = bindparam("fts_node_q", parsed.tsquery())
+            if owner is not None:
+                self.owner = bindparam("fts_node_owner", owner, type_=Uuid())
+        else:
+            long_words = [w for w in parsed.words if len(w) >= 3]
+            self.words = [
+                bindparam(f"fts_name_w{i}", "%" + _like_escape(w) + "%")
+                for i, w in enumerate(long_words)
+            ]
 
     def self_group(self, against: Any = None) -> Any:
         """Onthoudt waartegen SQLAlchemy groepeert (de AND van de WHERE): op SQLite krijgt de
@@ -278,30 +313,23 @@ class FtsMatch(ColumnElement):
 
 @compiles(FtsMatch)
 def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
-    t, parsed = element.table_name, element.parsed
+    t = element.table_name
     if compiler.dialect.name == "sqlite":
-        expr = parsed.match if t == "fts_node" else parsed.names
-        found = literal_column(t).op("MATCH")(bindparam(f"{t}_expr", expr))
+        found = element.sqlite_match
         if element.against is not None:
             found = found.self_group(against=element.against)
         return compiler.process(found, **kw)
     if t == "fts_name":
-        long_words = [w for w in parsed.words if len(w) >= 3]
         parts = [
-            compiler.process(
-                literal_column("fts_name.search_name").like(
-                    bindparam(f"fts_name_w{i}", "%" + _like_escape(w) + "%"), escape="\\"
-                ),
-                **kw,
-            )
-            for i, w in enumerate(long_words)
+            compiler.process(literal_column("fts_name.search_name").like(w, escape="\\"), **kw)
+            for w in element.words
         ]
         return "(" + " AND ".join(parts or ["true"]) + ")"
-    q = compiler.process(bindparam("fts_node_q", parsed.tsquery()), **kw)
+    q = compiler.process(element.q, **kw)
     found = f"fts_node.tsv @@ to_tsquery('simple', {q})"
     if element.owner is None:
         return f"({found})"
-    owner = compiler.process(bindparam("fts_node_owner", element.owner, type_=Uuid()), **kw)
+    owner = compiler.process(element.owner, **kw)
     own = f"(fts_node.otsv @@ to_tsquery('simple', {q}) AND n.owner_id = {owner})"
     return f"({found} OR {own})"
 
@@ -313,19 +341,19 @@ def _like_escape(word: str) -> str:
 class FtsRank(ColumnElement):
     """De rang (lager is beter, zoals bm25). own: de OCR van een eigen foto telt mee."""
 
-    inherit_cache = False
+    _traverse_internals = [("own", _T.dp_boolean), ("q", _T.dp_clauseelement)]
     type = Float()
 
     def __init__(self, parsed: Parsed, own: bool) -> None:
-        self.parsed = parsed
         self.own = own
+        self.q = bindparam("fts_node_q", parsed.tsquery())
 
 
 @compiles(FtsRank)
 def _fts_rank(element: FtsRank, compiler: Any, **kw: Any) -> str:
     if compiler.dialect.name == "sqlite":
         return RANK_OWN if element.own else RANK_OTHER
-    q = compiler.process(bindparam("fts_node_q", element.parsed.tsquery()), **kw)
+    q = compiler.process(element.q, **kw)
     vec = "coalesce(fts_node.otsv, fts_node.tsv)" if element.own else "fts_node.tsv"
     # normalisatie 1: gedeeld door 1 + log(lengte), zodat een korte naam voorgaat (zoals bm25)
     return f"(-ts_rank({TS_WEIGHTS}, {vec}, to_tsquery('simple', {q}), 1))"
@@ -335,88 +363,90 @@ class NotFromPocr(ColumnElement):
     """Een node van een ander met OCR-tekst uit een foto: de vraag moet ook zonder pocr passen
     (SQLite). Op PostgreSQL zit dat al in FtsMatch (otsv alleen voor de eigen nodes)."""
 
-    inherit_cache = False
+    _traverse_internals = [("check", _T.dp_clauseelement)]
     # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
     type = NullType()
 
     def __init__(self, n: Any, user_id: uuid.UUID, parsed: Parsed) -> None:
-        self.n = n
-        self.user_id = user_id
-        self.parsed = parsed
+        self.check = or_(
+            n.c.owner_id == user_id,
+            ~exists().where(PhotoOcr.node_id == n.c.id),
+            text(
+                "EXISTS (SELECT 1 FROM fts_node AS f2 "
+                "WHERE f2.rowid = n.num AND f2.fts_node MATCH :not_pocr)"
+            ).bindparams(not_pocr=parsed.match_not_pocr()),
+        )
 
 
 @compiles(NotFromPocr)
 def _not_from_pocr_sql(element: NotFromPocr, compiler: Any, **kw: Any) -> str:
     if compiler.dialect.name != "sqlite":
         return "true"
-    n = element.n
-    inner = compiler.process(
-        or_(
-            n.c.owner_id == element.user_id,
-            ~exists().where(PhotoOcr.node_id == n.c.id),
-            text(
-                "EXISTS (SELECT 1 FROM fts_node AS f2 "
-                "WHERE f2.rowid = n.num AND f2.fts_node MATCH :not_pocr)"
-            ).bindparams(not_pocr=element.parsed.match_not_pocr()),
-        ),
-        **kw,
-    )
     # tussen haakjes: de vorm is NullType, dus SQLAlchemy zet ze er zelf niet omheen
-    return f"({inner})"
+    return f"({compiler.process(element.check, **kw)})"
 
 
 class AllWordsIn(ColumnElement):
     """Elk woord staat in n.search_name (SQLite: json_each en instr; PostgreSQL: strpos)."""
 
-    inherit_cache = False
+    _traverse_internals = [
+        ("column_sql", _T.dp_string),
+        ("as_json", _T.dp_clauseelement),
+        ("each", _T.dp_clauseelement_list),
+    ]
     # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
     type = NullType()
 
     def __init__(self, words: Sequence[str], column_sql: str = "n.search_name") -> None:
         self.words = tuple(words)
         self.column_sql = column_sql
+        self.as_json = bindparam("words", json.dumps(list(self.words)))
+        self.each = [bindparam(f"word{i}", w) for i, w in enumerate(self.words)]
 
 
 @compiles(AllWordsIn)
 def _all_words_in(element: AllWordsIn, compiler: Any, **kw: Any) -> str:
     col = element.column_sql
     if compiler.dialect.name == "sqlite":
-        words = compiler.process(bindparam("words", json.dumps(list(element.words))), **kw)
+        words = compiler.process(element.as_json, **kw)
         return f"NOT EXISTS (SELECT 1 FROM json_each({words}) AS w WHERE instr({col}, w.value) = 0)"
-    parts = [
-        f"strpos({col}, {compiler.process(bindparam(f'word{i}', w), **kw)}) > 0"
-        for i, w in enumerate(element.words)
-    ]
+    parts = [f"strpos({col}, {compiler.process(w, **kw)}) > 0" for w in element.each]
     return "(" + " AND ".join(parts or ["true"]) + ")"
 
 
 class NumNotIn(ColumnElement):
     """n.num niet in deze lijst (SQLite: json_each; PostgreSQL: <> ALL)."""
 
-    inherit_cache = False
+    _traverse_internals = [("as_json", _T.dp_clauseelement), ("as_array", _T.dp_clauseelement)]
     # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
     type = NullType()
 
     def __init__(self, nums: Sequence[int]) -> None:
         self.nums = [int(x) for x in nums]
+        self.as_json = bindparam("without", json.dumps(self.nums))
+        self.as_array = bindparam("without_nums", self.nums, type_=ARRAY(BigInteger()))
 
 
 class InRanges(ColumnElement):
-    """{alias}.mpath binnen de bereiken (access.ranges_sql, voor de dialect van de compiler)."""
+    """{alias}.mpath binnen de bereiken (access.ranges_sql, voor de dialect van de compiler).
+    De parameters zijn op elke dialect dezelfde; de vorm is het aantal bereiken (tot MAX_OR elk
+    twee parameters, daarboven één lijst)."""
 
-    inherit_cache = False
+    _traverse_internals = [("alias", _T.dp_string), ("binds", _T.dp_clauseelement_list)]
     # geen Boolean: dan zet SQLAlchemy op SQLite "= 1" erachter, en MATCH mag dat niet
     type = NullType()
 
     def __init__(self, ranges: Sequence[tuple[str, str]], alias: str = "n") -> None:
         self.ranges = list(ranges)
         self.alias = alias
+        _, params = ranges_sql(self.ranges, alias)
+        self.binds = [bindparam(name, value) for name, value in params.items()]
 
 
 @compiles(InRanges)
 def _in_ranges(element: InRanges, compiler: Any, **kw: Any) -> str:
-    sql, params = ranges_sql(element.ranges, element.alias, compiler.dialect.name)
-    found = compiler.process(text(sql).bindparams(**params), **kw)
+    sql, _ = ranges_sql(element.ranges, element.alias, compiler.dialect.name)
+    found = compiler.process(text(sql).bindparams(*element.binds), **kw)
     # SQLite: zonder extra haakjes, zoals in 0.8.1 (F17)
     return found if compiler.dialect.name == "sqlite" else f"({found})"
 
@@ -424,10 +454,9 @@ def _in_ranges(element: InRanges, compiler: Any, **kw: Any) -> str:
 @compiles(NumNotIn)
 def _num_not_in(element: NumNotIn, compiler: Any, **kw: Any) -> str:
     if compiler.dialect.name == "sqlite":
-        nums = compiler.process(bindparam("without", json.dumps(element.nums)), **kw)
+        nums = compiler.process(element.as_json, **kw)
         return f"n.num NOT IN (SELECT value FROM json_each({nums}))"
-    nums = compiler.process(bindparam("without", element.nums, type_=ARRAY(BigInteger())), **kw)
-    return f"n.num <> ALL({nums})"
+    return f"n.num <> ALL({compiler.process(element.as_array, **kw)})"
 
 
 def _match(table_name: str, parsed: Parsed, owner: uuid.UUID | None = None) -> Any:

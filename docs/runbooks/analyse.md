@@ -204,6 +204,36 @@ eerst met de analyse aan (per gebruiker "uit" bij Account → Foto's, of op `/be
   container (de rootdisk) heeft ze wel. Wat er in die map staat, hoe je hem wist en hoe je hem
   ook uit een snapshot van de container houdt: [gezichten.md](gezichten.md).
 
+## In het cluster (PostgreSQL, vanaf 0.8.2)
+
+In het cluster van ClusterForge draait het platform op PostgreSQL, zonder `install.sh`. De
+template zet de analyse aan met de parameter **Gezichten en zoeken op beeld**. In plaats van `dc`
+gebruik je op de node met het VIP `platform-ctl.sh compose` (zie
+[cluster.md](cluster.md)), bijvoorbeeld
+`platform-ctl.sh compose exec -T platform python -m app.cli analyse-status`.
+
+- **Op PostgreSQL staat de analyse alleen aan met `PLATFORM_ANALYSE_POSTGRES=true`**, en met de
+  triggers van migratie 0013. De template van 0.8.2 (PR #163 van ClusterForge) zet die variabele,
+  alleen met de analyse aan. Zonder zegt `analyse-status`
+  `down (op PostgreSQL staat de analyse uit tot ANALYSE_POSTGRES=true …)` en `/beheer`
+  "ANALYSE_POSTGRES staat uit". Zet hem niet zelf aan met een oudere template: die synchroniseert
+  de sleutels zonder wissen, en dan blijft een sleutel na "uit" op de andere nodes staan.
+- **De sleutels staan per node.** De sync `platform-sleutels` zet ze van de node met het VIP op
+  de andere, met wissen, alleen achter `platform-ctl.sh sleutels-klaar`
+  ([cluster.md](cluster.md#de-sleutels-van-gezichten)).
+- **Uit in het cluster**: de parameter **Gezichten en zoeken op beeld** uit en **Toepassen**.
+  `PLATFORM_ANALYSE_POSTGRES` valt weg, de container analyse start niet meer, en het platform
+  herstart op de node met het VIP. Daarna doet de app wat hierboven bij "Uit nadat hij aan
+  stond" staat. Er wordt niets gewist: de gezichten, de vectoren van beeld en de sleutels blijven,
+  ook op de andere nodes. Wil je ze kwijt, wis ze dan eerst met de analyse aan, zoals hierboven.
+- **De rij `analyse` draait alleen op de node met het VIP.** De eerste ronde: ±2,2 tot 2,5 uur
+  (gezichten) en ±32 minuten (beeld) per 55.000 foto's op één core (een schatting). Reken op 12
+  tot 16 GB RAM per node. Elke node haalt de modellen zelf.
+- **Na een failover** start de container analyse op de nieuwe node. Mist daar een sleutel, dan
+  wacht de scan van die eigenaar en zegt `/beheer` "sleutel ontbreekt"
+  ([cluster.md](cluster.md#de-sleutels-van-gezichten) zegt wat je dan doet). De handtest:
+  [cluster.md](cluster.md#de-failover-handtest).
+
 ## Terug naar 0.8.0
 
 Zoals in `docs/runbooks/zoeken.md`, "Terug naar 0.8.0 van `59e0250`", ook met de analyse aan.

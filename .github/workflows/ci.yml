@@ -579,6 +579,91 @@ jobs:
           echo "S6: $(cat "$d/kaart.txt" 2> /dev/null || echo "liep niet")"
           echo "S6 web/public/kaart: $(cat "$d/kaart-web.txt" 2> /dev/null || echo "niet gelijk of liep niet")"
 
+  # §4.4 op PostgreSQL (release 0.8.2, P5 punt 8; docs/fase-6/i3/pg-fts.md): dezelfde test als de
+  # stap §4.4 van zoek-perf, met PLATFORM_TEST_DATABASE_URL. Dezelfde boom van 100.000 (seed 6,
+  # profiel groot) via de echte migratie tot en met 0014 in een eigen database, dezelfde zes
+  # rollen en routes over HTTP (e2e/perf/zoek_100k.py), en dezelfde harde poorten: zoeken en
+  # volgende p95 ≤ 200 ms, filters ≤ 150, suggesties ≤ 50, snip ≤ 40, 4 tegelijk ≤ 300, /health
+  # ≤ 50. De app zoekt met de zoekindex van 0014. PostgreSQL 17 zoals api-postgres; de test en de
+  # app onder taskset -c 0-2, zoals zoek-perf; PostgreSQL zelf als service, niet vastgezet.
+  zoek-perf-pg:
+    name: Zoek-perf op PostgreSQL 17 (§4.4 met de zoekindex van 0014)
+    runs-on: ubuntu-24.04
+    # Lokaal (4 cores, PostgreSQL 16): de boom ±5 min, het meten ±9 min (docs/fase-6/i3/pg-fts.md)
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform -d postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      PLATFORM_TEST_DATABASE_URL: postgresql+asyncpg://platform:platform@127.0.0.1:5432/postgres
+    defaults:
+      run:
+        shell: bash
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Versies en cores
+        run: |
+          mkdir -p "$RUNNER_TEMP/zoek-perf-pg"
+          uv run python - <<'EOF' | tee "$RUNNER_TEMP/zoek-perf-pg/versie.txt"
+          import asyncio
+          import os
+          import sys
+
+          import asyncpg
+
+
+          async def main():
+              url = os.environ["PLATFORM_TEST_DATABASE_URL"].replace("+asyncpg", "", 1)
+              conn = await asyncpg.connect(url)
+              try:
+                  pg = await conn.fetchval("SELECT current_setting('server_version')")
+                  ctype = await conn.fetchval("SELECT datctype FROM pg_database WHERE datname = 'postgres'")
+              finally:
+                  await conn.close()
+              print(f"python {sys.version.split()[0]}, PostgreSQL {pg} (LC_CTYPE {ctype})")
+
+
+          asyncio.run(main())
+          EOF
+          n="$(nproc)"
+          if [ "$n" -ge 3 ]; then cores=0-2; else cores="0-$((n - 1))"; echo "::warning::maar $n cores: taskset -c $cores"; fi
+          echo "cores: $n, taskset -c $cores"
+          echo "CORES=$cores" >> "$GITHUB_ENV"
+      - name: §4.4 100.000 bestanden binnen 200 ms op PostgreSQL (de poorten zijn hard)
+        run: |
+          set -o pipefail
+          ZOEK_PERF_UIT="$RUNNER_TEMP/zoek-perf-pg" taskset -c "$CORES" uv run pytest -q -s -m zoek_perf \
+            tests/search/test_perf_100k.py | tee "$RUNNER_TEMP/zoek-perf-pg/perf_100k.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zoek-perf-pg
+          path: ${{ runner.temp }}/zoek-perf-pg
+          if-no-files-found: warn
+      - name: Samenvatting
+        if: always()
+        run: |
+          d="$RUNNER_TEMP/zoek-perf-pg"
+          echo "=== kort ==="
+          cat "$d/versie.txt" 2> /dev/null || echo "(geen versie)"
+          echo "§4.4 op PostgreSQL: $(tail -n 1 "$d/perf_100k.txt" 2> /dev/null || echo "liep niet")"
+          # Het eerste blok van de uitvoer: de boom (bench.Uitkomst.kort), met de seconden
+          awk '/=== kort ===$/ { f = 1; next } f { print } f && /^seconden: / { exit }' "$d/perf_100k.txt" 2> /dev/null || true
+          if [ -f "$d/zoek_100k.txt" ]; then cat "$d/zoek_100k.txt"; else echo "§4.4: liep niet of brak af"; fi
+
   acme:
     name: HTTPS (certificaat van Pebble, de test-CA van Let's Encrypt)
     runs-on: ubuntu-latest

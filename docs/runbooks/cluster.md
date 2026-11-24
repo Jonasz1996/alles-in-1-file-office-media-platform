@@ -19,7 +19,13 @@ gedraaid.
 
 In 0.8.2 komen er twee dingen bij: een weg terug die de database met het nieuwe image
 terugzet (`db-downgrade`), zodat er geen gegevens verloren gaan, en de analyse (gezichten en
-zoeken op beeld) in het cluster. Dit runbook beschrijft wat er nu is.
+zoeken op beeld) in het cluster. De stappen van 0.8.1 naar 0.8.2 en terug staan in
+[Van 0.8.1 naar 0.8.2](#van-081-naar-082). De sleutels van gezichten:
+[De sleutels van gezichten](#de-sleutels-van-gezichten).
+
+ClusterForge zelf open je op http://192.168.113.154:8080 (het VIP van ClusterForge, ook
+`clusterforge.jbogaert.be`). `platform-ctl.sh` hieronder is
+`/usr/local/lib/clusterforge/platform-ctl.sh` op een node.
 
 ## Eenmalig: de twee commando's in ClusterForge
 
@@ -81,10 +87,11 @@ geen af. Zet er ook zelf geen in.
 3. **Extra vangnet**: **Databases** → de database van het platform → **Dumps** → **Dump nu**.
    Platform bijwerken maakt zelf ook een dump; deze staat daar los van in ClusterForge.
 4. **Nooit images opruimen op een node van het platform.** **Docker** → **Opruimen** →
-   "Images zonder container" en **Docker** → **Images** → **Ongebruikte weg** halen elk image
-   weg dat geen container gebruikt. Dat is `cf-platform:vorige` (dan kan Platform terug niet
-   meer) en op de nodes zonder VIP zelfs `cf-platform:local` (dan moet die node eerst bouwen
-   voordat het platform er kan starten).
+   "Images zonder container", **Docker** → **Images** → **Ongebruikte weg**, bij **Updates**
+   "ongebruikte images opruimen" en bij het opruimen van een schijf "Ongebruikte Docker-images
+   en bouwcache" halen elk image weg dat geen container gebruikt. Dat is `cf-platform:vorige`
+   (dan kan Platform terug niet meer) en op de nodes zonder VIP zelfs `cf-platform:local` (dan
+   moet die node eerst bouwen voordat het platform er kan starten).
 
 ## Bijwerken
 
@@ -129,6 +136,102 @@ Nog een keer draaien is veilig: staat alles al op de Versie, dan doet het niets.
 Mislukt het bouwen, dan is het platform niet geraakt en houdt de node het oude image. Los de
 oorzaak op (vaak: de Versie bestaat niet, geen netwerk, schijf vol) en draai opnieuw. Antwoordt
 de app na de herstart niet: zie hieronder.
+
+## Van 0.8.1 naar 0.8.2
+
+In twee stappen, zodat elke stap apart terug kan: eerst het platform, dan de template.
+
+1. **Vooraf** zoals hierboven. Gaat de analyse aan: 12 GB RAM of meer per node (16 is beter).
+2. **Het platform**: Versie = de commit van 0.8.2, **Toepassen**, dan **Platform bijwerken**
+   (zie [Bijwerken](#bijwerken)). De app migreert 0012 → 0013 → 0014. 0013 duurt seconden;
+   0014 vult de zoekindex, bij een grote bibliotheek enkele minuten. Controle: de browser,
+   `platform-ctl.sh status`, en `/beheer` → Zoeken toont de index van PostgreSQL. De analyse
+   staat nog uit: `/beheer` zegt "ANALYSE_POSTGRES staat uit". Zo hoort het.
+3. **De template**: ClusterForge bijwerken naar de versie met de template van 0.8.2 (PR #163 van
+   ClusterForge, Jonas voegt hem samen), dan het cluster → **Toepassen**. Dat brengt
+   `PLATFORM_ANALYSE_POSTGRES=true` (alleen met de analyse aan), de sync van de sleutels met
+   wissen achter `sleutels-klaar`, de grenzen van de containers en `BindsTo=keepalived`. De stap
+   "platform herstarten na een wijziging" herstart het platform op de node met het VIP; daarna
+   staat de analyse aan.
+4. **Controle**: op de node met het VIP `platform-ctl.sh compose exec -T platform python -m
+   app.cli analyse-status` (eerste regel `Analyse: ok`, met de grenzen). Een gebruiker zet
+   gezichten aan (Account → Foto's). De app maakt zijn sleutel bij het eerste gezicht dat de scan
+   vindt; een minuut later staat die op elke node en is de sync `platform-sleutels` groen (zie
+   [De sleutels van gezichten](#de-sleutels-van-gezichten)).
+5. **Eén keer de [failover-handtest](#de-failover-handtest).**
+
+Terug, van de laatste stap naar de eerste:
+
+- **Alleen de template slecht** (stap 3): ClusterForge terug naar de vorige versie en het
+  cluster → **Toepassen**. `PLATFORM_ANALYSE_POSTGRES` valt weg; het platform herstart met de
+  analyse uit. Er gaat niets verloren.
+- **0.8.2 zelf slecht**: **Platform terug** met `MET_DATABASE=downgrade` (eerste keus; zie
+  [Terugzetten](#terugzetten)). Het image van 0.8.2 zet de database eerst terug naar 0012; wat
+  sinds de update in de database kwam, blijft. Weg zijn de zoekindex (0014) en de plaatsen van
+  foto's (0013). Daarna Versie = de commit van 0.8.1 en **Toepassen**. Staat de template van
+  stap 3 er al, zet die dan ook terug: 0.8.1 kent `sleutels-check` niet, dus de sync van de
+  sleutels meldt elke minuut een fout (hij kopieert en wist dan niets: veilig, maar luid).
+- **Lukt de downgrade niet**: Platform terug met `MET_DATABASE=ja`. Dat zet
+  `voor-update.dump` terug: wat sinds de update in de database kwam, is dan weg
+  (`voor-terug.dump` bewaart die stand).
+- **Laatste vangnet**: de dump uit "Vooraf" (zie
+  [Laatste vangnet](#laatste-vangnet-de-dump-van-clusterforge)).
+
+## De sleutels van gezichten
+
+Vanaf de template van 0.8.2. Elke eigenaar met gezichten aan heeft een sleutel: één bestand in
+`/var/lib/cf-platform/sleutels/gezichten` op de node zelf. Niet op de gedeelde data en niet in
+de database. Alleen de node met het VIP schrijft er (daar draait de app).
+
+- **De sync `platform-sleutels`** kopieert die map elke minuut van de node met het VIP naar de
+  andere nodes, met wissen: een sleutel die op de node met het VIP weg is ("uit"), gaat ook
+  elders weg.
+- **Alleen achter `platform-ctl.sh sleutels-klaar`.** Dat draait eerst, op de node die stuurt.
+  Het slaagt alleen als die node het VIP heeft, `cf-platform` er draait, de map een echte map
+  is van uid 10001 (geen symlink), en `python -m app.cli sleutels-check` 0 geeft. Anders
+  kopieert en wist de sync niets. Op een node zonder het VIP van het platform (zoals die met
+  alleen het VIP van de database) en vlak na een failover telt ClusterForge de run als
+  overgeslagen, niet als mislukt.
+- **Nooit een nieuwe sleutel als er nog versleutelde gezichten zijn.** Mist een sleutel, dan
+  wacht de scan van die eigenaar en zegt `/beheer` "sleutel ontbreekt".
+- **Nakijken** op de node met het VIP: `platform-ctl.sh compose exec -T platform python -m
+  app.cli sleutels-check`. Exitcode 0: elke eigenaar met versleutelde gezichten heeft een
+  sleutel die ze opent. 1: er is iets mis; de uitvoer zegt wat (alleen aantallen). Op elke node
+  hetzelfde aantal sleutels: een los commando op het hele cluster met
+  `ls /var/lib/cf-platform/sleutels/gezichten | wc -l`.
+- **Een sleutel die alleen op een andere node staat** (een failover vlak na het eerste gezicht
+  van een eigenaar, vóór de sync): `sleutels-check` geeft 1 en de sync meldt een fout, zonder iets
+  te wissen. Kopieer het bestand `<id>.key` van die node naar dezelfde map op de node met het
+  VIP (rechten 0600, eigenaar 10001). Daarna is de sync weer groen.
+- **De dumps.** De dump van het platform (`platform-ctl.sh db-backup`, ook die van Platform
+  bijwerken) maakt de tabellen van gezichten leeg (`app.cli backup-wipe-tables`). De dumps van
+  de database-component van ClusterForge kunnen dat niet: daar staan de vectoren in, versleuteld.
+  De sleutels zitten in geen enkele dump.
+
+Wat "uit" en wissen op PostgreSQL wel en niet weghalen: [gezichten.md](gezichten.md#in-het-cluster).
+De analyse in het cluster: [analyse.md](analyse.md#in-het-cluster-postgresql-vanaf-082).
+
+## De failover-handtest
+
+Eén keer na de update naar 0.8.2, en na een grote wijziging aan de template. Nog niet gedraaid
+op echte nodes. De failover van de database zelf: [failover-test.md](failover-test.md).
+
+1. **Vooraf**: een gebruiker heeft gezichten aan en de scan liep (`/fotos/personen` toont
+   gezichten). De sync `platform-sleutels` is groen, en elke node heeft evenveel sleutels (zie
+   boven). Noteer welke node het VIP heeft: `platform-ctl.sh status` als los commando op het
+   hele cluster; die node zegt `(actief)`.
+2. **Het VIP verplaatsen**: op die node `systemctl stop keepalived`. Met `BindsTo=keepalived`
+   stopt `cf-platform` daar mee; een andere node neemt het VIP over en start het platform. Heeft
+   die node ook het VIP van de database, dan verhuist dat mee: doe de test op een rustig moment.
+3. **Controle**, na een paar minuten:
+   - er draait één platform: `systemctl is-active cf-platform` als los commando op het hele
+     cluster geeft één keer `active`;
+   - het platform opent in de browser, en zoeken vindt een woord uit de inhoud van een
+     document;
+   - `/fotos/personen` toont de gezichten, en `/beheer` zegt nergens "sleutel ontbreekt";
+   - `sleutels-check` op de nieuwe node met het VIP geeft 0, en de sync is na een minuut groen.
+4. **Terug**: `systemctl start keepalived` op de eerste node. Het VIP blijft op de nieuwe node
+   (`nopreempt`); er draait nog steeds één platform.
 
 ## Terugzetten
 
@@ -273,7 +376,10 @@ de melding zegt dan hoe je ze weer gelijk zet.
 - **Updates met "Docker Compose (pull; bij een nieuw image down en up -d)"** voor het platform.
   Het image `cf-platform:local` staat in geen registry. Een `up -d` buiten `cf-platform` om
   start het platform ook op een node zonder VIP: twee platformen op dezelfde data en database.
-- **Images opruimen** op een node van het platform (zie "Vooraf").
+- **Images opruimen** op een node van het platform (zie "Vooraf"): het wist
+  `cf-platform:vorige`.
+- **`PLATFORM_ANALYSE_POSTGRES` zelf aanzetten** zonder de template van 0.8.2. Met de sync van
+  0.8.1 (zonder wissen) blijft een sleutel na "uit" op de andere nodes staan.
 
 ## Bekende grenzen
 
@@ -321,4 +427,5 @@ de melding zegt dan hoe je ze weer gelijk zet.
 | de dump van vóór de update (alleen de VIP-node) | `/var/lib/cf-platform/bijwerken/voor-update.dump` en `voor-update.info` | Platform bijwerken |
 | de dump van vóór het terugzetten | `/var/lib/cf-platform/bijwerken/voor-terug.dump` | Platform terug |
 | de 5 nieuwste dumps | `/var/backups/cf-platform` | `platform-ctl.sh` van de template |
+| de sleutels van gezichten, per eigenaar (geheim, nooit in een dump) | `/var/lib/cf-platform/sleutels/gezichten` | de app op de node met het VIP; de sync `platform-sleutels` op de andere |
 | welke versie elke node heeft, en op welke nodes de VIP-node wacht (gedeeld, geen geheimen) | `/srv/platform-data/.cf-platform-bijwerken/node-<naam>`, `wacht-bijwerken`, `wacht-terug` | Platform bijwerken en Platform terug |

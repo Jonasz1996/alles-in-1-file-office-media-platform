@@ -201,7 +201,10 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
   template van ClusterForge zet dat aan zodra Analyse aan staat. De sleutels van gezichten staan
   per node; de app maakt nooit een nieuwe sleutel als er nog versleutelde gezichten zijn (een
   node waar de sleutel nog niet gesynchroniseerd is, wacht). `python -m app.cli sleutels-check`
-  zegt welke eigenaren hun sleutel kwijt zijn, en kan hun gezichten bewust wissen (`--wissen`).
+  zegt of elke eigenaar met versleutelde gezichten een sleutel heeft die ze opent (exitcode 0),
+  en `--opruimen` haalt de sleutels weg van wie gezichten uit heeft en er geen meer heeft. Het
+  [runbook van het cluster](../runbooks/cluster.md#de-sleutels-van-gezichten) zegt hoe de
+  sleutels over de nodes gaan.
 - **Een nieuwere vraag stopt de vorige** nu ook op PostgreSQL (`pg_cancel_backend`), zoals
   `interrupt()` op SQLite.
 - **Platform terug zonder gegevensverlies**: `MET_DATABASE=downgrade` laat het nieuwe image het

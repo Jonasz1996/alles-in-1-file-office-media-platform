@@ -10,6 +10,11 @@ clear eerst het slot van de boom (db.lock_tree): wie als tweede komt, wacht.
 T1 is de app (photo_rows.write of clear), eerst voor het bestand met het hoogste pad onder werk,
 dan voor dat met het laagste. In beide volgordes: T1 eerst (T2 wacht op T1), of T2 eerst (T1
 wacht op T2). Daarna klopt de boom, en photo_geo heeft de dead van de node.
+
+De job geo.places (photo_rows.run_places) werkt tot PLACES_CHUNK rijen van photo_geo bij in één
+transactie, op volgorde van node_id. Een prullenbak of verplaatsing erboven werkt photo_geo van
+de submap bij in een andere volgorde. Zonder het slot van de boom in run_places brak PostgreSQL
+er een af (40P01; w2.md, open punt 10); nu neemt run_places het eerst, net als write().
 """
 
 from __future__ import annotations
@@ -18,10 +23,15 @@ import asyncio
 import uuid
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import photo_rows
+from app.db import get_engine
+from app.geo import load, places
 from app.geo.types import Place
 from tests.factories import maker
+from tests.geo import bronnen
+from tests.geo.hulp import AMSTERDAM
 from tests.pgboom import ZERO, boom, dsn, fill, nalopen, rows
 
 pytestmark = [pytest.mark.anyio, pytest.mark.pg]
@@ -140,3 +150,102 @@ async def test_de_plek_terwijl_een_map_erboven_verandert(settings, wat, erboven,
     else:
         # vakantie/diep en de prullenbak: beide dood, en photo_geo volgt de node
         assert found == [(1, 1), (1, 1)]
+
+
+async def _map_zonder_plaats(settings, ids, count: int) -> list[uuid.UUID]:
+    """Een map onder werk met count foto's, elk met een plek in Amsterdam zonder plaats en land
+    (gelezen vóór places.sqlite er was). Het bestand met de hoogste node_id komt eerst: zo staan
+    de nodes (op mpath) en de rijen van photo_geo (op schijf) andersom dan run_places ze doet
+    (op node_id). Geeft de ids, oplopend."""
+    import asyncpg
+
+    kids = sorted((uuid.uuid4() for _ in range(count)), reverse=True)
+    conn = await asyncpg.connect(dsn(settings))
+    try:
+        map_ = await _new(conn, ids["werk"], ids["eva"], "dir")
+        for node in kids:
+            sha = node.hex * 2
+            await conn.execute(
+                "INSERT INTO blob (sha256, size, ref_count, created_at) VALUES ($1, 1, 1, now())",
+                sha,
+            )
+            name = f"file-{node.hex[:12]}"
+            await conn.execute(INSERT, node, map_, ids["eva"], name, "file", name, sha)
+            await conn.execute(
+                "INSERT INTO photo_geo (node_id, owner_id, lat, lon, x16, y16, source) "
+                "VALUES ($1, $2, 52.37403, 4.88969, 1, 2, 'exif')",
+                node,
+                ids["eva"],
+            )
+    finally:
+        await conn.close()
+    return sorted(kids)
+
+
+class _NaDeEersteRij(AsyncSession):
+    """Een sessie van run_places die na de eerste rij van een stuk (_FILL) eerst HAAK afwacht."""
+
+    async def execute(self, statement, params=None, **kw):  # type: ignore[override]
+        result = await super().execute(statement, params, **kw)
+        if statement is photo_rows._FILL and HAAK:
+            await HAAK.pop()()
+        return result
+
+
+HAAK: list = []
+
+
+@pytest.mark.parametrize("erboven", ["verplaatsen", "prullenbak"])
+@pytest.mark.parametrize("eerst", ["app", "map"])
+async def test_de_plaatsen_terwijl_een_map_erboven_verandert(settings, monkeypatch, erboven, eerst):
+    import asyncpg
+
+    ids = await boom(settings)
+    kids = await _map_zonder_plaats(settings, ids, 6)
+    bronnen.gebruik(monkeypatch, bronnen.maak(settings.geo_src))
+    places.forget()
+    assert load.ensure(settings) == "gebouwd"
+    monkeypatch.setattr(
+        photo_rows,
+        "_maker",
+        lambda s: async_sessionmaker(get_engine(s), expire_on_commit=False, class_=_NaDeEersteRij),
+    )
+    payload = {"after": "", "rows": 0, "bouw": ""}
+    if erboven == "verplaatsen":
+        statement = ("UPDATE node SET parent_id = $1 WHERE id = $2", ids["diep"], ids["werk"])
+    else:
+        statement = ("UPDATE node SET deleted_at = now() WHERE id = $1", ids["werk"])
+    t2 = await asyncpg.connect(dsn(settings))
+    try:
+        if eerst == "app":
+            started: list[asyncio.Task] = []
+
+            async def map_erboven() -> None:
+                started.append(asyncio.create_task(t2.execute(*statement)))
+                await _blocks(started[0])
+
+            HAAK.append(map_erboven)
+            await photo_rows.run_places(settings, payload)
+            await started[0]
+        else:
+            tx = t2.transaction()
+            await tx.start()
+            await t2.execute(*statement)
+            task = asyncio.create_task(photo_rows.run_places(settings, payload))
+            await _blocks(task)
+            await tx.commit()
+            await task
+    finally:
+        HAAK.clear()
+        places.forget()
+        await t2.close()
+    await nalopen(settings)
+    assert await fill(settings, repair=False) == ZERO
+    found = await rows(
+        settings,
+        "SELECT g.node_id, g.place_id, g.country, g.dead, n.dead FROM photo_geo g "
+        "JOIN node n ON n.id = g.node_id WHERE g.node_id = ANY(:t) ORDER BY g.node_id",
+        t=kids,
+    )
+    # Elke rij heeft zijn plaats, en vakantie/diep en de prullenbak: dood, zoals de node
+    assert found == [(kid, AMSTERDAM, "NL", 1, 1) for kid in kids]
