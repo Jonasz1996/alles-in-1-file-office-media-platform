@@ -20,7 +20,8 @@ import { PageTitle } from "./ui/PageTitle";
 import { Spinner } from "./ui/Spinner";
 import "./login.css";
 
-// "Wachtwoord vergeten of kan niet inloggen?" in een eigen chunk (met het gebied reset): niet in de eerste lading
+// "Wachtwoord vergeten of kan niet inloggen?" in een eigen chunk (met het gebied reset): niet in de
+// eerste lading
 const CantLogIn = lazyWithAreas(() => import("./CantLogIn"), ["reset"]);
 
 const MIN_PASSWORD = 10;
@@ -185,11 +186,9 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
 
   if (help) {
     return (
-      <main className="center login">
-        <Suspense fallback={<Spinner label={t("common.loading")} />}>
-          <CantLogIn email={email} onClose={() => setHelp(false)} />
-        </Suspense>
-      </main>
+      <Suspense>
+        <CantLogIn email={email} onClose={() => setHelp(false)} />
+      </Suspense>
     );
   }
 

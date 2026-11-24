@@ -430,11 +430,9 @@ export class Api {
         this.onLoggedOut();
       }
       const error = errorFromBody(res.status, body);
-      if (
-        res.status === 403 &&
-        (error.code === "totp_setup_required" || error.code === "password_change_required")
-      )
-        this.onSetupRequired();
+      // password_change_required hoeft hier niet: reset-account trekt alle logins in, dus wie een
+      // tijdelijk wachtwoord heeft, logt opnieuw in en /auth/me zegt het dan al
+      if (res.status === 403 && error.code === "totp_setup_required") this.onSetupRequired();
       throw error;
     }
     return res;

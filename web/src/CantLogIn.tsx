@@ -35,7 +35,15 @@ async function askCode(login: string): Promise<Issued> {
 }
 
 /** Login in, code uit. */
-export default function CantLogIn({ email: initial, onClose }: { email: string; onClose: () => void }): JSX.Element {
+export default function CantLogIn(props: { email: string; onClose: () => void }): JSX.Element {
+  return (
+    <main className="center login">
+      <Help {...props} />
+    </main>
+  );
+}
+
+function Help({ email: initial, onClose }: { email: string; onClose: () => void }): JSX.Element {
   const [login, setLogin] = useState(initial);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [busy, setBusy] = useState(false);
