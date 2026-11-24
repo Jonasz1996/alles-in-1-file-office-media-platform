@@ -50,7 +50,7 @@ Wat nog in `blobs-media/` van fase 11 staat (alleen als `PLATFORM_BLOB_SPLIT` da
 blijft leesbaar en verhuist naar zijn juiste plek. Een bibliotheek zonder keuze staat na de update
 op "Standaard": wil je de films op 2 kopieën houden zonder dat ze eerst terug naar `blobs/` gaan,
 start deze versie dan eerst met `PLATFORM_BLOB_SPLIT=false`, zet Films en Series op /beheer op 2,
-en zet het daarna weer aan (stap 4 hieronder). Daarna mag de regel van fase 11 weg:
+en zet het daarna weer aan (de instelling Kopieën per bibliotheek in ClusterForge, of `PLATFORM_BLOB_SPLIT`). Daarna mag de regel van fase 11 weg:
 `printf 'fs.configure -locationPrefix=/blobs-media/ -delete -apply\n' | weed shell -master=127.0.0.1:9333`
 (pas als `blobs-media/` buiten `.weg/` leeg is).
 
@@ -60,56 +60,48 @@ Zonder `PLATFORM_BLOB_SPLIT=true` verhuist er niets. De keuze op /beheer wordt w
 
 ## Het cluster instellen
 
-Wat er in het cluster staat (template `media-platform` 1.0.0, gezien 23-11): de master heeft
-`-defaultReplication=002`, de filer `-defaultReplicaPlacement=002`, en de mount
-(`cf-platform-mount.service`, op elke node) geeft zelf `-replication=002` mee. Die laatste wint van
-elke regel per map, dus die moet weg. De standaard `002` van master en filer blijft. `weed shell`
-hieronder draait op een node: `weed shell -master=127.0.0.1:9333`.
+De template `media-platform` van ClusterForge doet dit zelf, vanaf ClusterForge PR #163 (instelling
+**Kopieën per bibliotheek (platform 0.8.3)**):
 
-**1. De template (repo ClusterForge, `internal/templates/builtin/media-platform/1.0.0`):**
+- de mount (`cf-platform-mount.service`) geeft geen `-replication` meer mee: die won van elke regel
+  per map. De standaard van master en filer (de instelling Replicatie, nu `002` = 3) blijft;
+- `platform.env` krijgt `PLATFORM_BLOB_SPLIT=true` en `PLATFORM_BLOB_DEFAULT_COPIES` (3 bij `002`,
+  2 bij `001`), en `platform-cluster.yaml` geeft ze aan de app;
+- `platform-ctl.sh up` zet op de VIP-node vóór de start de regels per map, als ze ontbreken of
+  anders zijn (`platform-ctl.sh mapregels`; `--check` alleen kijken):
 
-- `files/cf-platform-mount.service.tmpl`: ` -replication={{ .params.replication }}` weglaten uit
-  `ExecStart`, voor alle nodes.
-- `files/platform-cluster.yaml.tmpl`, bij `environment` van het platform:
-  `PLATFORM_BLOB_SPLIT: ${PLATFORM_BLOB_SPLIT:-false}` en
-  `PLATFORM_BLOB_DEFAULT_COPIES: ${PLATFORM_BLOB_DEFAULT_COPIES:-3}`; in `files/platform.env.tmpl`
-  de regels `PLATFORM_BLOB_SPLIT=true` en `PLATFORM_BLOB_DEFAULT_COPIES=3` (of parameters,
-  standaard uit en 3).
-- `files/platform-ctl.sh.tmpl`, functie `replicatie`: die zet nu ALLE volumes op de replicatie van
-  ClusterForge (`volume.configure.replication … -collectionPattern *`), en `--check` meldt elk
-  volume dat afwijkt. De collecties `r1`, `r2` en `r3` moet hij overslaan: in `volumes_placements`
-  alleen volumes zonder collectie meetellen, en `volume.configure.replication` alleen op de
-  standaardcollectie laten werken. Anders zet hij de films terug op 3 kopieën en blijft de
-  controle rood. (Stond `media` van fase 11 daar al, vervang het dan door `r1`, `r2` en `r3`.)
+  | Map in de filer | Collectie | Replicatie |
+  |---|---|---|
+  | `/blobs-r1/` | `r1` | `000` |
+  | `/blobs-r2/` | `r2` | `001` |
+  | `/blobs-r3/` | `r3` | `002` |
 
-**2. De template uitrollen en de mount herstarten**, per node, de VIP-node als laatste:
-
-- op elke andere node: `systemctl restart cf-platform-mount`;
-- op de VIP-node: `platform-ctl.sh down`, `systemctl restart cf-platform-mount`,
-  `platform-ctl.sh up`.
-
-Nakijken: `ps aux | grep "weed mount"` toont geen `-replication` meer.
-
-**3. De regels per map**, één keer (ze gelden voor het hele cluster), op één node:
-
-```bash
-printf 'fs.configure -locationPrefix=/blobs-r1/ -collection=r1 -replication=000 -apply\n' | weed shell -master=127.0.0.1:9333
-printf 'fs.configure -locationPrefix=/blobs-r2/ -collection=r2 -replication=001 -apply\n' | weed shell -master=127.0.0.1:9333
-printf 'fs.configure -locationPrefix=/blobs-r3/ -collection=r3 -replication=002 -apply\n' | weed shell -master=127.0.0.1:9333
-```
+  Lukt dat niet, dan start het platform zonder te verhuizen (`PLATFORM_BLOB_SPLIT=false` voor die
+  start) en zegt `up` hoe je het herstelt: `platform-ctl.sh mapregels`, dan
+  `systemctl restart cf-platform`. `platform-ctl.sh status` toont dan een oranje "Regels per map";
+- `platform-ctl.sh replicatie` zet alleen de volumes zonder collectie om, dus r1, r2 en r3 blijven
+  zoals ze zijn, en `--check` blijft groen.
 
 De mount gebruikt `-filer.path=/`, dus `/srv/platform-data/blobs-r2` is in de filer `/blobs-r2/`.
 `000` is één kopie (gaat de node weg, dan is de inhoud weg: alleen voor wat je opnieuw kunt halen),
 `001` twee kopieën op verschillende nodes (met 3 nodes overleeft dat het verlies van één node),
-`002` drie. `blobs-r3/` is alleen nodig als de standaard lager is dan 3. Nakijken:
-`printf 'fs.configure\n' | weed shell -master=127.0.0.1:9333` toont de drie regels.
+`002` drie.
 
-**4. Het platform**: `PLATFORM_BLOB_SPLIT=true` en `PLATFORM_BLOB_DEFAULT_COPIES` (het aantal van
-master en filer: `002` is 3) staan in `/etc/clusterforge/platform.env` (stap 1); het platform
-herstarten (`platform-ctl.sh down` en `up` op de VIP-node). In de log staat
+De volgorde van de uitrol (samen met het platform, één keer): Dump nu; de template uitrollen met
+Kopieën per bibliotheek aan (Toepassen herstart de mount op elke node, de VIP-node als laatste);
+Platform bijwerken; dan op /beheer de bibliotheken kiezen. In de log van de app staat dan
 `blobsplit: aan, standaard 3 kopieën`.
 
-**5. De bibliotheken**: op /beheer → Media → Bibliotheken per bibliotheek de kopieën kiezen (bv.
+**Zonder die template** (met de hand, op één node; `weed shell` is
+`weed shell -master=127.0.0.1:9333`): de mount zonder `-replication` herstarten (de andere nodes
+eerst, de VIP-node als laatste), de drie regels zetten met
+`printf 'fs.configure -locationPrefix=/blobs-r2/ -collection=r2 -replication=001 -apply\n' | weed shell -master=127.0.0.1:9333`
+(en zo voor r1 met `000` en r3 met `002`), en `PLATFORM_BLOB_SPLIT=true` en
+`PLATFORM_BLOB_DEFAULT_COPIES` in de omgeving van de app. Zet de regels vóór je het platform met
+`PLATFORM_BLOB_SPLIT=true` start: een kopie die zonder regel in `blobs-r2/` kwam, houdt de
+standaard tot ze opnieuw geschreven wordt.
+
+**De bibliotheken**: op /beheer → Media → Bibliotheken per bibliotheek de kopieën kiezen (bv.
 Films 2, Series Standaard) en per rij op Opslaan drukken. Een minuut later begint de ronde.
 
 ## Nakijken
@@ -126,7 +118,7 @@ Films 2, Series Standaard) en per rij op Opslaan drukken. Een minuut later begin
   geeft volumes, met `replica_placement:1`; die van `r1` hebben er geen (`0`), de volumes zonder
   collectie `2`.
 - De mappen: `ls /srv/platform-data` toont `blobs-r2` (en de andere die in gebruik zijn).
-- `platform-ctl.sh replicatie --check` blijft groen (stap 1, de functie `replicatie`).
+- `platform-ctl.sh replicatie --check` blijft groen, en `platform-ctl.sh status` toont "Regels per map" als ok.
 
 ## Terugzetten
 
@@ -142,7 +134,8 @@ gaat de inhoud terug naar `blobs/` (een nieuwe write: weer 3 kopieën).
 3. `PLATFORM_BLOB_SPLIT=false` in `platform.env`, het platform herstarten.
 4. De regels weghalen:
    `printf 'fs.configure -locationPrefix=/blobs-r1/ -delete -apply\n' | weed shell -master=127.0.0.1:9333`
-   (en zo voor `/blobs-r2/` en `/blobs-r3/`). De mount mag weer `-replication=002` krijgen.
+   (en zo voor `/blobs-r2/` en `/blobs-r3/`). Met de template: zet eerst Kopieën per bibliotheek uit
+   (Toepassen); anders zet `up` de regels bij de volgende start opnieuw.
 
 Zet je `PLATFORM_BLOB_SPLIT` uit zonder stap 1, dan blijft wat in `blobs-r1/` tot `blobs-r3/` staat
 daar leesbaar (op het aantal kopieën van die map), maar het verhuist niet meer.
