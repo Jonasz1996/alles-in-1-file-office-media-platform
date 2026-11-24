@@ -564,6 +564,7 @@ class MediaLibrary(Base):
     __table_args__ = (
         UniqueConstraint("root_id", name="uq_media_library_root"),
         Index("ix_media_library_owner", "owner_id"),
+        CheckConstraint("copies IS NULL OR copies IN (1, 2, 3)", name="ck_media_library_copies"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -579,6 +580,9 @@ class MediaLibrary(Base):
     scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     item_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Kopieën in het cluster (0019, app/blobsplit.py): 1, 2 of 3; None is de standaard van het
+    # cluster (PLATFORM_BLOB_DEFAULT_COPIES). Alleen een beheerder zet het
+    copies: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MediaProbe(Base):

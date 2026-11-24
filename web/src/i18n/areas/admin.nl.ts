@@ -572,6 +572,13 @@ export default {
       noKey: "Online metadata staat aan, maar er is geen sleutel van TMDB: deze bibliotheek houdt de lokale gegevens. Zet de sleutel bij Online metadata.",
       musicbrainzOff: "Online metadata staat aan, maar MusicBrainz staat uit: deze bibliotheek houdt de lokale gegevens. Zet MusicBrainz aan bij Instellingen.",
       inside: "Let op: deze map ligt nu in {name}. De binnenste bibliotheek wint; zet de map terug als dat niet de bedoeling is.",
+      copies: "Kopieën in het cluster",
+      copiesLabel: "Kopieën in het cluster van {name}",
+      copiesDefault: "Standaard ({n})",
+      copiesSaved: "{name}: {copies} kopieën in het cluster. De inhoud verhuist bij de volgende ronde.",
+      copiesSavedDefault: "{name}: de standaard van het cluster ({n} kopieën). De inhoud verhuist bij de volgende ronde.",
+      copiesHelp: "Hoeveel kopieën het cluster van de bestanden in een bibliotheek bewaart, bijvoorbeeld films op 2 en series op 3. Staat hetzelfde bestand ook ergens anders, dan telt het hoogste aantal; buiten een bibliotheek geldt de standaard ({n}).",
+      copiesOff: "Deze instelling werkt pas in het cluster, met PLATFORM_BLOB_SPLIT=true (zie het runbook replicatie). Tot dan blijft alles in de standaard; de keuze wordt wel bewaard.",
       kinds: {
         movies: "films",
         shows: "series",

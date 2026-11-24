@@ -305,6 +305,16 @@ ENDPOINTS = [
     ("POST", "/api/v1/admin/media/retry", None, "admin", None, None, None),
     # M10 (M0-hotfix, alleen deze test): opnieuw scannen vanaf /beheer, ook van een ander
     ("POST", "/api/v1/admin/media/libraries/{library_id}/scan", None, "admin", None, None, 202),
+    # Replicatie per bibliotheek (0019): de kopieën in het cluster, ook van een ander
+    (
+        "PATCH",
+        "/api/v1/admin/media/libraries/{library_id}",
+        {"copies": 2},
+        "admin",
+        t.LibraryCopiesIn,
+        t.AdminLibrary,
+        None,
+    ),
     (
         "POST",
         "/api/v1/admin/media/cache/clear",
@@ -483,6 +493,7 @@ BUILT = {
     ("DELETE", "/api/v1/admin/media/sessions/{session_id}"),
     ("POST", "/api/v1/admin/media/retry"),
     ("POST", "/api/v1/admin/media/libraries/{library_id}/scan"),
+    ("PATCH", "/api/v1/admin/media/libraries/{library_id}"),
     ("POST", "/api/v1/admin/media/cache/clear"),
     ("PUT", "/api/v1/admin/media/tmdb"),
     ("DELETE", "/api/v1/admin/media/tmdb"),

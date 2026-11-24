@@ -563,6 +563,13 @@ const en: Translation<typeof nl> = {
       noKey: "Online metadata is on, but there is no TMDB key: this library keeps its local data. Set the key under Online metadata.",
       musicbrainzOff: "Online metadata is on, but MusicBrainz is off: this library keeps its local data. Turn MusicBrainz on under Settings.",
       inside: "Note: this folder is now inside {name}. The inner library wins; move the folder back if that was not intended.",
+      copies: "Copies in the cluster",
+      copiesLabel: "Copies in the cluster of {name}",
+      copiesDefault: "Default ({n})",
+      copiesSaved: "{name}: {copies} copies in the cluster. The files move in the next round.",
+      copiesSavedDefault: "{name}: the cluster default ({n} copies). The files move in the next round.",
+      copiesHelp: "How many copies the cluster keeps of the files in a library, for example movies on 2 and shows on 3. If the same file is also somewhere else, the highest number counts; outside a library the default ({n}) applies.",
+      copiesOff: "This setting only works in the cluster, with PLATFORM_BLOB_SPLIT=true (see the replication runbook). Until then everything stays on the default; the choice is saved.",
       kinds: {
         movies: "movies",
         shows: "shows",

@@ -60,6 +60,7 @@ def routes() -> list[tuple[str, str, dict | None]]:
         ("DELETE", f"{BASE}/sessions/{uuid.uuid4()}", None),
         ("POST", f"{BASE}/retry", None),
         ("POST", f"{BASE}/libraries/{uuid.uuid4()}/scan", None),
+        ("PATCH", f"{BASE}/libraries/{uuid.uuid4()}", {"copies": 2}),
         ("POST", f"{BASE}/cache/clear", {"what": "trick"}),
         ("PUT", f"{BASE}/tmdb", {"key": "geheim-sleutel-1234567890"}),
         ("DELETE", f"{BASE}/tmdb", None),
@@ -127,6 +128,8 @@ async def test_het_overzicht(media_app, client, admin):  # noqa: F811
     assert [n.code for n in view.notices] == ["media_sandbox_off"]
     # hoe vaak een native speler opnieuw laadde (M4, streams.native_reloads; M0-hotfix)
     assert view.native_reloads == 0
+    # replicatie per bibliotheek: standaard uit, 3 kopieën
+    assert (body["blob_split"], body["blob_default_copies"]) == (False, 3)
 
 
 async def test_native_spelers_die_opnieuw_laden(media_app, client, admin, monkeypatch):  # noqa: F811
@@ -260,6 +263,50 @@ async def test_opnieuw_scannen_ook_van_een_ander(media_app, client, admin):  # n
     assert len(queued) == 1 and queued[0].payload.get("full") is True
     failed(await client.post(f"{BASE}/libraries/{uuid.uuid4()}/scan", headers=admin_headers),
            404, "not_found")  # fmt: skip
+
+
+async def test_kopieen_van_elke_bibliotheek(media_app, client, admin, monkeypatch):  # noqa: F811
+    """Replicatie per bibliotheek: de beheerder zet de kopieën in het cluster, ook van de
+    bibliotheek van Bert; null is weer de standaard. Elke wijziging wekt blobsplit. 404 voor een
+    onbekende, 422 voor iets anders dan 1, 2, 3 of null."""
+    from app import blobsplit
+
+    settings, _ = media_app
+    admin_headers, _ = admin
+    kicks: list[int] = []
+    monkeypatch.setattr(blobsplit, "kick", lambda: kicks.append(1))
+    headers, _ = await person(client, admin_headers, "bert@example.nl")
+    top = (await root(client, headers))["folder"]["id"]
+    films = await mkdir(client, headers, top, "Films")
+    r = await client.post("/api/v1/media/libraries", json={"root_id": films, "kind": "movies"},
+                          headers=headers)  # fmt: skip
+    lib = r.json()["id"]
+    assert r.json()["copies"] is None
+    r = await client.patch(f"{BASE}/libraries/{lib}", json={"copies": 2}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    assert (r.json()["id"], r.json()["copies"], r.json()["path"]) == (lib, 2, "/Films")
+    assert [v for v in (await overview(client, admin_headers))["libraries"] if v["id"] == lib][0][
+        "copies"
+    ] == 2
+    # Bert ziet het ook, maar mag het zelf niet wijzigen (alleen beheerders)
+    mine = (await client.get("/api/v1/media/libraries", headers=headers)).json()
+    assert [x["copies"] for x in mine] == [2]
+    failed(await client.patch(f"/api/v1/media/libraries/{lib}", json={"copies": 3},
+                              headers=headers), 403, "admin_only")  # fmt: skip
+    # Zelfde waarde: geen nieuwe ronde; null: de standaard
+    await client.patch(f"{BASE}/libraries/{lib}", json={"copies": 2}, headers=admin_headers)
+    r = await client.patch(f"{BASE}/libraries/{lib}", json={"copies": None}, headers=admin_headers)
+    assert r.json()["copies"] is None
+    assert len(kicks) == 2
+    for wrong in (0, 4, "twee"):
+        r = await client.patch(
+            f"{BASE}/libraries/{lib}", json={"copies": wrong}, headers=admin_headers
+        )
+        assert r.status_code == 422, wrong
+    assert (await client.patch(f"{BASE}/libraries/{lib}", json={}, headers=admin_headers)
+            ).status_code == 422  # fmt: skip
+    failed(await client.patch(f"{BASE}/libraries/{uuid.uuid4()}", json={"copies": 1},
+                              headers=admin_headers), 404, "not_found")  # fmt: skip
 
 
 async def test_het_overzicht_als_media_op_beheer_uit_staat(media_app, client, admin):  # noqa: F811

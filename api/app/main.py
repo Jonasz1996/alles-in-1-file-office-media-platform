@@ -559,7 +559,8 @@ async def lifespan(app: FastAPI):
         if settings.environment == "production"
         else None
     )
-    # Films en series naar blobs-media/ (2 kopieën in het cluster); alleen met PLATFORM_BLOB_SPLIT
+    # Replicatie per bibliotheek (blobs-r1/ tot blobs-r3/ in het cluster); alleen met
+    # PLATFORM_BLOB_SPLIT
     split_task = None
     if settings.blob_split:
         from app import blobsplit

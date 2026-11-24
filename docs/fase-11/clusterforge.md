@@ -96,58 +96,19 @@ Jonas (23-11-2026): per plek, niet per soort bestand. Wat in een bibliotheek voo
 staat (vroeger Plex) mag op 2 kopieën; al de rest (vroeger Nextcloud, ook de video's daarin)
 blijft op 3.
 
-Onze bestanden staan in SeaweedFS op hun hash (`blobs/ab/cd/<sha256>`), niet op hun plek in de
-boom. Daarom zet de app inhoud waar alleen films en series naar wijzen in een tweede map,
-`blobs-media/`, naast `blobs/` (`api/app/blobsplit.py`, elk uur, en bij de start). Staat dezelfde
-inhoud ook in iemands eigen map, dan blijft of komt ze terug in `blobs/`. Nieuwe downloads en
-uploads komen eerst in `blobs/` en verhuizen binnen het uur. Een verhuisde kopie blijft nog een
-dag in `.weg/` liggen (een lopende stream leest verder) en gaat dan weg.
+**Vervangen (24-11-2026) door replicatie per bibliotheek:** de beheerder kiest nu per bibliotheek
+het aantal kopieën ("Standaard", 1, 2 of 3; bv. Films x2, Series x3), op /beheer → Media →
+Bibliotheken. De inhoud gaat naar `blobs-r1/`, `blobs-r2/` of `blobs-r3/` in plaats van naar
+`blobs-media/`; de regels in SeaweedFS zijn per map (collecties `r1`, `r2`, `r3` in plaats van
+`media`), en `platform-ctl.sh replicatie` moet die drie collecties overslaan. De stappen in het
+cluster (de mount zonder `-replication`, `fs.configure` per map, `PLATFORM_BLOB_SPLIT` en
+`PLATFORM_BLOB_DEFAULT_COPIES`, nakijken en terugzetten) staan in
+[docs/runbooks/replicatie.md](../runbooks/replicatie.md). Films x2 zoals hierboven: Films en
+Series daar op 2 zetten.
 
-Wat er nu in het cluster staat (template `media-platform` 1.0.0 in ClusterForge, gezien 23-11):
-de master heeft `-defaultReplication=002`, de filer `-defaultReplicaPlacement=002`, en de mount
-(`cf-platform-mount.service`, op elke node) geeft zelf `-replication=002` mee. Die laatste wint
-van elke regel per map, dus die moet weg. De standaard 002 van master en filer blijft: al de
-rest blijft zo op 3 kopieën, een regel voor `/` is niet nodig.
-
-**A. In de template (repo ClusterForge, `internal/templates/builtin/media-platform/1.0.0`):**
-
-1. `files/cf-platform-mount.service.tmpl`: ` -replication={{ .params.replication }}` weglaten
-   uit `ExecStart`. Dat geldt dan voor alle nodes.
-2. `files/platform-cluster.yaml.tmpl`, bij `environment` van het platform:
-   `PLATFORM_BLOB_SPLIT: ${PLATFORM_BLOB_SPLIT:-false}`; en in `files/platform.env.tmpl` een
-   regel `PLATFORM_BLOB_SPLIT=true` (of een parameter aan/uit, standaard uit).
-3. `files/platform-ctl.sh.tmpl`, functie `replicatie`: die zet nu ALLE volumes op de replicatie
-   van ClusterForge (`volume.configure.replication … -collectionPattern *`) en `--check` meldt
-   elk volume dat afwijkt. De volumes van collectie `media` moet hij overslaan: in
-   `volumes_placements` alleen volumes zonder collectie meetellen, en `volume.configure.replication`
-   alleen op de standaardcollectie laten werken. Anders zet hij de films terug op 3 kopieën en
-   blijft de controle rood.
-
-**B. Na de update van het platform naar een versie met blobsplit (dus na 0.8.2):**
-
-1. De template uitrollen. Daarna de mount per node herstarten, de VIP-node als laatste:
-   - op elke andere node: `systemctl restart cf-platform-mount`;
-   - op de VIP-node: `platform-ctl.sh down`, `systemctl restart cf-platform-mount`,
-     `platform-ctl.sh up`.
-   Nakijken: `ps aux | grep "weed mount"` toont geen `-replication` meer.
-2. De regel zetten, één keer (geldt voor het hele cluster), op een node:
-   ```
-   printf 'fs.configure -locationPrefix=/blobs-media/ -collection=media -replication=001 -apply\n' | weed shell -master=127.0.0.1:9333
-   ```
-   De mount gebruikt `-filer.path=/`, dus `/srv/platform-data/blobs-media` is in de filer
-   `/blobs-media/`. `001` is 2 kopieën op verschillende nodes: met 3 nodes overleeft dat het
-   verlies van één node.
-3. `PLATFORM_BLOB_SPLIT=true` staat in platform.env (stap A2); de app herstarten. De eerste
-   ronde kopieert alle films en series één keer (dat duurt even en vraagt tijdelijk extra
-   ruimte per film).
-4. Nakijken: `printf 'volume.list\n' | weed shell -master=127.0.0.1:9333 | grep -c 'collection:"media"'`
-   geeft volumes, en die hebben `replica_placement:1`; de andere volumes `2`. In de log van de
-   app staat na een ronde `blobsplit: {'naar_media': …}`.
-
-Zonder `PLATFORM_BLOB_SPLIT` doet de app niets en blijft alles in `blobs/`. Uitzetten kan altijd:
-wat al in `blobs-media/` staat, blijft daar leesbaar (de app kijkt in beide mappen). Terug naar 3
-kopieën voor alles: de regel van stap 2 op `-replication=002` zetten en de map één keer laten
-herschrijven (`fs.configure` geldt alleen voor wat nieuw geschreven wordt).
+Wat nog in `blobs-media/` staat (wie de versie van 23-11 met `PLATFORM_BLOB_SPLIT=true` draaide),
+blijft leesbaar en verhuist naar zijn juiste plek; de regel `fs.configure -locationPrefix=/blobs-media/`
+mag daarna weg (zie het runbook).
 
 ## 8. Terug
 

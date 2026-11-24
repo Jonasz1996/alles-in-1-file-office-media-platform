@@ -45,8 +45,13 @@ class Settings(BaseSettings):
     clients_dir: Path = Path("clients")
     # Waar GitHub de gebouwde apps zet (release "clients"); leeg: niet ophalen (app.client_fetch)
     clients_repo: str = "Jonasz1996/alles-in-1-file-office-media-platform"
-    # Films en series in blobs-media/ (app/blobsplit.py), voor 2 kopieën in SeaweedFS
+    # Replicatie per bibliotheek (app/blobsplit.py, docs/runbooks/replicatie.md): inhoud met een
+    # ander aantal kopieën dan de standaard naar blobs-r1/, blobs-r2/ of blobs-r3/. Alleen voor
+    # het cluster, waar SeaweedFS per map een eigen replicatie heeft
     blob_split: bool = False
+    # Hoeveel kopieën het cluster zelf geeft voor blobs/ (de replicatie van master en filer);
+    # een bibliotheek zonder eigen keuze krijgt dit aantal
+    blob_default_copies: int = Field(default=3, ge=1, le=3)
 
     # Poorten in de container. https start pas zodra er een certificaat is; het domein
     # stel je in op /beheer.

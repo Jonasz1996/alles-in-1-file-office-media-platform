@@ -440,6 +440,7 @@ class LoadtestFile(BaseModel):
 # fake_stream.py geeft precies deze vormen. Tijden in ms mediatijd, datums ISO 8601 in UTC.
 
 LibraryKind = Literal["movies", "shows", "music", "videos"]
+Copies = Literal[1, 2, 3]  # kopieën in het cluster per bibliotheek (0019)
 LIBRARY_KINDS: tuple[str, ...] = LibraryKind.__args__  # type: ignore[attr-defined]
 ScanState = Literal["idle", "queued", "running", "failed"]
 ItemKind = Literal["movie", "episode", "track", "video", "extra"]
@@ -479,23 +480,37 @@ class Library(BaseModel):
     scan_state: ScanState = "idle"
     scanned_at: datetime | None = None
     online: bool = False  # online opzoeken (Keuze 39)
+    # Kopieën in het cluster (0019, app/blobsplit.py): 1, 2 of 3; None is de standaard van het
+    # cluster (PLATFORM_BLOB_DEFAULT_COPIES)
+    copies: Copies | None = None
 
 
 class LibraryIn(BaseModel):
-    """POST /api/v1/media/libraries → 201 Library."""
+    """POST /api/v1/media/libraries → 201 Library. copies alleen voor een beheerder (anders 403
+    admin_only)."""
 
     root_id: uuid.UUID
     kind: LibraryKind
     name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     online: bool | None = None
+    copies: Copies | None = None
 
 
 class LibraryPatch(BaseModel):
-    """PATCH /api/v1/media/libraries/{id} → 200 Library."""
+    """PATCH /api/v1/media/libraries/{id} → 200 Library. copies: null zet de standaard terug;
+    weglaten verandert niets. Alleen voor een beheerder (anders 403 admin_only)."""
 
     name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     online: bool | None = None
     language: Annotated[str, Field(pattern=r"^[a-z]{2,3}(-[A-Z]{2})?$")] | None = None
+    copies: Copies | None = None
+
+
+class LibraryCopiesIn(BaseModel):
+    """PATCH /api/v1/admin/media/libraries/{id} → 200 AdminLibrary: de kopieën in het cluster van
+    elke bibliotheek, ook die van een ander. null: de standaard van het cluster."""
+
+    copies: Copies | None
 
 
 class CardProgress(BaseModel):
@@ -1111,6 +1126,10 @@ class MediaAdmin(BaseModel):
     # M0-hotfix van M10 (additief): hoe vaak een native speler (HLS) opnieuw moest laden na een
     # andere stsd (streams.native_reloads, M4; sinds de start van de app)
     native_reloads: int = 0
+    # Replicatie per bibliotheek (app/blobsplit.py): staat PLATFORM_BLOB_SPLIT aan (anders doet
+    # de keuze per bibliotheek nog niets), en de standaard van het cluster
+    blob_split: bool = False
+    blob_default_copies: int = 3
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 

@@ -193,15 +193,22 @@ export interface Library {
   scanned_at: string | null;
   /** Online opzoeken (Keuze 39) */
   online: boolean;
+  /** Kopieën in het cluster (0019): 1, 2 of 3; null is de standaard van het cluster */
+  copies?: Copies | null;
 }
 
+/** Kopieën in het cluster per bibliotheek (replicatie per bibliotheek, 0019) */
+export type Copies = 1 | 2 | 3;
+
 /** POST /api/v1/media/libraries → 201 Library | 403 media_not_owner | 409 media_library_nested
- * | 422 media_library_not_folder | 422 media_library_limit */
+ * | 422 media_library_not_folder | 422 media_library_limit. copies alleen voor een beheerder
+ * (anders 403 admin_only) */
 export interface LibraryIn {
   root_id: string;
   kind: LibraryKind;
   name?: string;
   online?: boolean;
+  copies?: Copies | null;
 }
 
 /** PATCH /api/v1/media/libraries/{id} → 200 Library */
@@ -210,6 +217,8 @@ export interface LibraryPatch {
   online?: boolean;
   /** "nl-NL" */
   language?: string;
+  /** null: de standaard van het cluster; alleen een beheerder (anders 403 admin_only) */
+  copies?: Copies | null;
 }
 
 /** Het soort item (media_item.kind). */
@@ -864,6 +873,9 @@ export interface MediaAdmin {
   notices: { code: MediaNotice; params: Record<string, unknown>; text: string }[];
   /** M0-hotfix van M10 (additief): hoe vaak een native speler opnieuw laadde (M4) */
   native_reloads?: number;
+  /** Replicatie per bibliotheek: staat PLATFORM_BLOB_SPLIT aan, en de standaard van het cluster */
+  blob_split?: boolean;
+  blob_default_copies?: number;
 }
 
 /** POST /api/v1/admin/media/cache/clear (body) */

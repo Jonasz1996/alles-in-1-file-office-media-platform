@@ -67,6 +67,8 @@ FASE11 = (
     "/api/v1/media/items/{node_id}/collection",
     # Account resetten: de code van "Wachtwoord vergeten of kan niet inloggen?"
     "/api/v1/auth/reset-request",
+    # Replicatie per bibliotheek (0019): de kopieën in het cluster vanaf /beheer (PATCH)
+    "/api/v1/admin/media/libraries/{library_id}",
 )
 
 
