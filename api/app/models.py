@@ -82,6 +82,47 @@ class User(Base):
     locale: Mapped[str | None] = mapped_column(String(5), nullable=True)
     # Geblokkeerd door een beheerder: kan niets meer, ook niet met een uitgegeven token
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Gezet door `app.cli reset-account`: het wachtwoord is tijdelijk en werkt tot dit moment.
+    # Zolang het gezet is, kan de gebruiker alleen zijn wachtwoord wijzigen (zie
+    # security.current_user); daarna gaat het terug op None.
+    password_temp_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AccountReset(Base):
+    """Logboek van de resets met `app.cli reset-account`: één rij per reset. Bewust zonder
+    foreign key, zodat de rij blijft als het account later verwijderd wordt."""
+
+    __tablename__ = "account_reset"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    email: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Eerste aanmelding met het tijdelijke wachtwoord, en het moment dat de gebruiker er een
+    # eigen wachtwoord voor in de plaats zette
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResetRequest(Base):
+    """Een openstaand verzoek van "Wachtwoord vergeten of kan niet inloggen?": de inlogpagina
+    geeft een willekeurige code en bewaart hier alleen de sha256 ervan, met de ingevulde login.
+    De beheerder geeft de code aan `app.cli reset-account`. Of het account bestaat, kijkt pas de
+    CLI na: zo is het antwoord voor elke login hetzelfde, en kan niemand een code voor een
+    willekeurige naam verzinnen."""
+
+    __tablename__ = "reset_request"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    login: Mapped[str] = mapped_column(String(320))
+    ip: Mapped[str] = mapped_column(String(45), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RecoveryCode(Base):

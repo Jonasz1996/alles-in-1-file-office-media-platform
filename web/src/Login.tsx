@@ -6,10 +6,11 @@
 // - Geen verbinding: een eigen scherm dat het opnieuw probeert zodra de browser online is.
 // - Bij 2FA een tweede stap met "Terug"; een blokkade na te veel foute codes toont wanneer het
 //   weer kan (params.until van totp_locked).
+// - "Wachtwoord vergeten of kan niet inloggen?": een code voor de systeembeheerder (CantLogIn.tsx, apart geladen).
 
-import { type FormEvent, type JSX, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type JSX, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type User } from "./api";
-import { errorText, fmt, isNetworkError, t } from "./i18n";
+import { errorText, fmt, isNetworkError, lazyWithAreas, t } from "./i18n";
 import { markReady } from "./perf";
 import { Button } from "./ui/Button";
 import { EmptyState } from "./ui/EmptyState";
@@ -19,9 +20,14 @@ import { PageTitle } from "./ui/PageTitle";
 import { Spinner } from "./ui/Spinner";
 import "./login.css";
 
+// "Wachtwoord vergeten of kan niet inloggen?" in een eigen chunk (met het gebied reset): niet in de
+// eerste lading
+const CantLogIn = lazyWithAreas(() => import("./CantLogIn"), ["reset"]);
+
 const MIN_PASSWORD = 10;
 
 type Step = "login" | "code";
+
 
 /** Wanneer een blokkade (totp_locked) afloopt, als de server het zei. */
 function lockedUntil(e: unknown): number | null {
@@ -61,6 +67,7 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
   const [error, setError] = useState<string | null>(message ?? null);
   const [lock, setLock] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const checkStatus = useCallback(() => {
@@ -177,6 +184,14 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
     );
   }
 
+  if (help) {
+    return (
+      <Suspense>
+        <CantLogIn email={email} onClose={() => setHelp(false)} />
+      </Suspense>
+    );
+  }
+
   const title = setup ? t("auth.setupTitle") : step === "code" ? t("auth.codeTitle") : t("auth.title");
 
   return (
@@ -254,7 +269,13 @@ export function Login({ onLoggedIn, message }: { onLoggedIn: (u: User) => void; 
             {setup ? t("auth.createAccount") : t("auth.submit")}
           </Button>
         </div>
-        {!setup && step === "login" && <p className="login-forgot muted">{t("auth.forgot")}</p>}
+        {!setup && (
+          <p className="login-forgot">
+            <button type="button" className="link" onClick={() => setHelp(true)}>
+              {t("auth.cantLogIn")}
+            </button>
+          </p>
+        )}
       </form>
     </main>
   );
