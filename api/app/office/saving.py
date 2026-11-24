@@ -28,6 +28,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
@@ -66,14 +67,20 @@ def repr_digest(sha: str) -> str:
     return "sha-256=:" + base64.b64encode(bytes.fromhex(sha)).decode() + ":"
 
 
-async def download(settings: Settings, key: str, url: str, limit: int) -> tuple[Path, str, int]:
+async def download(
+    settings: Settings,
+    key: str,
+    url: str,
+    limit: int,
+    kind: Literal["data", "saveas"] = "data",
+) -> tuple[Path, str, int]:
     """Een adres uit een callback ophalen naar blobs.root/.tmp: (pad, sha, grootte).
 
     Alleen pad en query tellen, en het pad moet bij deze key passen (urls.rewrite, Keuze 13):
     anders ValueError en gaat er niets weg. Het verzoek gaat via de http-client van de adapter
     (engine.upstream, regel 7 van §2.0). Groter dan limit: DownloadTooLarge; een andere fout:
     DownloadError. Bij een fout blijft er niets staan."""
-    target = urls.rewrite(settings, url, key=key, kind="data")
+    target = urls.rewrite(settings, url, key=key, kind=kind)
     base = settings.office_url.rstrip("/")
     path = target[len(base) :]
     upstream = engine.upstream()

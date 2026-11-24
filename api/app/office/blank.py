@@ -28,15 +28,25 @@ import io
 import zipfile
 from typing import Literal
 
-Kind = Literal["docx", "xlsx", "pptx"]
+Kind = Literal["docx", "xlsx", "pptx", "txt"]
 Language = Literal["nl", "en"]
 
-KINDS: tuple[Kind, ...] = ("docx", "xlsx", "pptx")
+KINDS: tuple[Kind, ...] = ("docx", "xlsx", "pptx", "txt")
 
 # De naam van een nieuw document, zonder extensie, per taal (Keuze 24)
 NAMES: dict[Language, dict[Kind, str]] = {
-    "nl": {"docx": "Nieuw document", "xlsx": "Nieuw werkblad", "pptx": "Nieuwe presentatie"},
-    "en": {"docx": "New document", "xlsx": "New spreadsheet", "pptx": "New presentation"},
+    "nl": {
+        "docx": "Nieuw document",
+        "xlsx": "Nieuw werkblad",
+        "pptx": "Nieuwe presentatie",
+        "txt": "Nieuw tekstbestand",
+    },
+    "en": {
+        "docx": "New document",
+        "xlsx": "New spreadsheet",
+        "pptx": "New presentation",
+        "txt": "New text file",
+    },
 }
 # De taal van de tekst (w:lang, a:endParaRPr lang) en de naam van het eerste blad
 TAGS: dict[Language, str] = {"nl": "nl-NL", "en": "en-GB"}
@@ -90,6 +100,8 @@ def blank(kind: Kind, locale: str | None) -> bytes:
     """Een leeg document van deze soort, in de taal van locale. Elke keer dezelfde bytes."""
     if kind not in KINDS:
         raise ValueError(f"onbekende soort: {kind}")
+    if kind == "txt":
+        return b""  # een leeg tekstbestand: geen bytes (de web-app bewaart UTF-8)
     return _build(kind, language(locale))
 
 
