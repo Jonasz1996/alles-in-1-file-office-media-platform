@@ -98,6 +98,25 @@ export function textFraction(index: AdminSearch["index"]): number | null {
   return Math.min(1, Math.max(0, index.text_done / index.text_total));
 }
 
+/** De acties van één blok die nog lopen. Een blok is bezig (de sleutel van de laatst gestarte) tot
+ * ze allemaal klaar zijn, en pas dan null. Ze kunnen elkaar overlappen: "Meer laden" staat er al
+ * terwijl het tonen van de lijst nog ververst. Zette elke actie bij haar eigen einde null, dan was
+ * het blok niet meer bezig terwijl "Meer laden" nog liep: useFocusAfter gaf de focus dan te vroeg
+ * terug (de knop had hem nog) en daarna niet meer, als de knop weg was. */
+export function runs(setBusy: (key: string | null) => void): { start(key: string): void; end(): void } {
+  let open = 0;
+  return {
+    start(key) {
+      open += 1;
+      setBusy(key);
+    },
+    end() {
+      open = Math.max(0, open - 1);
+      if (open === 0) setBusy(null);
+    },
+  };
+}
+
 // --- het tabblad -----------------------------------------------------------------------------------
 
 type Reload = () => Promise<void>;
@@ -182,10 +201,11 @@ function useFocusAfter(busy: boolean, heading: RefObject<HTMLElement | null>): (
 
 function useAction(reload: Reload, heading: RefObject<HTMLElement | null>) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [open] = useState(() => runs(setBusy));
   const [error, setError] = useState<string | null>(null);
   const press = useFocusAfter(busy !== null, heading);
   async function run(key: string, fn: () => Promise<string | null>): Promise<void> {
-    setBusy(key);
+    open.start(key);
     try {
       const message = await fn();
       setError(null);
@@ -194,7 +214,7 @@ function useAction(reload: Reload, heading: RefObject<HTMLElement | null>) {
     } catch (e) {
       setError(errorText(e));
     } finally {
-      setBusy(null);
+      open.end();
     }
   }
   return { busy, error, press, run };

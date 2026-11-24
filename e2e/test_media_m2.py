@@ -65,8 +65,13 @@ def expect_focus_text(page: Any, text: str) -> None:
     )
 
 
-def tab_to(page: Any, selector: str, presses: int = 12) -> None:
-    """Tab tot het element van selector de focus heeft (hooguit presses keer)."""
+def tab_to(page: Any, selector: str, presses: int = 40) -> None:
+    """Tab tot het element van selector de focus heeft (hooguit presses keer).
+
+    40 is een grens voor de lus, geen belofte (zoals tab_to in test_media_m9.py): vanaf de top van
+    een pagina gaat Tab eerst langs de balk (naar inhoud, tot acht items van het menu, het
+    zoekveld, het account), en die groeit met het menu (0.8.2: Dubbel). Met 12 haalde "Verder op"
+    op een item het niet meer. Een test die de stops precies telt, geeft presses mee (M10)."""
     for _ in range(presses):
         page.keyboard.press("Tab")
         if page.evaluate(
