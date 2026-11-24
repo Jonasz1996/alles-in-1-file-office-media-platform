@@ -69,6 +69,9 @@ FASE11 = (
     "/api/v1/auth/reset-request",
     # Replicatie per bibliotheek (0019): de kopieën in het cluster vanaf /beheer (PATCH)
     "/api/v1/admin/media/libraries/{library_id}",
+    # Txt-fix (0.8.3): "Opslaan als" uit de editor en omzetten bij hernoemen (POST)
+    "/api/v1/office/files/{node_id}/save-as",
+    "/api/v1/office/files/{node_id}/convert-to",
 )
 
 
