@@ -51,7 +51,7 @@ from app.routers.files import TagRef, get_tree_access, tag_order, tree
 from app.routers.stubs import not_built
 from app.search import engine as engines
 from app.search import hooks as search_hooks
-from app.search.engine import LIKE, engine_for
+from app.search.engine import engine_for
 from app.search.filters import FILTERS
 from app.search.like import own_tag, search_roots
 from app.search.limits import Replaced, admit
@@ -195,12 +195,9 @@ async def search(
     if not q.strip() and not params.has_filter():
         raise errors.fail(400, "search_bad_filter", "Geef een zoekvraag of een filter")
     engine = await engine_for(settings, await session.connection())
-    if engine is LIKE:
-        page = await engine.search(session, user, params)
-        page.indexing = await analysis.indexing(session)
-        page.groups = await _groups(session, user, params)
-        page.fallback = fallback
-        return page
+    # Ook LIKE (de index uit, of een herbouw die loopt) gaat door admit: dezelfde snelheid per
+    # gebruiker en dezelfde rij van 2 tegelijk als de index (plan 0.8.2 P5 punt 5, vraag 9;
+    # review van PR #6, F5). LIKE is een scan zonder deadline: juist die moet in de rij.
     token = engines.SETTINGS.set(settings)
     # De tijd per stap in Server-Timing, alleen voor tests en metingen (Keuze 13)
     steps: dict[str, float] | None = {} if settings.search_timing else None
@@ -212,7 +209,7 @@ async def search(
             page = await engine.search(session, user, params)
     except Replaced:
         # Een nieuwere vraag van deze gebruiker nam de plek in de rij over (review golf 1, H4)
-        page = engines.stopped_page(params)
+        page = engines.stopped_page(params, engine.name)
     except QueryTooLong:
         raise errors.fail(
             400, "search_query_too_long", "Je zoekvraag is te lang", max_words=10
@@ -242,8 +239,6 @@ async def suggest(
     (app/search/suggest.py)."""
     _not_too_long(q)
     engine = await engine_for(settings, await session.connection())
-    if engine is LIKE:
-        return await engine.suggest(session, user, q)
     try:
         # geen verbinding vasthouden in de rij (zie search)
         async with admit(user, "suggest", settings, release=session.commit):

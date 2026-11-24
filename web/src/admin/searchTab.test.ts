@@ -11,6 +11,7 @@ import SearchTab, {
   photosRebuilding,
   POLL_MS,
   progressOf,
+  runs,
   SearchView,
   textFraction,
   withProgress,
@@ -62,7 +63,7 @@ function state(over: Partial<AdminSearch> = {}): AdminSearch {
   return {
     engine: "fts",
     paused: false,
-    index: { names_done: true, text_done: 3, text_total: 4, failed: 2 },
+    index: { names_done: true, text_done: 3, text_total: 4, failed: 2, capped: 0 },
     rebuild: null,
     extract_in_sandbox: true,
     per_hour: { deadline_b: 5, deadline_c: 6, busy: 7 },
@@ -208,13 +209,19 @@ describe("de tab Zoeken en foto's (Z7)", () => {
   });
 
   it("zonder bestanden met tekst geen voortgangsbalk; zonder mislukte geen knop en geen lijst", () => {
-    const html = view(state({ index: { names_done: true, text_done: 0, text_total: 0, failed: 0 } }));
+    const html = view(state({ index: { names_done: true, text_done: 0, text_total: 0, failed: 0, capped: 0 } }));
     expect(field(html, "text")).toBe("0 van 0 bestanden");
     expect(html).not.toContain("<progress");
     expect(field(html, "failed")).toBe("0 inhouden");
     expect(html).not.toContain('data-search="retry"');
     expect(html).not.toContain('data-search="failed-toggle"');
     expect(html).toContain("Niets mislukt.");
+    expect(html).not.toContain('data-search="capped"');
+  });
+
+  it("ingekorte documenten (de index op PostgreSQL, 1 MB per document) alleen als er zijn", () => {
+    const html = view(state({ index: { names_done: true, text_done: 4, text_total: 4, failed: 0, capped: 2 } }));
+    expect(field(html, "capped")).toBe("2 bestanden: te groot voor de index, het eind is niet vindbaar");
   });
 
   it("de wekelijkse search-check (I1): geen verschil, of een verschil in rood met wat Jonas doet", () => {
@@ -254,7 +261,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
     expect(oud).not.toContain('<dd data-search="check"><span class="badge degraded">');
     expect(oud).not.toContain("Herbouw de index (de knop hierboven).");
     // Tijdens een herbouw zoekt de app ook met LIKE: dan blijft de laatste uitkomst staan
-    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0 };
+    const index = { names_done: false, text_done: 3, text_total: 4, failed: 0, capped: 0 };
     const bezig = view(state({ engine: "like", index, check: { at, sampled: 200, bad: 3 } }));
     expect(field(bezig, "check")).toBe(`${fmt.dateTime(at)}: 3 verschillen met de bron (200 vergeleken)`);
   });
@@ -271,7 +278,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
 
   it("een herbouw van de index: voortgang, en de knop index herbouwen is weg", () => {
     const rebuild = { what: "text" as const, started_at: "2026-11-09T09:00:00+00:00", done: 0.42 };
-    const html = view(state({ rebuild, index: { names_done: false, text_done: 3, text_total: 4, failed: 0 } }));
+    const html = view(state({ rebuild, index: { names_done: false, text_done: 3, text_total: 4, failed: 0, capped: 0 } }));
     expect(sections(html)).toEqual([
       "admin-search-title",
       "admin-search-engine",
@@ -331,7 +338,7 @@ describe("de tab Zoeken en foto's (Z7)", () => {
 
   it("de hulpjes: herbouwen van de index, van de foto's, en het deel tekst", () => {
     expect(indexRebuilding(state())).toBe(false);
-    expect(indexRebuilding(state({ index: { names_done: false, text_done: 0, text_total: 0, failed: 0 } }))).toBe(true);
+    expect(indexRebuilding(state({ index: { names_done: false, text_done: 0, text_total: 0, failed: 0, capped: 0 } }))).toBe(true);
     for (const what of ["names", "text"] as const) {
       expect(indexRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(true);
       expect(photosRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(false);
@@ -340,9 +347,9 @@ describe("de tab Zoeken en foto's (Z7)", () => {
       expect(photosRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(true);
       expect(indexRebuilding(state({ rebuild: { what, started_at: "x", done: 0 } }))).toBe(false);
     }
-    expect(textFraction({ names_done: true, text_done: 1, text_total: 4, failed: 0 })).toBe(0.25);
-    expect(textFraction({ names_done: true, text_done: 0, text_total: 0, failed: 0 })).toBeNull();
-    expect(textFraction({ names_done: true, text_done: 9, text_total: 4, failed: 0 })).toBe(1);
+    expect(textFraction({ names_done: true, text_done: 1, text_total: 4, failed: 0, capped: 0 })).toBe(0.25);
+    expect(textFraction({ names_done: true, text_done: 0, text_total: 0, failed: 0, capped: 0 })).toBeNull();
+    expect(textFraction({ names_done: true, text_done: 9, text_total: 4, failed: 0, capped: 0 })).toBe(1);
   });
 
   it("en: de stand in het Engels, zonder sleutel of {naam} in beeld", async () => {
@@ -461,5 +468,29 @@ describe("search.progress op de tab (0.8.2, z0-web.md Open 6)", () => {
     expect(searchTabSource).toContain("useServerEvents((event) => {");
     expect(searchTabSource).toContain("const progress = progressOf(event);");
     expect(searchTabSource).toContain("usePolling(adminSearch, POLL_MS)");
+  });
+});
+
+describe("acties die elkaar overlappen in één blok (0.8.2)", () => {
+  it("het blok blijft bezig tot de laatste actie klaar is, ook als de eerste eerder eindigt", () => {
+    const gezet: (string | null)[] = [];
+    const open = runs((key) => gezet.push(key));
+    // De lijst tonen, en "Meer laden" terwijl de lijst nog ververst
+    open.start("list");
+    open.start("more");
+    open.end(); // de lijst is klaar: het blok is nog bezig met "Meer laden"
+    expect(gezet).toEqual(["list", "more"]);
+    open.end(); // "Meer laden" klaar: nu pas niet meer bezig (useFocusAfter geeft de focus terug)
+    expect(gezet).toEqual(["list", "more", null]);
+    // Daarna gewoon weer: één actie, bezig en klaar
+    open.start("retry");
+    open.end();
+    expect(gezet).toEqual(["list", "more", null, "retry", null]);
+  });
+
+  it("useAction zet bezig alleen via runs, niet bij het einde van elke actie", () => {
+    expect(searchTabSource).toContain("const [open] = useState(() => runs(setBusy));");
+    expect(searchTabSource).toContain("open.end();");
+    expect(searchTabSource.split("setBusy(null)").length - 1).toBe(1); // alleen in runs
   });
 });

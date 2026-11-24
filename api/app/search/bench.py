@@ -1009,7 +1009,7 @@ def run(settings: Settings, args: argparse.Namespace) -> int:
     if args.command == "search-bench":
         return _bench(settings, args)
     # Ook op PostgreSQL (0.8.2): de index van 0014 (fts_node met tsvector), dezelfde herbouw in
-    # stukken, en check() vergelijkt met wat fts_refresh opnieuw zou schrijven
+    # stukken, en check() vergelijkt met fts_rows (wat de bron nu zou geven), zonder te schrijven
     import asyncio
 
     from app.db import get_engine

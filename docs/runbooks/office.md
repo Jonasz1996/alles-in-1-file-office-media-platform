@@ -16,6 +16,22 @@ Hieronder heet dat kortweg "het script"; een instelling zet je ervoor, zoals
 `curl … | OFFICE=uit bash`. Zolang 0.6.0 nog niet op `main` staat, gebruik je het adres van de
 branch en `PLATFORM_BRANCH`, zoals in `infra/single/README.md` ("Bijwerken naar 0.6.0").
 
+## Achter een reverse proxy (vanaf 0.8.2)
+
+Doet Nginx Proxy Manager (NPM) of een andere proxy het certificaat, en praat die http met het
+platform, dan moet het platform de proxy vertrouwen. Anders ziet de tunnel van de editor een
+verbinding over http, terwijl de browser `Origin: https://…` stuurt: de WebSocket krijgt dan
+403 en bewerken lukt niet.
+
+- Zet `PLATFORM_TRUSTED_PROXIES` op het adres of netwerk van de proxy (één node:
+  `TRUSTED_PROXIES=` in `/opt/platform/.env`, zie
+  [infra/single/README.md](../../infra/single/README.md); cluster:
+  `/etc/clusterforge/platform.env`). Geen `*`: dat weigert de app bij de start.
+- Zet in NPM **Websockets Support** aan voor de Proxy Host.
+
+De tunnel neemt dan het schema uit `X-Forwarded-Proto` en het IP van de gebruiker uit
+`X-Forwarded-For`, met dezelfde regels als de rest van de app, en geeft ze door aan DS.
+
 ## Vóór het bijwerken naar 0.6.0
 
 Eén controle op de LXC, vóór de eerste run met office:

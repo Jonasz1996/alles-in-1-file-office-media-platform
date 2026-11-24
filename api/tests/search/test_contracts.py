@@ -642,6 +642,7 @@ def test_een_oude_vraag_en_een_oud_antwoord_blijven_gelijk():
     }
     assert t.AdminSearch.model_validate(z0).model_dump() == {
         **z0,
+        "index": {**z0["index"], "capped": 0},  # review van PR #6 (F10): PostgreSQL kort in
         "faces": None,
         "beeld": None,
         "check": None,  # I1: de wekelijkse search-check

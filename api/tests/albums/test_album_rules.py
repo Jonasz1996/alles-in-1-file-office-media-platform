@@ -392,3 +392,35 @@ async def test_verversen_met_de_taak_de_nacht_en_na_uploads(client, huis, settin
     # Een taak voor een album dat intussen weg is, of voor iets dat geen album is: niets
     await rule_router.run(settings, {"album": str(uuid.uuid4())})
     await rule_router.run(settings, {"album": str(huis["een"])})
+
+
+# De vraag van de regel op SQLite, zoals in 0.8.1 (review van PR #6, F17): dezelfde SQL voor wie
+# op één node draait. Witruimte telt niet, haakjes wel.
+REGEL_SQL_081 = (
+    "SELECT n.id FROM node AS n WHERE n.owner_id = ? AND n.dead = ? AND n.kind = ? AND n.ftype "
+    "IN (?, ?) AND n.taken_day IS NOT NULL AND NOT (EXISTS (SELECT * FROM album_skip WHERE "
+    "album_skip.album_id = ? AND album_skip.node_id = n.id)) AND (n.num IN (SELECT "
+    "fts_node.rowid FROM fts_node WHERE fts_node MATCH ?) OR instr(n.search_name, ?) > ?) "
+    "ORDER BY n.taken_day DESC, n.taken_at DESC, n.id DESC LIMIT ? OFFSET ?"
+)
+
+
+@motoren.fts5
+async def test_de_vraag_van_de_regel_op_sqlite_is_die_van_081(client, huis, settings):
+    from sqlalchemy import event
+
+    from app.db import get_engine
+
+    gezien: list[str] = []
+
+    def _noteer(conn, cursor, statement, parameters, context, executemany):
+        if "album_skip.node_id = n.id" in statement:
+            gezien.append(" ".join(statement.split()))
+
+    sync = get_engine(settings).sync_engine
+    event.listen(sync, "before_cursor_execute", _noteer)
+    try:
+        await regel(client, huis["h_eva"], huis["album"], {"q": "strand"})
+    finally:
+        event.remove(sync, "before_cursor_execute", _noteer)
+    assert gezien == [REGEL_SQL_081]
