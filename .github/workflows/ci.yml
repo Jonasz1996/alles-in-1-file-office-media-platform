@@ -1263,9 +1263,8 @@ jobs:
     # zoals docs/runbooks/office.md en weer vooruit. Hij bouwt het platform vier keer (±17 min in
     # de sandbox met een warme build-cache; hier is de cache koud)
     timeout-minutes: 75
-    env:
-      # Chromium van de stap hieronder; de test (als root) vindt hem via dit pad
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
+    # PLAYWRIGHT_BROWSERS_PATH staat per stap: de context runner bestaat niet in env van een
+    # job (daar was de hele workflow ongeldig, 24-11-2026: geen enkele job liep)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1275,12 +1274,16 @@ jobs:
           python-version: "3.12"
       - name: Chromium voor Playwright (stap S, de echte editor)
         working-directory: api
+        env:
+          # Chromium hier; de test (als root) vindt hem via hetzelfde pad
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
         run: uv run --with playwright python -m playwright install --with-deps chromium
       # Als root, zoals op de LXC: .env (600) en de broncode zijn van root. sudo -E houdt
       # PLAYWRIGHT_BROWSERS_PATH en INSTALL_TEST_LOGS; PATH voor uv. Root krijgt een eigen cache
       # van uv: die van setup-uv blijft van de runner (de stap na de job ruimt hem op)
       - name: Office over een update, terug naar fase 3 en weer vooruit (test_install_update.sh)
         env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
           INSTALL_TEST_LOGS: ${{ runner.temp }}/install-update/logs
         run: |
           set -o pipefail
