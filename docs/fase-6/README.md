@@ -198,7 +198,9 @@ voor wat er met 0.8.1 bijkwam: [integratie-2.md](integratie-2.md).
   ook op PostgreSQL, net als de wekelijkse controle (die zet een afwijking meteen recht). De
   migratie vult de index meteen: reken op enkele minuten bij een grote bibliotheek.
 - **Gezichten en zoeken op beeld op PostgreSQL**, achter `PLATFORM_ANALYSE_POSTGRES=true`. De
-  template van ClusterForge zet dat aan zodra Analyse aan staat. De sleutels van gezichten staan
+  template van ClusterForge zet dat aan zodra Analyse aan staat (al op `main`), maar de sync van
+  de sleutels wist pas met PR #163 van ClusterForge: tot dan staat Analyse uit
+  ([runbook](../runbooks/cluster.md#van-081-naar-082)). De sleutels van gezichten staan
   per node; de app maakt nooit een nieuwe sleutel als er nog versleutelde gezichten zijn (een
   node waar de sleutel nog niet gesynchroniseerd is, wacht). `python -m app.cli sleutels-check`
   zegt of elke eigenaar met versleutelde gezichten een sleutel heeft die ze opent (exitcode 0),
