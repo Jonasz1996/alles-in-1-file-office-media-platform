@@ -488,6 +488,19 @@ describe("acties die elkaar overlappen in één blok (0.8.2)", () => {
     expect(gezet).toEqual(["list", "more", null, "retry", null]);
   });
 
+  it("idle zegt of er nog een actie loopt (het effect van een vorige render neemt de knop niet mee)", () => {
+    const open = runs(() => undefined);
+    expect(open.idle()).toBe(true);
+    open.start("list");
+    open.end(); // de lijst klaar; het effect van die render loopt pas na de volgende toets
+    open.start("more"); // "Meer laden" ingedrukt
+    expect(open.idle()).toBe(false); // dat effect laat de ingedrukte knop staan
+    open.end();
+    expect(open.idle()).toBe(true);
+    expect(searchTabSource).toContain("useFocusAfter(busy !== null, heading, open.idle)");
+    expect(searchTabSource).toContain("if (busy || !idle()) return;");
+  });
+
   it("useAction zet bezig alleen via runs, niet bij het einde van elke actie", () => {
     expect(searchTabSource).toContain("const [open] = useState(() => runs(setBusy));");
     expect(searchTabSource).toContain("open.end();");

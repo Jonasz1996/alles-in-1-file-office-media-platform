@@ -103,7 +103,11 @@ export function textFraction(index: AdminSearch["index"]): number | null {
  * terwijl het tonen van de lijst nog ververst. Zette elke actie bij haar eigen einde null, dan was
  * het blok niet meer bezig terwijl "Meer laden" nog liep: useFocusAfter gaf de focus dan te vroeg
  * terug (de knop had hem nog) en daarna niet meer, als de knop weg was. */
-export function runs(setBusy: (key: string | null) => void): { start(key: string): void; end(): void } {
+export function runs(setBusy: (key: string | null) => void): {
+  start(key: string): void;
+  end(): void;
+  idle(): boolean;
+} {
   let open = 0;
   return {
     start(key) {
@@ -113,6 +117,9 @@ export function runs(setBusy: (key: string | null) => void): { start(key: string
     end() {
       open = Math.max(0, open - 1);
       if (open === 0) setBusy(null);
+    },
+    idle() {
+      return open === 0;
     },
   };
 }
@@ -182,17 +189,26 @@ function Body({ s, reload }: { s: AdminSearch; reload: Reload }): JSX.Element {
 
 // --- focus en acties (zoals MediaTab) -------------------------------------------------------------
 
-/** Na een actie: terug naar de knop die je indrukte, of naar de kop als die knop weg is. */
-function useFocusAfter(busy: boolean, heading: RefObject<HTMLElement | null>): () => void {
+/** Na een actie: terug naar de knop die je indrukte, of naar de kop als die knop weg is.
+ *
+ * idle: of er echt geen actie meer loopt. Het effect van de render waarin het blok klaar was, kan
+ * pas lopen nadat een volgende toets al een actie begon (React voert het uit vlak voor de render
+ * van die toets). Zonder deze controle nam het de knop van die nieuwe actie mee; was die knop
+ * daarna weg ("Meer laden" op de laatste pagina), dan bleef de focus op body (CI-run 195). */
+function useFocusAfter(
+  busy: boolean,
+  heading: RefObject<HTMLElement | null>,
+  idle: () => boolean = () => true,
+): () => void {
   const pressed = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (busy) return;
+    if (busy || !idle()) return;
     const el = pressed.current;
     pressed.current = null;
     const now = document.activeElement;
     if (el === null || (now !== null && now !== document.body)) return;
     (el.isConnected ? el : heading.current)?.focus();
-  }, [busy, heading]);
+  }, [busy, heading, idle]);
   return () => {
     const now = document.activeElement;
     pressed.current = now instanceof HTMLElement ? now : null;
@@ -203,7 +219,7 @@ function useAction(reload: Reload, heading: RefObject<HTMLElement | null>) {
   const [busy, setBusy] = useState<string | null>(null);
   const [open] = useState(() => runs(setBusy));
   const [error, setError] = useState<string | null>(null);
-  const press = useFocusAfter(busy !== null, heading);
+  const press = useFocusAfter(busy !== null, heading, open.idle);
   async function run(key: string, fn: () => Promise<string | null>): Promise<void> {
     open.start(key);
     try {
