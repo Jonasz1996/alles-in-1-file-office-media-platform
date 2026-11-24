@@ -1,8 +1,8 @@
 """De echte server (python -m app.serve) als subproces, voor wat alleen daar te zien is: de
 toegangslog van uvicorn (test_search_logs.py) en de meting van §4.4 via HTTP
-(test_perf_100k.py). Zoals e2e/conftest.py: een eigen omgeving zonder PLATFORM_* van de
-ontwikkelaar, rate limits uit (alleen voor een testserver), en stoppen via de PID (SIGTERM, dan
-SIGKILL; nooit pkill).
+(test_perf_100k.py, ook op PostgreSQL). Zoals e2e/conftest.py: een eigen omgeving zonder
+PLATFORM_* van de ontwikkelaar, rate limits uit (alleen voor een testserver), en stoppen via de
+PID (SIGTERM, dan SIGKILL; nooit pkill).
 """
 
 from __future__ import annotations
@@ -28,10 +28,31 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def zonder_2fa(db: Path) -> None:
-    """2FA niet verplicht (zoals e2e/search_harness._zonder_2fa), rechtstreeks in SQLite."""
+def zonder_2fa(db: Path, database_url: str = "") -> None:
+    """2FA niet verplicht (zoals e2e/search_harness._zonder_2fa), rechtstreeks in SQLite, of
+    met database_url in die PostgreSQL-database (zoek-perf-pg)."""
     from app.security import SECURITY_KEY
 
+    if database_url:
+        import asyncio
+
+        import asyncpg
+
+        async def zet() -> None:
+            dsn = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+            con = await asyncpg.connect(dsn)
+            try:
+                await con.execute(
+                    "INSERT INTO setting (key, value, updated_at) SELECT $1::text, $2::json, now() "
+                    "WHERE NOT EXISTS (SELECT 1 FROM setting WHERE key = $1::text)",
+                    SECURITY_KEY,
+                    '{"require_2fa": false}',
+                )
+            finally:
+                await con.close()
+
+        asyncio.run(zet())
+        return
     with contextlib.closing(sqlite3.connect(db)) as con, con:
         con.execute(
             "INSERT INTO setting (key, value, updated_at) SELECT ?, ?, datetime('now') "

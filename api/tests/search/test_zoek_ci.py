@@ -123,3 +123,27 @@ def test_zoek_perf_draait_churn_en_de_triggers_op_3_46_1():
     assert len(samenvatting) == 1 and "$d/triggers.txt" in samenvatting[0]
     # Elke regel van het kort-blok leest als "naam: uitkomst", met een spatie na de dubbele punt
     assert ":$(" not in samenvatting[0], re.findall(r".*:\$\(.*", samenvatting[0])
+
+
+def test_zoek_perf_pg_meet_paragraaf_4_4_op_postgresql():
+    """P5 punt 8 (0.8.2): de job zoek-perf-pg draait dezelfde test als de stap §4.4 van
+    zoek-perf (dus dezelfde boom, rollen, routes en poorten), op PostgreSQL 17 via
+    PLATFORM_TEST_DATABASE_URL, met de getallen als artefact en een blok === kort === als
+    laatste stap."""
+    regels = job("zoek-perf-pg")
+    tekst = "\n".join(regels)
+    assert "image: postgres:17-alpine" in tekst
+    assert re.search(r"^\s+PLATFORM_TEST_DATABASE_URL: postgresql\+asyncpg://", tekst, re.M)
+    blokken = [re.sub(r"\\\n\s*", "", b) for _, b in _runs(regels)]
+    perf = [b for b in blokken if "-m zoek_perf" in b]
+    assert len(perf) == 1, perf
+    assert re.search(r"-m zoek_perf .*tests/search/test_perf_100k\.py(?=\s)", perf[0]), perf[0]
+    assert 'taskset -c "$CORES"' in perf[0] and "ZOEK_PERF_UIT=" in perf[0]
+    # Dezelfde test als in zoek-perf, niet een kopie
+    zp = [re.sub(r"\\\n\s*", "", b) for _, b in _runs(job("zoek-perf"))]
+    assert any("tests/search/test_perf_100k.py" in b for b in zp)
+    assert "name: zoek-perf-pg" in tekst and "uses: actions/upload-artifact@v4" in tekst
+    stappen = [i for i, line in enumerate(regels) if re.match(r"^      - ", line)]
+    laatste = "\n".join(regels[stappen[-1] :])
+    assert "name: Samenvatting" in laatste and 'echo "=== kort ==="' in laatste
+    assert "if: always()" in laatste and "zoek_100k.txt" in laatste
