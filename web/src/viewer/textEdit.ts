@@ -6,13 +6,19 @@
 //   het opslaan zelf.
 // - Laden: de hele inhoud (niet de eerste 512 KB zoals het lezen). Alleen UTF-8 (met of zonder
 //   BOM): een andere codering zou bij opslaan veranderen, dan kan bewerken niet (met een reden).
-// - Opslaan (de knop of Ctrl+S): PUT /files/{id}/content (api.replaceContent); de vorige inhoud
+// - Opslaan (de knop of Ctrl+S): PUT /files/{id}/content (putContent); de vorige inhoud
 //   wordt een versie. Een BOM en de regeleinden (CRLF of LF) blijven zoals ze waren: de textarea
 //   werkt met \n, en bij opslaan komen ze terug.
-// - Weggaan met wijzigingen die niet zijn opgeslagen (sluiten, naar een ander bestand, de pagina
-//   verlaten): eerst vragen (viewer/leaveGuard.ts en beforeunload).
+// - Typen tijdens het opslaan mag: wat erbij kwam, blijft in het veld (en is nog niet opgeslagen).
+// - Wie anders opslaat: opslaan stuurt de etag mee waar de tekst op voortbouwt (If-Match); is de
+//   inhoud intussen een andere, dan weigert de server (412 content_changed) en blijft de tekst in
+//   het veld. Ziet de viewer een andere etag terwijl je bewerkt (seen), dan meldt hij dat
+//   (changedOutside) in plaats van opnieuw te beginnen; "Toch opslaan" (overwrite) slaat op
+//   zonder If-Match, "Opnieuw laden" (reload) gooit de eigen wijzigingen weg.
+// - Weggaan met wijzigingen die niet zijn opgeslagen (sluiten, naar een ander bestand, terug in de
+//   browser, de pagina verlaten): eerst vragen (viewer/leaveGuard.ts en beforeunload).
 
-import type { FileNode } from "../api";
+import { ApiError, type FileNode } from "../api";
 import { canWrite, permissionOf } from "../sharing";
 import { matchKey } from "../ui/keys";
 
@@ -92,21 +98,51 @@ export interface EditState {
   problem: EditProblem;
   /** Een fout van laden of opslaan (al vertaald) */
   error: string | null;
+  /** De inhoud op de server is niet meer die waar de tekst op voortbouwt (iemand anders sloeg
+   * op, of opslaan gaf 412 content_changed) */
+  changedOutside: boolean;
 }
 
 export interface EditDeps {
   /** De hele inhoud */
   load(): Promise<Uint8Array>;
-  /** PUT /files/{id}/content */
-  save(body: Blob): Promise<FileNode>;
+  /** PUT /files/{id}/content; ifMatch: de etag waar de tekst op voortbouwt (undefined: altijd) */
+  save(body: Blob, ifMatch?: string): Promise<FileNode>;
   /** Een fout als tekst (i18n errorText) */
   errorText(e: unknown): string;
 }
 
+/** PUT /files/{id}/content met If-Match (zoals api.replaceContent, die geen headers meegeeft:
+ * api.ts zit in de eerste lading, en die zit op zijn budget). */
+export async function putContent(
+  api: { rawRequest(path: string, init?: RequestInit): Promise<Response> },
+  id: string,
+  body: Blob,
+  ifMatch?: string,
+): Promise<FileNode> {
+  const res = await api.rawRequest(`/api/v1/files/${id}/content`, {
+    method: "PUT",
+    body,
+    headers: ifMatch ? { "If-Match": ifMatch } : undefined,
+  });
+  return (await res.json()) as FileNode;
+}
+
 /** Bewerken van één tekstbestand: lezen → laden → bewerken ↔ opslaan → lezen. */
 export class TextEditSession {
-  private state: EditState = { phase: "reading", text: "", saved: "", problem: null, error: null };
+  private state: EditState = {
+    phase: "reading",
+    text: "",
+    saved: "",
+    problem: null,
+    error: null,
+    changedOutside: false,
+  };
   private format: TextFormat = { bom: false, crlf: false };
+  /** De etag van de inhoud waar de tekst op voortbouwt (bij laden, daarna die van het opslaan) */
+  private base: string | undefined;
+  /** De laatste etag die de viewer van het bestand kreeg */
+  private latest: string | undefined;
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: EditDeps) {}
@@ -131,10 +167,27 @@ export class TextEditSession {
     return (s.phase === "editing" || s.phase === "saving") && s.text !== s.saved;
   }
 
-  /** Bewerken beginnen: de hele inhoud laden. */
-  async start(): Promise<boolean> {
+  /** De etag die de viewer nu van het bestand heeft (een nieuwe lijst na node.changed). Een
+   * andere dan waar de tekst op voortbouwt: changedOutside, de tekst blijft. */
+  seen(etag: string | undefined): void {
+    this.latest = etag;
+    this.recheck();
+  }
+
+  private recheck(): void {
+    const s = this.state;
+    // Tijdens het opslaan kan de etag van het eigen opslaan er al zijn: pas daarna vergelijken
+    if (s.phase !== "editing") return;
+    const outside = this.latest !== undefined && this.base !== undefined && this.latest !== this.base;
+    if (outside && !s.changedOutside) this.set({ changedOutside: true });
+  }
+
+  /** Bewerken beginnen: de hele inhoud laden. etag: van de inhoud zoals de viewer hem nu kent. */
+  async start(etag?: string): Promise<boolean> {
     if (this.state.phase !== "reading") return this.state.phase === "editing";
-    this.set({ phase: "loading", error: null, problem: null });
+    this.base = etag;
+    this.latest = etag;
+    this.set({ phase: "loading", error: null, problem: null, changedOutside: false });
     let bytes: Uint8Array;
     try {
       bytes = await this.deps.load();
@@ -156,31 +209,64 @@ export class TextEditSession {
     return true;
   }
 
+  /** Het veld veranderde; ook tijdens het opslaan (dat slaat op wat er toen stond). */
   change(text: string): void {
-    if (this.state.phase !== "editing") return;
+    if (this.state.phase !== "editing" && this.state.phase !== "saving") return;
     this.set({ text });
   }
 
   /** Opslaan; geeft het bestand zoals de server het teruggaf, en de bytes die er nu staan. Zonder
-   * wijzigingen: niets (null). */
-  async save(): Promise<{ node: FileNode; bytes: Uint8Array } | null> {
+   * wijzigingen: niets (null). Met If-Match op de etag waar de tekst op voortbouwt; is die er
+   * niet meer (412): changedOutside, en de tekst blijft. */
+  save(): Promise<{ node: FileNode; bytes: Uint8Array } | null> {
+    return this.put(false);
+  }
+
+  /** "Toch opslaan": zonder If-Match, over wat er intussen op de server staat heen (dat blijft
+   * als versie bewaard). */
+  overwrite(): Promise<{ node: FileNode; bytes: Uint8Array } | null> {
+    return this.put(true);
+  }
+
+  private async put(force: boolean): Promise<{ node: FileNode; bytes: Uint8Array } | null> {
     const s = this.state;
-    if (s.phase !== "editing" || s.text === s.saved) return null;
+    if (s.phase !== "editing" || (s.text === s.saved && !force)) return null;
     const text = s.text;
     const bytes = writeText(text, this.format);
     this.set({ phase: "saving", error: null });
     try {
-      const node = await this.deps.save(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "text/plain" }));
-      this.set({ phase: "editing", saved: text });
+      const body = new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "text/plain" });
+      const before = this.base;
+      const node = await this.deps.save(body, force ? undefined : this.base);
+      this.base = node.etag;
+      // Wat de viewer eerder zag, is hiermee voorbij: de oude etag (de lijst loopt nog achter), of
+      // bij "Toch opslaan" ook die van de ander
+      if (force || this.latest === before) this.latest = node.etag;
+      // Alleen wat er werd opgeslagen; wat je intussen typte, blijft in het veld
+      this.set({ phase: "editing", saved: text, changedOutside: false });
+      this.recheck();
       return { node, bytes };
     } catch (e) {
-      this.set({ phase: "editing", error: this.deps.errorText(e) });
+      const changed = e instanceof ApiError && e.code === "content_changed";
+      this.set({
+        phase: "editing",
+        error: this.deps.errorText(e),
+        changedOutside: changed || this.state.changedOutside,
+      });
+      this.recheck();
       return null;
     }
   }
 
+  /** "Opnieuw laden": de eigen wijzigingen weg, de inhoud van nu laden (etag: die van nu). */
+  async reload(etag?: string): Promise<boolean> {
+    if (this.state.phase !== "editing") return false;
+    this.stop();
+    return this.start(etag);
+  }
+
   /** Terug naar lezen (de vraag of wijzigingen weg mogen, stelt de pagina eerst). */
   stop(): void {
-    this.set({ phase: "reading", text: "", saved: "", error: null });
+    this.set({ phase: "reading", text: "", saved: "", error: null, changedOutside: false });
   }
 }

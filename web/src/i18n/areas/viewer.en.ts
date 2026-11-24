@@ -109,6 +109,10 @@ const en: Translation<typeof nl> = {
       leaveTitle: "Discard changes?",
       leaveMessage: "You have changes to this text that have not been saved.",
       leaveConfirm: "Discard",
+      changedOutside:
+        "This file was changed outside this editor (saved by someone else or elsewhere). Your text is still here; saving would overwrite that other change.",
+      reload: "Reload",
+      overwrite: "Save anyway",
     },
   },
   office: {

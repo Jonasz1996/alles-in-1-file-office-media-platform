@@ -8,20 +8,22 @@ POST /api/v1/office/files/{id}/save-as {key, url, file_type, title} -> 201 NodeO
     de open sessie van dit bestand zijn waar deze gebruiker nu met schrijfrecht in zit
     (office._my_session, pending of open); anders 404. De kopie komt naast het origineel, in
     dezelfde map, met de naam van title (de extensie van file_type erbij als die ontbreekt) en
-    conflict rename. Schrijfrecht op die map is nodig (403 read_only); de grens is die van een
-    opslag (saving.limit_for: office_max_save_bytes of het quotum van de eigenaar van de map).
+    conflict rename (wie alleen dit ene bestand gedeeld kreeg en de map niet ziet: in zijn
+    eigen hoofdmap, copy_target). Schrijfrecht op die map is nodig (403 read_only); de grens is
+    die van een opslag (saving.limit_for: office_max_save_bytes of het quotum van de eigenaar
+    van de map).
 
 POST /api/v1/office/files/{id}/convert-to {format, name?} -> 201 NodeOut
-    Een omgezette kopie in dezelfde map (de web-app vraagt het bij hernoemen naar een andere
-    extensie). Het origineel blijft zoals het is. Wat kan, per groep (de bron volgens het
-    mime-type van de inhoud; tekst/csv als txt of csv):
+    Een omgezette kopie in dezelfde map, of net als hierboven in de eigen hoofdmap (de web-app
+    vraagt het bij hernoemen naar een andere extensie). Het origineel blijft zoals het is. Wat
+    kan, per groep (de bron volgens het mime-type van de inhoud; tekst/csv als txt of csv):
       tekst:    docx, doc, odt, rtf, docm, txt  -> docx, odt, rtf, txt, pdf
       werkblad: xlsx, xls, ods, xlsm, csv      -> xlsx, ods, csv, pdf
       dia:      pptx, ppt, odp, pptm           -> pptx, odp, pdf
     Een kantoorbestand gaat eerst door de invoercontrole (Keuze 23); dan een grant, zoals bij de
     PDF (Keuze 25), en engine.convert met een eigen key per verzoek (cv-<hex>: DS bewaart het
     antwoord onder de key, en elke vraag is nieuw). Hooguit 10 per 10 minuten per gebruiker,
-    samen met de voorbeelden op verzoek (convert.ASKS).
+    samen met de voorbeelden op verzoek (convert.ASKS); die grens geldt al vóór de invoercontrole.
 
 Fouten: 404 not_found (geen bestand, of geen sessie van jou met die key); 403 read_only; 404
 folder_not_found; 413 office_too_large, no_room of no_room_owner; 422 office_format (dit
@@ -41,7 +43,7 @@ from typing import Annotated
 
 import anyio
 import anyio.to_thread
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import errors
@@ -53,7 +55,7 @@ from app.office.state import office_policy, office_state
 from app.routers import office
 from app.routers.files import NodeOut, Store, clean_name, get_access, no_room, one_out, place_file
 from app.routers.office_contracts import SAVE_AS_FORMATS, ConvertToIn, SaveAsIn
-from app.routers.office_new import target_folder, with_extension
+from app.routers.office_new import Target, target_folder, with_extension
 from app.security import CurrentUser
 from app.storage import BlobStore
 
@@ -139,6 +141,19 @@ async def _file(session: AsyncSession, user: User, node_id: uuid.UUID) -> Node:
     return node
 
 
+async def copy_target(session: AsyncSession, user: User, node: Node) -> Target:
+    """Waar de kopie komt: de map van het origineel. Wie alleen dit ene bestand gedeeld kreeg,
+    ziet die map niet (404 folder_not_found): dan in zijn eigen hoofdmap, van hem en op zijn
+    quotum. Zonder eigen hoofdmap (een gast) blijft het 404 folder_not_found; alleen leesrecht
+    op de map van het origineel blijft 403 read_only."""
+    try:
+        return await target_folder(session, user, node.parent_id)
+    except HTTPException as e:
+        if e.status_code != 404 or node.owner_id == user.id:
+            raise
+    return await target_folder(session, user, user.root_id)
+
+
 def convert_to_failed(code: int) -> Exception:
     error = errors.fail(
         502, "office_convert_to_failed", f"Dit bestand kon niet worden omgezet (code {code})"
@@ -168,7 +183,7 @@ async def save_as(
     row = await office._my_session(session, user, node, ("pending", "open"))
     if row is None or row.key != body.key:
         raise errors.fail(404, "not_found", NOT_FOUND)
-    target = await target_folder(session, user, node.parent_id)
+    target = await copy_target(session, user, node)
     name = copy_name(node, body.title, file_type)
     limit, by_room = await saving.limit_for(session, office_settings, target.owner)
     key = row.key
@@ -239,10 +254,12 @@ async def convert_to(
             "office_too_large",
             f"Dit bestand is te groot om om te zetten (hooguit {limit // 1024**2} MB)",
         )
-    target = await target_folder(session, user, node.parent_id)
+    target = await copy_target(session, user, node)
     name = copy_name(node, body.name, output)
     out_limit, by_room = await saving.limit_for(session, office_settings, target.owner)
     sha = blob.sha256
+    # De grens per gebruiker vóór de invoercontrole: die is duur, en mag niet onbegrensd draaien
+    convert.ASKS.check(str(user.id))
     await session.commit()  # geen databaseverbinding vasthouden tijdens de controle en DS
     if ext not in PLAIN:
         verdict = await inspect.check(office_settings, blobs.path(sha), ext, sha)
@@ -250,7 +267,6 @@ async def convert_to(
             raise errors.fail(503, "office_unavailable", UNAVAILABLE)
         if not verdict.ok:
             raise convert.unsafe()
-    convert.ASKS.check(str(user.id))
     eng = engine.current()
     if eng is None:
         raise office.off()

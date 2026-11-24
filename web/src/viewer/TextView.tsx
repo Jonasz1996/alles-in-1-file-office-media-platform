@@ -8,6 +8,11 @@
 // vorige inhoud een versie; een BOM en CRLF blijven. Een nieuw tekstbestand (Nieuw → Tekstbestand)
 // opent meteen zo (startEditing, van de prop editText van de viewer). Wijzigingen die nog niet zijn
 // opgeslagen: de viewer vraagt eerst (leaveGuard.ts).
+//
+// Een nieuwe etag (iemand sloeg op; de viewer geeft TextView dan hetzelfde key, viewKeys.ts):
+// tijdens het lezen de nieuwe inhoud laden; tijdens het bewerken blijft de tekst, met de melding
+// "buiten de editor veranderd" en de keuze "Opnieuw laden" of "Toch opslaan". Opslaan stuurt de
+// etag mee (If-Match): een ander overschrijven gaat nooit zonder dat je het ziet.
 
 import {
   type JSX,
@@ -33,7 +38,7 @@ import { type Highlighted, highlight, languageOf, lineTokens, MAX_HIGHLIGHT, pla
 import { setLeaveGuard } from "./leaveGuard";
 import { markdown } from "./markdown";
 import type { Source } from "./source";
-import { canEditText, isSaveKey, MAX_EDIT_BYTES, type TextTarget, TextEditSession } from "./textEdit";
+import { canEditText, isSaveKey, MAX_EDIT_BYTES, putContent, type TextTarget, TextEditSession } from "./textEdit";
 import type { ViewerItem } from "./types";
 
 export const CHUNK = 512 * 1024;
@@ -94,18 +99,22 @@ export default function TextView({
   const loadedBytes = chunks.reduce((n, c) => n + c.length, 0);
   const complete = !busy && (total !== null ? loadedBytes >= total : chunks.length > 0 && chunks[chunks.length - 1].length < CHUNK);
   const editable = canEditText(item as ViewerItem & TextTarget, source.kind);
+  // Het item van nu (de etag verandert terwijl TextView blijft)
+  const current = useRef(item);
+  current.current = item;
   const session = useMemo(
     () =>
       new TextEditSession({
         async load() {
+          const it = current.current;
           try {
-            return (await source.range(item, 0, MAX_EDIT_BYTES + 1)).bytes;
+            return (await source.range(it, 0, MAX_EDIT_BYTES + 1)).bytes;
           } catch {
-            source.forget(item); // misschien een verlopen adres: één keer met een nieuw
-            return (await source.range(item, 0, MAX_EDIT_BYTES + 1)).bytes;
+            source.forget(it); // misschien een verlopen adres: één keer met een nieuw
+            return (await source.range(it, 0, MAX_EDIT_BYTES + 1)).bytes;
           }
         },
-        save: (body) => api.replaceContent(item.id, body),
+        save: (body, ifMatch) => putContent(api, current.current.id, body, ifMatch),
         errorText,
       }),
     [],
@@ -116,14 +125,29 @@ export default function TextView({
 
   useEffect(() => setLeaveGuard(() => session.dirty()), [session]);
 
+  // De etag van de inhoud die het lezen toont
+  const shown = useRef(item.etag);
+  useEffect(() => {
+    session.seen(item.etag);
+    if (item.etag === shown.current) return;
+    if (session.getState().phase !== "reading") return; // bewerken: de melding, de tekst blijft
+    // Lezen: de nieuwe inhoud
+    shown.current = item.etag;
+    source.forget(item);
+    setChunks([]);
+    setTotal(null);
+    void load(0);
+  }, [item.etag]);
+
   async function startEdit() {
-    if (await session.start()) requestAnimationFrame(() => field.current?.focus());
+    if (await session.start(current.current.etag)) requestAnimationFrame(() => field.current?.focus());
   }
 
-  async function save() {
-    const done = await session.save();
+  async function save(force = false) {
+    const done = await (force ? session.overwrite() : session.save());
     if (!done) return;
     // Wat er nu staat, is wat de viewer toont als je stopt met bewerken
+    shown.current = done.node.etag;
     source.forget(item);
     setChunks([done.bytes]);
     setTotal(done.bytes.length);
@@ -131,18 +155,34 @@ export default function TextView({
     announce(t("viewer.text.edit.saved", { name: done.node.name }));
   }
 
+  /** De inhoud van nu laden; de eigen wijzigingen weg (eerst de vraag). */
+  async function reloadEdit() {
+    if (session.dirty() && !(await askDiscard())) return;
+    shown.current = current.current.etag;
+    source.forget(current.current);
+    if (await session.reload(current.current.etag)) requestAnimationFrame(() => field.current?.focus());
+  }
+
+  function askDiscard(): Promise<boolean> {
+    return confirm({
+      title: t("viewer.text.edit.leaveTitle"),
+      message: t("viewer.text.edit.leaveMessage"),
+      confirm: t("viewer.text.edit.leaveConfirm"),
+      danger: true,
+    });
+  }
+
   async function stopEdit() {
-    if (
-      session.dirty() &&
-      !(await confirm({
-        title: t("viewer.text.edit.leaveTitle"),
-        message: t("viewer.text.edit.leaveMessage"),
-        confirm: t("viewer.text.edit.leaveConfirm"),
-        danger: true,
-      }))
-    )
-      return;
+    if (session.dirty() && !(await askDiscard())) return;
     session.stop();
+    // Intussen opgeslagen door een ander: lezen toont de inhoud van nu
+    if (current.current.etag !== shown.current) {
+      shown.current = current.current.etag;
+      source.forget(current.current);
+      setChunks([]);
+      setTotal(null);
+      void load(0);
+    }
   }
 
   useEffect(() => {
@@ -153,13 +193,14 @@ export default function TextView({
   async function load(start: number) {
     setBusy(true);
     setError(null);
+    const it = current.current;
     try {
       let got;
       try {
-        got = await source.range(item, start, start + CHUNK);
+        got = await source.range(it, start, start + CHUNK);
       } catch {
-        source.forget(item); // misschien een verlopen adres: één keer met een nieuw
-        got = await source.range(item, start, start + CHUNK);
+        source.forget(it); // misschien een verlopen adres: één keer met een nieuw
+        got = await source.range(it, start, start + CHUNK);
       }
       const { bytes, total: size } = got;
       setChunks((old) => [...old, bytes]);
@@ -193,7 +234,13 @@ export default function TextView({
     return (
       <div className="text-view">
         <div className="text-tools" role="toolbar" aria-label={t("viewer.text.tools")}>
-          <Button variant="primary" busy={edit.phase === "saving"} disabled={!dirty} aria-keyshortcuts="Control+S" onClick={() => void save()}>
+          <Button
+            variant="primary"
+            busy={edit.phase === "saving"}
+            disabled={!dirty || edit.changedOutside}
+            aria-keyshortcuts="Control+S"
+            onClick={() => void save()}
+          >
             {t("viewer.text.edit.save")}
           </Button>
           <Button onClick={() => void stopEdit()}>{t("viewer.text.edit.done")}</Button>
@@ -215,7 +262,19 @@ export default function TextView({
             void save();
           }}
         />
-        {edit.error && <p role="alert">{edit.error}</p>}
+        {edit.changedOutside ? (
+          <div className="text-changed" role="alert">
+            <p>{t("viewer.text.edit.changedOutside")}</p>
+            <Button disabled={edit.phase === "saving"} onClick={() => void reloadEdit()}>
+              {t("viewer.text.edit.reload")}
+            </Button>
+            <Button variant="danger" busy={edit.phase === "saving"} onClick={() => void save(true)}>
+              {t("viewer.text.edit.overwrite")}
+            </Button>
+          </div>
+        ) : (
+          edit.error && <p role="alert">{edit.error}</p>
+        )}
       </div>
     );
   }

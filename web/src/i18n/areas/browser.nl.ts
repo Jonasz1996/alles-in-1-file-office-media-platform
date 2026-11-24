@@ -100,8 +100,9 @@ export default {
     convert: {
       title: "Omzetten naar .{to}?",
       message:
-        "Alleen de naam veranderen maakt van een .{from} geen .{to}: de inhoud blijft {from}. Omzetten maakt een kopie {name} met de inhoud als {to}; het origineel blijft zoals het is.",
+        "Alleen de naam veranderen maakt van een .{from} geen .{to}: de inhoud blijft {from}. Omzetten maakt een kopie {name} met de inhoud als {to}; het origineel blijft zoals het is. Niet omzetten: dan kun je alleen de naam wijzigen.",
       confirm: "Omzetten",
+      dont: "Niet omzetten",
       done: "Omgezet: {name}",
     },
     warn: {

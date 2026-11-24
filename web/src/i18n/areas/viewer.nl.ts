@@ -109,6 +109,10 @@ export default {
       leaveTitle: "Wijzigingen weggooien?",
       leaveMessage: "Je hebt wijzigingen in deze tekst die nog niet zijn opgeslagen.",
       leaveConfirm: "Weggooien",
+      changedOutside:
+        "Dit bestand is buiten deze editor veranderd (opgeslagen door iemand anders of elders). Je tekst staat er nog; opslaan zou die andere wijziging overschrijven.",
+      reload: "Opnieuw laden",
+      overwrite: "Toch opslaan",
     },
   },
   office: {

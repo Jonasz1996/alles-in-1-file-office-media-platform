@@ -4,12 +4,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, type FileNode } from "../api";
 import { fileNode } from "../browser/testNodes";
-import { hasUnsaved, onBeforeUnload, setLeaveGuard, whenMayLeave } from "./leaveGuard";
+import { backGuard, hasUnsaved, onBeforeUnload, routerIndex, setLeaveGuard, whenMayLeave } from "./leaveGuard";
 import {
   canEditText,
   type EditDeps,
   isSaveKey,
   MAX_EDIT_BYTES,
+  putContent,
   readText,
   TextEditSession,
   writeText,
@@ -157,17 +158,32 @@ describe("bewerken", () => {
     expect(dec(await blobBytes(saved[0]))).toBe("boodschappen\nmelk\n");
   });
 
-  it("tijdens het opslaan: saving, en wat je intussen typt, blijft onopgeslagen", async () => {
+  it("tijdens het opslaan: saving, en wat je intussen typt, blijft (onopgeslagen) in het veld", async () => {
     let finish: (n: FileNode) => void = () => {};
-    const { s } = session(enc("a"), () => new Promise<FileNode>((resolve) => (finish = resolve)));
+    const { s, saved } = session(enc("a"), (body) => {
+      saved.push(body);
+      return new Promise<FileNode>((resolve) => (finish = resolve));
+    });
     await s.start();
     s.change("ab");
     const pending = s.save();
     expect(s.getState().phase).toBe("saving");
     expect(s.dirty()).toBe(true);
+    // Doortypen na Ctrl+S, terwijl de server nog bezig is (review txt, punt 2)
+    s.change("abc");
+    expect(s.getState().text).toBe("abc");
     finish(fileNode({ id: "f1" }));
     await pending;
-    expect(s.getState()).toMatchObject({ phase: "editing", saved: "ab" });
+    // Opgeslagen is wat er bij Ctrl+S stond; de "c" staat er nog, en is nog niet opgeslagen
+    expect(s.getState()).toMatchObject({ phase: "editing", text: "abc", saved: "ab" });
+    expect(dec(await blobBytes(saved[0]))).toBe("ab");
+    expect(s.dirty()).toBe(true);
+    // Nog eens opslaan bewaart ook de rest
+    const again = s.save();
+    finish(fileNode({ id: "f1" }));
+    await again;
+    expect(dec(await blobBytes(saved[1]))).toBe("abc");
+    expect(s.dirty()).toBe(false);
   });
 
   it("opslaan mislukt: de melding, en de tekst blijft (nog steeds onopgeslagen)", async () => {
@@ -254,5 +270,220 @@ describe("weggaan met wijzigingen (de viewer)", () => {
     expect(hasUnsaved()).toBe(true);
     second();
     expect(hasUnsaved()).toBe(false);
+  });
+});
+
+describe("buiten de editor veranderd (review txt, punt 1)", () => {
+  function tracked(content: Uint8Array) {
+    const calls: { text: string; ifMatch: string | undefined }[] = [];
+    let n = 0;
+    let fail: ApiError | null = null;
+    const { s } = session(content, async (body, ifMatch) => {
+      calls.push({ text: dec(await blobBytes(body)), ifMatch });
+      if (fail) {
+        const e = fail;
+        fail = null;
+        throw e;
+      }
+      return fileNode({ id: "f1", name: "notities.txt", etag: `"na-${++n}"` });
+    });
+    return { s, calls, failNext: (e: ApiError) => (fail = e) };
+  }
+
+  it("opslaan stuurt de etag waar de tekst op voortbouwt (If-Match), daarna die van het opslaan", async () => {
+    const { s, calls } = tracked(enc("a"));
+    await s.start('"begin"');
+    s.change("ab");
+    await s.save();
+    s.change("abc");
+    await s.save();
+    expect(calls).toEqual([
+      { text: "ab", ifMatch: '"begin"' },
+      { text: "abc", ifMatch: '"na-1"' },
+    ]);
+  });
+
+  it("een andere etag terwijl je bewerkt: de tekst blijft, met de melding", async () => {
+    const { s } = tracked(enc("a"));
+    await s.start('"begin"');
+    s.change("mijn tekst");
+    s.seen('"begin"');
+    expect(s.getState().changedOutside).toBe(false);
+    s.seen('"van-een-ander"');
+    expect(s.getState()).toMatchObject({ phase: "editing", text: "mijn tekst", changedOutside: true });
+    expect(s.dirty()).toBe(true);
+  });
+
+  it("de etag van het eigen opslaan (de lijst kan eerder zijn dan het antwoord) is geen melding", async () => {
+    let finish: (n: FileNode) => void = () => {};
+    const { s } = session(enc("a"), () => new Promise<FileNode>((resolve) => (finish = resolve)));
+    await s.start('"begin"');
+    s.change("ab");
+    const pending = s.save();
+    s.seen('"eigen"'); // node.changed van dit opslaan, vóór het antwoord
+    expect(s.getState().changedOutside).toBe(false);
+    finish(fileNode({ id: "f1", etag: '"eigen"' }));
+    await pending;
+    expect(s.getState()).toMatchObject({ phase: "editing", changedOutside: false, saved: "ab" });
+  });
+
+  it("412 content_changed: niets weg, de melding; Toch opslaan zonder If-Match", async () => {
+    const { s, calls, failNext } = tracked(enc("a"));
+    await s.start('"begin"');
+    s.change("mijn tekst");
+    failNext(new ApiError(412, "Het bestand is intussen veranderd", "content_changed"));
+    expect(await s.save()).toBeNull();
+    expect(s.getState()).toMatchObject({ phase: "editing", text: "mijn tekst", saved: "a", changedOutside: true });
+    const done = await s.overwrite();
+    expect(done?.node.etag).toBe('"na-1"');
+    expect(calls.map((c) => c.ifMatch)).toEqual(['"begin"', undefined]);
+    expect(s.getState()).toMatchObject({ changedOutside: false, saved: "mijn tekst" });
+  });
+
+  it("Opnieuw laden: de inhoud van nu, met de etag van nu", async () => {
+    let content = enc("oud");
+    const loads = vi.fn(async () => content);
+    const s = new TextEditSession({
+      load: loads,
+      save: vi.fn(async (_b: Blob, ifMatch?: string) => fileNode({ id: "f1", etag: `${ifMatch}+` })),
+      errorText: String,
+    });
+    await s.start('"1"');
+    s.change("mijn");
+    s.seen('"2"');
+    content = enc("nieuw");
+    expect(await s.reload('"2"')).toBe(true);
+    expect(s.getState()).toMatchObject({ phase: "editing", text: "nieuw", saved: "nieuw", changedOutside: false });
+    s.change("nieuw!");
+    const done = await s.save();
+    expect(done?.node.etag).toBe('"2"+');
+  });
+});
+
+describe("Terug in de browser (review txt, punt 4)", () => {
+  function pop(idx: number | null, trusted = true) {
+    return { isTrusted: trusted, state: idx === null ? null : { key: "k", idx }, stopImmediatePropagation: vi.fn() };
+  }
+
+  it("zonder wijzigingen gaat Terug gewoon door", () => {
+    const remove = setLeaveGuard(() => false);
+    try {
+      const go = vi.fn();
+      const handler = backGuard({ index: routerIndex, go, ask: vi.fn(async () => true) }, 3);
+      const e = pop(2);
+      handler(e);
+      expect(e.stopImmediatePropagation).not.toHaveBeenCalled();
+      expect(go).not.toHaveBeenCalled();
+    } finally {
+      remove();
+    }
+  });
+
+  it("met wijzigingen: de stap terugdraaien en vragen; nee blijft, ja gaat alsnog terug", async () => {
+    let dirty = true;
+    const remove = setLeaveGuard(() => dirty);
+    try {
+      const go = vi.fn();
+      let answer = false;
+      const ask = vi.fn(async () => answer);
+      const handler = backGuard({ index: routerIndex, go, ask }, 3);
+
+      // Terug: de app ziet het niet, de stap wordt teruggedraaid, de vraag komt
+      const back = pop(2);
+      handler(back);
+      expect(back.stopImmediatePropagation).toHaveBeenCalled();
+      expect(go).toHaveBeenLastCalledWith(1);
+      // Het terugdraaien zelf is ook een echte popstate: geen nieuwe vraag
+      const restored = pop(3);
+      handler(restored);
+      expect(restored.stopImmediatePropagation).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+      await Promise.resolve();
+      expect(go).toHaveBeenCalledTimes(1); // nee: blijven
+
+      // Nog eens, nu ja: dezelfde stap alsnog, zonder nieuwe vraag
+      answer = true;
+      handler(pop(2));
+      handler(pop(3));
+      await vi.waitFor(() => expect(go).toHaveBeenLastCalledWith(-1));
+      const leave = pop(2);
+      handler(leave);
+      expect(leave.stopImmediatePropagation).not.toHaveBeenCalled();
+      expect(ask).toHaveBeenCalledTimes(2); // ja gezegd: ook de stap zelf vraagt niet nog eens
+      dirty = false;
+    } finally {
+      remove();
+    }
+  });
+
+  it("navigate() van de app zelf (geen echte popstate) houdt hij niet tegen", () => {
+    const remove = setLeaveGuard(() => true);
+    try {
+      const go = vi.fn();
+      const handler = backGuard({ index: routerIndex, go, ask: vi.fn(async () => true) }, 3);
+      const e = pop(3, false);
+      handler(e);
+      expect(e.stopImmediatePropagation).not.toHaveBeenCalled();
+      expect(go).not.toHaveBeenCalled();
+    } finally {
+      remove();
+    }
+  });
+
+  it("Vooruit (of meer stappen) draait hij de andere kant op terug; zonder plek: één", () => {
+    const remove = setLeaveGuard(() => true);
+    try {
+      const go = vi.fn();
+      const handler = backGuard({ index: routerIndex, go, ask: () => new Promise<boolean>(() => {}) }, 3);
+      handler(pop(4));
+      expect(go).toHaveBeenLastCalledWith(-1);
+      const other = backGuard({ index: routerIndex, go, ask: () => new Promise<boolean>(() => {}) }, null);
+      other(pop(null));
+      expect(go).toHaveBeenLastCalledWith(1);
+    } finally {
+      remove();
+    }
+  });
+
+  it("ja op sluiten: de stap terug van het sluiten zelf vraagt niet nog eens", async () => {
+    const remove = setLeaveGuard(() => true);
+    try {
+      const run = vi.fn();
+      whenMayLeave(run, async () => true);
+      await vi.waitFor(() => expect(run).toHaveBeenCalled());
+      const go = vi.fn();
+      const handler = backGuard({ index: routerIndex, go, ask: vi.fn(async () => true) }, 3);
+      const e = pop(2);
+      handler(e);
+      expect(e.stopImmediatePropagation).not.toHaveBeenCalled();
+      // Een nieuwe bewaker (een volgend bestand) vraagt weer
+      const again = setLeaveGuard(() => true);
+      const e2 = pop(2);
+      handler(e2);
+      expect(e2.stopImmediatePropagation).toHaveBeenCalled();
+      again();
+    } finally {
+      remove();
+    }
+  });
+});
+
+describe("opslaan over de lijn", () => {
+  it("PUT op het bestand zelf, met If-Match als er een etag is", async () => {
+    const seen: { path: string; init?: RequestInit }[] = [];
+    const api = {
+      rawRequest: vi.fn(async (path: string, init?: RequestInit) => {
+        seen.push({ path, init });
+        return new Response(JSON.stringify({ id: "n1", etag: '"nieuw"' }), { status: 200 });
+      }),
+    };
+    const body = new Blob(["tekst"]);
+    expect((await putContent(api, "n1", body, '"oud"')).etag).toBe('"nieuw"');
+    await putContent(api, "n1", body);
+    expect(seen[0].path).toBe("/api/v1/files/n1/content");
+    expect(seen[0].init?.method).toBe("PUT");
+    expect(seen[0].init?.body).toBe(body);
+    expect(new Headers(seen[0].init?.headers).get("If-Match")).toBe('"oud"');
+    expect(new Headers(seen[1].init?.headers).get("If-Match")).toBeNull();
   });
 });

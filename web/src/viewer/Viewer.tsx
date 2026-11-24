@@ -11,8 +11,9 @@
 // link en nooit bij een eerdere versie. Zonder office zijn ze er niet, precies zoals fase 3.
 //
 // Tekst bewerken (0.8.3) zit in TextView zelf. Met wijzigingen die nog niet zijn opgeslagen
-// vraagt de viewer eerst of ze weg mogen, bij sluiten en bij het volgende bestand
-// (leaveGuard.ts), en de browser bij het verlaten van de pagina (beforeunload).
+// vraagt de viewer eerst of ze weg mogen, bij sluiten, bij het volgende bestand en bij Terug in
+// de browser (leaveGuard.ts), en de browser bij het verlaten van de pagina (beforeunload). Een
+// nieuwe etag laat TextView staan (viewKeys.ts).
 
 import {
   type JSX,
@@ -39,10 +40,11 @@ import { confirm } from "../ui/dialogs";
 import { Spinner } from "../ui/Spinner";
 import { modals } from "../ui/topLayer";
 import type { ViewerDetail } from "./api";
-import { onBeforeUnload, whenMayLeave } from "./leaveGuard";
+import { backGuard, onBeforeUnload, routerIndex, whenMayLeave } from "./leaveGuard";
 import { moreComing, previewReadyFor, type ViewKind, viewKind } from "./media";
 import { type Source, sourceOf } from "./source";
 import type { ViewerItem, ViewerProps } from "./types";
+import { fileKeyOf, keyOf, type LoadedLike, shownLoaded } from "./viewKeys";
 import "./viewer.css";
 
 const ZoomView = lazy(() => import("./ZoomView"));
@@ -83,10 +85,6 @@ function scrollsSideways(from: Element | null, direction: -1 | 1): boolean {
   return false;
 }
 
-function keyOf(item: ViewerItem): string {
-  return `${item.id}|${item.etag ?? ""}|${item.version?.id ?? ""}`;
-}
-
 /** Details per bestand, voor deze viewer: terug naar een bestand vraagt niets opnieuw. */
 function useDetails(source: Source) {
   const cache = useRef(new Map<string, Promise<ViewerDetail>>());
@@ -105,7 +103,7 @@ function useDetails(source: Source) {
   );
 }
 
-type Loaded = { key: string; detail?: ViewerDetail; error?: unknown };
+type Loaded = LoadedLike<ViewerDetail>;
 
 export default function Viewer({
   items,
@@ -138,6 +136,7 @@ export default function Viewer({
   const zoomed = useRef(false);
   const swipe = useRef<{ id: number; x: number; y: number } | null>(null);
   const key = item ? keyOf(item) : "";
+  const fileKey = item ? fileKeyOf(item) : "";
   // Office: alleen voor wie ingelogd is. Een item uit Bestanden is een FileNode (met kind en
   // permission); zonder permission is het van jou, zoals overal
   const office = useOfficeStatus(src.kind === "user");
@@ -145,10 +144,19 @@ export default function Viewer({
   const editHook = target && src.kind === "user" ? canEdit(target, office) : NO_HOOK;
   const pdfHook = target && src.kind === "user" ? canPdf(target, office) : NO_HOOK;
 
-  // De pagina verlaten met tekst die nog niet is opgeslagen: de browser vraagt het
+  // De pagina verlaten met tekst die nog niet is opgeslagen: de browser vraagt het. Terug of
+  // Vooruit in de browser: eerst wij (capture, vóór de router die ?bestand= zou weghalen)
   useEffect(() => {
     window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    const onPop = backGuard(
+      { index: routerIndex, go: (delta) => window.history.go(delta), ask: askLeave },
+      routerIndex(window.history.state),
+    );
+    window.addEventListener("popstate", onPop, { capture: true });
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("popstate", onPop, { capture: true });
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -192,11 +200,11 @@ export default function Viewer({
       getDetail(item, fresh).then(
         (detail) => {
           if (!live) return;
-          setLoaded({ key, detail });
+          setLoaded({ key, file: fileKey, detail });
           clearTimeout(timer);
           if (moreComing(detail) && ++rounds < PENDING_ROUNDS) timer = setTimeout(() => load(true), PENDING_MS);
         },
-        (e: unknown) => live && setLoaded({ key, error: e }),
+        (e: unknown) => live && setLoaded({ key, file: fileKey, error: e }),
       );
     };
     load(false);
@@ -325,7 +333,9 @@ export default function Viewer({
 
   if (!item) return null;
 
-  const current = loaded?.key === key ? loaded : null;
+  // Een tekst houdt het vorige detail terwijl het nieuwe van een andere etag komt: anders zou
+  // TextView even weg zijn (en het bewerken kwijt)
+  const current = shownLoaded(loaded, key, fileKey, (d: ViewerDetail) => viewKind(item, d.meta) === "text");
   const detail = current?.detail;
   const kind: ViewKind = viewKind(item, detail?.meta ?? {});
 
@@ -385,7 +395,9 @@ export default function Viewer({
       />
     );
   } else if (kind === "text") {
-    body = <TextView key={key} item={item} detail={detail} source={src} startEditing={editText === item.id} />;
+    // Op fileKey, niet key: een nieuwe etag (opgeslagen, door jou of een ander) begint niet
+    // opnieuw; TextView ziet hem zelf (bewerken blijft, met een melding)
+    body = <TextView key={fileKey} item={item} detail={detail} source={src} startEditing={editText === item.id} />;
   } else if (kind === "office") {
     body = <OfficeView key={key} item={item} detail={detail} source={src} />;
   } else if (kind === "archive") {

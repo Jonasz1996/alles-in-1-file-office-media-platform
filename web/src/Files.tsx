@@ -66,6 +66,7 @@ import { clickSelect, keySelect, SelectionStore, useSelection } from "./ui/selec
 import { announce, toast } from "./ui/toast";
 import { hasFiles, UploadButtons, uploadDropped } from "./upload/index";
 import { useViewerParam, Viewer } from "./viewer";
+import { withViewing } from "./viewer/param";
 import "./files.css";
 import "./share.css";
 import "./browser/browser.css";
@@ -474,12 +475,13 @@ function FolderView({ folderId }: { folderId: string | null }): JSX.Element {
   const viewerItems = useMemo(() => {
     if (!open) return [];
     const out: FileNode[] = [];
-    for (const id of viewIds) {
+    // Ook het bestand dat open moet als het filter het verbergt (een nieuw tekstbestand)
+    for (const id of withViewing(viewIds, snap.ids, viewing)) {
       const n = snap.nodes.get(id);
       if (n && n.kind === "file") out.push(n);
     }
     return out;
-  }, [open, viewIds, snap.version]);
+  }, [open, viewIds, snap.ids, viewing, snap.version]);
   const viewIndex = viewing ? viewerItems.findIndex((n) => n.id === viewing) : -1;
 
   const cut = useMemo(

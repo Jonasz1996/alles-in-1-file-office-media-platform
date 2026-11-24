@@ -76,7 +76,7 @@ function deps(over: Partial<RenameDeps> = {}) {
   const asked: Ask[] = [];
   const d = {
     canConvert: vi.fn(async () => true),
-    ask: vi.fn(async (a: Ask) => {
+    ask: vi.fn(async (a: Ask): Promise<boolean> => {
       asked.push(a);
       return true;
     }),
@@ -114,6 +114,7 @@ describe("de hernoem-dialoog", () => {
         title: "Omzetten naar .txt?",
         message: expect.stringContaining("Omzetten maakt een kopie Verslag.txt"),
         confirm: "Omzetten",
+        cancel: "Niet omzetten",
       },
     ]);
     expect(d.convertTo).toHaveBeenCalledWith("f1", "txt", "Verslag.txt");
@@ -121,11 +122,29 @@ describe("de hernoem-dialoog", () => {
     expect(done).toEqual({ kind: "converted", node: fileNode({ id: "kopie", name: "Verslag.txt" }) });
   });
 
-  it("Omzetten? nee: niets (geen naam veranderd, geen kopie)", async () => {
+  it("Niet omzetten, en dan annuleren: niets (geen naam veranderd, geen kopie)", async () => {
     const { d } = deps({ ask: vi.fn(async () => false) });
     expect(await renameWithCheck(docx, "Verslag.txt", d)).toEqual({ kind: "none" });
+    expect(d.ask).toHaveBeenCalledTimes(2); // Omzetten?, dan de waarschuwing
     expect(d.rename).not.toHaveBeenCalled();
     expect(d.convertTo).not.toHaveBeenCalled();
+  });
+
+  it("Niet omzetten, dan Toch hernoemen: alleen de naam, geen kopie (een verkeerde extensie verbeteren)", async () => {
+    // Een x.doc waar al docx in zit: omzetten naar docx weigert de server (office_format), dus
+    // het moet met de editor aan ook gewoon te hernoemen zijn (review txt, punt 3)
+    const answers = [false, true];
+    const { d, asked } = deps();
+    d.ask = vi.fn(async (a: Ask) => {
+      asked.push(a);
+      return answers.shift() ?? false;
+    });
+    const doc = fileNode({ id: "f3", name: "x.doc" });
+    const done = await renameWithCheck(doc, "x.docx", d);
+    expect(asked.map((a) => a.confirm)).toEqual(["Omzetten", "Toch hernoemen"]);
+    expect(d.rename).toHaveBeenCalledWith("f3", "x.docx");
+    expect(d.convertTo).not.toHaveBeenCalled();
+    expect(done).toEqual({ kind: "renamed", node: fileNode({ id: "f3", name: "x.docx" }) });
   });
 
   it("zonder editor: de waarschuwing; Toch hernoemen verandert alleen de naam", async () => {
@@ -171,6 +190,7 @@ describe("de hernoem-dialoog", () => {
       const second = deps();
       await renameWithCheck(docx, "Verslag.txt", second.d);
       expect(second.asked[0]?.title).toBe("Convert to .txt?");
+      expect(second.asked[0]?.cancel).toBe("Don’t convert");
     } finally {
       resetI18nForTests("nl");
       await loadAreas(["common", "browser"]);

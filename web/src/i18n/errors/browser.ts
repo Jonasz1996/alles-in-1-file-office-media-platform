@@ -4,4 +4,5 @@ export default {
   too_many_tags: { en: "You can have at most {max} tags" },
   version_not_found: { en: "Version not found" },
   invalid_cursor: { en: "Invalid position in the list; reload the folder" },
+  content_changed: { en: "The file was changed meanwhile" },
 } satisfies Record<string, { en: string }>;

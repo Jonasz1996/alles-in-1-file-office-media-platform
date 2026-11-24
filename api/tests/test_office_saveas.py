@@ -379,3 +379,70 @@ async def test_een_sessie_telt_niet_als_omzetten(world):
     async with maker(world.base_settings)() as session:
         row = await sessions.find_by_key(session, key)
         assert row is not None and row.state == "open"
+
+
+# --- een los gedeeld bestand (review txt, punt 6) ---
+
+
+async def test_los_gedeeld_bestand_kopie_in_je_eigen_hoofdmap(world):
+    """Bob kreeg alleen Plan.docx met schrijfrecht; de map erboven ziet hij niet. Opslaan als en
+    omzetten zetten de kopie dan in zijn eigen hoofdmap, van hem (niet "Map niet gevonden")."""
+    anna = await world.user("anna@example.nl")
+    bob = await world.user("bob@example.nl")
+    folder = await world.folder(anna, "Privé")
+    node = await world.docx(anna, folder, "Plan.docx", ["Plan"])
+    await world.share(anna, node, bob, write=True)
+    bob_root = await world.root(bob)
+
+    r = await convert_to(world, bob, node, format="txt")
+    assert r.status_code == 201, r.text
+    made = r.json()
+    assert made["name"] == "Plan.txt"
+    assert await owner_of(world, made["id"]) == bob.id
+    assert (await world.node_row(uuid.UUID(made["id"]))).parent_id == bob_root
+
+    key = await world.begin(bob, node)
+    url = world.stage_saveas(key, b"Plan", "txt", "Plan kopie.txt")
+    r = await save_as(world, bob, node, key=key, url=url, file_type="txt", title="Plan kopie.txt")
+    assert r.status_code == 201, r.text
+    assert (await world.node_row(uuid.UUID(r.json()["id"]))).parent_id == bob_root
+    assert await names_in(world, bob_root) == ["Plan kopie.txt", "Plan.txt"]
+    # Bij Anna komt er niets bij
+    assert await names_in(world, folder) == ["Plan.docx"]
+
+
+async def test_eigen_bestand_in_een_weggegooide_map_blijft_niet_gevonden(world):
+    """De eigenaar zelf valt nooit terug op zijn hoofdmap: wat hij niet meer ziet, is weg."""
+    anna = await world.user("anna@example.nl")
+    folder = await world.folder(anna, "Weg")
+    node = await world.docx(anna, folder, "Plan.docx", ["Plan"])
+    r = await world.client.delete(f"/api/v1/files/{folder}", headers=anna.headers)
+    assert r.status_code == 204
+    r = await convert_to(world, anna, node, format="txt")
+    assert r.status_code == 404 and code_of(r) == "folder_not_found", r.text
+    assert await names_in(world, await world.root(anna)) == []
+
+
+# --- de grens per gebruiker vóór de invoercontrole (review txt, punt 7) ---
+
+
+async def test_de_grens_per_gebruiker_voor_de_invoercontrole(world, monkeypatch):
+    anna = await world.user("anna@example.nl")
+    node = await world.docx(anna, None, "Brief.docx", ["Hoi"])
+    checks = 0
+    real = office_saveas.inspect.check
+
+    async def counting(*args, **kw):
+        nonlocal checks
+        checks += 1
+        return await real(*args, **kw)
+
+    monkeypatch.setattr(office_saveas.inspect, "check", counting)
+    for _ in range(10):
+        assert (await convert_to(world, anna, node, format="txt")).status_code == 201
+    assert checks == 10
+    for _ in range(3):
+        r = await convert_to(world, anna, node, format="txt")
+        assert r.status_code == 429 and code_of(r) == "rate_limited"
+    # Geweigerd door de grens: de dure controle draaide niet meer
+    assert checks == 10

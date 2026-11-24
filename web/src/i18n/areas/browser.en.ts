@@ -101,8 +101,9 @@ const en: Translation<typeof nl> = {
     convert: {
       title: "Convert to .{to}?",
       message:
-        "Only changing the name does not turn a .{from} into a .{to}: the content stays {from}. Converting makes a copy {name} with the content as {to}; the original stays as it is.",
+        "Only changing the name does not turn a .{from} into a .{to}: the content stays {from}. Converting makes a copy {name} with the content as {to}; the original stays as it is. Don’t convert: then you can change just the name.",
       confirm: "Convert",
+      dont: "Don’t convert",
       done: "Converted: {name}",
     },
     warn: {

@@ -3,8 +3,10 @@
 // - dezelfde extensie, geen extensie (ervoor of erna), of tekst naar tekst (txt, md, csv, log,
 //   json, …): gewoon hernoemen, de inhoud past nog;
 // - kan de editor het omzetten (office bewerkt nu, en beide in dezelfde groep: tekst, werkblad of
-//   dia, zie api/app/routers/office_saveas.py): de vraag "Omzetten?". Ja maakt een omgezette kopie
-//   met de nieuwe naam (POST …/convert-to); het origineel blijft. Nee: niets;
+//   dia, zie api/app/routers/office_saveas.py): de vraag "Omzetten?". Omzetten maakt een omgezette
+//   kopie met de nieuwe naam (POST …/convert-to); het origineel blijft. "Niet omzetten": dan de
+//   waarschuwing hieronder, met "Toch hernoemen" (een verkeerde extensie verbeteren: een x.doc
+//   waar al docx in zit, kan de editor niet "omzetten" naar docx, en moet te hernoemen blijven);
 // - anders een waarschuwing dat de inhoud niet wordt omgezet, met "Toch hernoemen".
 // Mappen hernoemen zonder vragen.
 
@@ -57,6 +59,8 @@ export interface Ask {
   title: string;
   message: string;
   confirm: string;
+  /** De tekst op de knop die nee zegt (anders Annuleren) */
+  cancel?: string;
   danger?: boolean;
 }
 
@@ -89,9 +93,10 @@ export async function renameWithCheck(node: FileNode, name: string, deps: Rename
       title: deps.t("browser.rename.convert.title", vars),
       message: deps.t("browser.rename.convert.message", vars),
       confirm: deps.t("browser.rename.convert.confirm"),
+      cancel: deps.t("browser.rename.convert.dont"),
     });
-    if (!yes) return { kind: "none" };
-    return { kind: "converted", node: await deps.convertTo(node.id, plan.to, name) };
+    if (yes) return { kind: "converted", node: await deps.convertTo(node.id, plan.to, name) };
+    // Niet omzetten: alleen hernoemen moet nog kunnen (hieronder, met de waarschuwing)
   }
   const anyway = await deps.ask({
     title: deps.t("browser.rename.warn.title", vars),
