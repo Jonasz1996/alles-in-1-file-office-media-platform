@@ -1325,7 +1325,8 @@ def test_11_alles_in_het_engels_ook_de_fouten(verhaal: Verhaal) -> None:
     # Een fout van de API, in het Engels: een map met een naam die er al is. Sinds 0.8.3 is er
     # altijd het menu New (Tekstbestand kan ook zonder office), met Folder als eerste item
     page.get_by_role("button", name="New", exact=True).click()
-    page.get_by_role("menu", name="New", exact=True).get_by_role("menuitem", name="Folder", exact=True).click()
+    menu = page.get_by_role("menu", name="New", exact=True)
+    menu.get_by_role("menuitem", name="Folder", exact=True).click()
     dialog = page.get_by_role("dialog", name="New folder", exact=True)
     dialog.get_by_label("Folder name", exact=True).fill("Reis")
     dialog.get_by_role("button", name="Create", exact=True).click()
