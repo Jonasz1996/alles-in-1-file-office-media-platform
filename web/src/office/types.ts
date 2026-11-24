@@ -6,7 +6,7 @@
 // De foutcodes staan in i18n/errors/office.ts (office_off, office_unavailable, office_format,
 // office_too_large, office_unsafe, office_busy, office_too_many {max}, office_gate,
 // office_token, office_convert_failed {code}, pdf_pending, office_owner_gone,
-// office_misconfigured); de bestaande codes (not_found, read_only, trashed, not_a_file, album,
+// office_misconfigured, en sinds 0.8.3 office_convert_to_failed {code}); de bestaande codes (not_found, read_only, trashed, not_a_file, album,
 // no_room, folder_not_found, guest, rate_limited) blijven waar ze staan.
 
 import type { FileNode, Permission } from "../api";
@@ -117,10 +117,31 @@ export interface PdfLink {
 
 /** POST /api/v1/office/new → 201 NodeOut. Fouten: 403 read_only; 404 folder_not_found; 413
  * no_room; 422 album | invalid_input. Werkt ook als DS uit staat. */
+/** Wat POST /office/new maakt: de soorten van de editor, plus een leeg tekstbestand (dat kan
+ * altijd, ook zonder office: de viewer bewerkt tekst zelf). */
+export type NewKind = OfficeKind | "txt";
+
 export interface NewDocumentIn {
   parent_id: string;
-  kind: OfficeKind;
+  kind: NewKind;
   /** Zonder extensie krijgt hij die erbij; bestaat hij al: "Nieuw document (2).docx" */
+  name?: string;
+}
+
+/** POST /office/files/{id}/save-as: "Kopie opslaan als" in de editor (onRequestSaveAs) → 201 */
+export interface SaveAsIn {
+  /** De key van de sessie die open staat */
+  key: string;
+  /** Het adres dat DS gaf (al omgezet naar file_type) */
+  url: string;
+  file_type: string;
+  title?: string;
+}
+
+/** POST /office/files/{id}/convert-to: een omgezette kopie in dezelfde map → 201 */
+export interface ConvertToIn {
+  format: string;
+  /** De naam van de kopie; zonder: de stam van het origineel met de nieuwe extensie */
   name?: string;
 }
 

@@ -159,6 +159,8 @@ class FakeDocServer:
         # of restart (een leeg geheugen)
         self.done: dict[str, Doc] = {}
         self.files: dict[str, dict[str, bytes]] = {}  # "<key>_<n>" -> {naam: inhoud}
+        # Delen van "Kopie opslaan als": daar is het laatste deel van het adres de titel
+        self.titled: set[str] = set()
         self.entries: list[dict] = []
         self.up = True
         self.starting = False
@@ -999,7 +1001,8 @@ def create_app(config: FakeConfig, parts: tuple[str, ...] = ("forgotten", "conve
             texts = {u: {"name": doc.names.get(u, ""), "text": t} for u, t in doc.texts.items()}
             return JSONResponse({"paragraphs": doc.paragraphs, "texts": texts})
         content = fake.files.get(part, {}).get(name)
-        if content is None or filename != name:
+        # Na "Kopie opslaan als" is het laatste deel de titel (fake.titled), anders de naam
+        if content is None or (filename != name and part not in fake.titled):
             return Response(status_code=404)
         return Response(content, media_type="application/octet-stream")
 

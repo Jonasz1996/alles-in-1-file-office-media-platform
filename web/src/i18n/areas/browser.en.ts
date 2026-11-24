@@ -98,6 +98,19 @@ const en: Translation<typeof nl> = {
     title: "Rename",
     label: "New name",
     confirm: "Rename",
+    convert: {
+      title: "Convert to .{to}?",
+      message:
+        "Only changing the name does not turn a .{from} into a .{to}: the content stays {from}. Converting makes a copy {name} with the content as {to}; the original stays as it is.",
+      confirm: "Convert",
+      done: "Converted: {name}",
+    },
+    warn: {
+      title: "The content is not converted",
+      message:
+        "After renaming, the file is called .{to}, but the content stays {from}. Programs that expect a .{to} may not open it properly.",
+      confirm: "Rename anyway",
+    },
   },
   trashed: { one: "{name} is in the trash", other: "{n} items are in the trash" },
   undo: "Undo",
@@ -186,11 +199,12 @@ const en: Translation<typeof nl> = {
       docx: "Document",
       xlsx: "Spreadsheet",
       pptx: "Presentation",
+      txt: "Text file",
       created: "{name} created",
     },
     keys: {
       edit: "Edit in the editor",
-      newMenu: "New menu (folder, document, spreadsheet, presentation)",
+      newMenu: "New menu (folder, document, spreadsheet, presentation, text file)",
     },
     reasons: {
       read_only: "You can only view this file",

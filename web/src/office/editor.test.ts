@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api";
+import { fileNode } from "../browser/testNodes";
+import { toasts } from "../ui/toast";
 import { loadAreas, resetI18nForTests } from "../i18n";
 import {
   BUSY_MAX_MS,
@@ -17,7 +19,7 @@ import {
 } from "./editor";
 import { GATE_RENEW_MS, keepGate } from "./gate";
 import { type DocEditor, type DocsApi, loadApi, resetApiForTests, type ScriptHost } from "./loadApi";
-import type { SessionOut } from "./types";
+import type { SaveAsIn, SessionOut } from "./types";
 
 beforeAll(async () => {
   resetI18nForTests("nl");
@@ -105,6 +107,7 @@ function world(open?: () => Promise<SessionOut>): World {
       return made as DocEditor;
     }),
     saveNow: vi.fn(async () => {}),
+    saveAs: vi.fn(async (body: SaveAsIn) => fileNode({ id: "kopie", name: body.title ?? `kopie.${body.file_type}` })),
     keepGate: vi.fn(() => stopGate),
     focusFrame: vi.fn(),
     close: vi.fn(),
@@ -145,7 +148,7 @@ describe("openen", () => {
     expect(statusText(w.ed.getState())).toBe("Bewerken");
   });
 
-  it("de events zijn die van Keuze 32, en nooit onRequestSaveAs (A16)", async () => {
+  it("de events zijn die van Keuze 32, plus onRequestSaveAs (Kopie opslaan als; A16 is herzien)", async () => {
     const w = world();
     await w.ed.start();
     expect(Object.keys(w.events[0]).sort()).toEqual(
@@ -156,10 +159,12 @@ describe("openen", () => {
         "onError",
         "onRequestClose",
         "onRequestRefreshFile",
+        "onRequestSaveAs",
         "onWarning",
       ].sort(),
     );
-    expect("onRequestSaveAs" in w.events[0]).toBe(false);
+    // Met onRequestSaveAs toont DS "Kopie opslaan als"; zonder dit event niet
+    expect(typeof w.events[0].onRequestSaveAs).toBe("function");
   });
 
   it("stale: een melding dat het bestand buiten de editor veranderde", async () => {
@@ -578,5 +583,70 @@ describe("het poort-cookie", () => {
     stop();
     await clock.advance(GATE_RENEW_MS * 3);
     expect(renew).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Kopie opslaan als (onRequestSaveAs)", () => {
+  function messages(kind?: string): string[] {
+    return toasts
+      .getSnapshot()
+      .filter((x) => kind === undefined || x.kind === kind)
+      .map((x) => x.message);
+  }
+
+  beforeEach(() => {
+    for (const item of toasts.getSnapshot()) toasts.dismiss(item.id);
+  });
+
+  it("stuurt adres, formaat, titel en de key van de sessie naar …/save-as, met een melding", async () => {
+    const w = world();
+    const ev = await ready(w);
+    ev.onRequestSaveAs({ data: { fileType: "txt", title: "verslag.txt", url: "https://x/office/cache/files/data/k1c/output.txt/verslag.txt" } });
+    await vi.waitFor(() => expect(messages()).toEqual(["Opgeslagen als verslag.txt"]));
+    expect(w.deps.saveAs).toHaveBeenCalledWith({
+      key: "k1",
+      url: "https://x/office/cache/files/data/k1c/output.txt/verslag.txt",
+      file_type: "txt",
+      title: "verslag.txt",
+    });
+    // De editor blijft gewoon open
+    expect(w.ed.getState().phase).toBe("ready");
+    expect(w.ed.getState().notices).toEqual([]);
+  });
+
+  it("de naam in de melding is die van de server (een vrije naam)", async () => {
+    const w = world();
+    vi.mocked(w.deps.saveAs).mockResolvedValueOnce(fileNode({ id: "kopie", name: "verslag (1).odt" }));
+    await ready(w);
+    const node = await w.ed.saveAs({ data: { fileType: "odt", title: "verslag.odt", url: "u" } });
+    expect(node?.name).toBe("verslag (1).odt");
+    expect(messages()).toEqual(["Opgeslagen als verslag (1).odt"]);
+  });
+
+  it("zonder adres of formaat: niets", async () => {
+    const w = world();
+    await ready(w);
+    expect(await w.ed.saveAs({ data: { fileType: "txt" } })).toBeNull();
+    expect(await w.ed.saveAs({ data: { url: "u" } })).toBeNull();
+    expect(await w.ed.saveAs({})).toBeNull();
+    expect(w.deps.saveAs).not.toHaveBeenCalled();
+  });
+
+  it("een fout wordt een melding in de pagina; de editor blijft open", async () => {
+    const w = world();
+    vi.mocked(w.deps.saveAs).mockRejectedValueOnce(new ApiError(413, "Onvoldoende quotum", "no_room"));
+    await ready(w);
+    expect(await w.ed.saveAs({ data: { fileType: "txt", title: "a.txt", url: "u" } })).toBeNull();
+    expect(w.ed.getState().notices).toEqual([{ kind: "error", text: "Onvoldoende quotum", reload: false }]);
+    expect(w.ed.getState().phase).toBe("ready");
+    expect(messages("success")).toEqual([]);
+  });
+
+  it("na sluiten gaat er niets meer weg", async () => {
+    const w = world();
+    await ready(w);
+    w.ed.destroy();
+    expect(await w.ed.saveAs({ data: { fileType: "txt", url: "u" } })).toBeNull();
+    expect(w.deps.saveAs).not.toHaveBeenCalled();
   });
 });

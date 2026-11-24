@@ -96,6 +96,20 @@ export default {
     title: "Naam wijzigen",
     label: "Nieuwe naam",
     confirm: "Wijzigen",
+    // Een andere extensie (0.8.3): de inhoud verandert niet mee
+    convert: {
+      title: "Omzetten naar .{to}?",
+      message:
+        "Alleen de naam veranderen maakt van een .{from} geen .{to}: de inhoud blijft {from}. Omzetten maakt een kopie {name} met de inhoud als {to}; het origineel blijft zoals het is.",
+      confirm: "Omzetten",
+      done: "Omgezet: {name}",
+    },
+    warn: {
+      title: "Inhoud wordt niet omgezet",
+      message:
+        "Na het hernoemen heet het bestand .{to}, maar de inhoud blijft {from}. Programma's die een .{to} verwachten, kunnen het dan niet goed openen.",
+      confirm: "Toch hernoemen",
+    },
   },
   trashed: { one: "{name} staat in de prullenbak", other: "{n} items staan in de prullenbak" },
   undo: "Ongedaan maken",
@@ -186,11 +200,12 @@ export default {
       docx: "Document",
       xlsx: "Werkblad",
       pptx: "Presentatie",
+      txt: "Tekstbestand",
       created: "{name} gemaakt",
     },
     keys: {
       edit: "Bewerken in de editor",
-      newMenu: "Menu Nieuw (map, document, werkblad, presentatie)",
+      newMenu: "Menu Nieuw (map, document, werkblad, presentatie, tekstbestand)",
     },
     reasons: {
       read_only: "Je mag dit bestand alleen bekijken",

@@ -20,7 +20,7 @@ import { PageTitle } from "../ui/PageTitle";
 import { readTheme } from "../ui/theme";
 import { EditorSession, type EditorState, initialState, isLeaveKey, LEAVE_COMBO, sessionBody, statusText } from "./editor";
 import { keepGate } from "./gate";
-import { officeStatus, openSession, saveNow, useOfficeStatus } from "./index";
+import { officeStatus, openSession, saveAs, saveNow, useOfficeStatus } from "./index";
 import { loadApi, withoutInlineHandlers } from "./loadApi";
 
 /** Het element dat DocEditor door zijn iframe vervangt. */
@@ -130,12 +130,13 @@ function Editor({ id }: { id: string }): JSX.Element {
         const placeholder = document.createElement("div");
         placeholder.id = PLACEHOLDER;
         host.replaceChildren(placeholder);
-        // Nooit onRequestSaveAs: dan toont DS "Kopie opslaan als", en dat bouwen we niet (A16)
+        // Met onRequestSaveAs toont DS "Kopie opslaan als" (editor.ts: POST …/save-as)
         const made = withoutInlineHandlers(() => new docs.DocEditor(PLACEHOLDER, { ...out.config, events }));
         watchFrames();
         return made;
       },
       saveNow: () => saveNow(id),
+      saveAs: (body) => saveAs(id, body),
       keepGate: () => keepGate(),
       focusFrame: () => {
         const frame = box.current?.querySelector("iframe");

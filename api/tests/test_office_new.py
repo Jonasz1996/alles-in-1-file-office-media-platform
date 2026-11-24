@@ -346,7 +346,7 @@ async def test_een_album_geeft_422(client, settings, office, people):
 @pytest.mark.anyio
 async def test_een_andere_soort_of_geen_login(client, settings, office, people):
     anna = await people("anna@example.nl")
-    for kind in ("odt", "doc", "txt", ""):
+    for kind in ("odt", "doc", "rtf", ""):
         r = await new(client, anna, anna.root, kind)
         assert r.status_code == 422 and code_of(r) == "invalid_input", kind
     r = await client.post("/api/v1/office/new", json={"parent_id": str(anna.root), "kind": "docx"})
@@ -393,3 +393,46 @@ async def test_zonder_office_of_uitgezet_office_off(client, settings, people):
             if hasattr(app.state, name):
                 delattr(app.state, name)
     assert await names_in(settings, anna.root) == ["Nieuw document.docx"]
+
+
+# --- een leeg tekstbestand (txt): ook zonder office ---
+
+
+@pytest.mark.anyio
+async def test_een_leeg_tekstbestand_ook_zonder_office(client, settings, people):
+    """Zonder office-instellingen (precies fase 3) kan Nieuw tekstbestand toch: de web-app bewerkt
+    tekst zelf. Leeg, text/plain, de naam in de taal van de gebruiker, en een vrije naam."""
+    anna = await people("anna@example.nl")
+    r = await new(client, anna, anna.root, "txt")
+    assert r.status_code == 201, r.text
+    made = r.json()
+    assert made["name"] == "Nieuw tekstbestand.txt" and made["size"] == 0
+    assert made["mime"] == "text/plain"
+    assert await content(settings, made["id"]) == b""
+    r = await new(client, anna, anna.root, "txt")
+    assert r.status_code == 201 and r.json()["name"] == "Nieuw tekstbestand (1).txt"
+    r = await new(client, anna, anna.root, "txt", name="boodschappen")
+    assert r.status_code == 201 and r.json()["name"] == "boodschappen.txt"
+    r = await new(client, anna, anna.root, "txt", headers={"Accept-Language": "en-GB,en;q=0.9"})
+    assert r.status_code == 201 and r.json()["name"] == "New text file.txt"
+    # Een docx zonder office nog steeds niet
+    r = await new(client, anna, anna.root, "docx")
+    assert r.status_code == 503 and code_of(r) == "office_off"
+
+
+@pytest.mark.anyio
+async def test_een_tekstbestand_met_office_uitgezet_en_de_rechten(client, settings, office, people):
+    """Met office uitgezet op /beheer ook; de rechten blijven die van een upload."""
+    office_policy(app).config = OfficeConfig(enabled=False)
+    anna = await people("anna@example.nl")
+    bob = await people("bob@example.nl")
+    r = await new(client, anna, anna.root, "txt")
+    assert r.status_code == 201, r.text
+    async with maker(settings)() as session:
+        user = await session.get(User, anna.id)
+        assert user is not None
+        folder = (await create_folder(session, user, name="Gedeeld")).id
+        await session.commit()
+    await share(client, anna, folder, bob, "read")
+    r = await new(client, bob, folder, "txt")
+    assert r.status_code == 403 and code_of(r) == "read_only"

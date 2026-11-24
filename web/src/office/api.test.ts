@@ -3,6 +3,7 @@ import { ApiError, api } from "../api";
 import {
   checkpointAll,
   convert,
+  convertTo,
   deleteUnsaved,
   getAdmin,
   getFile,
@@ -17,6 +18,7 @@ import {
   STATUS_RETRY,
   STATUS_TTL,
   StatusStore,
+  saveAs,
   saveNow,
 } from "./api";
 import { editorPath } from "./index";
@@ -52,6 +54,18 @@ function store(answers: (() => Promise<OfficeStatus>)[], canFetch = () => true) 
     },
   };
 }
+
+describe("een kopie in een ander formaat (0.8.3)", () => {
+  it("save-as en convert-to: POST op het bestand, met de body", async () => {
+    const request = vi.spyOn(api, "request").mockResolvedValue({});
+    await saveAs("a/b", { key: "k1", url: "u", file_type: "txt", title: "x.txt" });
+    await convertTo("a/b", { format: "txt", name: "x.txt" });
+    expect(request.mock.calls).toEqual([
+      ["POST", "/api/v1/office/files/a%2Fb/save-as", { key: "k1", url: "u", file_type: "txt", title: "x.txt" }],
+      ["POST", "/api/v1/office/files/a%2Fb/convert-to", { format: "txt", name: "x.txt" }],
+    ]);
+  });
+});
 
 describe("de aanroepen (§3.4)", () => {
   it("elke functie gebruikt de methode en het pad van het contract", async () => {

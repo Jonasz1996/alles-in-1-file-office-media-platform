@@ -5,8 +5,12 @@
 // Het verloop:
 // - openen: POST …/session; bij 409 office_busy elke 3 s opnieuw, hooguit 30 s (Keuze 14);
 // - stale: een melding "buiten de editor veranderd" (Keuze 19);
-// - de editor maken met de events van Keuze 32 (nooit onRequestSaveAs: A16). Geen onAppReady
-//   binnen 20 s: de editor één keer opnieuw maken, daarna een melding (A22);
+// - de editor maken met de events van Keuze 32, plus onRequestSaveAs ("Kopie opslaan als", ook
+//   naar txt; in fase 4 bewust weggelaten, A16). Geen onAppReady binnen 20 s: de editor één keer
+//   opnieuw maken, daarna een melding (A22);
+// - onRequestSaveAs: DS zette het document al om en geeft een adres; POST …/save-as met de key
+//   van de sessie zet de kopie naast het origineel (office_saveas.py). Daarna een melding
+//   "Opgeslagen als <naam>"; een fout wordt een melding in de pagina;
 // - onDocumentReady: bewerken, en de focus naar de iframe;
 // - onRequestRefreshFile, en office.dropped met reden stale: een nieuwe sessie en
 //   refreshFile(config); lukt dat niet, de pagina opnieuw laden (Keuze 15 en 32, A21);
@@ -20,12 +24,14 @@
 // - het cookie elke 30 minuten vernieuwen (gate.ts), en bij het verlaten destroyEditor().
 
 import { ApiError } from "../api";
+import type { FileNode } from "../api";
 import type { ServerEvent } from "../events";
 import { errorText, fmt, t } from "../i18n";
 import { matchKey } from "../ui/keys";
 import type { Theme } from "../ui/theme";
+import { toast } from "../ui/toast";
 import type { DocEditor } from "./loadApi";
-import type { DroppedEvent, PresenceEvent, SessionIn, SessionOut, UnsavedEvent } from "./types";
+import type { DroppedEvent, PresenceEvent, SaveAsIn, SessionIn, SessionOut, UnsavedEvent } from "./types";
 import { OFFICE_EVENTS } from "./types";
 
 export const BUSY_RETRY_MS = 3_000;
@@ -62,7 +68,12 @@ export interface EditorState {
   title: string | null;
 }
 
-/** De events die de pagina aan DocEditor geeft (Keuze 32). Nooit onRequestSaveAs (A16). */
+/** Wat DS bij "Kopie opslaan als" meegeeft (event onRequestSaveAs). */
+export interface SaveAsEvent {
+  data?: { fileType?: string; title?: string; url?: string };
+}
+
+/** De events die de pagina aan DocEditor geeft (Keuze 32), plus onRequestSaveAs. */
 export interface EditorEvents {
   onAppReady(): void;
   onDocumentReady(): void;
@@ -71,6 +82,7 @@ export interface EditorEvents {
   onWarning(e: { data?: { warningCode?: number; warningDescription?: string } }): void;
   onRequestClose(): void;
   onRequestRefreshFile(): void;
+  onRequestSaveAs(e: SaveAsEvent): void;
 }
 
 export interface Timers {
@@ -87,6 +99,8 @@ export interface Deps {
   mount(session: SessionOut, events: EditorEvents): Promise<DocEditor>;
   /** POST …/save */
   saveNow(): Promise<void>;
+  /** POST …/save-as: de kopie van "Kopie opslaan als" naast het origineel */
+  saveAs(body: SaveAsIn): Promise<FileNode>;
   /** Het cookie elke 30 minuten vernieuwen; geeft de functie om te stoppen */
   keepGate(): () => void;
   /** De focus naar de iframe (na onDocumentReady) */
@@ -351,7 +365,29 @@ export class EditorSession {
       onRequestRefreshFile: () => {
         void this.refresh();
       },
+      onRequestSaveAs: (e) => {
+        void this.saveAs(e);
+      },
     };
+  }
+
+  /** "Kopie opslaan als": de kopie die DS maakte, naast het origineel. */
+  async saveAs(e: SaveAsEvent): Promise<FileNode | null> {
+    const key = this.state.key;
+    const url = e.data?.url;
+    const fileType = e.data?.fileType;
+    if (this.destroyed || !key || !url || !fileType) return null;
+    try {
+      const node = await this.deps.saveAs({ key, url, file_type: fileType, title: e.data?.title || undefined });
+      if (!this.destroyed) {
+        this.clearNotice("error");
+        toast(t("office.saveAs.done", { name: node.name }));
+      }
+      return node;
+    } catch (err) {
+      if (!this.destroyed) this.notice("error", errorText(err));
+      return null;
+    }
   }
 
   /** Een nieuwe sessie en refreshFile(config); lukt dat niet, dan de pagina opnieuw laden. */

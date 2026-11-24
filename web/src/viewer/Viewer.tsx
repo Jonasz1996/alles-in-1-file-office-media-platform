@@ -9,6 +9,10 @@
 // De haak van office in de werkbalk (fase 4, van O0): "Bewerken" (E) en "Downloaden als PDF".
 // Of ze er zijn, zeggen office/actions.ts (O2) en office/pdf.ts (O3); nooit via een publieke
 // link en nooit bij een eerdere versie. Zonder office zijn ze er niet, precies zoals fase 3.
+//
+// Tekst bewerken (0.8.3) zit in TextView zelf. Met wijzigingen die nog niet zijn opgeslagen
+// vraagt de viewer eerst of ze weg mogen, bij sluiten en bij het volgende bestand
+// (leaveGuard.ts), en de browser bij het verlaten van de pagina (beforeunload).
 
 import {
   type JSX,
@@ -31,9 +35,11 @@ import type { HookState, OfficeTarget } from "../office/types";
 import { Button, IconButton } from "../ui/Button";
 import { pushScope, useShortcuts } from "../ui/keys";
 import { openShortcutHelp } from "../ui/ShortcutHelp";
+import { confirm } from "../ui/dialogs";
 import { Spinner } from "../ui/Spinner";
 import { modals } from "../ui/topLayer";
 import type { ViewerDetail } from "./api";
+import { onBeforeUnload, whenMayLeave } from "./leaveGuard";
 import { moreComing, previewReadyFor, type ViewKind, viewKind } from "./media";
 import { type Source, sourceOf } from "./source";
 import type { ViewerItem, ViewerProps } from "./types";
@@ -52,6 +58,16 @@ const PENDING_ROUNDS = 20;
 const PENDING_MS = 3000;
 /** Zo ver (px) vegen is naar het volgende bestand. */
 const SWIPE = 60;
+/** Wijzigingen in een tekst die nog niet zijn opgeslagen: weggooien? */
+function askLeave(): Promise<boolean> {
+  return confirm({
+    title: t("viewer.text.edit.leaveTitle"),
+    message: t("viewer.text.edit.leaveMessage"),
+    confirm: t("viewer.text.edit.leaveConfirm"),
+    danger: true,
+  });
+}
+
 /** Een haak van office die er niet is. */
 const NO_HOOK: HookState = { visible: false, reason: null };
 
@@ -91,15 +107,26 @@ function useDetails(source: Source) {
 
 type Loaded = { key: string; detail?: ViewerDetail; error?: unknown };
 
-export default function Viewer({ items, index, onIndexChange, onClose: close, onNeedMore, source }: ViewerProps): JSX.Element | null {
+export default function Viewer({
+  items,
+  index,
+  onIndexChange,
+  onClose: close,
+  onNeedMore,
+  source,
+  editText,
+}: ViewerProps): JSX.Element | null {
   const src = sourceOf(source);
   // Hooguit één keer sluiten: Esc komt zowel als sneltoets als als cancel van de <dialog>, en
   // twee keer "terug" zou ook de pagina eronder verlaten
   const closed = useRef(false);
   const onClose = useCallback(() => {
     if (closed.current) return;
-    closed.current = true;
-    close();
+    whenMayLeave(() => {
+      if (closed.current) return;
+      closed.current = true;
+      close();
+    }, askLeave);
   }, [close]);
   const item = items[index] as ViewerItem | undefined;
   const dialog = useRef<HTMLDialogElement>(null);
@@ -117,6 +144,12 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
   const target = item as (ViewerItem & OfficeTarget) | undefined;
   const editHook = target && src.kind === "user" ? canEdit(target, office) : NO_HOOK;
   const pdfHook = target && src.kind === "user" ? canPdf(target, office) : NO_HOOK;
+
+  // De pagina verlaten met tekst die nog niet is opgeslagen: de browser vraagt het
+  useEffect(() => {
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   useLayoutEffect(() => {
     const el = dialog.current;
@@ -206,14 +239,14 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
         onNeedMore?.(step);
         return;
       }
-      onIndexChange(next);
+      whenMayLeave(() => onIndexChange(next), askLeave);
     },
     [index, items.length, onIndexChange, onNeedMore],
   );
 
   const goTo = useCallback(
     (i: number) => {
-      if (i !== index && i >= 0 && i < items.length) onIndexChange(i);
+      if (i !== index && i >= 0 && i < items.length) whenMayLeave(() => onIndexChange(i), askLeave);
     },
     [index, items.length, onIndexChange],
   );
@@ -352,7 +385,7 @@ export default function Viewer({ items, index, onIndexChange, onClose: close, on
       />
     );
   } else if (kind === "text") {
-    body = <TextView key={key} item={item} detail={detail} source={src} />;
+    body = <TextView key={key} item={item} detail={detail} source={src} startEditing={editText === item.id} />;
   } else if (kind === "office") {
     body = <OfficeView key={key} item={item} detail={detail} source={src} />;
   } else if (kind === "archive") {

@@ -95,6 +95,21 @@ export default {
     region: "Inhoud van het bestand",
     empty: "Dit bestand is leeg.",
     tableTruncated: "Niet alle rijen of kolommen staan erin.",
+    // Tekst bewerken (0.8.3)
+    edit: {
+      start: "Bewerken",
+      save: "Opslaan",
+      done: "Klaar",
+      unsaved: "Niet opgeslagen wijzigingen",
+      clean: "Alles is opgeslagen",
+      saved: "{name} opgeslagen",
+      field: "Tekst van {name}",
+      encoding: "Alleen tekst in UTF-8 kan hier worden bewerkt.",
+      tooLarge: "Dit bestand is te groot om hier te bewerken (hooguit 5 MB).",
+      leaveTitle: "Wijzigingen weggooien?",
+      leaveMessage: "Je hebt wijzigingen in deze tekst die nog niet zijn opgeslagen.",
+      leaveConfirm: "Weggooien",
+    },
   },
   office: {
     simplified: "Vereenvoudigd voorbeeld zonder opmaak",

@@ -34,6 +34,9 @@ export default {
       error_status: "De editor kon het document niet bewaren. Je werk staat nog in de editor.",
     },
   },
+  saveAs: {
+    done: "Opgeslagen als {name}",
+  },
   toast: {
     unsaved: {
       no_room: "{name} is niet opgeslagen: er is geen ruimte meer. De beheerder kan het terugzetten zodra er ruimte is.",

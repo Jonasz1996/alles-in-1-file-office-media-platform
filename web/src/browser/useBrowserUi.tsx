@@ -2,7 +2,8 @@
 // kopiëren, tags, delen, versies, album), hernoemen, downloaden (een bestand, of een zip) en de
 // bulkacties van de API. Bestanden (Files.tsx), NodeActions (⋯ bij één node, ook in Gedeeld met
 // mij) en Zoeken gebruiken dit allemaal; de pagina krijgt de uitkomst terug (upsert/remove) en
-// werkt zijn lijst bij zonder alles opnieuw te laden.
+// werkt zijn lijst bij zonder alles opnieuw te laden. Hernoemen naar een andere extensie vraagt
+// eerst (renameCheck.ts): omzetten als de editor dat kan, anders een waarschuwing.
 
 import { type ReactNode, Suspense, useMemo, useRef, useState } from "react";
 import { api, type FileNode } from "../api";
@@ -11,15 +12,17 @@ import { FolderPicker } from "../FolderPicker";
 import { errorText, t } from "../i18n";
 import { nodeHref } from "../links";
 import { AddToAlbumDialog } from "../photos/index";
+import { convertTo, officeStatus } from "../office/api";
 import { navigate } from "../router";
 import { ShareDialog } from "../ShareDialog";
 import { canWrite, permissionOf } from "../sharing";
 import { TagEditor } from "../Tags";
-import { prompt } from "../ui/dialogs";
+import { confirm, prompt } from "../ui/dialogs";
 import { announce, toast } from "../ui/toast";
 import { Versions } from "../Versions";
 import type { BrowserUi } from "./actions";
 import { clipboard, ownerOf, planTransfer } from "./clipboard";
+import { type RenameDeps, renameWithCheck } from "./renameCheck";
 import { offerUndo } from "./undo";
 
 export interface UiHooks {
@@ -59,6 +62,15 @@ function follow(url: string, name: string): void {
   a.remove();
 }
 
+
+/** Wat hernoemen echt doet (renameCheck.ts), met de dialogen en de API van de app. */
+const RENAME_DEPS: RenameDeps = {
+  canConvert: async () => (officeStatus.stale() ? await officeStatus.load() : officeStatus.peek())?.editing === true,
+  ask: (a) => confirm(a),
+  rename: (id, name) => api.change(id, { name }),
+  convertTo: (id, format, name) => convertTo(id, { format, name }),
+  t: (key, vars) => t(key as Parameters<typeof t>[0], vars),
+};
 
 /** Meldt wat er misging bij een bulkactie (de eerste fout, vertaald op code). */
 export function reportFailures(results: readonly ItemResult[]): void {
@@ -158,7 +170,12 @@ export function useBrowserUi(h: UiHooks): BrowserUiResult {
         )?.trim();
         if (!name || name === node.name) return;
         try {
-          hooks().onUpsert?.([await api.change(node.id, { name })]);
+          const done = await renameWithCheck(node, name, RENAME_DEPS);
+          if (done.kind === "none") return;
+          const { folder, onUpsert } = hooks();
+          // Een omgezette kopie staat in de map van het origineel
+          if (done.kind === "renamed" || folder?.id === done.node.parent_id) onUpsert?.([done.node]);
+          if (done.kind === "converted") toast(t("browser.rename.convert.done", { name: done.node.name }));
         } catch (e) {
           fail(e);
         }

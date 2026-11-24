@@ -3,7 +3,8 @@ gebeurtenissen. Frozen na O0: alleen de hotfix-lane verandert ze.
 
 Foutcodes (web/src/i18n/errors/office.ts): office_off, office_unavailable, office_format,
 office_too_large, office_unsafe, office_busy, office_too_many {max}, office_gate, office_token,
-office_convert_failed {code}, pdf_pending, office_owner_gone, office_misconfigured. Bestaande
+office_convert_failed {code}, pdf_pending, office_owner_gone, office_misconfigured, en (0.8.3,
+"Opslaan als" en "Omzetten") office_convert_to_failed {code}. Bestaande
 codes blijven: not_found, read_only, trashed, not_a_file, album, no_room, folder_not_found,
 guest, rate_limited.
 

@@ -157,10 +157,11 @@ def test_grens_op_1_de_tweede_bewerker_krijgt_de_melding(office: Office, office_
 
 
 def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers) -> None:
-    """Zet de beheerder office uit en gaat hij meteen (zonder te herladen) naar Bestanden, dan is
-    Nieuw er niet meer, alleen Nieuwe map; weer aan en terug: Nieuw is er meteen weer. De status
-    van office in de app gold eerst nog tot een minuut na het opslaan. Uit met de knop Opslaan,
-    weer aan met Enter in het formulier."""
+    """Zet de beheerder office uit en gaat hij meteen (zonder te herladen) naar Bestanden, dan
+    staan Document, Werkblad en Presentatie niet meer in het menu Nieuw (alleen Map en
+    Tekstbestand: een tekstbestand kan ook zonder office, sinds 0.8.3); weer aan en terug: ze zijn
+    er meteen weer. De status van office in de app gold eerst nog tot een minuut na het opslaan.
+    Uit met de knop Opslaan, weer aan met Enter in het formulier."""
     tab = office_tab(office, office_browsers)
     nav = tab.get_by_role("navigation", name="Hoofdmenu")
     switch = tab.get_by_label("Bewerken en omzetten naar PDF aan", exact=True)
@@ -168,9 +169,13 @@ def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers
     save = tab.get_by_role("button", name="Opslaan", exact=True)
     new = tab.get_by_role("button", name="Nieuw", exact=True)
     folder = tab.get_by_role("button", name="Nieuwe map", exact=True)
+    items = tab.get_by_role("menu", name="Nieuw", exact=True).get_by_role("menuitem")
+    with_office = [re.compile(r"^MapN$"), "Document", "Werkblad", "Presentatie", "Tekstbestand"]
     try:
         nav.get_by_role("link", name="Bestanden", exact=True).click()
-        expect(new).to_be_visible()  # office aan: het menu Nieuw
+        new.click()  # office aan: het menu Nieuw met alles
+        expect(items).to_have_text(with_office)
+        tab.keyboard.press("Escape")
         nav.get_by_role("link", name="Beheer", exact=True).click()
         tab.get_by_role("navigation", name="Onderdelen van beheer").get_by_role(
             "link", name="Office", exact=True
@@ -179,8 +184,11 @@ def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers
         save.click()
         expect(toast(tab, "Instellingen opgeslagen.")).to_be_visible()
         nav.get_by_role("link", name="Bestanden", exact=True).click()
-        expect(folder).to_be_visible()
-        expect(new).to_have_count(0)
+        # Het menu Nieuw blijft (Tekstbestand kan altijd), maar zonder de soorten van de editor
+        expect(folder).to_have_count(0)
+        new.click()
+        expect(items).to_have_text([re.compile(r"^MapN$"), "Tekstbestand"])
+        tab.keyboard.press("Escape")
 
         nav.get_by_role("link", name="Beheer", exact=True).click()
         tab.get_by_role("navigation", name="Onderdelen van beheer").get_by_role(
@@ -191,7 +199,9 @@ def test_na_opslaan_ziet_de_eigen_app_het_meteen(office: Office, office_browsers
         save_with_enter(tab, limit)
         expect(toast(tab, "Instellingen opgeslagen.").last).to_be_visible()
         nav.get_by_role("link", name="Bestanden", exact=True).click()
-        expect(new).to_be_visible()
+        new.click()
+        expect(items).to_have_text(with_office)
+        tab.keyboard.press("Escape")
         expect(folder).to_have_count(0)
     finally:
         office.server.call(office.admin, "PUT", ADMIN, json=DEFAULTS, expect=200)
