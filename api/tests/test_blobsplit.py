@@ -8,6 +8,7 @@ import asyncio
 import os
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +19,14 @@ from tests.factories import create_blob, create_file, create_folder, create_user
 
 pytestmark = pytest.mark.anyio
 
-NIETS = {"naar_blobs": 0, "naar_r1": 0, "naar_r2": 0, "naar_r3": 0, "weg": 0}
+NIETS = {
+    "naar_blobs": 0,
+    "naar_r1": 0,
+    "naar_r2": 0,
+    "naar_r3": 0,
+    "weg": 0,
+    "afgebroken": 0,
+}
 
 
 def counts(**kw: int) -> dict[str, int]:
@@ -245,10 +253,14 @@ async def test_delete_en_adopt_kijken_overal(settings):
 
 
 async def test_path_zonder_mappen_geen_blik_extra(settings, monkeypatch):
-    """Zonder mappen naast blobs/ kijkt path() hooguit één keer per minuut of ze er zijn; met
-    een map die er is, zoekt hij daar."""
+    """Staat de inhoud in blobs/, dan kijkt path() nergens anders (ook niet of de mappen ernaast
+    er zijn). Ontbreekt ze daar, dan kijkt hij in de mappen ernaast, ook als hij onthouden had
+    dat die er niet zijn: een ander proces kan net de eerste inhoud verhuisd hebben."""
     blobs = BlobStore(settings.blob_dir)
     sha = "ef" * 32
+    main = blobs.main_path(sha)
+    main.parent.mkdir(parents=True, exist_ok=True)
+    main.write_bytes(b"z")
     looked: list[str] = []
     real = type(blobs.root).is_dir
 
@@ -258,15 +270,22 @@ async def test_path_zonder_mappen_geen_blik_extra(settings, monkeypatch):
 
     monkeypatch.setattr(type(blobs.root), "is_dir", is_dir)
     for _ in range(5):
-        assert blobs.path(sha) == blobs.main_path(sha)
-    assert sorted(looked) == sorted(f.name for f in blobs.others())  # één keer elk
+        assert blobs.path(sha) == main
+    assert looked == []
+    # Ontbreekt de inhoud: één blik per map, elke keer opnieuw
+    missing = "ee" * 32
+    assert blobs.path(missing) == blobs.main_path(missing)
+    assert blobs.path(missing) == blobs.main_path(missing)
+    assert sorted(looked) == sorted([f.name for f in blobs.others()] * 2)
     monkeypatch.undo()
 
+    # Dit proces onthield "blobs-r1/ is er niet"; een ander proces verhuisde de inhoud erheen
+    # en zette de kopie in blobs/ opzij: path() vindt haar toch meteen
+    BlobStore._seen[blobs.copies_dir(1)] = (False, time.monotonic())
     path = blobs.copies_path(sha, 1)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"z")
-    assert blobs.path(sha) == blobs.main_path(sha)  # de cache: nog niet gezien
-    blobs.saw(blobs.copies_dir(1))
+    main.unlink()
     assert blobs.path(sha) == path
     with pytest.raises(ValueError):
         blobs.copies_dir(4)
@@ -304,3 +323,144 @@ async def test_kick_wekt_de_lus():
         assert blobsplit._wake.is_set()
     finally:
         blobsplit._wake = None
+
+
+async def _films_op_2(settings, blobs, data=b"film"):
+    """Films op 2 kopieën met één film in blobs/; geeft de sessie-maker en de film."""
+    async with maker(settings)() as session:
+        user = await create_user(session, "jonas@example.nl")
+        films = await create_folder(session, user, name="Films")
+        session.add(
+            MediaLibrary(owner_id=user.id, root_id=films.id, kind="movies", name="Films", copies=2)
+        )
+        film = await create_file(session, user, films.id, "f.mkv", data=data, blobs=blobs)
+        await session.commit()
+        return film
+
+
+@pytest.mark.parametrize("broken", [b"", b"fi"], ids=["leeg", "half"])
+async def test_stuk_doel_gaat_niet_voor_de_goede_kopie(settings, broken):
+    """Review replicatie, punt 1: staat er al een kopie in blobs-r2/ maar is die leeg of half
+    (stroomstoring na de hernoeming, of met de hand neergezet), dan gaat de goede kopie niet
+    opzij. De kapotte wordt vervangen door een hele kopie; pas daarna gaat blobs/ opzij."""
+    blobs = BlobStore(settings.blob_dir)
+    film = await _films_op_2(settings, blobs)
+    dest = blobs.copies_path(film.blob_id, 2)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(broken)
+
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == counts(naar_r2=1)
+    assert dest.read_bytes() == b"film"
+    assert blobs.path(film.blob_id) == dest
+    assert blobs.path(film.blob_id).read_bytes() == b"film"
+    assert (blobs.root / blobsplit.TRASH / film.blob_id).read_bytes() == b"film"
+    assert list((blobs.copies_dir(2) / ".tmp").iterdir()) == []
+
+
+async def test_stuk_doel_en_stuk_bron_niets_opzij(settings):
+    """Is ook de bron stuk (klopt niet met haar SHA-256), dan verhuist er niets: geen kapotte
+    kopie op haar plek, en de bron blijft waar ze stond."""
+    blobs = BlobStore(settings.blob_dir)
+    film = await _films_op_2(settings, blobs)
+    src = blobs.main_path(film.blob_id)
+    src.write_bytes(b"flim")  # stuk, zelfde grootte
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == NIETS
+    assert src.read_bytes() == b"flim"
+    assert not blobs.copies_path(film.blob_id, 2).exists()
+    assert list((blobs.copies_dir(2) / ".tmp").iterdir()) == []
+
+
+async def test_heel_doel_alleen_de_rest_opzij_en_gezien(settings):
+    """Staat er al een hele kopie (een ronde stopte tussen neerzetten en opzij leggen), dan gaat
+    de rest opzij, en weet path() in dit proces meteen dat blobs-r2/ er is (punt 5)."""
+    blobs = BlobStore(settings.blob_dir)
+    film = await _films_op_2(settings, blobs)
+    dest = blobs.copies_path(film.blob_id, 2)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"film")
+    BlobStore._seen[blobs.copies_dir(2)] = (False, time.monotonic())
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == counts(naar_r2=1)
+    assert BlobStore._seen[blobs.copies_dir(2)][0] is True
+
+
+async def test_doel_veranderd_tijdens_het_nakijken(settings, monkeypatch):
+    """Verandert de kopie in blobs-r2/ terwijl we haar nakeken, dan legt deze ronde niets opzij."""
+    blobs = BlobStore(settings.blob_dir)
+    film = await _films_op_2(settings, blobs)
+    dest = blobs.copies_path(film.blob_id, 2)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"")
+    real = blobsplit._intact
+
+    def intact(path, sha):
+        ok = real(path, sha)
+        path.write_bytes(b"x")  # intussen veranderd
+        return ok
+
+    monkeypatch.setattr(blobsplit, "_intact", intact)
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == NIETS
+    assert blobs.main_path(film.blob_id).read_bytes() == b"film"
+    assert dest.read_bytes() == b"x"
+
+
+async def test_kopie_en_map_naar_de_schijf(settings, monkeypatch):
+    """De kopie gaat met fsync naar de schijf voor ze op haar plek komt, en daarna de map
+    (de hernoeming) voor de oude kopie opzij gaat."""
+    blobs = BlobStore(settings.blob_dir)
+    film = await _films_op_2(settings, blobs)
+    order: list[str] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        order.append("fsync")
+        return real_fsync(fd)
+
+    def replace(src, dst):
+        order.append(f"replace:{Path(dst).parent.name}")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(blobsplit.os, "fsync", fsync)
+    monkeypatch.setattr(blobsplit.os, "replace", replace)
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == counts(naar_r2=1)
+    dest_dir = blobs.copies_path(film.blob_id, 2).parent.name
+    # kopie gesynct, neergezet, map gesynct; dan pas opzij (en ook die map gesynct)
+    first = order.index(f"replace:{dest_dir}")
+    assert order[first - 1] == "fsync" and order[first + 1] == "fsync"
+    assert order.index(f"replace:{blobsplit.TRASH}") > first + 1
+    assert order[-1] == "fsync"
+
+
+async def test_afgebroken_kopie_wordt_opgeruimd(settings):
+    """Review replicatie, punt 2: een kopie die bij een herstart halverwege bleef steken
+    (split-*.part in <map>/.tmp/), gaat weg zodra er een uur niets meer in geschreven is.
+    Een kopie die nog loopt en de uploads in blobs/.tmp/ blijven."""
+    blobs = BlobStore(settings.blob_dir)
+    old = time.time() - blobsplit.PART_S - 60
+    made = {}
+    for folder in (blobs.root, blobs.copies_dir(2), blobs.media):
+        tmp = folder / ".tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        made[folder] = tmp / "split-oud.part"
+        made[folder].write_bytes(b"half")
+        os.utime(made[folder], (old, old))
+    fresh = blobs.copies_dir(2) / ".tmp" / "split-nu.part"
+    fresh.write_bytes(b"bezig")
+    upload = blobs.root / ".tmp" / "tmpabc123"
+    upload.write_bytes(b"upload")
+    os.utime(upload, (old, old))
+
+    async with maker(settings)() as session:
+        done = await blobsplit.run(session, blobs, default=3)
+    assert done == counts(afgebroken=3)
+    assert not any(p.exists() for p in made.values())
+    assert fresh.exists() and upload.exists()

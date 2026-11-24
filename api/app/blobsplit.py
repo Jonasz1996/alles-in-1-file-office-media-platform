@@ -34,9 +34,10 @@ PLATFORM_BLOB_SPLIT doet dit niets, en blijft alles in blobs/ (de single heeft e
 from __future__ import annotations
 
 import asyncio
+import errno
+import hashlib
 import logging
 import os
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -50,7 +51,7 @@ from app import access
 from app.config import Settings
 from app.db import get_engine
 from app.models import MediaLibrary, Node, Version
-from app.storage import COPIES, BlobStore
+from app.storage import CHUNK, COPIES, BlobStore, hash_file
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ ROUND_S = 3600
 SOON_S = 60  # zo snel na een wijziging op /beheer de volgende ronde
 GRACE_S = 24 * 3600  # zo lang blijft een verhuisde kopie in .weg/
 TRASH = ".weg"
+PART_PREFIX, PART_SUFFIX = "split-", ".part"  # een kopie onderweg, in <map>/.tmp/
+PART_S = 3600  # zo lang niets meer geschreven: een afgebroken kopie, weg ermee
 
 # Wekt de lus na een wijziging van de kopieën van een bibliotheek (kick)
 _wake: asyncio.Event | None = None
@@ -150,18 +153,78 @@ async def target_of(session: AsyncSession, sha: str, default: int) -> int:
     return max(level.get(start, default) for start in starts)
 
 
-def _copy(src: Path, folder: Path) -> Path:
-    """Kopie in een werkmap; geeft het tijdelijke bestand. Controle op de grootte."""
-    folder.mkdir(parents=True, exist_ok=True)
-    tmp = folder / f"split-{uuid.uuid4().hex}.part"
+def _fsync_dir(folder: Path) -> None:
+    """De map naar de schijf (een hernoeming erin), zodat die een stroomstoring overleeft. Een
+    bestandssysteem dat dat niet kan (sommige FUSE-mounts), laat het: dan geldt wat het zelf
+    belooft."""
     try:
-        shutil.copyfile(src, tmp)
-        if tmp.stat().st_size != src.stat().st_size:
-            raise OSError(f"kopie van {src.name} is onvolledig")
+        fd = os.open(folder, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno not in (errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EBADF):
+            raise
+    finally:
+        os.close(fd)
+
+
+def _copy(src: Path, folder: Path, sha: str) -> Path:
+    """Kopie in een werkmap; geeft het tijdelijke bestand. Onderweg de SHA-256: een kopie die
+    niet klopt (of een bron die stuk is), gaat nooit op haar plek. Daarna fsync, zodat na een
+    stroomstoring nooit een lege of halve kopie op haar plek staat terwijl de goede al opzij
+    ligt."""
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = folder / f"{PART_PREFIX}{uuid.uuid4().hex}{PART_SUFFIX}"
+    try:
+        digest = hashlib.sha256()
+        with open(src, "rb") as reader, open(tmp, "wb") as writer:
+            while chunk := reader.read(CHUNK):
+                digest.update(chunk)
+                writer.write(chunk)
+            writer.flush()
+            os.fsync(writer.fileno())
+        if digest.hexdigest() != sha:
+            raise OSError(f"kopie van {src.name} klopt niet (SHA-256)")
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
     return tmp
+
+
+def _intact(path: Path, sha: str) -> bool:
+    """Of dit bestand de inhoud met deze SHA-256 is (heel, niet leeg of half)."""
+    try:
+        return hash_file(path) == sha
+    except FileNotFoundError:
+        return False
+
+
+def _ident(path: Path) -> tuple[int, int, int] | None:
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _stale_parts(folder: Path, now: float) -> int:
+    """Een kopie die halverwege stopte (herstart, OOM) blijft anders voor altijd in <map>/.tmp/
+    staan, zo groot als een film. Alleen onze eigen split-*.part (uploads staan daar ook), en
+    alleen als er al PART_S niets meer in geschreven is: een lopende kopie schrijft steeds."""
+    folder = folder / ".tmp"
+    gone = 0
+    if not folder.is_dir():
+        return gone
+    for p in folder.glob(f"{PART_PREFIX}*{PART_SUFFIX}"):
+        try:
+            if now - p.stat().st_mtime > PART_S:
+                p.unlink()
+                gone += 1
+        except FileNotFoundError:
+            pass
+    return gone
 
 
 def _aside(path: Path) -> None:
@@ -171,6 +234,8 @@ def _aside(path: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     os.replace(path, target)
     os.utime(target)
+    _fsync_dir(target.parent)
+    _fsync_dir(path.parent)
 
 
 def folder_of(blobs: BlobStore, copies: int, default: int) -> Path:
@@ -186,10 +251,21 @@ async def _move(
     srcs = [p for p in blobs.everywhere(sha) if p != dest and p.is_file()]
     if not srcs:
         return False
-    # Staat ze er al (een vorige ronde stopte halverwege), dan alleen de rest opzij
     tmp = None
+    seen = None
+    if dest.is_file():
+        # Staat ze er al (een vorige ronde stopte halverwege), dan eerst nakijken of die kopie
+        # heel is, voor de andere opzij gaan: na een stroomstoring of met de hand neergezet kan
+        # ze leeg of half zijn. Stuk: weg, en de gewone weg (kopiëren en neerzetten)
+        seen = _ident(dest)
+        if not await anyio.to_thread.run_sync(_intact, dest, sha):
+            log.warning("blobsplit: %s in %s is stuk; opnieuw kopiëren", sha, folder.name)
+            async with blobs.lock:
+                if _ident(dest) != seen:
+                    return False  # intussen veranderd: de volgende ronde
+                dest.unlink(missing_ok=True)
     if not dest.is_file():
-        tmp = await anyio.to_thread.run_sync(_copy, srcs[0], folder / ".tmp")
+        tmp = await anyio.to_thread.run_sync(_copy, srcs[0], folder / ".tmp", sha)
     try:
         async with blobs.lock:
             # Intussen weggegooid, al verhuisd, of hoort ze nu ergens anders?
@@ -200,9 +276,10 @@ async def _move(
                     return False
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(tmp, dest)
-                blobs.saw(folder)
-            elif not dest.is_file():
-                return False
+                _fsync_dir(dest.parent)
+            elif _ident(dest) != seen:
+                return False  # niet meer de kopie die we nakeken
+            blobs.saw(folder)
             for src in srcs:
                 if src.is_file():
                     _aside(src)
@@ -250,7 +327,8 @@ def _key(blobs: BlobStore, folder: Path) -> str:
 
 
 async def run(session: AsyncSession, blobs: BlobStore, default: int = 3) -> dict[str, int]:
-    """Eén ronde; geeft per map hoeveel er naartoe verhuisde, en hoeveel oude kopieën weg zijn.
+    """Eén ronde; geeft per map hoeveel er naartoe verhuisde, hoeveel oude kopieën weg zijn, en
+    hoeveel afgebroken kopieën (split-*.part in .tmp/) er opgeruimd zijn.
     default: het aantal kopieën van blobs/ (PLATFORM_BLOB_DEFAULT_COPIES)."""
     want = await targets(session, default)
     others = blobs.others()
@@ -271,7 +349,7 @@ async def run(session: AsyncSession, blobs: BlobStore, default: int = 3) -> dict
         for sha in shas:
             if folder_of(blobs, want.get(sha, default), default) != folder:
                 plan[sha] = folder_of(blobs, want.get(sha, default), default)
-    out = {"naar_blobs": 0, **{f"naar_r{n}": 0 for n in COPIES}, "weg": 0}
+    out = {"naar_blobs": 0, **{f"naar_r{n}": 0 for n in COPIES}, "weg": 0, "afgebroken": 0}
     for sha, folder in sorted(plan.items()):
         try:
             if await _move(session, blobs, sha, folder, default):
@@ -281,6 +359,7 @@ async def run(session: AsyncSession, blobs: BlobStore, default: int = 3) -> dict
     now = time.time()
     for root in (blobs.root, *others):
         out["weg"] += await anyio.to_thread.run_sync(_purge, root, now)
+        out["afgebroken"] += await anyio.to_thread.run_sync(_stale_parts, root, now)
     return out
 
 

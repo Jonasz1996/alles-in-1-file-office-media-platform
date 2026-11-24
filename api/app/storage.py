@@ -100,13 +100,14 @@ class BlobStore:
     def copies_path(self, sha256: str, copies: int) -> Path:
         return self.at(self.copies_dir(copies), sha256)
 
-    def exists(self, folder: Path) -> bool:
-        """Of deze map naast blobs/ er is; hooguit één blik per minuut zolang ze er niet is."""
+    def exists(self, folder: Path, fresh: bool = False) -> bool:
+        """Of deze map naast blobs/ er is; hooguit één blik per minuut zolang ze er niet is.
+        fresh: het onthouden "nee" niet geloven en opnieuw kijken."""
         seen, at = self._seen.get(folder, (False, -1e9))
         if seen:
             return True
         clock = time.monotonic()
-        if clock - at > 60:
+        if fresh or clock - at > 60:
             seen = folder.is_dir()
             self._seen[folder] = (seen, clock)
         return seen
@@ -120,13 +121,19 @@ class BlobStore:
 
     def path(self, sha256: str) -> Path:
         """Waar de inhoud staat: in blobs/, anders in blobs-r1/ tot blobs-r3/, anders in
-        blobs-media/. Staat ze nergens, dan de plek in blobs/ (daar komt nieuwe inhoud). Zonder
-        die mappen altijd blobs/, zonder een blik op de schijf."""
+        blobs-media/. Staat ze nergens, dan de plek in blobs/ (daar komt nieuwe inhoud).
+
+        Staat ze in blobs/: één blik, zoals vroeger. Staat ze daar niet, dan kijkt path() ook in
+        de mappen ernaast, en gelooft dan een onthouden "die map is er niet" niet: blobsplit kan
+        in een ander proces net de eerste inhoud naar een nieuwe map verhuisd hebben (en de oude
+        kopie in blobs/.weg/ gezet). Dat kost alleen iets extra als de inhoud in blobs/
+        ontbreekt."""
         main = self.main_path(sha256)
-        folders = [f for f in self.others() if self.exists(f)]
-        if not folders or main.exists():
+        if main.exists():
             return main
-        for folder in folders:
+        for folder in self.others():
+            if not self.exists(folder, fresh=True):
+                continue
             found = self.at(folder, sha256)
             if found.exists():
                 return found

@@ -577,8 +577,11 @@ export default {
       copiesDefault: "Standaard ({n})",
       copiesSaved: "{name}: {copies} kopieën in het cluster. De inhoud verhuist bij de volgende ronde.",
       copiesSavedDefault: "{name}: de standaard van het cluster ({n} kopieën). De inhoud verhuist bij de volgende ronde.",
+      copiesSavedOff: "{name}: bewaard. Dit doet pas iets met PLATFORM_BLOB_SPLIT=true.",
+      copiesSave: "Opslaan",
+      copiesSaveLabel: "Kopieën in het cluster van {name} opslaan",
       copiesHelp: "Hoeveel kopieën het cluster van de bestanden in een bibliotheek bewaart, bijvoorbeeld films op 2 en series op 3. Staat hetzelfde bestand ook ergens anders, dan telt het hoogste aantal; buiten een bibliotheek geldt de standaard ({n}).",
-      copiesOff: "Deze instelling werkt pas in het cluster, met PLATFORM_BLOB_SPLIT=true (zie het runbook replicatie). Tot dan blijft alles in de standaard; de keuze wordt wel bewaard.",
+      copiesOff: "Deze instelling werkt pas in het cluster, met PLATFORM_BLOB_SPLIT=true (zie het runbook replicatie). De keuze wordt wel bewaard. Er verhuist nu niets; wat al eerder verhuisd is, blijft waar het staat.",
       kinds: {
         movies: "films",
         shows: "series",

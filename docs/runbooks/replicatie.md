@@ -110,15 +110,18 @@ herstarten (`platform-ctl.sh down` en `up` op de VIP-node). In de log staat
 `blobsplit: aan, standaard 3 kopieën`.
 
 **5. De bibliotheken**: op /beheer → Media → Bibliotheken per bibliotheek de kopieën kiezen (bv.
-Films 2, Series Standaard). Een minuut later begint de ronde.
+Films 2, Series Standaard) en per rij op Opslaan drukken. Een minuut later begint de ronde.
 
 ## Nakijken
 
 - De log van de app na een ronde:
-  `blobsplit: {'naar_blobs': 0, 'naar_r1': 0, 'naar_r2': 812, 'naar_r3': 0, 'weg': 0}` (hoeveel
-  inhoud naar welke map verhuisde, en hoeveel oude kopieën uit `.weg/` weg zijn). Een regel
+  `blobsplit: {'naar_blobs': 0, 'naar_r1': 0, 'naar_r2': 812, 'naar_r3': 0, 'weg': 0, 'afgebroken': 0}`
+  (hoeveel inhoud naar welke map verhuisde, hoeveel oude kopieën uit `.weg/` weg zijn, en hoeveel
+  kopieën die bij een herstart halverwege bleven steken uit `.tmp/` zijn opgeruimd). Een regel
   `blobsplit: … niet naar blobs-r2: …` zegt welke inhoud niet lukte; de volgende ronde probeert
-  opnieuw.
+  opnieuw. `… klopt niet (SHA-256)` betekent dat de bron zelf stuk is: die blijft waar ze staat.
+  `blobsplit: … in blobs-r2 is stuk; opnieuw kopiëren`: een kopie die al op haar plek stond maar
+  niet heel was (na een stroomstoring); de goede kopie blijft staan tot er een hele naast ligt.
 - De volumes: `printf 'volume.list\n' | weed shell -master=127.0.0.1:9333 | grep -c 'collection:"r2"'`
   geeft volumes, met `replica_placement:1`; die van `r1` hebben er geen (`0`), de volumes zonder
   collectie `2`.

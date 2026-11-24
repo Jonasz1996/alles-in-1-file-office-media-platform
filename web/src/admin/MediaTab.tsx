@@ -701,11 +701,11 @@ function Libraries({ a, reload }: { a: MediaAdmin; reload: Reload }): JSX.Elemen
                       lib={lib}
                       defaultCopies={defaultCopies}
                       disabled={act.busy !== null}
-                      onChange={(copies) => {
+                      onSave={(copies) => {
                         act.press();
                         void act.run(`${lib.id}:copies`, async () => {
                           await setLibraryCopies(lib.id, copies);
-                          return copiesSaved(lib.name, copies, defaultCopies);
+                          return copiesSaved(lib.name, copies, defaultCopies, a.blob_split ?? false);
                         });
                       }}
                     />

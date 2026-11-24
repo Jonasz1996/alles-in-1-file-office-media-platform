@@ -568,8 +568,11 @@ const en: Translation<typeof nl> = {
       copiesDefault: "Default ({n})",
       copiesSaved: "{name}: {copies} copies in the cluster. The files move in the next round.",
       copiesSavedDefault: "{name}: the cluster default ({n} copies). The files move in the next round.",
+      copiesSavedOff: "{name}: saved. This only takes effect with PLATFORM_BLOB_SPLIT=true.",
+      copiesSave: "Save",
+      copiesSaveLabel: "Save copies in the cluster of {name}",
       copiesHelp: "How many copies the cluster keeps of the files in a library, for example movies on 2 and shows on 3. If the same file is also somewhere else, the highest number counts; outside a library the default ({n}) applies.",
-      copiesOff: "This setting only works in the cluster, with PLATFORM_BLOB_SPLIT=true (see the replication runbook). Until then everything stays on the default; the choice is saved.",
+      copiesOff: "This setting only works in the cluster, with PLATFORM_BLOB_SPLIT=true (see the replication runbook). The choice is saved. Nothing moves now; whatever was moved before stays where it is.",
       kinds: {
         movies: "movies",
         shows: "shows",

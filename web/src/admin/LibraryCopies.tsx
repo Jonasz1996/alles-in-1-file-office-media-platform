@@ -2,11 +2,16 @@
 // docs/runbooks/replicatie.md): de keuze in de tabel Bibliotheken op /beheer/media en de uitleg
 // eronder. "Standaard (N)" is de standaard van het cluster (PLATFORM_BLOB_DEFAULT_COPIES); 1, 2
 // of 3 zet de inhoud in blobs-r1/ tot blobs-r3/ (app/blobsplit.py). Zonder PLATFORM_BLOB_SPLIT
-// wordt de keuze bewaard maar doet ze nog niets; dat zegt de uitleg.
+// wordt de keuze bewaard maar doet ze nog niets; dat zeggen de uitleg en de melding.
+//
+// Opslaan gaat met de knop Opslaan (of Enter in de lijst), nooit bij elke keuze in de lijst: in
+// Chrome en Firefox geeft een dichte <select> bij elke pijltjestoets een change, en wie van
+// "Standaard (3)" naar 2 gaat, zou dan eerst 1 kopie opslaan (en een ronde wekken).
 
-import type { JSX } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
+import { Button } from "../ui/Button";
 import type { Copies, MediaAdmin } from "../media/types";
 
 type AdminLibrary = MediaAdmin["libraries"][number];
@@ -27,8 +32,19 @@ export function parseCopies(value: string): Copies | null {
   return value !== "" && (COPIES as readonly number[]).includes(n) ? (n as Copies) : null;
 }
 
-/** De melding na het opslaan. */
-export function copiesSaved(name: string, copies: Copies | null, defaultCopies: number): string {
+/** De waarde van de lijst voor copies: null (de standaard) is "". */
+export function copiesValue(copies: Copies | null | undefined): string {
+  return copies == null ? "" : String(copies);
+}
+
+/** Wat Opslaan zou bewaren; undefined als de keuze in de lijst niet afwijkt van wat bewaard is. */
+export function copiesToSave(saved: Copies | null | undefined, draft: string): Copies | null | undefined {
+  return draft === copiesValue(saved) ? undefined : parseCopies(draft);
+}
+
+/** De melding na het opslaan. Zonder PLATFORM_BLOB_SPLIT is er geen ronde die iets verhuist. */
+export function copiesSaved(name: string, copies: Copies | null, defaultCopies: number, split: boolean): string {
+  if (!split) return t("admin.media.libraries.copiesSavedOff", { name });
   return copies === null
     ? t("admin.media.libraries.copiesSavedDefault", { name, n: defaultCopies })
     : t("admin.media.libraries.copiesSaved", { name, copies });
@@ -39,31 +55,55 @@ export function setLibraryCopies(id: string, copies: Copies | null): Promise<Adm
   return api.request<AdminLibrary>("PATCH", `/api/v1/admin/media/libraries/${encodeURIComponent(id)}`, { copies });
 }
 
+/** De keuze van één bibliotheek: de lijst en Opslaan. Pas Opslaan (of Enter) roept onSave aan. */
 export function CopiesSelect({
   lib,
   defaultCopies,
   disabled,
-  onChange,
+  onSave,
 }: {
   lib: Pick<AdminLibrary, "id" | "name" | "copies">;
   defaultCopies: number;
   disabled?: boolean;
-  onChange: (copies: Copies | null) => void;
+  onSave: (copies: Copies | null) => void;
 }): JSX.Element {
+  const [draft, setDraft] = useState(copiesValue(lib.copies));
+  // Na het opslaan (of een ververs) toont de lijst weer wat bewaard is
+  useEffect(() => setDraft(copiesValue(lib.copies)), [lib.copies]);
+  const pending = copiesToSave(lib.copies, draft);
+  const save = () => {
+    if (pending !== undefined && !disabled) onSave(pending);
+  };
   return (
-    <select
-      data-media="copies"
-      aria-label={t("admin.media.libraries.copiesLabel", { name: lib.name })}
-      value={lib.copies == null ? "" : String(lib.copies)}
-      disabled={disabled}
-      onChange={(e) => onChange(parseCopies(e.currentTarget.value))}
-    >
-      {copiesChoices(defaultCopies).map((c) => (
-        <option key={c.value} value={c.value}>
-          {c.label}
-        </option>
-      ))}
-    </select>
+    <span className="copies-pick">
+      <select
+        data-media="copies"
+        aria-label={t("admin.media.libraries.copiesLabel", { name: lib.name })}
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            save();
+          }
+        }}
+      >
+        {copiesChoices(defaultCopies).map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+      <Button
+        data-media="copies-save"
+        disabled={disabled || pending === undefined}
+        aria-label={t("admin.media.libraries.copiesSaveLabel", { name: lib.name })}
+        onClick={save}
+      >
+        {t("admin.media.libraries.copiesSave")}
+      </Button>
+    </span>
   );
 }
 
