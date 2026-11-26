@@ -114,14 +114,13 @@ async def test_een_nieuw_bestand_wordt_een_item(world, client):
 
 
 async def test_zonder_bibliotheek_doet_touched_niets(world, client):
-    """Zonder bibliotheek komt er geen scan. touched onthoudt de ids wel (fixlijst 26-11, punt 9:
-    in het cluster kan een andere node de bibliotheek gemaakt hebben); tick vraagt de database
-    en laat ze dan vallen."""
+    """Zonder bibliotheek komt er geen scan en bewaart touched geen ids; hij onthoudt alleen dat
+    er iets gebeurde (fixlijst 26-11, punt 9), en tick vraagt dan de database."""
     settings, _, headers = world
     parent = (await root(client, headers))["folder"]["id"]
     await upload(client, headers, parent, "los.mkv")
-    assert await scanner.tick(settings) == 0
     assert not scanner._pending
+    assert await scanner.tick(settings) == 0
     assert not scanner.active()
     scanner.activate()
     hooks.touched([uuid.uuid4()], "node.created")
@@ -130,20 +129,21 @@ async def test_zonder_bibliotheek_doet_touched_niets(world, client):
 
 async def test_touched_zonder_vlag_met_bibliotheek_van_een_andere_node(world, client):
     """Cluster (punt 9): de bibliotheek kwam van een andere node, de vlag hier staat uit. Een
-    upload gaat toch niet verloren: tick ziet de bibliotheek in de database en zet de scan klaar."""
+    upload gaat toch niet verloren: tick ziet de bibliotheek in de database en zet een volledige
+    ronde klaar."""
     settings, _, headers = world
     library_id, folder = await library(client, headers)
     await jobs.run_pending(settings, lane="media_scan")
     scanner.activate(False)
     await upload(client, headers, folder, "Andere node (2021).mkv")
-    assert scanner._pending
+    assert not scanner._pending
     assert await scanner.tick(settings) == 1
     assert scanner.active()
     async with maker(settings)() as session:
         queued = await session.scalar(
             select(Job).where(Job.key == f"media.scan:{library_id}", Job.status == "queued")
         )
-    assert queued is not None and queued.payload.get("nodes")
+    assert queued is not None and queued.payload.get("full")
 
 
 async def test_hernoemd_en_verplaatst_binnen_houdt_item_en_voortgang(world, client):

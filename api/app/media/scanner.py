@@ -99,6 +99,7 @@ SEP, END = "\x1f", "\x1e"  # in de sorteersleutel van een map (namen hebben geen
 _pending: set[uuid.UUID] = set()
 _overflow = False
 _active = False
+_missed = False  # touched zonder vlag (punt 9): tick kijkt of er toch een bibliotheek is
 # Mappen waarvan de NFO's nog gelezen moeten worden: bibliotheek → (wanneer, mappen)
 _retry: dict[uuid.UUID, tuple[float, set[uuid.UUID]]] = {}
 
@@ -117,21 +118,26 @@ def active() -> bool:
 
 def reset() -> None:
     """Voor tests: de set, de vlag en de herkansingen leeg."""
-    global _overflow, _active
+    global _overflow, _active, _missed
     _pending.clear()
     _retry.clear()
     _overflow = False
     _active = False
+    _missed = False
 
 
 def touched(node_ids: list[uuid.UUID], type: str) -> None:
     """De luisteraar voor hooks.touched: alleen in het geheugen, nooit I/O.
 
-    Ook zonder bibliotheek in dit proces (fixlijst 26-11, punt 9): in het cluster maakt een
-    andere node de bibliotheek, en alleen die zette zijn vlag aan. Een import die hier liep,
-    verloor zo al zijn ids, en de items kwamen pas met de ronde van 6 uur. De ids gaan nu altijd
-    in de set; tick vraagt de database of er een bibliotheek is voor hij ze laat vallen."""
-    global _overflow
+    Zonder vlag (fixlijst 26-11, punt 9): in het cluster maakt een andere node de bibliotheek,
+    en alleen die zette zijn vlag aan. Een import die hier liep, verloor zo al zijn ids, en de
+    items kwamen pas met de ronde van 6 uur. Nu onthoudt hij dan alleen dat er iets gebeurde
+    (geen ids: zo blijft een upload zonder bibliotheek even goedkoop als vroeger); tick vraagt
+    de database of er intussen een bibliotheek is, en doet dan een volledige ronde."""
+    global _overflow, _missed
+    if not _active:
+        _missed = True
+        return
     if _overflow:
         return
     _pending.update(node_ids)
@@ -374,18 +380,18 @@ async def recount(session: AsyncSession, library_ids: Iterable[uuid.UUID] | None
 async def tick(settings: Settings) -> int:
     """Eén ronde van de lus: de set leeg en per bibliotheek een scan klaarzetten. Geeft het
     aantal bibliotheken. Gaat het mis, dan komen de ids terug in de set."""
-    global _overflow
-    if not _active and not _retry:
-        if not _pending and not _overflow:
-            return 0
-        # Geraakte nodes zonder vlag: misschien maakte een andere node een bibliotheek
+    global _overflow, _missed
+    if not _active and _missed:
+        # Iets veranderde zonder vlag: misschien maakte een andere node een bibliotheek. Dan
+        # een volledige ronde (de ids zijn niet bewaard).
+        _missed = False
         async with _maker(settings)() as session:
             any_library = await session.scalar(select(MediaLibrary.id).limit(1))
-        if any_library is None:
-            _pending.clear()
-            _overflow = False
-            return 0
-        activate()
+        if any_library is not None:
+            activate()
+            _overflow = True
+    if not _active and not _retry:
+        return 0
     ids = list(_pending)
     _pending.clear()
     overflow, _overflow = _overflow, False
