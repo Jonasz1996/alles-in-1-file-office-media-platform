@@ -122,30 +122,12 @@ def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a). 0013 (PostgreSQL, 0.8.2) maakt op SQLite niets
     kwijt; op PostgreSQL de plaatsen van foto's (review PG13-2, test hieronder)."""
-    assert cli.removed_revisions(HEAD, "0019") == ["0022"]
-    assert cli.removed_revisions(HEAD, "0018") == ["0022", "0019"]
-    assert cli.removed_revisions(HEAD, "0016") == ["0022", "0019", "0018"]
-    assert cli.removed_revisions(HEAD, "0014") == ["0022", "0019", "0018", "0016"]
-    assert cli.removed_revisions(HEAD, "0013") == ["0022", "0019", "0018", "0016", "0014"]
-    assert cli.removed_revisions(HEAD, "0012") == ["0022", "0019", "0018", "0016", "0014", "0013"]
-    assert cli.removed_revisions(HEAD, "0011") == [
-        "0022",
-        "0019",
-        "0018",
-        "0016",
-        "0014",
-        "0013",
-        "0012",
-    ]
-    assert cli.removed_revisions(HEAD, "0010") == [
-        "0022", "0019", "0018", "0016", "0014", "0013", "0012", "0011"
-    ]  # fmt: skip
-    assert cli.removed_revisions(HEAD, "0009") == [
-        "0022", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010"
-    ]  # fmt: skip
-    assert cli.removed_revisions(HEAD, "0007") == [
-        "0022", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010", "0009", "0008"
-    ]  # fmt: skip
+    chain = ["0022", "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012", "0011"]
+    chain += ["0010", "0009", "0008"]
+    for target, n in [("0021", 1), ("0020", 2), ("0019", 3), ("0018", 4), ("0016", 5),
+                      ("0014", 6), ("0013", 7), ("0012", 8), ("0011", 9), ("0010", 10),
+                      ("0009", 11), ("0007", 13)]:  # fmt: skip
+        assert cli.removed_revisions(HEAD, target) == chain[:n], target
     assert cli.lost_lines(["0013"]) == []
     assert cli.lost_lines(["0016"]) == [cli.ARR_LOST]
     assert cli.lost_lines(["0018", "0016"]) == [cli.RESET_LOST, cli.ARR_LOST]

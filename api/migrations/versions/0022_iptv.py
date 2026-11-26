@@ -1,7 +1,7 @@
 """iptv: live tv met een kanaallijst (m3u) en een gids (XMLTV)
 
 Revision ID: 0022
-Revises: 0019
+Revises: 0021
 Create Date: 2026-11-26 20:00:00.000000
 
 Drie nieuwe tabellen, op SQLite en PostgreSQL gelijk: iptv_channel (app.models.IptvChannel, de
@@ -11,15 +11,15 @@ vaste sleutel van een kanaal zodat ze een nieuwe lijst overleven). De instelling
 van de m3u, ook versleuteld, en dat van de gids) staan in de tabel setting, rij
 `iptv_settings`. Niets bestaands verandert; de downgrade haalt de drie tabellen weg.
 
-Nummering: 0020 is gereserveerd (rangvector, fase 6) en 0021 is Sport (PR #13). Beide volgen
-nu, net als deze, op 0019. Wie als laatste samenvoegt, zet down_revision op de vorige.
+Keten: 0019 -> 0020 (rangvector, PR #15) -> 0021 (Sport, PR #13) -> 0022 (deze). Deze
+migratie werkt pas als 0020 en 0021 er ook zijn.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0022"
-down_revision = "0019"
+down_revision = "0021"
 branch_labels = None
 depends_on = None
 
