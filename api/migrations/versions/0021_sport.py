@@ -1,21 +1,21 @@
 """sport: activiteiten uit GPX en TCX (vervangt Endurain)
 
 Revision ID: 0021
-Revises: 0019
+Revises: 0020
 Create Date: 2026-11-26 17:00:00.000000
 
 Eén nieuwe tabel, sport_activity (app.models.SportActivity). Niets bestaands verandert; de
 downgrade haalt de tabel weg (de activiteiten zijn dan weg, de bestanden in Bestanden niet).
 
-Nummering: 0020 is gereserveerd voor de rangvector van zoeken (0.8.3-lijst). Komt die er eerder,
-zet down_revision hier dan op "0020" (net als 0016 en 0018 bij het samenvoegen).
+Nummering: volgt op 0020 (de rangvector van zoeken, PR #15); die moet eerst in de branch. Daarna
+komt 0022 (IPTV).
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0021"
-down_revision = "0019"
+down_revision = "0020"
 branch_labels = None
 depends_on = None
 

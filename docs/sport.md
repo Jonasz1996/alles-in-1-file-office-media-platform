@@ -62,8 +62,8 @@ Eén tabel, `sport_activity` (migratie `0021`): de cijfers per activiteit, de ru
 geen Sport. Een account verwijderen haalt zijn activiteiten mee weg. Een downgrade onder 0021 wist
 alle activiteiten (`app.cli db-downgrade` waarschuwt).
 
-Migratie: `0020` is gereserveerd voor de rangvector van zoeken. Komt die eerder in de branch, zet
-dan `down_revision` van `0021_sport.py` op `"0020"` (en de lijsten in `tests/test_cli_db.py`).
+Migratie: `0021` volgt op `0020` (de rangvector van zoeken); die moet eerst in de branch. `0022`
+(IPTV) volgt op `0021`.
 
 ## API
 

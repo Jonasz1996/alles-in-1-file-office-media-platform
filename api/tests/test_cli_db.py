@@ -122,23 +122,29 @@ def test_welke_revisies_een_downgrade_weghaalt():
     """Alleen een downgrade die 0010 weghaalt, raakt zoeken en foto's (fase 6, §3.1); 0011 de
     gezichten en 0012 de beeldindex (§3.1a). 0013 (PostgreSQL, 0.8.2) maakt op SQLite niets
     kwijt; op PostgreSQL de plaatsen van foto's (review PG13-2, test hieronder)."""
-    assert cli.removed_revisions(HEAD, "0019") == ["0021"]
-    assert cli.removed_revisions(HEAD, "0018") == ["0021", "0019"]
-    assert cli.removed_revisions(HEAD, "0016") == ["0021", "0019", "0018"]
-    assert cli.removed_revisions(HEAD, "0014") == ["0021", "0019", "0018", "0016"]
-    assert cli.removed_revisions(HEAD, "0013") == ["0021", "0019", "0018", "0016", "0014"]
-    assert cli.removed_revisions(HEAD, "0012") == ["0021", "0019", "0018", "0016", "0014", "0013"]
+    assert cli.removed_revisions(HEAD, "0020") == ["0021"]
+    assert cli.removed_revisions(HEAD, "0019") == ["0021", "0020"]
+    assert cli.removed_revisions(HEAD, "0018") == ["0021", "0020", "0019"]
+    assert cli.removed_revisions(HEAD, "0016") == ["0021", "0020", "0019", "0018"]
+    assert cli.removed_revisions(HEAD, "0014") == ["0021", "0020", "0019", "0018", "0016"]
+    assert cli.removed_revisions(HEAD, "0013") == [
+        "0021", "0020", "0019", "0018", "0016", "0014"
+    ]  # fmt: skip
+    assert cli.removed_revisions(HEAD, "0012") == [
+        "0021", "0020", "0019", "0018", "0016", "0014", "0013"
+    ]  # fmt: skip
     assert cli.removed_revisions(HEAD, "0011") == [
-        "0021", "0019", "0018", "0016", "0014", "0013", "0012"
+        "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012"
     ]  # fmt: skip
     assert cli.removed_revisions(HEAD, "0010") == [
-        "0021", "0019", "0018", "0016", "0014", "0013", "0012", "0011"
+        "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012", "0011"
     ]  # fmt: skip
     assert cli.removed_revisions(HEAD, "0009") == [
-        "0021", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010"
+        "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010"
     ]  # fmt: skip
     assert cli.removed_revisions(HEAD, "0007") == [
-        "0021", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010", "0009", "0008"
+        "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010",
+        "0009", "0008",
     ]  # fmt: skip
     assert cli.lost_lines(["0013"]) == []
     assert cli.lost_lines(["0016"]) == [cli.ARR_LOST]
@@ -146,7 +152,7 @@ def test_welke_revisies_een_downgrade_weghaalt():
     assert cli.lost_lines(["0019"]) == [cli.COPIES_LOST]
     assert cli.lost_lines(["0019", "0018"]) == [cli.COPIES_LOST, cli.RESET_LOST]
     assert cli.COPIES_REVISION == "0019"
-    assert cli.lost_lines(["0021", "0019"]) == [cli.SPORT_LOST, cli.COPIES_LOST]
+    assert cli.lost_lines(["0021", "0020", "0019"]) == [cli.SPORT_LOST, cli.COPIES_LOST]
     assert cli.SPORT_REVISION == "0021"
     assert cli.RESET_REVISION == "0018"
     assert cli.ARR_REVISION == "0016"
