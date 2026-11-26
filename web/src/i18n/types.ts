@@ -9,6 +9,7 @@ import type beeld from "./areas/beeld.nl";
 import type browser from "./areas/browser.nl";
 import type common from "./areas/common.nl";
 import type dupes from "./areas/dupes.nl";
+import type live from "./areas/live.nl";
 import type media from "./areas/media.nl";
 import type music from "./areas/music.nl";
 import type ocr from "./areas/ocr.nl";
@@ -64,7 +65,9 @@ export type Area =
   // Fase 6 (I2): de pagina /over (bronnen en licenties)
   | "about"
   // "Kan niet inloggen?" (app.cli reset-account)
-  | "reset";
+  | "reset"
+  // Live tv (IPTV): de pagina /live
+  | "live";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -129,6 +132,7 @@ export interface Dictionaries {
   beeld: typeof beeld;
   ocr: typeof ocr;
   about: typeof about;
+  live: typeof live;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */
