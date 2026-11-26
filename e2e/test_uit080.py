@@ -176,6 +176,10 @@ ERIN: dict[str, tuple[str, list[str]]] = {
 # elke pagina met het hoofdmenu precies één keer; de viewer van Eva is alleen het dialoog.
 PRULLENBAK = ['    - link "Prullenbak":', "      - /url: /prullenbak"]
 DUBBEL = ['    - link "Dubbel":', "      - /url: /dubbel"]
+# Sport (de Strava-vervanger): de link Sport direct voor "Gedeeld met mij" (na Muziek als media
+# aan staat), voor dezelfde mensen als Dubbel
+GEDEELD = '    - link "Gedeeld met mij":'
+SPORT = ['    - link "Sport":', "      - /url: /sport"]
 MENU_082 = {f"{wie} {pad}" for wie in ("eva", "jonas") for pad in (*PAGINAS, VIEWER)}
 MENU_082.discard(f"eva {VIEWER}")
 
@@ -431,7 +435,7 @@ KAN_NIET = ["  - paragraph:", '    - button "Wachtwoord vergeten of kan niet inl
 
 def met_081(key: str, boom: list[str]) -> list[str]:
     """De boom van 0.8.0 met precies wat 0.8.1 anders toont (ANDERS) en erbij toont (ERIN), en
-    wat 0.8.2 erbij toont (MENU_082)."""
+    wat 0.8.2 erbij toont (MENU_082: Dubbel, en later Sport)."""
     if VERGETEN_080 in boom:
         i = boom.index(VERGETEN_080)
         boom = boom[:i] + KAN_NIET + boom[i + 1 :]
@@ -448,6 +452,10 @@ def met_081(key: str, boom: list[str]) -> list[str]:
     if key in MENU_082:
         i = plekken[0] + 2
         boom = boom[:i] + DUBBEL + boom[i:]
+        # Het eerste "Gedeeld met mij" is dat van het menu (op /gedeeld staat er nog een in de tabs)
+        assert GEDEELD in boom[plekken[0] - 40 : plekken[0]], (key, GEDEELD)
+        i = boom.index(GEDEELD)
+        boom = boom[:i] + SPORT + boom[i:]
     return boom
 
 
