@@ -1,5 +1,5 @@
 // /muziek (fase 5, M9; Keuze 37): albums, artiesten en afspeellijsten in drie tabbladen
-// (?tab=albums|artiesten|lijsten). Albums en artiesten zijn per muziekbibliotheek (?bib=, de
+// (?tab=albums|artiesten|lijsten), en YouTube (?tab=youtube: zoeken, kijken, als mp3 bewaren). Albums en artiesten zijn per muziekbibliotheek (?bib=, de
 // eerste als je niets kiest); afspeellijsten zijn van jou, over alle bibliotheken.
 //
 // Albums komen per pagina (60, "Meer laden"); een media.library-gebeurtenis van de bibliotheek
@@ -23,8 +23,9 @@ import { Skeleton } from "../ui/Spinner";
 import { Tabs, tabPanelProps } from "../ui/Tabs";
 import { AlbumGrid, LinkList, playlistActions, playlistMeta, useMusicOwner, usePlaylists } from "./parts";
 import { artistName, newPlaylist } from "./tracks";
+import YouTubePanel from "./YouTubePanel";
 
-const TABS = ["albums", "artiesten", "lijsten"] as const;
+const TABS = ["albums", "artiesten", "lijsten", "youtube"] as const;
 type Tab = (typeof TABS)[number];
 const SORTS = ["title", "year", "added"] as const;
 type Sort = (typeof SORTS)[number];
@@ -37,10 +38,14 @@ export function parseSort(v: string | null): Sort {
   return (SORTS as readonly string[]).includes(v ?? "") ? (v as Sort) : "title";
 }
 
-const TAB_LABEL: Record<Tab, "music.tabs.albums" | "music.tabs.artists" | "music.tabs.playlists"> = {
+const TAB_LABEL: Record<
+  Tab,
+  "music.tabs.albums" | "music.tabs.artists" | "music.tabs.playlists" | "music.tabs.youtube"
+> = {
   albums: "music.tabs.albums",
   artiesten: "music.tabs.artists",
   lijsten: "music.tabs.playlists",
+  youtube: "music.tabs.youtube",
 };
 
 // --- albums ---
@@ -250,7 +255,7 @@ function Music(): JSX.Element {
         tabs={TABS.map((id) => ({ id, label: t(TAB_LABEL[id]) }))}
       />
       <section {...tabPanelProps("music", tab)} className="music-panel">
-        {tab !== "lijsten" && libs.length > 1 && lib && (
+        {tab !== "lijsten" && tab !== "youtube" && libs.length > 1 && lib && (
           <div className="music-toolbar">
             <label>
               <span>{t("music.library")}</span>
@@ -264,7 +269,7 @@ function Music(): JSX.Element {
             </label>
           </div>
         )}
-        {tab !== "lijsten" && !lib && (
+        {tab !== "lijsten" && tab !== "youtube" && !lib && (
           <EmptyState icon="audio" title={t("music.noLibrary.title")}>
             <p>{t("music.noLibrary.text")}</p>
             <Link to={MEDIA_HOME} className="btn">
@@ -275,6 +280,7 @@ function Music(): JSX.Element {
         {tab === "albums" && lib && <Albums key={lib.id} lib={lib} />}
         {tab === "artiesten" && lib && <Artists key={lib.id} lib={lib} />}
         {tab === "lijsten" && <Playlists />}
+        {tab === "youtube" && <YouTubePanel libs={libs} />}
       </section>
     </main>
   );

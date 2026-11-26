@@ -438,3 +438,61 @@ a.music-card:hover .music-card-title {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* --- YouTube (fixlijst 26-11, punt 7) --- */
+
+.youtube-player {
+  margin: var(--space-3) 0 var(--space-4);
+}
+
+.youtube-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  max-width: 960px;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.youtube-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.youtube-results {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.youtube-results li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.youtube-results img {
+  flex: none;
+  width: 160px;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.youtube-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .youtube-results img {
+    width: 112px;
+  }
+}
