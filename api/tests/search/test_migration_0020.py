@@ -92,7 +92,7 @@ async def test_heen_terug_heen(at_0019):
     assert {"cf_rank_len", "cf_rank_head", "fts_rank_trg"} <= {f[0] for f in schema["functions"]}
     # De grote rij die er al was, is gevuld; de kleine niet
     big, rlen, total = await _rij(settings, ids["verslag"])
-    assert big and rlen == total > M0020.RANK_MIN_LEN
+    assert big and rlen == total > M0020.RANK_UPTO
     assert (await _rij(settings, ids["notities"]))[:2] == (False, None)
 
     await migrate(settings, command.downgrade, "0019")

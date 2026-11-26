@@ -63,8 +63,8 @@ de vraag splitst ook op leestekens (`app/search/query.py`).
   als 0,5 : 1 : 6 : 10, zoals bm25 op SQLite (meta 0,5, tekst 1, titel 6, naam 10). Normalisatie
   1 deelt door 1 + log(lengte): een korte naam gaat voor, zoals bij bm25. Voor een node van een
   ander telt `otsv` niet mee, ook niet in de volgorde.
-- **De rangvector** (0.8.3, migratie 0020, W4R-2): een rij met meer dan 2.048 plekken heeft
-  naast `tsv` een kleine `rvec` (de woorden met hun plekken tot en met plek 1.024: de naam, de
+- **De rangvector** (0.8.3, migratie 0020, W4R-2): een rij met meer dan 64 plekken heeft
+  naast `tsv` een kleine `rvec` (de woorden met hun plekken tot en met plek 64: de naam, de
   titel en het begin van de tekst) en `rlen` (de lengte van `tsv` zoals `ts_rank` hem telt). De
   rang van zo'n rij is `ts_rank(rvec, q, 0) / log2(rlen + 1)`: dezelfde normalisatie, zonder de
   hele vector te lezen. Staat een woord alleen verder in de tekst, dan is de rij nog een
@@ -270,9 +270,11 @@ wat in de index van FTS5 staat en leest het document niet.
 ## Open punten
 
 - **zoek-perf-pg haalde §4.4 niet** (0.8.2 en 0.8.3: 4 tegelijk p95 389 ms, alles volgende
-  p95 217 ms op 02e642bb). Opgelost met de rangvector van 0020 (hierboven). Op de boom van 3.000
-  (PostgreSQL 16, lokaal, via de GIN-index): de rangvraag van `hypotheek` 113 ms zonder, 4 ms
-  met de rangvector. Het bewijs bij 100.000 is de job zelf.
+  p95 217 ms op 02e642bb). Opgelost met de rangvector van 0020 (hierboven). Op de boom van
+  100.000 (PostgreSQL 16, lokaal) raakt `hypotheek` 12.901 rijen; 8.831 daarvan hebben een `tsv`
+  boven 2 kB (samen 90 MB). De rangvraag: 140 ms zonder, en ook met een eerste poging van de
+  rangvector vanaf 2.048 plekken (die liet de middelgrote rijen buiten), 15 tot 20 ms met de
+  grens van 64 plekken. Het bewijs van §4.4 is de job zelf.
 - **Afwijking van het plan**: de index via triggers in de transactie, niet via `search_dirty` en
   een taak (zie boven). Het werkt en de tests zijn groen; de prijs is de tijd bij het schrijven
   (elke INSERT schrijft zijn rij in de index; de nodes van de boom van 100.000: 262 s). Nog
