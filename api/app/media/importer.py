@@ -24,7 +24,10 @@ import in de bibliotheek.
 - **Wat nog geschreven wordt, komt er niet in** (per bestand, op de fd van de import zelf):
   `fstat` vóór het tellen (een gewoon bestand, minstens MIN_AGE_S oud, bij verplaatsen
   `st_nlink == 1`), de sha uit die fd, opnieuw `fstat` (grootte, `mtime_ns` en `ctime_ns`
-  gelijk), en bij verplaatsen na de `linkat` hetzelfde `st_ino` met precies twee namen. Klopt
+  gelijk), en bij verplaatsen na de `linkat` hetzelfde `st_dev`, `st_ino` en `st_size` met
+  precies twee namen. Na de link worden mtime en ctime niet meer vergeleken: de SeaweedFS-mount
+  (FUSE) zet die bij een `linkat` op "nu", en dan kwam elk bestand in "in gebruik". De inhoud is
+  dan al zeker: de sha komt uit dezelfde fd, met de volledige vergelijking vóór de link. Klopt
   iets niet, dan komt het in "overgeslagen" met de reden "in gebruik"; een volgende import pakt
   het op.
 - **Hervatbaar en idempotent:** een map die er al is, wordt hergebruikt; dezelfde naam met dezelfde
@@ -449,10 +452,19 @@ def _copy(fd: int, tmp_dir: Path) -> tuple[Path, str, int]:
     return Path(name), digest.hexdigest(), offset
 
 
-def _unchanged(a: os.stat_result, b: os.stat_result, *, ctime: bool = True) -> bool:
-    """Is dit nog hetzelfde bestand, zonder wijziging? (Na een rename verandert ctime.)"""
-    keys = ("st_dev", "st_ino", "st_size", "st_mtime_ns") + (("st_ctime_ns",) if ctime else ())
+def _unchanged(a: os.stat_result, b: os.stat_result) -> bool:
+    """Is dit nog hetzelfde bestand, zonder wijziging? Alleen vóór een link: daarna veranderen
+    mtime en ctime (zie _same_inode)."""
+    keys = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
     return all(getattr(a, k) == getattr(b, k) for k in keys)
+
+
+def _same_inode(a: os.stat_result, b: os.stat_result) -> bool:
+    """Is dit nog hetzelfde bestand, na een link? Alleen apparaat, inode en grootte: een link
+    verandert ctime, en de SeaweedFS-mount (FUSE) zet er ook mtime en ctime op "nu" (gemeten:
+    mtime +2636 s, zelfde inode en grootte). De inhoud is dan al nagekeken (de sha uit de fd,
+    met _unchanged vóór de link)."""
+    return all(getattr(a, k) == getattr(b, k) for k in ("st_dev", "st_ino", "st_size"))
 
 
 def _open_file(name: str, dir_fd: int) -> int:
@@ -479,9 +491,12 @@ def _seal(fd: int) -> None:
         os.removexattr(fd, "system.posix_acl_access")
 
 
-def _remove_source(name: str, dir_fd: int, before: os.stat_result, *, ctime: bool) -> None:
-    """De bron weg, als het nog hetzelfde bestand is. OSError als dat niet lukt."""
-    if not _unchanged(before, os.stat(name, dir_fd=dir_fd, follow_symlinks=False), ctime=ctime):
+def _remove_source(name: str, dir_fd: int, before: os.stat_result, *, linked: bool) -> None:
+    """De bron weg, als het nog hetzelfde bestand is. OSError als dat niet lukt. Is de bron ook
+    de blob (linked), dan alleen dezelfde inode en grootte: na de link veranderden mtime en ctime
+    (_same_inode). Na een kopie moet hij helemaal onveranderd zijn."""
+    now = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    if not (_same_inode(before, now) if linked else _unchanged(before, now)):
         raise OSError(errno.ESTALE, "een ander bestand")
     os.unlink(name, dir_fd=dir_fd)
 
@@ -683,11 +698,7 @@ class Run:
             return await self.copy_for_move(fd, before, sha, path)
         try:
             now = os.stat(staged, dir_fd=self.tmp_fd, follow_symlinks=False)
-            if (
-                not stat.S_ISREG(now.st_mode)
-                or now.st_nlink != 2
-                or not _unchanged(before, now, ctime=False)
-            ):
+            if not stat.S_ISREG(now.st_mode) or now.st_nlink != 2 or not _same_inode(before, now):
                 # Tussen het tellen en de link kwam er iets anders, of een derde naam: overslaan
                 raise OSError(errno.ESTALE, "een ander bestand")
             _seal(fd)
@@ -730,7 +741,7 @@ class Run:
                     # Een vorige import stopte na place_file en vóór het weghalen: de bron is
                     # de blob al (dezelfde inode). Alleen de naam in de bron moet nog weg.
                     try:
-                        _remove_source(name, dir_fd, before, ctime=True)
+                        _remove_source(name, dir_fd, before, linked=True)
                     except OSError:
                         p.skip(path, NOT_REMOVED)
                         return
@@ -802,8 +813,7 @@ class Run:
         p.bytes += size
         if self.move:
             try:
-                # Na een link veranderde ctime (de link en de modus); na een kopie niet
-                _remove_source(name, dir_fd, before, ctime=not staged.linked)
+                _remove_source(name, dir_fd, before, linked=staged.linked)
             except OSError:
                 p.skip(path, NOT_REMOVED)
 
