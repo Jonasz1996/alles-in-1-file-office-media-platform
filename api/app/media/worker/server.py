@@ -56,7 +56,8 @@ TIMEOUT: dict[Op, float | None] = {
     Op.REMUX_AUDIO: None,
     Op.SYNTH: 900,
     Op.TEXT: 900,  # fase 6, Z2: RLIMIT_CPU 60 s, maar met nice 19 kan de wandklok lang duren
-    Op.FINGERPRINT: 300,  # fase 11: 10 minuten audio decoderen
+    Op.FINGERPRINT: 300,
+    Op.LIVE: None,  # live tv: tot de app de verbinding sluit  # fase 11: 10 minuten audio decoderen
     Op.OCR: 600,  # fase 6, X1: kind 1 hooguit 300 s, dan twee keer de herkenning van 60 s en OSD
 }
 KEYFRAMES_FALLBACK_TIMEOUT = 3600.0
@@ -185,7 +186,10 @@ def _check_fds(op: Op, parsed: A._Args, fds: list[int]) -> None:
         raise OpError(Code.BAD_FDS, f"{layout.total} fd's verwacht, {len(fds)} gekregen")
     for i, fd in enumerate(fds):
         mode = os.fstat(fd).st_mode
-        if i < layout.inputs:
+        if i < layout.inputs and op == Op.LIVE:
+            if not stat.S_ISFIFO(mode):
+                raise OpError(Code.BAD_FDS, "de invoer van live is geen pipe")
+        elif i < layout.inputs:
             if not stat.S_ISREG(mode):
                 raise OpError(Code.BAD_FDS, f"invoer {i} is geen gewoon bestand")
         elif op == Op.SYNTH:

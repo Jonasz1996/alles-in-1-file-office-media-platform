@@ -240,6 +240,19 @@ class StreamArgs(_Args):
         return isinstance(self.video, VideoEncode) and self.video.burn_index is not None
 
 
+class LiveArgs(_Args):
+    """Live tv (IPTV): MPEG-TS van een pipe naar fMP4 op pipe:1. De app haalt de bron (met de
+    logins van de aanbieder, die de worker nooit ziet) en schrijft hem in de pipe; de worker
+    krijgt alleen de leeskant. Het beeld wordt gekopieerd (copy, H.264) of omgezet naar H.264
+    (h264: deinterlace, hooguit height lijnen, de breedte volgt de verhouding); het geluid gaat
+    altijd naar AAC (MP2, AC-3 en AAC in ADTS kan een browser niet, of de muxer weigert ze)."""
+
+    video: Literal["copy", "h264"]
+    height: Literal[480, 576, 720, 1080] = 720
+    maxrate_k: int = Field(default=4000, ge=500, le=20_000)
+    audio: AudioEncode
+
+
 class RemuxAudioArgs(_Args):
     """Eén nummer naar fMP4 voor gapless (Keuze 38). Opus gaat als flac (spike punt 13)."""
 
@@ -306,6 +319,7 @@ ARGS: dict[Op, type[_Args]] = {
     Op.TEXT: TextArgs,
     Op.OCR: OcrArgs,
     Op.FINGERPRINT: FingerprintArgs,
+    Op.LIVE: LiveArgs,
 }
 
 
@@ -333,6 +347,9 @@ def work_class(op: Op, args: _Args) -> WorkClass:
         return WorkClass.TRANSCODE if args.mode == "transcode" else WorkClass.REMUX
     if op == Op.REMUX_AUDIO:
         return WorkClass.REMUX
+    if op == Op.LIVE:
+        assert isinstance(args, LiveArgs)
+        return WorkClass.TRANSCODE if args.video == "h264" else WorkClass.REMUX
     if op in (Op.SUBS, Op.SPRITES, Op.BENCH, Op.SYNTH, Op.TEXT, Op.OCR, Op.FINGERPRINT):
         return WorkClass.BACKGROUND
     if op == Op.KEYFRAMES and isinstance(args, KeyframesArgs) and args.fallback:
@@ -376,6 +393,7 @@ def fd_layout(op: Op, args: _Args) -> Layout:
       geeft ze in die volgorde: [bron, (ffmpeg_w, worker_r) × N, vtt_w × N];
     - subs met loose: het bestand, dan de schrijfkant voor de VTT;
     - synth: geen invoer, één uitvoer (het bestand);
+    - live: de leeskant van een pipe (geen bestand: de app schrijft de bron erin), dan pipe:1;
     - caps en bench: geen fd's."""
     if op in (Op.CAPS, Op.BENCH):
         return Layout(0, 0)
@@ -389,6 +407,8 @@ def fd_layout(op: Op, args: _Args) -> Layout:
         return Layout(1, 1 if args.loose else 3 * len(args.tracks))
     if op in (Op.FRAME, Op.SPRITES, Op.REMUX_AUDIO, Op.FINGERPRINT):
         return Layout(1, 1)
+    if op == Op.LIVE:
+        return Layout(1, 1)  # de leeskant van de pipe met de bron, dan pipe:1
     if op == Op.TEXT:
         assert isinstance(args, TextArgs)
         return Layout(len(args.items), 1)  # de blobs, dan de pipe naar de app (fase 6, Z2)
@@ -398,7 +418,7 @@ def fd_layout(op: Op, args: _Args) -> Layout:
 def memory_mb(op: Op, job_memory_mb: int) -> int:
     """RLIMIT_DATA per kind: job_memory_mb voor live, sprites, bench en synth; 512 MB voor het
     korte werk en de ondertitels (Keuze 12)."""
-    if op in (Op.STREAM, Op.REMUX_AUDIO, Op.SPRITES, Op.BENCH, Op.SYNTH):
+    if op in (Op.STREAM, Op.LIVE, Op.REMUX_AUDIO, Op.SPRITES, Op.BENCH, Op.SYNTH):
         return job_memory_mb
     return SHORT_MEMORY_MB
 
@@ -412,6 +432,8 @@ def niceness(op: Op, args: _Args) -> tuple[str, ...]:
             return background
         live = op == Op.STREAM and getattr(args, "mode", "") == "transcode"
         return ("nice", "-n", "5") if live else ()
+    if op == Op.LIVE:
+        return ("nice", "-n", "5") if work_class(op, args) == WorkClass.TRANSCODE else ()
     if work_class(op, args) == WorkClass.BACKGROUND:
         return background
     if op == Op.FRAME:

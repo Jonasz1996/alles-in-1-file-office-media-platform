@@ -89,6 +89,8 @@ class Op(StrEnum):
     OCR = "ocr"
     # Fase 11, stap 7: de vingerafdruk van de audio voor intro overslaan (ops/fingerprint.py)
     FINGERPRINT = "fingerprint"
+    # IPTV (live tv): MPEG-TS van een pipe (de app haalt de bron) naar fMP4 (ops/live.py)
+    LIVE = "live"
 
 
 class WorkClass(StrEnum):

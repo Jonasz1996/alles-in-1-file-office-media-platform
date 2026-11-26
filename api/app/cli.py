@@ -467,6 +467,8 @@ ARR_REVISION = "0016"
 RESET_REVISION = "0018"
 # De revisie van replicatie per bibliotheek (kopieën in het cluster)
 COPIES_REVISION = "0019"
+# Live tv (IPTV): kanalen, gids en favorieten
+IPTV_REVISION = "0022"
 # De zoekindex op PostgreSQL (0.8.2, P5): op SQLite doet hij niets
 PG_SEARCH_REVISION = "0014"
 
@@ -555,6 +557,10 @@ FACES_LOST = (
 
 # Wat een downgrade die 0019 weghaalt, kwijtmaakt. Een oudere versie kijkt niet in blobs-r1/ tot
 # blobs-r3/: wat daar staat, moet eerst terug naar blobs/ (docs/runbooks/replicatie.md)
+IPTV_LOST = (
+    "Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids) "
+    "blijven in de tabel setting staan; een nieuwere versie leest ze opnieuw."
+)
 COPIES_LOST = (
     "De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in "
     "blobs-r1/, blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op "
@@ -597,6 +603,8 @@ def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
     de database is PostgreSQL (0013 en 0014 doen alleen daar iets)."""
     lines = []
+    if IPTV_REVISION in removed:
+        lines.append(IPTV_LOST)
     if COPIES_REVISION in removed:
         lines.append(COPIES_LOST)
     if RESET_REVISION in removed:

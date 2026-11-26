@@ -1510,3 +1510,57 @@ Index("ux_fp_ja", FacePerson.face_id, unique=True, sqlite_where=text("verdict = 
 Index("ix_fp_person", FacePerson.owner_id, FacePerson.person_id, FacePerson.verdict)
 Index("ix_face_scan_todo", FaceScan.state, FaceScan.owner_id, FaceScan.prio.desc())
 Index("ux_blob_embed_sha", BlobEmbed.blob_sha, unique=True)
+
+
+class IptvChannel(Base):
+    """Live tv (IPTV, migratie 0022): een kanaal uit de m3u van de beheerder. key is vast over
+    een nieuwe lijst heen (een hash van naam en tvg-id, app/iptv/m3u.py): de favorieten hangen
+    eraan. stream is het adres van de stroom, versleuteld (media.providers.secrets.seal, naam
+    `iptv.stream`): het bevat meestal de logins van de aanbieder en gaat nooit naar buiten.
+    logo is het adres van het logo (de app haalt het zelf, onder logo_key)."""
+
+    __tablename__ = "iptv_channel"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(64), unique=True)
+    position: Mapped[int] = mapped_column(Integer)
+    number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    name: Mapped[str] = mapped_column(String(200))
+    group_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    xmltv_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    logo: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    logo_key: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    stream: Mapped[dict] = mapped_column(JSON)
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class IptvProgramme(Base):
+    """Live tv: één uitzending uit de gids (XMLTV), op het kanaal-id van de gids (xmltv_id,
+    gelijk aan tvg-id in de m3u). Een nieuwe gids vervangt alles vanaf nu; wat voorbij is,
+    gaat na een dag weg."""
+
+    __tablename__ = "iptv_programme"
+    __table_args__ = (Index("ix_iptv_programme_channel_start", "xmltv_id", "start"),)
+
+    id: Mapped[int] = mapped_column(BIGINT_PG, primary_key=True, autoincrement=True)
+    xmltv_id: Mapped[str] = mapped_column(String(200))
+    start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    stop: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    subtitle: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    episode: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class IptvFavorite(Base):
+    """Live tv: een favoriet kanaal van een gebruiker (op de vaste sleutel van het kanaal)."""
+
+    __tablename__ = "iptv_favorite"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
