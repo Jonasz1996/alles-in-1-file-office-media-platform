@@ -11,6 +11,9 @@ DELETE /api/v1/admin/arr/qbittorrent          → 204
 PUT    /api/v1/admin/arr/opensubtitles        OpenSubsIn → OpenSubsTest | 422 arr_link_auth | 503
 POST   /api/v1/admin/arr/opensubtitles/test   → OpenSubsTest | 404 not_found | 422 | 503
 DELETE /api/v1/admin/arr/opensubtitles        → 204
+PUT    /api/v1/admin/arr/lidarr               LidarrIn → LidarrTest | 422 arr_link_auth | 503
+POST   /api/v1/admin/arr/lidarr/test          → LidarrTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/lidarr               → 204
 
 Alleen beheerders. Opslaan test eerst de verbinding; lukt dat niet, dan wordt er niets bewaard.
 Een fout zegt nooit een sleutel of wachtwoord, alleen een vaste reden.
@@ -19,16 +22,18 @@ Een fout zegt nooit een sleutel of wachtwoord, alleen een vaste reden.
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 
-from app.arr import opensubs, prowlarr, qbit
+from app.arr import lidarr, opensubs, prowlarr, qbit
 from app.arr import settings as arr_settings
 from app.config import Settings, get_settings
 from app.db import Session
 from app.errors import fail
+from app.models import MediaLibrary
 from app.security import AdminUser
 
 router = APIRouter(prefix="/api/v1/admin/arr", tags=["beheer"])
@@ -73,6 +78,17 @@ class OpenSubsIn(BaseModel):
         min_length=1,
         max_length=8,
     )
+
+
+class LidarrIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    key: str | None = Field(default=None, max_length=200)
+    # De muziekbibliotheek waar een klaar album heen gaat (None: de oudste)
+    library: uuid.UUID | None = None
+
+
+class LidarrTest(BaseModel):
+    version: str
 
 
 class OpenSubsTest(BaseModel):
@@ -202,4 +218,36 @@ async def test_opensubs(admin: AdminUser, session: Session, settings: Config):
 @router.delete("/opensubtitles", status_code=204)
 async def forget_opensubs(admin: AdminUser, session: Session):
     await arr_settings.forget(session, "opensubtitles")
+    return Response(status_code=204)
+
+
+@router.put("/lidarr", response_model=LidarrTest)
+async def save_lidarr(body: LidarrIn, admin: AdminUser, session: Session, settings: Config):
+    if body.library is not None:
+        lib = await session.get(MediaLibrary, body.library)
+        if lib is None or lib.kind != "music":
+            raise fail(422, "invalid_input", "Kies een muziekbibliotheek", field="library")
+    try:
+        version = await arr_settings.save_lidarr(
+            session, settings, body.url, body.key, str(body.library) if body.library else None
+        )
+    except lidarr.LidarrError as exc:
+        raise _link_error(exc) from None
+    return LidarrTest(version=version)
+
+
+@router.post("/lidarr/test", response_model=LidarrTest)
+async def test_lidarr(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_lidarr(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "Lidarr is nog niet ingesteld")
+    try:
+        return LidarrTest(version=await arr_settings.check_lidarr(conf))
+    except lidarr.LidarrError as exc:
+        raise _link_error(exc) from None
+
+
+@router.delete("/lidarr", status_code=204)
+async def forget_lidarr(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "lidarr")
     return Response(status_code=204)

@@ -128,7 +128,7 @@ want_places() {
   esac
 }
 
-# Mediabeheer (fase 11): qBittorrent en Prowlarr in compose.arr.yaml. ARR uit de omgeving wint
+# Mediabeheer (fase 11): qBittorrent, Prowlarr en Lidarr in compose.arr.yaml. ARR uit de omgeving wint
 # van .env en wordt bewaard; zonder ARR staat het uit (zoals tot en met 0.8.x).
 decide_arr() {
   ARR_ON=0
@@ -144,18 +144,19 @@ decide_arr() {
   if [ "$(sed -n 's/^ARR=//p' "$ENV_FILE" | tail -n 1)" = aan ]; then ARR_ON=1; fi
 }
 
-# Na de app: qBittorrent en Prowlarr vooraf instellen en koppelen (app.cli arr-koppel), dan
+# Na de app: qBittorrent, Prowlarr en Lidarr vooraf instellen en koppelen (app.cli arr-koppel), dan
 # starten. Breekt nooit af: de app draait al.
 arr_start() {
   if ! "${compose[@]}" exec -T platform python -m app.cli arr-koppel </dev/null; then
-    echo "Let op: qBittorrent en Prowlarr koppelen lukte niet; het platform werkt verder."
+    echo "Let op: qBittorrent, Prowlarr en Lidarr koppelen lukte niet; het platform werkt verder."
     return 0
   fi
-  if ! "${compose[@]}" up -d --no-deps qbittorrent prowlarr </dev/null; then
-    echo "Let op: qBittorrent of Prowlarr kon niet starten (de melding van Docker staat hierboven)."
+  if ! "${compose[@]}" up -d --no-deps qbittorrent prowlarr lidarr </dev/null; then
+    echo "Let op: qBittorrent, Prowlarr of Lidarr kon niet starten (de melding van Docker staat hierboven)."
     return 0
   fi
   echo "Prowlarr: voeg je torrentsites toe op http://<ip-van-deze-container>:9696"
+  echo "Lidarr: volg artiesten en albums op http://<ip-van-deze-container>:8686"
 }
 
 # En voor de analyse (fase 6, Keuze 56): ANALYSE uit de omgeving wint van .env. Alleen aan of uit.
@@ -1459,7 +1460,7 @@ main() {
   fi
 
   if [ "$ARR_ON" = 1 ]; then
-    stap "Mediabeheer (qBittorrent en Prowlarr)"
+    stap "Mediabeheer (qBittorrent, Prowlarr en Lidarr)"
     arr_start
   fi
 

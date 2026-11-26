@@ -48,6 +48,7 @@ import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
 import ArrBlock from "./ArrBlock";
+import LidarrBlock from "./LidarrBlock";
 import CleanupBlock from "./CleanupBlock";
 import KidsLockBlock from "./KidsLockBlock";
 import { CopiesNote, CopiesSelect, copiesSaved, setLibraryCopies } from "./LibraryCopies";
@@ -257,6 +258,7 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <Providers a={a} reload={reload} />
       <ArrBlock />
       <WantedBlock libraries={a.libraries} />
+      <LidarrBlock libraries={a.libraries} />
       <SubsBlock />
       <RequestsSettings libraries={a.libraries} />
       <UpscaleBlock />
