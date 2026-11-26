@@ -330,8 +330,13 @@ def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
     if element.owner is None:
         return f"({found})"
     owner = compiler.process(element.owner, **kw)
-    own = f"(fts_node.otsv @@ to_tsquery('simple', {q}) AND n.owner_id = {owner})"
-    return f"({found} OR {own})"
+    # Hetzelfde als tsv @@ q OR (otsv @@ q AND eigen node), maar zo dat het deel met node (de
+    # join) tsv niet leest: het eerste deel gaat helemaal naar de GIN-index van fts_node, en
+    # het tweede is voor bijna elke rij al waar bij otsv IS NULL. Anders las de join de tsv van
+    # elke treffer nog eens helemaal (W4R-2).
+    either = f"({found} OR fts_node.otsv @@ to_tsquery('simple', {q}))"
+    own = f"(fts_node.otsv IS NULL OR n.owner_id = {owner} OR {found})"
+    return f"({either} AND {own})"
 
 
 def _like_escape(word: str) -> str:
