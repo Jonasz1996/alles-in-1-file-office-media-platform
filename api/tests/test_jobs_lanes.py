@@ -416,7 +416,20 @@ def test_de_bestaande_soorten_veranderen_niet():
         "faces.wipe": ("default", 900),
     }
     assert {t: (jobs._kinds[t].lane, jobs._kinds[t].timeout) for t in faces} == faces
-    eigen = {"preview", "preview.large", "analysis.index", "analysis.backfill", *ocr, *faces}
+    # De YouTube-module (fixlijst 26-11, punt 7): downloaden en omzetten mag een uur duren
+    assert (jobs._kinds["youtube.mp3"].lane, jobs._kinds["youtube.mp3"].timeout) == (
+        "default",
+        3700.0,
+    )
+    eigen = {
+        "preview",
+        "preview.large",
+        "analysis.index",
+        "analysis.backfill",
+        "youtube.mp3",
+        *ocr,
+        *faces,
+    }
     for t in known - eigen:
         assert jobs._kinds[t].lane == "default", t
         assert jobs._kinds[t].timeout is None, t

@@ -29,7 +29,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -46,10 +47,17 @@ def _out() -> Path:
     return Path(os.environ.get("YOUTUBE_OUT", "/out"))
 
 
-def _check(key: str | None) -> None:
+def _refused(key: str | None) -> JSONResponse | None:
+    """Een antwoord 401 als de sleutel niet klopt (de helper gebruikt geen app.errors: hij
+    importeert niets van de rest van de app)."""
     want = os.environ.get("YOUTUBE_KEY", "")
     if want and not hmac.compare_digest(want, key or ""):
-        raise HTTPException(401, "sleutel")
+        return _error(401, "sleutel")
+    return None
+
+
+def _error(status: int, detail: str) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"detail": detail})
 
 
 def _live(entry: dict[str, Any]) -> bool:
@@ -162,30 +170,34 @@ async def zoek(
     q: str = Query(min_length=1, max_length=200),
     n: int = Query(default=20, ge=1, le=SEARCH_MAX),
     x_key: str | None = Header(default=None),
-) -> list[dict]:
-    _check(x_key)
+):
+    if (refused := _refused(x_key)) is not None:
+        return refused
     try:
         return await asyncio.to_thread(search, q, n)
     except Exception as exc:  # noqa: BLE001 - yt-dlp geeft veel soorten fouten
-        raise HTTPException(502, f"zoeken mislukt: {str(exc)[:200]}") from None
+        return _error(502, f"zoeken mislukt: {str(exc)[:200]}")
 
 
 @app.post("/mp3")
-async def mp3(body: Mp3In, x_key: str | None = Header(default=None)) -> dict:
-    _check(x_key)
+async def mp3(body: Mp3In, x_key: str | None = Header(default=None)):
+    if (refused := _refused(x_key)) is not None:
+        return refused
     async with _slots:
         try:
             return await asyncio.to_thread(fetch, body.id, str(body.job))
         except ValueError as exc:
-            raise HTTPException(422, str(exc)[:200]) from None
+            return _error(422, str(exc)[:200])
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"downloaden mislukt: {str(exc)[:200]}") from None
+            return _error(502, f"downloaden mislukt: {str(exc)[:200]}")
 
 
 @app.delete("/mp3/{job}", status_code=204)
-async def forget(job: uuid.UUID, x_key: str | None = Header(default=None)) -> None:
-    _check(x_key)
+async def forget(job: uuid.UUID, x_key: str | None = Header(default=None)):
+    if (refused := _refused(x_key)) is not None:
+        return refused
     shutil.rmtree(_out() / str(job), ignore_errors=True)
+    return None
 
 
 def main() -> None:
