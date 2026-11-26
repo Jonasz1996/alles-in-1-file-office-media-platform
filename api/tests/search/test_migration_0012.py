@@ -253,8 +253,8 @@ async def test_de_migratie_bij_het_starten_maakt_zelf_de_wal_leeg(tmp_path):
     await migrate_mod.upgrade(settings)
     async with get_engine(settings).connect() as conn:
         found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
-        # de head; 0013, 0014, 0016, 0018 en 0019 doen hier niets met de WAL
-        assert found.scalars().all() == ["0019"]
+        # de head; 0013, 0014, 0016, 0018, 0019 en 0022 doen hier niets met de WAL
+        assert found.scalars().all() == ["0022"]
     assert _wal(settings) == 0
 
 
@@ -350,5 +350,5 @@ async def test_0010_naar_0012_op_100000_nodes(tmp_path):
     async with get_engine(settings).connect() as conn:
         assert (await conn.exec_driver_sql("SELECT count(*) FROM beeld_owner")).scalar() == 0
         found = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
-        # de head; 0013, 0014, 0016, 0018 en 0019 doen hier niets met de WAL
-        assert found.scalars().all() == ["0019"]
+        # de head; 0013, 0014, 0016, 0018, 0019 en 0022 doen hier niets met de WAL
+        assert found.scalars().all() == ["0022"]
