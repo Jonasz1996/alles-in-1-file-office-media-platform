@@ -1000,11 +1000,11 @@ WANT81 = want(SHA81, HEAD81, "0.8.1")
 consts = {}
 for node in ast.parse((top / "api/app/cli.py").read_text(encoding="utf-8")).body:
     if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-        if node.targets[0].id in ("COPIES_LOST", "RESET_LOST", "ARR_LOST", "BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
+        if node.targets[0].id in ("SPORT_LOST", "COPIES_LOST", "RESET_LOST", "ARR_LOST", "BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
             consts[node.targets[0].id] = ast.literal_eval(node.value)
-# Terug naar 0.8.1 haalt 0013 tot en met 0019 weg. 0013 en 0014 doen op SQLite niets (PG_LOST en
-# PG_SEARCH_LOST gelden alleen op PostgreSQL); 0019, 0018 en 0016 van 0.8.3 wel
-LOST81 = [consts.get("COPIES_LOST"), consts.get("RESET_LOST"), consts.get("ARR_LOST")]
+# Terug naar 0.8.1 haalt 0013 tot en met 0021 weg. 0013 en 0014 doen op SQLite niets (PG_LOST en
+# PG_SEARCH_LOST gelden alleen op PostgreSQL); 0021 (Sport), 0019, 0018 en 0016 wel
+LOST81 = [consts.get("SPORT_LOST"), consts.get("COPIES_LOST"), consts.get("RESET_LOST"), consts.get("ARR_LOST")]
 LOST80 = LOST81 + [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]
 LOST71 = LOST80 + [consts.get("SEARCH_LOST")]
 
@@ -2082,10 +2082,10 @@ stappen_081() {
     tail -n 20 "$WORK/logs/3-downgrade.log"
   fi
   # Op SQLite doen 0013 en 0014 niets (PG_LOST en PG_SEARCH_LOST alleen op PostgreSQL); wat 0.8.3
-  # bijbracht (0019, 0018, 0016) wel: de vraag, precies die drie regels (de teksten van
+  # bijbracht (0019, 0018, 0016) en Sport (0021) wel: de vraag, precies die vier regels (de teksten van
   # api/app/cli.py, de nieuwste eerst) en niets anders dat weggaat. Zonder terminal staat de
   # uitkomst op de regel van de vraag
-  lost081=$(lost_texts COPIES_LOST RESET_LOST ARR_LOST)
+  lost081=$(lost_texts SPORT_LOST COPIES_LOST RESET_LOST ARR_LOST)
   check "3.4: het commando vraagt om \"ja\", noemt precies wat 0.8.3 bijbracht als wat weggaat, en zegt dat het schema op $from_head staat" eval \
     'grep -qxF "De database gaat van revisie $schema_head terug naar $from_head. Wat alleen in de nieuwere kolommen en tabellen staat, is daarna weg. Is de app gestopt?" "$WORK/logs/3-downgrade.log" &&
       grep -qxF "Typ \"ja\" om door te gaan: De database staat nu op revisie $from_head." "$WORK/logs/3-downgrade.log" &&
