@@ -31,6 +31,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import org.platform.app.live.LivePlayerScreen
+import org.platform.app.live.LiveScreen
 import org.platform.app.media.LibraryScreen
 import org.platform.app.media.MediaHomeScreen
 import org.platform.app.media.OfflinePlayer
@@ -84,7 +86,7 @@ private fun Main(app: PlatformApp, onLoggedOut: () -> Unit) {
     val route = entry?.destination?.route ?: "media"
     Scaffold(
         bottomBar = {
-            if (!route.startsWith("play") && !route.startsWith("offline/")) {
+            if (!route.startsWith("play") && !route.startsWith("offline/") && !route.startsWith("live/")) {
                 NavigationBar {
                     TABS.forEach { tab ->
                         NavigationBarItem(
@@ -137,6 +139,10 @@ private fun Main(app: PlatformApp, onLoggedOut: () -> Unit) {
             }
             composable("play/{node}") { e ->
                 PlayerScreen(app, e.arguments?.getString("node").orEmpty(), onDone = { nav.popBackStack() })
+            }
+            composable("live") { LiveScreen(app, open = { nav.navigate(it) }) }
+            composable("live/{id}") { e ->
+                LivePlayerScreen(app, e.arguments?.getString("id").orEmpty(), onDone = { nav.popBackStack() })
             }
             composable("files") { FilesScreen(app, null, open = { nav.navigate(it) }) }
             composable("files/{id}") { e ->

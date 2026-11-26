@@ -187,3 +187,34 @@ data class SelectIn(val pin: String? = null)
 
 @Serializable
 data class SelectOut(val token: String)
+
+// Live tv (IPTV): GET /api/v1/iptv/channels (api/app/routers/iptv.py)
+@Serializable
+data class LiveSlot(
+    val id: Long,
+    val start: String,
+    val stop: String,
+    val title: String,
+    val subtitle: String? = null,
+    val episode: String? = null,
+)
+
+@Serializable
+data class LiveChannel(
+    val id: String,
+    val key: String,
+    val name: String,
+    val number: Int? = null,
+    val group: String? = null,
+    val logo: String? = null,
+    val favorite: Boolean = false,
+    val now: LiveSlot? = null,
+    val next: LiveSlot? = null,
+)
+
+@Serializable
+data class LiveChannels(
+    val configured: Boolean = false,
+    val channels: List<LiveChannel> = emptyList(),
+    val groups: List<String> = emptyList(),
+)
