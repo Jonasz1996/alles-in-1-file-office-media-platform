@@ -9,9 +9,11 @@ import pytest
 from app.main import WEB_CSP, accepted_codings, accepts
 
 # media-src 'self' blob: sinds fase 5 (F4): de speler zet een object-URL in video.src
+# i.ytimg.com en frame-src youtube-nocookie.com: de YouTube-module (fixlijst 26-11, punt 7)
 EXACT_CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+    "default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; "
     "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+    "frame-src https://www.youtube-nocookie.com; "
     "manifest-src 'self'; worker-src 'self'"
 )
 

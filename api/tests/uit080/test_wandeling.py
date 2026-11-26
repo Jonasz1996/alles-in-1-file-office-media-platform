@@ -72,6 +72,8 @@ FASE11 = (
     # Txt-fix (0.8.3): "Opslaan als" uit de editor en omzetten bij hernoemen (POST)
     "/api/v1/office/files/{node_id}/save-as",
     "/api/v1/office/files/{node_id}/convert-to",
+    # YouTube-module (fixlijst 26-11, punt 7)
+    "/api/v1/youtube",
 )
 
 

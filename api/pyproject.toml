@@ -22,6 +22,7 @@ dependencies = [
     "pillow-heif>=1.8.1",
     "pypdfium2>=5.14.0",
     "mutagen>=1.48.1",
+    "yt-dlp>=2025.10.22",
 ]
 
 [project.optional-dependencies]

@@ -102,6 +102,7 @@ from app.routers import (
 )
 from app.routers import events as live_events
 from app.routers import previews as preview_routes
+from app.routers import youtube as youtube_routes
 from app.search import hooks as search_hooks
 from app.security import RateLimiter
 
@@ -174,8 +175,9 @@ BODY_TIMEOUT = 90.0
 # speler zet een object-URL van MediaSource in video.src; zonder blob: speelt geen MSE-video.
 # Dezelfde CSP staat 6 keer in web/nginx.conf en in de CI-job images (test_csp_nginx.py).
 WEB_CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
+    "default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; "
     "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+    "frame-src https://www.youtube-nocookie.com; "
     "manifest-src 'self'; worker-src 'self'"
 )
 # Bestanden van de web-app en hun media-type; de rest via mimetypes
@@ -668,6 +670,7 @@ app.include_router(media_profiles.admin_router)
 app.include_router(media_stats.router)
 app.include_router(stream.router)
 app.include_router(media_subs.router)
+app.include_router(youtube_routes.router)
 app.include_router(stream_audio.router)
 app.include_router(stream_file.router)
 
