@@ -63,6 +63,14 @@ de vraag splitst ook op leestekens (`app/search/query.py`).
   als 0,5 : 1 : 6 : 10, zoals bm25 op SQLite (meta 0,5, tekst 1, titel 6, naam 10). Normalisatie
   1 deelt door 1 + log(lengte): een korte naam gaat voor, zoals bij bm25. Voor een node van een
   ander telt `otsv` niet mee, ook niet in de volgorde.
+- **De rangvector** (0.8.3, migratie 0020, W4R-2): een rij met meer dan 2.048 plekken heeft
+  naast `tsv` een kleine `rvec` (de woorden met hun plekken tot en met plek 1.024: de naam, de
+  titel en het begin van de tekst) en `rlen` (de lengte van `tsv` zoals `ts_rank` hem telt). De
+  rang van zo'n rij is `ts_rank(rvec, q, 0) / log2(rlen + 1)`: dezelfde normalisatie, zonder de
+  hele vector te lezen. Staat een woord alleen verder in de tekst, dan is de rij nog een
+  treffer, met rang 0 (achteraan in ronde A). Een BEFORE-trigger op `fts_node` houdt beide bij;
+  kleine rijen (de meeste) houden de rang van 0014. `otsv` heeft geen rangvector (die rijen zijn
+  klein).
 - **De rondes** zijn die van SQLite (Keuze 9): ronde A gerangschikt binnen
   `search_deadline_ms` (120 ms), dan de stukken van namen als A minder dan een pagina gaf; ronde B
   in de volgorde van `rowid`, zonder rang, met de rest van A + 40 ms; ronde C alleen de namen,
@@ -117,7 +125,7 @@ die mag in geen enkel deel van een parallel plan (F14).
 | `search_doc` met `search_dirty`; triggers zetten alleen een num klaar, een taak in de lane index bouwt de tsvector in Python (punt 1 en 2) | `fts_node` met triggers die de rij meteen schrijven, in de transactie; de tsvector in plpgsql (`cf_fold`, `fts_doc`) | Zo werkt de index zoals FTS5 op SQLite: na een commit klopt hij, er is geen achterstand en geen taak om te bewaken. De vragen in `engine.py` houden hun vorm (dezelfde tabelnamen). Het kost wel tijd bij het schrijven (zie de metingen). Besluit van PR #6; voor Jonas als afwijking genoteerd ([w3.md](w3.md), open punten). |
 | "While search_dirty is not empty the LIKE engine answers" | LIKE zolang de cursor van een herbouw staat | Er is geen `search_dirty`. De cursor is dezelfde regel als op SQLite (Keuze 10 en 12). |
 | De stukken van namen "as today" (met trigram) | `fts_name` als view, `LIKE` zonder index | Geen extensie (vraag 1). Een scan over `node`: bij 60.000 rijen lokaal ±35 ms ([w3.md](w3.md)). |
-| `bm25` | `ts_rank` met gewichten in dezelfde verhouding | PostgreSQL heeft geen bm25 zonder extensie. De volgorde lijkt erop, maar is niet overal gelijk. En `ts_rank` leest de hele vector: bij grote documenten te traag (Lokaal gemeten). |
+| `bm25` | `ts_rank` met gewichten in dezelfde verhouding | PostgreSQL heeft geen bm25 zonder extensie. De volgorde lijkt erop, maar is niet overal gelijk. En `ts_rank` leest de hele vector: bij grote documenten te traag (Lokaal gemeten); sinds 0020 rangschikt een grote rij met zijn rangvector. |
 | De caps in Python (positions clamp, capped docs geteld) | In plpgsql: de langste reeks woorden vooraan, `capped` per rij | Volgt uit de triggers in de database. |
 | Punt 8 en 9 in golf 3 | In golf 4 (dit stuk en de job `zoek-perf-pg`) | Zaten niet in PR #6. |
 
@@ -261,13 +269,10 @@ wat in de index van FTS5 staat en leest het document niet.
 
 ## Open punten
 
-- **zoek-perf-pg haalt §4.4 niet: ronde A is op PostgreSQL te traag** zodra een vraag de grote
-  documenten raakt. Lokaal bij 100.000: 4 tegelijk p95 366,5 ms (poort 300); zoeken p95 177 tot
-  195 ms, alleen onder 200 omdat de rondes de tijd begrenzen. De oorzaak staat hierboven
-  (`ts_rank` leest de hele tsvector van elke treffer). Herstel vraagt een besluit: een kleine
-  vector voor de rang naast `tsv` (een nieuwe migratie; 0015, 0016 en 0018 zijn van andere
-  branches), of een andere volgorde in ronde A (dan is de rang niet meer die van SQLite). Niet in
-  golf 4 gedaan. Voor Jonas.
+- **zoek-perf-pg haalde §4.4 niet** (0.8.2 en 0.8.3: 4 tegelijk p95 389 ms, alles volgende
+  p95 217 ms op 02e642bb). Opgelost met de rangvector van 0020 (hierboven). Op de boom van 3.000
+  (PostgreSQL 16, lokaal, via de GIN-index): de rangvraag van `hypotheek` 113 ms zonder, 4 ms
+  met de rangvector. Het bewijs bij 100.000 is de job zelf.
 - **Afwijking van het plan**: de index via triggers in de transactie, niet via `search_dirty` en
   een taak (zie boven). Het werkt en de tests zijn groen; de prijs is de tijd bij het schrijven
   (elke INSERT schrijft zijn rij in de index; de nodes van de boom van 100.000: 262 s). Nog

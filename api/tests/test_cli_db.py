@@ -146,6 +146,10 @@ def test_welke_revisies_een_downgrade_weghaalt():
         "0021", "0020", "0019", "0018", "0016", "0014", "0013", "0012", "0011", "0010",
         "0009", "0008",
     ]  # fmt: skip
+    # 0020 (de rangvector van zoeken, alleen PostgreSQL) maakt niets kwijt: de rang is dan die
+    # van 0014
+    assert cli.lost_lines(["0020"]) == []
+    assert cli.lost_lines(["0020", "0019"]) == [cli.COPIES_LOST]
     assert cli.lost_lines(["0013"]) == []
     assert cli.lost_lines(["0016"]) == [cli.ARR_LOST]
     assert cli.lost_lines(["0018", "0016"]) == [cli.RESET_LOST, cli.ARR_LOST]

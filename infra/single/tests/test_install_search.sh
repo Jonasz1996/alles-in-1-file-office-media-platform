@@ -1002,7 +1002,7 @@ for node in ast.parse((top / "api/app/cli.py").read_text(encoding="utf-8")).body
     if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
         if node.targets[0].id in ("SPORT_LOST", "COPIES_LOST", "RESET_LOST", "ARR_LOST", "BEELD_LOST", "FACES_LOST", "SEARCH_LOST"):
             consts[node.targets[0].id] = ast.literal_eval(node.value)
-# Terug naar 0.8.1 haalt 0013 tot en met 0021 weg. 0013 en 0014 doen op SQLite niets (PG_LOST en
+# Terug naar 0.8.1 haalt 0013 tot en met 0021 weg. 0013, 0014 en 0020 doen op SQLite niets (PG_LOST en
 # PG_SEARCH_LOST gelden alleen op PostgreSQL); 0021 (Sport), 0019, 0018 en 0016 wel
 LOST81 = [consts.get("SPORT_LOST"), consts.get("COPIES_LOST"), consts.get("RESET_LOST"), consts.get("ARR_LOST")]
 LOST80 = LOST81 + [consts.get("BEELD_LOST"), consts.get("FACES_LOST")]

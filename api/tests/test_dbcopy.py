@@ -248,8 +248,9 @@ async def test_copy_de_boom_en_de_gezichten(sqlite_with_data):
                 "SELECT count(*), count(*) FILTER (WHERE tgenabled = 'D') FROM pg_trigger "
                 "WHERE NOT tgisinternal"
             )
-            # 10 van 0013 en 6 van de zoekindex (0014), allemaal weer aan
-            assert tuple(got.one()) == (16, 0)
+            # 10 van 0013, 6 van de zoekindex (0014) en 1 van de rangvector (0020), allemaal
+            # weer aan
+            assert tuple(got.one()) == (17, 0)
             # De zoekindex: leeg, de app bouwt hem op bij het starten (cursor 0)
             got = await conn.exec_driver_sql("SELECT cursor FROM search_state WHERE id = 1")
             assert got.scalar_one() == 0
