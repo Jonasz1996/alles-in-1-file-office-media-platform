@@ -14,7 +14,7 @@ A haalde zijn 120 ms niet, en met 4 tegelijk ging §4.4 over de 300 ms (zoek-per
 
 Wat erbij komt in fts_node:
 
-- rvec: voor een rij met meer dan RANK_MIN_LEN plekken, de woorden met hun plekken tot en met
+- rvec: voor een rij met meer dan RANK_UPTO (64) plekken, de woorden met hun plekken tot en met
   plek RANK_UPTO (cf_rank_head). De naam (A) en de titel (B) staan vooraan, dus altijd erin;
   van de tekst het begin. NULL voor de andere rijen: daar blijft de rang precies die van 0014.
 - rlen: de lengte van tsv zoals ts_rank hem telt (cf_rank_len: elke plek, een woord zonder plek
@@ -38,12 +38,13 @@ down_revision = "0019"
 branch_labels = None
 depends_on = None
 
-# Een rij krijgt een rangvector als tsv meer plekken heeft dan dit (cf_rank_len; een telling, geen
-# grootte in bytes, zodat een herbouw en de migratie hetzelfde beslissen). Daaronder leest
-# ts_rank de vector snel genoeg (pg-fts.md: zonder de rijen boven 100 kB 2 tot 4 ms).
-RANK_MIN_LEN = 2048
-# De plekken die in de rangvector blijven: de naam, de titel en het begin van de tekst
-RANK_UPTO = 1024
+# De plekken die in de rangvector blijven: de naam, de titel en het begin van de tekst. Een rij
+# met meer plekken (cf_rank_len; een telling, geen grootte in bytes, zodat een herbouw en de
+# migratie hetzelfde beslissen) krijgt een rangvector; een kleinere houdt de rang van 0014.
+# Gemeten op de boom van 100.000 (profiel groot, PostgreSQL 16): 'hypotheek' raakt 12.901 rijen,
+# waarvan 8.831 met een tsv boven 2 kB (samen 90 MB); met een grens van 2.048 plekken bleef de
+# rangvraag 140 ms, met 64 plekken (rvec hooguit ±1,2 kB) 15 tot 20 ms.
+RANK_UPTO = 64
 
 FUNCTION_SQL = {
     # De lengte van v zoals ts_rank hem telt bij normalisatie 1 (cnt_length in tsrank.c)
@@ -75,7 +76,7 @@ CREATE OR REPLACE FUNCTION fts_rank_trg() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   NEW.rlen := cf_rank_len(NEW.tsv);
-  IF NEW.rlen > {RANK_MIN_LEN} THEN
+  IF NEW.rlen > {RANK_UPTO} THEN
     NEW.rvec := cf_rank_head(NEW.tsv, {RANK_UPTO});
   ELSE
     NEW.rlen := NULL;
@@ -98,7 +99,7 @@ def upgrade() -> None:
         "FOR EACH ROW EXECUTE FUNCTION fts_rank_trg()"
     )
     # De grote rijen die er al zijn (UPDATE OF tsv laat de trigger lopen)
-    op.execute(f"UPDATE fts_node SET tsv = tsv WHERE cf_rank_len(tsv) > {RANK_MIN_LEN}")
+    op.execute(f"UPDATE fts_node SET tsv = tsv WHERE cf_rank_len(tsv) > {RANK_UPTO}")
 
 
 def downgrade() -> None:
