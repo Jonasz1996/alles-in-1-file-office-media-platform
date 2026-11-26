@@ -124,7 +124,8 @@ app en qBittorrent.
 
 **Lidarr** (zit in `compose.arr.yaml`, dus mee met `ARR=aan`):
 
-1. Starten: `up -d --no-deps qbittorrent prowlarr lidarr` (in plaats van alleen de eerste twee).
+1. Starten: Lidarr start mee met mediabeheer zodra `compose.arr.yaml` een dienst `lidarr` heeft
+   (ClusterForge PR #166; in de single: `up -d --no-deps qbittorrent prowlarr lidarr`).
    `arr-koppel` maakt `/data/arr/lidarr` en `/data/import/lidarr` (eigenaar 10001) en zet de
    API-sleutel van Lidarr; de map `/data/arr` zelf (eigenaar 10001) maakt de template al (fixlijst
    punt 6).
@@ -145,13 +146,17 @@ app en qBittorrent.
 
 **YouTube-module** (`compose.youtube.yaml`):
 
-1. **Instelling YOUTUBE** (aan/uit, standaard aan) en **YOUTUBE_KEY** (64 hex-tekens, één keer
-   gemaakt, op alle nodes gelijk) in `/etc/clusterforge/platform.env`.
-2. **compose()**: met `YOUTUBE=aan` ook `infra/single/compose.youtube.yaml` meenemen.
-3. **Starten, alleen op de VIP-node:** eerst
-   `docker compose … exec -T platform mkdir -p /data/import/youtube`, dan
-   `docker compose … up -d --no-deps youtube`. De helper heeft internet nodig (yt-dlp), geen
-   poort naar buiten.
+De templatekant staat in ClusterForge PR #166 (branch `claude/project-thread-gyheez`):
+
+1. **Instelling YOUTUBE** (aan/uit, standaard aan) in `/etc/clusterforge/platform.env`.
+   `YOUTUBE_KEY` leidt de template zelf af: sha256("youtube " + mediasleutel), op alle nodes
+   gelijk.
+2. **compose()**: met `YOUTUBE=aan` ook `infra/single/compose.youtube.yaml` meenemen (image
+   `cf-platform:local`, restart "no": platform-ctl.sh start de helper mee met de app, alleen op de
+   VIP-node).
+3. **Mappen:** platform-ctl.sh maakt `import/youtube` (en `arr/lidarr`, `import/lidarr`, eigenaar
+   10001) vóór de start; een aparte `exec mkdir` of `up -d youtube` zoals bij de single is in het
+   cluster niet nodig. De helper heeft internet nodig (yt-dlp), geen poort naar buiten.
 4. De CSP van de web-app laat nu de speler van `youtube-nocookie.com` en de miniaturen van
    `i.ytimg.com` toe. Zet Nginx Proxy Manager een eigen Content-Security-Policy, dan moet die
    hetzelfde toelaten (standaard zet NPM er geen).
