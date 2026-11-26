@@ -764,10 +764,13 @@ def test_afspeellijsten_met_het_toetsenbord(media, media_browsers, ffmpeg_count,
     toast(page, "3 nummers toegevoegd aan Avond")
     wait_order(media, owner, avond["id"], ["Nummer 3", "Nummer 1", "Nummer 2", "Nummer 3"])
 
-    # Naar de tab Afspeellijsten (End in de tabs), Enter op de lijst
+    # Naar de tab Afspeellijsten (End in de tabs, dan één naar links: YouTube is sinds de
+    # fixlijst van 26-11 de laatste tab), Enter op de lijst
     page.goto("/muziek")
     page.get_by_role("tab", name="Albums").focus()
     page.keyboard.press("End")
+    expect(page.get_by_role("tab", name="YouTube")).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("ArrowLeft")
     expect(page.get_by_role("tab", name="Afspeellijsten")).to_have_attribute(
         "aria-selected", "true"
     )
