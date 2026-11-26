@@ -116,3 +116,42 @@ mag daarna weg (zie het runbook).
 van de database (het commando doet `alembic downgrade <vorige head>` voor het de oude versie
 start) of de dump van stap 2 terugzetten. Gegevens van mediabeheer (gevolgde titels, verzoeken,
 profielen) zijn dan weg; de media-bestanden zelf niet.
+
+## 9. Lidarr en de YouTube-module (fixlijst 26-11-2026, punten 7 en 8)
+
+Ook dit staat in de template van ClusterForge, niet hier. Alles alleen op de VIP-node, net als de
+app en qBittorrent.
+
+**Lidarr** (zit in `compose.arr.yaml`, dus mee met `ARR=aan`):
+
+1. Starten: `up -d --no-deps qbittorrent prowlarr lidarr` (in plaats van alleen de eerste twee).
+   `arr-koppel` maakt `/data/arr/lidarr` en `/data/import/lidarr` (eigenaar 10001) en zet de
+   API-sleutel van Lidarr; de map `/data/arr` zelf (eigenaar 10001) maakt de template al (fixlijst
+   punt 6).
+2. Volumes van Lidarr in het cluster:
+   - `/config` → `${DATA_ROOT}/arr/lidarr` (op SeaweedFS mag: klein, en zo kent Lidarr na failover
+     zijn artiesten nog);
+   - `/downloads` → dezelfde **lokale** map als qBittorrent (bv. `/var/lib/cf-platform/torrents`),
+     anders vindt Lidarr de klare download niet;
+   - `/music` → `${DATA_ROOT}/import/lidarr` (SeaweedFS). Een harde link van de lokale schijf naar
+     SeaweedFS kan niet; Lidarr kopieert dan vanzelf, en de app ook (staging).
+3. Poort 8686 op de VIP-node (alleen in het eigen netwerk): `http://<VIP>:8686`.
+4. Na de update: eerste bezoek aan Lidarr kiest een login; volg daar artiesten of albums. De app
+   koppelt Lidarr zelf aan Prowlarr en qBittorrent (categorie `lidarr`) en zet de hoofdmap
+   `/music`. In /beheer → Media → "Lidarr" kies je de muziekbibliotheek (anders de oudste).
+   Een klaar album gaat binnen een minuut naar die bibliotheek en wordt meteen geïndexeerd;
+   Lidarr volgt dat album daarna niet meer (anders downloadt hij het opnieuw). Een torrent van
+   Lidarr gaat na 3 dagen seeden weg.
+
+**YouTube-module** (`compose.youtube.yaml`):
+
+1. **Instelling YOUTUBE** (aan/uit, standaard aan) en **YOUTUBE_KEY** (64 hex-tekens, één keer
+   gemaakt, op alle nodes gelijk) in `/etc/clusterforge/platform.env`.
+2. **compose()**: met `YOUTUBE=aan` ook `infra/single/compose.youtube.yaml` meenemen.
+3. **Starten, alleen op de VIP-node:** eerst
+   `docker compose … exec -T platform mkdir -p /data/import/youtube`, dan
+   `docker compose … up -d --no-deps youtube`. De helper heeft internet nodig (yt-dlp), geen
+   poort naar buiten.
+4. De CSP van de web-app laat nu de speler van `youtube-nocookie.com` en de miniaturen van
+   `i.ytimg.com` toe. Zet Nginx Proxy Manager een eigen Content-Security-Policy, dan moet die
+   hetzelfde toelaten (standaard zet NPM er geen).
