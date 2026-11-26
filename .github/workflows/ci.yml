@@ -1384,7 +1384,7 @@ jobs:
       WEB_CSP: >-
         default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:;
         style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
-        frame-src https://www.youtube-nocookie.com; manifest-src 'self'; worker-src 'self'
+        frame-src 'self' https://www.youtube-nocookie.com; manifest-src 'self'; worker-src 'self'
       # import- of export-syntaxis (een service worker als klassiek script heeft die niet)
       MODULE_SYNTAX: >-
         (^|[;}])[[:space:]]*(import[[:space:]]*[{*"]|import[[:space:]]+[a-zA-Z_$]|export[[:space:]]*[{*]|export[[:space:]]+[a-z])

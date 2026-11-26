@@ -51,7 +51,7 @@ def test_media_src_staat_in_web_csp():
     assert found["default-src"] == ["'self'"]
     # i.ytimg.com: de miniaturen van de YouTube-module (fixlijst 26-11, punt 7)
     assert found["img-src"] == ["'self'", "data:", "blob:", "https://i.ytimg.com"]
-    assert found["frame-src"] == ["https://www.youtube-nocookie.com"]
+    assert found["frame-src"] == ["'self'", "https://www.youtube-nocookie.com"]
     assert found["style-src"] == ["'self'"]
     assert "unsafe-inline" not in WEB_CSP
 

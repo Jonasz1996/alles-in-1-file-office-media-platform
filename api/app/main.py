@@ -177,7 +177,7 @@ BODY_TIMEOUT = 90.0
 WEB_CSP = (
     "default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; "
     "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
-    "frame-src https://www.youtube-nocookie.com; "
+    "frame-src 'self' https://www.youtube-nocookie.com; "
     "manifest-src 'self'; worker-src 'self'"
 )
 # Bestanden van de web-app en hun media-type; de rest via mimetypes
