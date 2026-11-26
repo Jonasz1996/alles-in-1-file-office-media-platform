@@ -58,6 +58,8 @@ const AREAS: Area[] = [
   "about",
   // Kan niet inloggen? (reset-account)
   "reset",
+  // Sport (de Strava-vervanger)
+  "sport",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */
