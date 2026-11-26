@@ -125,9 +125,14 @@ def reset() -> None:
 
 
 def touched(node_ids: list[uuid.UUID], type: str) -> None:
-    """De luisteraar voor hooks.touched: alleen in het geheugen, nooit I/O."""
+    """De luisteraar voor hooks.touched: alleen in het geheugen, nooit I/O.
+
+    Ook zonder bibliotheek in dit proces (fixlijst 26-11, punt 9): in het cluster maakt een
+    andere node de bibliotheek, en alleen die zette zijn vlag aan. Een import die hier liep,
+    verloor zo al zijn ids, en de items kwamen pas met de ronde van 6 uur. De ids gaan nu altijd
+    in de set; tick vraagt de database of er een bibliotheek is voor hij ze laat vallen."""
     global _overflow
-    if not _active or _overflow:
+    if _overflow:
         return
     _pending.update(node_ids)
     if len(_pending) > MAX_TOUCHED:
@@ -280,6 +285,22 @@ async def queue_nodes(
     await _queue(session, library_id, nodes=node_ids)
 
 
+async def queue_touched(session: AsyncSession, node_ids: Iterable[uuid.UUID]) -> int:
+    """Deze nodes nu laten scannen, rechtstreeks in de database in plaats van via de set in het
+    geheugen (de import, fixlijst 26-11 punt 9): wat zo klaarstaat, overleeft een herstart en
+    hangt niet af van de lus van dit proces. Een map telt met alles eronder, ook bibliotheken
+    die eronder liggen. In de transactie van de aanroeper; geeft het aantal bibliotheken."""
+    ids = list(dict.fromkeys(node_ids))
+    if not ids:
+        return 0
+    plan, _ = await _resolve(session, ids)
+    for library_id, nodes in plan.items():
+        await queue_nodes(session, library_id, nodes)
+    if plan:
+        activate()
+    return len(plan)
+
+
 async def _resolve(
     session: AsyncSession, ids: list[uuid.UUID]
 ) -> tuple[dict[uuid.UUID, set[uuid.UUID]], bool]:
@@ -355,7 +376,16 @@ async def tick(settings: Settings) -> int:
     aantal bibliotheken. Gaat het mis, dan komen de ids terug in de set."""
     global _overflow
     if not _active and not _retry:
-        return 0
+        if not _pending and not _overflow:
+            return 0
+        # Geraakte nodes zonder vlag: misschien maakte een andere node een bibliotheek
+        async with _maker(settings)() as session:
+            any_library = await session.scalar(select(MediaLibrary.id).limit(1))
+        if any_library is None:
+            _pending.clear()
+            _overflow = False
+            return 0
+        activate()
     ids = list(_pending)
     _pending.clear()
     overflow, _overflow = _overflow, False

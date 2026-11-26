@@ -10,6 +10,10 @@
 // inhoud is van Z7 (admin/SearchTab.tsx, een eigen chunk; de aanroepen in admin/searchApi.ts).
 // Z0b: in die tab ook de blokken "Gezichten" (X2) en "Zoeken op beeld" (X3); hun gebieden
 // photos_faces en beeld laden met de tab (SEARCH_TAB_AREAS).
+//
+// Fase 11 (fixlijst 26-11): het tabblad "Film/serie downloaden" (Alt+0) direct na Media, met
+// dezelfde voorwaarde als Media. Het volgen, de kalender, de downloads, de koppeling met Prowlarr en
+// qBittorrent en de verzoeken stonden onderaan Media; ze staan nu daar (admin/DownloadsTab.tsx).
 
 import { type JSX, lazy, Suspense } from "react";
 import { Jobs } from "./admin/Jobs";
@@ -53,6 +57,9 @@ const OFFICE_TAB: TabInfo = { id: "office", path: "office", label: "admin.office
 /** Het achtste tabblad (fase 5), alleen als de server het overzicht van media geeft. */
 const MEDIA_TAB: TabInfo = { id: "media", path: "media", label: "admin.media.tab" };
 
+/** Film/serie downloaden (fase 11), direct na Media en met dezelfde voorwaarde. */
+const DOWNLOADS_TAB: TabInfo = { id: "downloads", path: "downloaden", label: "admin.downloads.tab" };
+
 /** Het negende tabblad (fase 6), altijd, als laatste. */
 const SEARCH_TAB: TabInfo = { id: "search", path: "zoeken", label: "admin.search.tab" };
 
@@ -60,21 +67,25 @@ const SEARCH_TAB: TabInfo = { id: "search", path: "zoeken", label: "admin.search
  * fase 3, en Zoeken en foto's. */
 export function tabsFor(status: Pick<OfficeStatus, "state"> | null, media = false): readonly TabInfo[] {
   const tabs = status && status.state !== "off" ? [...TABS, OFFICE_TAB] : [...TABS];
-  if (media) tabs.push(MEDIA_TAB);
+  if (media) tabs.push(MEDIA_TAB, DOWNLOADS_TAB);
   tabs.push(SEARCH_TAB);
   return tabs;
 }
 
 /** De sneltoetsen: Alt+1 … Alt+9, elk vast bij zijn tabblad (Alt+8 is Media, ook zonder Office;
- * Alt+9 is Zoeken en foto's, ook zonder Office en Media). */
+ * Alt+9 is Zoeken en foto's, ook zonder Office en Media), en Alt+0 voor Film/serie downloaden. */
 export function tabKeys(): readonly { combo: string; tab: TabInfo }[] {
-  return [...TABS, OFFICE_TAB, MEDIA_TAB, SEARCH_TAB].map((tab, i) => ({ combo: `alt+${i + 1}`, tab }));
+  return [
+    ...[...TABS, OFFICE_TAB, MEDIA_TAB, SEARCH_TAB].map((tab, i) => ({ combo: `alt+${i + 1}`, tab })),
+    { combo: "alt+0", tab: DOWNLOADS_TAB },
+  ];
 }
 
 /** De gebieden die de tab "Zoeken en foto's" meeneemt: die van de blokken van X2 en X3 (Z0b). */
 export const SEARCH_TAB_AREAS: readonly Area[] = ["photos_faces", "beeld"];
 
 const MediaTab = lazy(() => import("./admin/MediaTab"));
+const DownloadsTab = lazy(() => import("./admin/DownloadsTab"));
 const SearchTab = lazyWithAreas(() => import("./admin/SearchTab"), SEARCH_TAB_AREAS);
 
 export function tabHref(path: string): string {
@@ -98,8 +109,8 @@ export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
       combo,
       label: t("admin.keys.tab", { name: t(tab.label) }),
       run: () => navigate(tabHref(tab.path)),
-      // Alt+7 en Alt+8 alleen met hun tabblad; anders vangt hij de toets niet
-      when: tab === OFFICE_TAB || tab === MEDIA_TAB ? () => tabs.includes(tab) : undefined,
+      // Alt+7, Alt+8 en Alt+0 alleen met hun tabblad; anders vangt hij de toets niet
+      when: tab === OFFICE_TAB || tab === MEDIA_TAB || tab === DOWNLOADS_TAB ? () => tabs.includes(tab) : undefined,
     })),
     { scope: "admin" },
   );
@@ -124,6 +135,11 @@ export default function BeheerPage({ params }: RouteProps): JSX.Element | null {
         {current.id === "media" && (
           <Suspense fallback={<p>{t("common.loading")}</p>}>
             <MediaTab />
+          </Suspense>
+        )}
+        {current.id === "downloads" && (
+          <Suspense fallback={<p>{t("common.loading")}</p>}>
+            <DownloadsTab />
           </Suspense>
         )}
         {current.id === "search" && (
