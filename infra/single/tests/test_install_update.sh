@@ -655,6 +655,11 @@ dc() {
     f+=(-f "$d/compose.analyse.yaml")
     [ "$limits" = 0 ] || f+=(-f "$d/compose.analyse-limits.yaml")
   fi
+  # De YouTube-module (fixlijst 26-11): standaard aan met media; zonder dit bestand maakte een
+  # losse up de app opnieuw zonder PLATFORM_YOUTUBE_URL
+  if docker container inspect platform-youtube-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.youtube.yaml")
+  fi
   [ -z "$SANDBOX_COMPOSE" ] || f+=(-f "$SANDBOX_COMPOSE")
   docker compose --project-directory "$d" --env-file "$ROOT/.env" "${f[@]}" "$@"
 }

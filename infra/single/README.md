@@ -408,6 +408,12 @@ dc() {
       f+=(-f "$d/compose.analyse-limits.yaml")
     fi
   fi
+  if docker container inspect platform-qbittorrent-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.arr.yaml")
+  fi
+  if docker container inspect platform-youtube-1 >/dev/null 2>&1; then
+    f+=(-f "$d/compose.youtube.yaml")
+  fi
   docker compose --project-directory "$d" --env-file /opt/platform/.env "${f[@]}" "$@"
 }
 ```
