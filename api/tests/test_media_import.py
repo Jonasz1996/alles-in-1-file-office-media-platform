@@ -6,7 +6,8 @@ daarna de bron weg; ontdubbelen; quotum vol halverwege; een symlink en een fifo 
 `../` buiten de importmap geweigerd; een bronmap die een symlink naar de datamap is, geeft
 media_import_path; een bestand dat tijdens het tellen groeit, of jonger is dan 60 s, komt in
 "overgeslagen" (in gebruik); een harde link wordt bij verplaatsen overgeslagen; een bestand dat de
-app niet kan lezen komt in "overgeslagen"; nog een keer draaien doet niets.
+app niet kan lezen komt in "overgeslagen"; nog een keer draaien doet niets; verplaatsen op een
+FUSE-mount die bij een link mtime en ctime verandert (SeaweedFS).
 """
 
 from __future__ import annotations
@@ -255,6 +256,59 @@ async def test_gestopt_na_place_en_voor_het_weghalen_van_de_bron(world, monkeypa
     assert not source.exists()
     st = blob_of(w, (await tree(w["settings"], w["target"]))["a.mkv"]).stat()
     assert st.st_nlink == 1
+
+
+def fuse_link(monkeypatch, extra=None):
+    """Zoals de SeaweedFS-mount (FUSE): na een linkat staan mtime en ctime van de inode op "nu"
+    (gemeten: nlink 2, zelfde inode en grootte, mtime +2636 s). utime zet mtime en ctime."""
+    real = importer._link
+
+    def link(name, staged, dir_fd, tmp_fd):
+        real(name, staged, dir_fd, tmp_fd)
+        if extra is not None:
+            extra(staged, tmp_fd)
+        os.utime(staged, dir_fd=tmp_fd, follow_symlinks=False)
+
+    monkeypatch.setattr(importer, "_link", link)
+
+
+async def test_verplaatsen_op_fuse_waar_een_link_mtime_verandert(world, monkeypatch):
+    """Bug 0.8.3 op het cluster: na de link zette SeaweedFS mtime op "nu" en kwam elk bestand in
+    "in gebruik" (1.488 van 1.833). Na de link tellen alleen inode, grootte en twee namen, ook
+    bij het weghalen van de bron."""
+    w = world
+    inodes = {}
+    for i in range(5):
+        path = put(w["src"], f"Bron/Map/f{i}.mkv", f"film {i}".encode() * 50)
+        inodes[f"Map/f{i}.mkv"] = path.stat().st_ino
+    fuse_link(monkeypatch)
+    payload = await run_import(w, move=True)
+    assert (payload["done"], payload["skipped"]) == (5, 0), skipped(payload)
+    found = await tree(w["settings"], w["target"])
+    for rel, ino in inodes.items():
+        st = blob_of(w, found[rel]).stat()
+        assert (st.st_ino, st.st_nlink, st.st_mode & 0o777) == (ino, 1, 0o600), rel
+    assert not [p for p in (w["src"] / "Bron").rglob("*") if p.is_file()]  # de bron is leeg
+    assert not list((w["settings"].blob_dir / ".tmp").glob("import-*"))
+
+
+async def test_op_fuse_blijft_een_andere_grootte_na_de_link_in_gebruik(world, monkeypatch):
+    """Alleen mtime en ctime vallen weg: groeit het bestand tussen de sha en de link, dan blijft
+    het "in gebruik" en staat de bron er nog."""
+    w = world
+    put(w["src"], "Bron/groeit.mkv", b"x" * 5000)
+
+    def grow(staged, tmp_fd):
+        fd = os.open(staged, os.O_WRONLY | os.O_APPEND, dir_fd=tmp_fd)
+        os.write(fd, b"meer")
+        os.close(fd)
+
+    fuse_link(monkeypatch, grow)
+    payload = await run_import(w, move=True)
+    assert skipped(payload) == {"groeit.mkv": importer.IN_USE}
+    assert (w["src"] / "Bron/groeit.mkv").stat().st_size == 5004
+    assert await tree(w["settings"], w["target"]) == {}
+    assert not list((w["settings"].blob_dir / ".tmp").glob("import-*"))
 
 
 async def test_ontdubbelen(world, client):
