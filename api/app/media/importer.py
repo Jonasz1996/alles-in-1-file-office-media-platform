@@ -30,6 +30,11 @@ BlobStore in (ontdubbeld, met quotum, versies en prullenbak), en daarna doet de 
   versie, zoals bij uploaden.
 - **Quotum:** dat van de eigenaar, zoals een upload (place_file). Vol: de import stopt (staat
   stopped, reden no_room); wat binnen is, blijft.
+- **De mount valt even weg** (het cluster: SeaweedFS via FUSE, die herstart na een crash of de
+  OOM-killer): een fout als ENOTCONN, of een datamap die niet meer antwoordt, maakt van een bestand
+  geen "niet leesbaar". De import stopt dan en staat na MOUNT_RETRY_S opnieuw in de rij, zonder
+  dat de poging telt (jobs.Defer); de volgende ronde slaat over wat al binnen is (fixlijst 26-11,
+  punt 5). Het cluster herstart de app na een nieuwe mount (platform-ctl.sh check).
 - Hooguit één import tegelijk (409 media_import_busy). De voortgang staat in de payload van de
   job (view() geeft ImportView) en gaat als event media.import naar de beheerders.
 
@@ -101,6 +106,36 @@ BAD_NAME = "ongeldige naam"
 NAME_TAKEN = "de naam is al van een map of bestand"
 OTHER_FS = "ander bestandssysteem"
 TOO_DEEP = "te diep"
+
+# De mount is weg (FUSE van SeaweedFS): opnieuw proberen in plaats van overslaan
+MOUNT_RETRY_S = 60.0
+GONE_ERRNOS = frozenset(
+    {errno.ENOTCONN, errno.ECONNABORTED, errno.ECONNREFUSED, errno.ESHUTDOWN, errno.ENODEV}
+)
+
+
+class MountGone(Exception):
+    """De datamap antwoordt niet meer (de mount viel weg): later opnieuw, niets overslaan."""
+
+
+def _data_gone(settings: Settings) -> bool:
+    """Antwoordt de datamap (en de importmap) niet? Blokkeert: in een thread."""
+    try:
+        os.statvfs(settings.data_dir)
+        os.stat(import_root(settings))
+    except OSError:
+        return True
+    return False
+
+
+def mount_gone(settings: Settings, exc: BaseException) -> bool:
+    """Komt deze fout van een mount die wegviel? Een EIO of ENOENT van één bestand telt niet,
+    tenzij de datamap zelf ook niet meer antwoordt."""
+    if isinstance(exc, MountGone):
+        return True
+    if not isinstance(exc, OSError):
+        return False
+    return exc.errno in GONE_ERRNOS or _data_gone(settings)
 
 
 def import_root(settings: Settings) -> Path:
@@ -529,6 +564,11 @@ class Run:
     progress: Progress = field(default_factory=Progress)
     saved_at: float = 0.0
 
+    def check_mount(self, exc: OSError) -> None:
+        """Viel de mount weg? Dan MountGone (opnieuw proberen), niet overslaan."""
+        if mount_gone(self.settings, exc):
+            raise MountGone(str(exc)) from exc
+
     async def save(self, force: bool = False) -> None:
         """De voortgang in de payload van de job, en als event naar de beheerders."""
         now = time.monotonic()
@@ -632,6 +672,7 @@ class Run:
         try:
             _link(name, staged, dir_fd, self.tmp_fd)
         except OSError as exc:
+            self.check_mount(exc)
             if exc.errno != errno.EXDEV:
                 p.skip(path, UNMOVABLE)
                 return None
@@ -647,6 +688,7 @@ class Run:
                 raise OSError(errno.ESTALE, "een ander bestand")
             _seal(fd)
         except OSError as exc:
+            self.check_mount(exc)
             os.unlink(staged, dir_fd=self.tmp_fd)
             p.skip(path, IN_USE if exc.errno == errno.ESTALE else UNMOVABLE)
             return None
@@ -669,6 +711,7 @@ class Run:
         try:
             fd = _open_file(name, dir_fd)
         except OSError as exc:
+            self.check_mount(exc)
             p.skip(path, SYMLINK if exc.errno == errno.ELOOP else UNREADABLE)
             return
         try:
@@ -686,7 +729,8 @@ class Run:
                     # de blob al (dezelfde inode). Alleen de naam in de bron moet nog weg.
                     try:
                         _remove_source(name, dir_fd, before, ctime=True)
-                    except OSError:
+                    except OSError as exc:
+                        self.check_mount(exc)
                         p.skip(path, NOT_REMOVED)
                         return
                     p.same += 1
@@ -719,7 +763,8 @@ class Run:
                     sha, size = await anyio.to_thread.run_sync(_hash, fd)
                 else:
                     copy, sha, size = await anyio.to_thread.run_sync(_copy, fd, self.blobs.tmp)
-            except OSError:
+            except OSError as exc:
+                self.check_mount(exc)
                 p.skip(path, UNREADABLE)
                 return
             if size != before.st_size or not _unchanged(before, os.fstat(fd)):
@@ -759,7 +804,8 @@ class Run:
             try:
                 # Na een link veranderde ctime (de link en de modus); na een kopie niet
                 _remove_source(name, dir_fd, before, ctime=not staged.linked)
-            except OSError:
+            except OSError as exc:
+                self.check_mount(exc)
                 p.skip(path, NOT_REMOVED)
 
     async def walk(self, dir_fd: int, parent_id: uuid.UUID, rel: str, depth: int) -> None:
@@ -771,14 +817,16 @@ class Run:
 
         try:
             names = await anyio.to_thread.run_sync(listing)
-        except OSError:
+        except OSError as exc:
+            self.check_mount(exc)
             p.skip(rel or ".", UNREADABLE)
             return
         for name in names:
             path = f"{rel}/{name}" if rel else name
             try:
                 st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-            except OSError:
+            except OSError as exc:
+                self.check_mount(exc)
                 p.skip(path, UNREADABLE)
                 continue
             if stat.S_ISLNK(st.st_mode):
@@ -805,6 +853,7 @@ class Run:
         try:
             sub = os.open(name, DIR_FLAGS, dir_fd=dir_fd)
         except OSError as exc:
+            self.check_mount(exc)
             p.skip(path, SYMLINK if exc.errno == errno.ELOOP else UNREADABLE)
             return
         try:
@@ -818,9 +867,25 @@ class Run:
 
 
 async def run(settings: Settings, payload: dict[str, Any]) -> None:
+    """De taak: viel de mount weg, dan later opnieuw (Defer, de poging telt niet)."""
+    try:
+        await _run(settings, payload)
+    except (MountGone, OSError) as exc:
+        if not await anyio.to_thread.run_sync(mount_gone, settings, exc):
+            raise
+        log.warning(
+            "import %s: de datamap antwoordt niet (%s); opnieuw over %g s",
+            payload.get("job"), exc, MOUNT_RETRY_S,
+        )  # fmt: skip
+        raise jobs.Defer(MOUNT_RETRY_S) from exc
+
+
+async def _run(settings: Settings, payload: dict[str, Any]) -> None:
     from app.routers.files import trashed_among
 
     job_id = uuid.UUID(payload["job"])
+    if await anyio.to_thread.run_sync(_data_gone, settings):
+        raise MountGone("de datamap antwoordt niet")
     base = {k: payload[k] for k in ("job", "source", "target_id", "owner_id", "move")}
     try:
         parts = parts_of(settings, payload["source"])
@@ -863,6 +928,12 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
             except Stop as stop:
                 job.progress.state = "stopped"
                 job.progress.reason = stop.reason
+            except MountGone:
+                # De voortgang tot hier blijft zichtbaar; de volgende ronde gaat verder
+                job.progress.reason = "mount"
+                with contextlib.suppress(Exception):
+                    await job.save(force=True)
+                raise
             await job.save(force=True)
             p = job.progress
             log.info(
