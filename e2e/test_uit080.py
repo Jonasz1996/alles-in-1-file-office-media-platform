@@ -453,7 +453,7 @@ def met_081(key: str, boom: list[str]) -> list[str]:
         i = plekken[0] + 2
         boom = boom[:i] + DUBBEL + boom[i:]
         # Het eerste "Gedeeld met mij" is dat van het menu (op /gedeeld staat er nog een in de tabs)
-        assert GEDEELD in boom[plekken[0] - 40 : plekken[0]], (key, GEDEELD)
+        assert GEDEELD in boom[max(0, plekken[0] - 40) : plekken[0]], (key, GEDEELD)
         i = boom.index(GEDEELD)
         boom = boom[:i] + SPORT + boom[i:]
     return boom
