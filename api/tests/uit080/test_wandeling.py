@@ -49,6 +49,8 @@ NIEUW = {
     # Het logboek van account resetten (0018): de wandeling reset niemand
     "account_reset": 0,
     "reset_request": 0,
+    # Sport (0021): de wandeling importeert geen activiteiten
+    "sport_activity": 0,
 }
 
 # De routes die fase 11 toevoegt (na 0.8.0)
@@ -72,6 +74,8 @@ FASE11 = (
     # Txt-fix (0.8.3): "Opslaan als" uit de editor en omzetten bij hernoemen (POST)
     "/api/v1/office/files/{node_id}/save-as",
     "/api/v1/office/files/{node_id}/convert-to",
+    # Sport (vervangt Endurain): activiteiten uit GPX en TCX
+    "/api/v1/sport/",
 )
 
 
