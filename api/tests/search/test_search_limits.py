@@ -550,3 +550,16 @@ async def test_de_snelheid_via_de_api(client, settings, monkeypatch, motor):
     # Suggesties tellen apart
     r = await client.get("/api/v1/search/suggest", params={"q": "x"}, headers=kop)
     assert r.status_code == 200, r.text
+
+
+def test_plekken_tegelijk_per_database(tmp_path):
+    """Keuze 13 (W4R-2, 0.8.3): 2 zoekvragen tegelijk op SQLite, 4 op PostgreSQL; een gezette
+    search_inflight gaat altijd voor."""
+    from app.config import Settings
+
+    base = {"data_dir": tmp_path, "jwt_secret": "test" * 8}
+    assert Settings(**base).search_slots == 2
+    pg = Settings(**base, database_url="postgresql+asyncpg://u:p@h/db")
+    assert pg.search_slots == 4
+    assert Settings(**base, search_inflight=1).search_slots == 1
+    assert pg.model_copy(update={"search_inflight": 3}).search_slots == 3

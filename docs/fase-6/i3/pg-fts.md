@@ -275,6 +275,13 @@ wat in de index van FTS5 staat en leest het document niet.
   boven 2 kB (samen 90 MB). De rangvraag: 140 ms zonder, en ook met een eerste poging van de
   rangvector vanaf 2.048 plekken (die liet de middelgrote rijen buiten), 15 tot 20 ms met de
   grens van 64 plekken. Het bewijs van §4.4 is de job zelf.
+- **Daarna nog 4 tegelijk p95 349 tot 364 ms** (lokaal, 100.000). Twee dingen erbij: elk
+  zoekblok krijgt een plan voor de eigen waarden (`plan_cache_mode = force_custom_plan`; het
+  generieke plan las elke treffer helemaal, 426 tegen 22 ms), en de voorwaarde met de eigenaar
+  leest `tsv` niet meer in de join. Wat dan overblijft, zijn de frases: `<->` laat PostgreSQL de
+  hele `tsv` van elke kandidaat lezen (de GIN-index kent geen plekken), voor `"en de factuur"`
+  ±315 MB. Met 2 plekken tegelijk (Keuze 13) wachten de andere vragen in de rij. Op PostgreSQL
+  zijn er nu 4 (`Settings.search_slots`; SQLite blijft 2): 4 tegelijk p95 207 ms lokaal.
 - **Afwijking van het plan**: de index via triggers in de transactie, niet via `search_dirty` en
   een taak (zie boven). Het werkt en de tests zijn groen; de prijs is de tijd bij het schrijven
   (elke INSERT schrijft zijn rij in de index; de nodes van de boom van 100.000: 262 s). Nog
