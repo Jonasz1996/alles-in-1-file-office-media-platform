@@ -466,9 +466,11 @@ Per stap (zoals bij 0.7.1 hieronder):
    `De reservekopie staat in /data/backup/platform-0022-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
 4. **Het schema terug naar `0012`** met het image van nu, want alleen dat kent 0013 tot en met
-   0019. Op SQLite doen 0013 en 0014 niets; wat sinds 0.8.3 (0016, 0018 en 0019) bijkwam, gaat
+   0019. Op SQLite doen 0013 en 0014 niets; wat sinds 0.8.3 (0016, 0018 en 0019) en met live tv (0022) bijkwam, gaat
    weg. `db-downgrade` zegt:
 
+   > Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids)
+   > blijven in de tabel setting staan; een nieuwere versie leest ze opnieuw.
    > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
    > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
    > laat een ronde lopen: een oudere versie kijkt daar niet.
@@ -526,6 +528,8 @@ Per stap (zoals bij 0.7.1 hieronder):
 4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 tot en met 0019.
    `db-downgrade` zegt wat er weggaat:
 
+   > Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids)
+   > blijven in de tabel setting staan; een nieuwere versie leest ze opnieuw.
    > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
    > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
    > laat een ronde lopen: een oudere versie kijkt daar niet.
@@ -599,6 +603,8 @@ Per stap:
    ineens gedeeld zijn. Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het
    wat er weggaat:
 
+   > Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids)
+   > blijven in de tabel setting staan; een nieuwere versie leest ze opnieuw.
    > De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in blobs-r1/,
    > blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op Standaard en
    > laat een ronde lopen: een oudere versie kijkt daar niet.
