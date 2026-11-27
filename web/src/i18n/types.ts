@@ -25,6 +25,7 @@ import type pwa from "./areas/pwa.nl";
 import type search from "./areas/search.nl";
 import type sharing from "./areas/sharing.nl";
 import type shell from "./areas/shell.nl";
+import type sport from "./areas/sport.nl";
 import type trash from "./areas/trash.nl";
 import type upload from "./areas/upload.nl";
 import type versions from "./areas/versions.nl";
@@ -67,7 +68,9 @@ export type Area =
   // "Kan niet inloggen?" (app.cli reset-account)
   | "reset"
   // Live tv (IPTV): de pagina /live
-  | "live";
+  | "live"
+  // Sport: de Strava-vervanger (sport/)
+  | "sport";
 
 /** Meervoudsvormen (Intl.PluralRules); "other" is altijd nodig. Een object met de sleutel
  * "other" is daarom altijd een meervoud, nooit een groep sleutels. */
@@ -133,6 +136,7 @@ export interface Dictionaries {
   ocr: typeof ocr;
   about: typeof about;
   live: typeof live;
+  sport: typeof sport;
 }
 
 /** "browser.title", "common.close", "shell.nav.files": gebied, dan het pad in het woordenboek. */

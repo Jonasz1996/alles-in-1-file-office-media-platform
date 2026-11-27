@@ -269,7 +269,8 @@ def _velden(schema: Any, onderdelen: dict, gezien: set[str]) -> set[str]:
 
 async def test_het_contract_van_de_publieke_routes():
     """In de OpenAPI: geen publieke route met een plek in zijn naam of in zijn antwoord; en
-    coördinaten staan alleen in de antwoorden van deze twee routes (alleen voor de eigenaar)."""
+    coördinaten staan alleen in de antwoorden van deze routes (alleen voor de eigenaar): de plek
+    van een foto, de fotokaart, en de route van een eigen sportactiviteit (Sport)."""
     spec = app.openapi()
     onderdelen = spec["components"]["schemas"]
     met_coordinaten = set()
@@ -285,4 +286,6 @@ async def test_het_contract_van_de_publieke_routes():
     assert met_coordinaten == {
         ("GET", "/api/v1/files/{node_id}/location"),
         ("GET", "/api/v1/photos/map"),
+        ("GET", "/api/v1/sport/activities/{activity_id}"),
+        ("PATCH", "/api/v1/sport/activities/{activity_id}"),
     }

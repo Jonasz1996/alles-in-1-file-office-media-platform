@@ -139,6 +139,9 @@ def test_welke_revisies_een_downgrade_weghaalt():
     assert cli.lost_lines(["0019", "0018"]) == [cli.COPIES_LOST, cli.RESET_LOST]
     assert cli.COPIES_REVISION == "0019"
     assert cli.lost_lines(["0022", "0019"]) == [cli.IPTV_LOST, cli.COPIES_LOST]
+    assert cli.lost_lines(["0021", "0020", "0019"]) == [cli.SPORT_LOST, cli.COPIES_LOST]
+    assert cli.lost_lines(["0022", "0021"]) == [cli.IPTV_LOST, cli.SPORT_LOST]
+    assert cli.SPORT_REVISION == "0021"
     assert cli.RESET_REVISION == "0018"
     assert cli.ARR_REVISION == "0016"
     assert cli.PG_REVISION == "0013"
@@ -225,6 +228,7 @@ def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, 
     assert seen == [
         [
             cli.IPTV_LOST,
+            cli.SPORT_LOST,
             cli.COPIES_LOST,
             cli.RESET_LOST,
             cli.ARR_LOST,
@@ -232,7 +236,7 @@ def test_de_downgrade_vraagt_met_de_regel_van_postgresql(tmp_path, monkeypatch, 
             cli.PG_LOST,
         ]
         if postgres
-        else [cli.IPTV_LOST, cli.COPIES_LOST, cli.RESET_LOST, cli.ARR_LOST]
+        else [cli.IPTV_LOST, cli.SPORT_LOST, cli.COPIES_LOST, cli.RESET_LOST, cli.ARR_LOST]
     ]
 
 

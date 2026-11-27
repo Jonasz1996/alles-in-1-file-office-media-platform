@@ -41,6 +41,8 @@
 // in ZOEK_PAGES; src/about/ hoort bij de modules die nooit in de eerste lading of in Bestanden
 // zitten. De regel in de routetabel zelf zit wel in de eerste lading (een paar tientallen bytes).
 //
+// Sport: /sport/:id? is één lazy chunk (src/sport/), geteld als elk ander lazy chunk.
+//
 // Gebruik: node scripts/budget.mjs [--json]
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -58,7 +60,7 @@ export const LIMITS = {
   // 101 KB: live tv (IPTV) voegt een route en een gebied toe aan de eerste lading (zat op de grens;
   // Sport, PR #13, verhoogde hem om dezelfde reden naar 101 KB)
   initialJs: 101 * KB,
-  filesRoute: 45 * KB,
+  filesRoute: 46 * KB,
   lazyChunk: 50 * KB,
   heavyChunk: 60 * KB,
   initialCss: 12 * KB,

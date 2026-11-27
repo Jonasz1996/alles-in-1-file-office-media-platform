@@ -95,6 +95,7 @@ from app.routers import (
     public_media,
     search,
     shares,
+    sport,
     stream,
     stream_audio,
     stream_file,
@@ -674,6 +675,7 @@ app.include_router(stream_audio.router)
 app.include_router(stream_file.router)
 app.include_router(iptv.router)
 app.include_router(admin_iptv.router)
+app.include_router(sport.router)
 
 # Wat de document server aanroept, op een eigen luisteraar (Keuze 8, app/serve.py): de
 # publieke poorten kennen /internal/ niet. Deelt app.state (database, blob-opslag,

@@ -60,6 +60,8 @@ const AREAS: Area[] = [
   "reset",
   // Live tv (IPTV)
   "live",
+  // Sport (de Strava-vervanger)
+  "sport",
 ];
 
 /** Elke tekst met zijn pad; een meervoud ({one, other}) is één blad met al zijn vormen. */

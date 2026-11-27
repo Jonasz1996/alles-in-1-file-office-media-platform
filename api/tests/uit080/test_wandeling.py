@@ -53,6 +53,8 @@ NIEUW = {
     "iptv_channel": 0,
     "iptv_programme": 0,
     "iptv_favorite": 0,
+    # Sport (0021): de wandeling importeert geen activiteiten
+    "sport_activity": 0,
 }
 
 # De routes die fase 11 toevoegt (na 0.8.0)
@@ -79,6 +81,8 @@ FASE11 = (
     # Live tv (IPTV, 0022)
     "/api/v1/iptv/",
     "/api/v1/admin/iptv",
+    # Sport (vervangt Endurain): activiteiten uit GPX en TCX
+    "/api/v1/sport/",
 )
 
 

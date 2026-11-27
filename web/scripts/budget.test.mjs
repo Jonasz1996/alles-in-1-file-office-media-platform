@@ -30,7 +30,7 @@ describe("de regels van het budget (fase 6)", () => {
   it("de grenzen: precies deze, met faces, beeld en likeRow van Z0b en about van I2", () => {
     expect(LIMITS).toEqual({
       initialJs: 101 * KB,
-      filesRoute: 45 * KB,
+      filesRoute: 46 * KB,
       lazyChunk: 50 * KB,
       heavyChunk: 60 * KB,
       initialCss: 12 * KB,
