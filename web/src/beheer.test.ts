@@ -36,17 +36,21 @@ describe("de tabbladen van /beheer", () => {
       "security",
       "office",
       "media",
+      "downloads",
       "search",
     ]);
     const noOffice = tabsFor(null, true);
-    expect(noOffice.map((tab) => tab.id)).toEqual(["overview", "users", "storage", "jobs", "groups", "security", "media", "search"]);
+    expect(noOffice.map((tab) => tab.id)).toEqual(["overview", "users", "storage", "jobs", "groups", "security", "media", "downloads", "search"]);
     expect(tabOf("media", noOffice)).toEqual({ id: "media", path: "media", label: "admin.media.tab" });
     expect(tabHref("media")).toBe("/beheer/media");
+    expect(tabOf("downloaden", noOffice).id).toBe("downloads");
+    expect(tabOf("downloaden", without).id).toBe("overview");
   });
 
-  it("Alt+1 … Alt+9 staan vast bij hun tabblad: Alt+7 is Office, Alt+8 is Media, Alt+9 Zoeken en foto's", () => {
+  it("Alt+1 … Alt+9 staan vast bij hun tabblad: Alt+7 is Office, Alt+8 is Media, Alt+9 Zoeken en foto's, Alt+0 Downloaden", () => {
     const keys = tabKeys();
-    expect(keys.map((k) => k.combo)).toEqual(["alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9"]);
+    expect(keys.map((k) => k.combo)).toEqual(["alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9", "alt+0"]);
+    expect(keys[9].tab.id).toBe("downloads");
     expect(keys[6].tab.id).toBe("office");
     expect(keys[7].tab.id).toBe("media");
     expect(keys[8].tab.id).toBe("search");
