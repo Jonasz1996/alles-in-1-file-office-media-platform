@@ -57,9 +57,8 @@ const KB = 1000;
 
 /** De grenzen in bytes gzip (§4.1). */
 export const LIMITS = {
-  // Sport (de Strava-vervanger): +1 kB voor de regel in de routetabel en de link in de balk, en
-  // +1 kB in Bestanden voor "Importeren in Sport" (de rest van Sport laadt lazy). Beide zaten
-  // al op hun grens (100,0 en 44,9 kB)
+  // 101 KB: live tv (IPTV) voegt een route en een gebied toe aan de eerste lading (zat op de grens;
+  // Sport, PR #13, verhoogde hem om dezelfde reden naar 101 KB)
   initialJs: 101 * KB,
   filesRoute: 46 * KB,
   lazyChunk: 50 * KB,

@@ -46,6 +46,7 @@ from app.office.state import OfficeState
 from app.routers import (
     admin,
     admin_arr,
+    admin_iptv,
     admin_media,
     admin_office,
     admin_search,
@@ -65,6 +66,7 @@ from app.routers import (
     folder_tree,
     geo,
     groups,
+    iptv,
     jobs_admin,
     media_library,
     media_match,
@@ -686,6 +688,8 @@ app.include_router(media_subs.router)
 app.include_router(youtube_routes.router)
 app.include_router(stream_audio.router)
 app.include_router(stream_file.router)
+app.include_router(iptv.router)
+app.include_router(admin_iptv.router)
 app.include_router(sport.router)
 
 # Wat de document server aanroept, op een eigen luisteraar (Keuze 8, app/serve.py): de

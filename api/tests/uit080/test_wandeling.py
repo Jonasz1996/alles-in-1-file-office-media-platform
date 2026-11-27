@@ -49,6 +49,10 @@ NIEUW = {
     # Het logboek van account resetten (0018): de wandeling reset niemand
     "account_reset": 0,
     "reset_request": 0,
+    # Live tv (0022): de wandeling stelt geen kanaallijst in
+    "iptv_channel": 0,
+    "iptv_programme": 0,
+    "iptv_favorite": 0,
     # Sport (0021): de wandeling importeert geen activiteiten
     "sport_activity": 0,
 }
@@ -76,6 +80,9 @@ FASE11 = (
     "/api/v1/office/files/{node_id}/convert-to",
     # YouTube-module (fixlijst 26-11, punt 7)
     "/api/v1/youtube",
+    # Live tv (IPTV, 0022)
+    "/api/v1/iptv/",
+    "/api/v1/admin/iptv",
     # Sport (vervangt Endurain): activiteiten uit GPX en TCX
     "/api/v1/sport/",
 )

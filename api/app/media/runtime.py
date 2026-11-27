@@ -212,6 +212,12 @@ def begin_stop(app) -> int:
     from app.media import sessions
 
     try:
+        from app.iptv import tuner  # live tv: de tuners stoppen, de kijkers krijgen het einde
+
+        tuner.stop_all()
+    except Exception:
+        log.exception("live tv stoppen bij het stoppen")
+    try:
         closed = sessions.close_all()
     except Exception:  # stoppen gaat altijd door
         log.exception("mediasessies sluiten bij het stoppen")

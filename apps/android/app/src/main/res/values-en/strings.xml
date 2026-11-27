@@ -52,4 +52,10 @@
     <string name="offline_started">Offline download started</string>
     <string name="offline_empty">Nothing offline yet. Long-press a movie or episode to download it.</string>
     <string name="offline_delete">Delete</string>
+    <!-- Live tv (IPTV) -->
+    <string name="live">Live TV</string>
+    <string name="live_empty">There are no channels yet. An administrator sets up live TV under Admin → Media.</string>
+    <string name="live_search">Search channel</string>
+    <string name="live_favorites">Favourites</string>
+    <string name="live_back">Back</string>
 </resources>
