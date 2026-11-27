@@ -309,6 +309,11 @@ async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline
     try:
         try:
             await conn.execute(text(f"SET LOCAL statement_timeout = {max(1, int(ms))}"))
+            # Altijd een plan voor deze waarden (W4R-2): asyncpg bereidt elke vraag voor, en na 5
+            # keer koos PostgreSQL het generieke plan, dat de tsquery niet kent. Bij 100.000
+            # nodes was dat een hash join over alle nodes in het bereik, met tsv @@ q in de join
+            # (elke treffer helemaal gelezen): 426 ms tegen 20 ms met het plan voor de waarden.
+            await conn.execute(text("SET LOCAL plan_cache_mode = force_custom_plan"))
             yield d
         except exc.DBAPIError as e:
             await cancel.finish()  # niets meer stoppen, ook de rollback niet
@@ -325,6 +330,7 @@ async def _pg_deadline(conn: AsyncConnection, ms: int) -> AsyncIterator[Deadline
         await cancel.finish()  # het blok is klaar: niets meer stoppen
         # SET LOCAL geldt na de release van het savepoint tot het eind van de transactie
         await conn.execute(text("SET LOCAL statement_timeout TO DEFAULT"))
+        await conn.execute(text("SET LOCAL plan_cache_mode TO DEFAULT"))
         await nested.commit()
     finally:
         cancel.done()

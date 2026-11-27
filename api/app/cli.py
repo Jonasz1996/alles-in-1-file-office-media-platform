@@ -467,6 +467,8 @@ ARR_REVISION = "0016"
 RESET_REVISION = "0018"
 # De revisie van replicatie per bibliotheek (kopieën in het cluster)
 COPIES_REVISION = "0019"
+# De revisie van sport (de activiteiten uit GPX en TCX)
+SPORT_REVISION = "0021"
 # De zoekindex op PostgreSQL (0.8.2, P5): op SQLite doet hij niets
 PG_SEARCH_REVISION = "0014"
 
@@ -555,6 +557,10 @@ FACES_LOST = (
 
 # Wat een downgrade die 0019 weghaalt, kwijtmaakt. Een oudere versie kijkt niet in blobs-r1/ tot
 # blobs-r3/: wat daar staat, moet eerst terug naar blobs/ (docs/runbooks/replicatie.md)
+SPORT_LOST = (
+    "Alle sportactiviteiten gaan weg (ook de bewaarde GPX- en TCX-bestanden erin). Download ze "
+    "eerst als je ze wilt houden; wat in Bestanden staat, blijft."
+)
 COPIES_LOST = (
     "De keuze voor kopieën in het cluster per bibliotheek gaat weg. Staat er inhoud in "
     "blobs-r1/, blobs-r2/ of blobs-r3/ (PLATFORM_BLOB_SPLIT), zet dan eerst elke bibliotheek op "
@@ -597,6 +603,8 @@ def lost_lines(removed: list[str], postgres: bool = False) -> list[str]:
     """Wat een downgrade die deze revisies weghaalt kwijtmaakt, de nieuwste eerst. postgres:
     de database is PostgreSQL (0013 en 0014 doen alleen daar iets)."""
     lines = []
+    if SPORT_REVISION in removed:
+        lines.append(SPORT_LOST)
     if COPIES_REVISION in removed:
         lines.append(COPIES_LOST)
     if RESET_REVISION in removed:

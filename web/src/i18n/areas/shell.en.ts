@@ -16,6 +16,8 @@ const en: Translation<typeof nl> = {
     media: "Media",
     music: "Music",
     dupes: "Duplicates",
+    // Sport (de Strava-vervanger), niet voor een gast
+    sport: "Sport",
   },
   search: {
     region: "Search everything",

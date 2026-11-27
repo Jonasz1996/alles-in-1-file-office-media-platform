@@ -174,7 +174,8 @@ class Settings(BaseSettings):
     # Zoeken en foto's (fase 6, bouwontwerp §3.2). "uit" zet LikeFallback terug (Keuze 10)
     search_index: Literal["aan", "uit"] = "aan"
     search_deadline_ms: int = 120  # grens van ronde A; ronde B heeft 40 ms (Keuze 9)
-    search_inflight: int = 2  # FTS-vragen tegelijk voor de hele app (Keuze 13)
+    # FTS-vragen tegelijk voor de hele app (Keuze 13); leeg: search_slots kiest (2 of 4)
+    search_inflight: int | None = None
     search_queue: int = 20  # wachtenden; daarboven 429 search_busy
     search_max_text: int = 1_048_576  # tekens per blob
     search_timing: bool = False  # Server-Timing op /search (alleen tests en metingen)
@@ -262,6 +263,16 @@ class Settings(BaseSettings):
     @property
     def db_url(self) -> str:
         return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
+
+    @property
+    def search_slots(self) -> int:
+        """Hoeveel zoekvragen tegelijk (Keuze 13): search_inflight, of anders 2 op SQLite en 4 op
+        PostgreSQL. Op SQLite deelt alles één bestand en de app één event loop (S12); PostgreSQL
+        is een eigen proces met eigen cores, en daar hield de grens van 2 vragen vooral in de rij:
+        bij 100.000 bestanden 4 tegelijk p95 364 ms, met 4 plekken 207 ms (W4R-2, 0.8.3)."""
+        if self.search_inflight is not None:
+            return self.search_inflight
+        return 4 if self.db_url.startswith("postgresql") else 2
 
     def analyse_pg_block(self) -> str | None:
         """Waarom de analyse op deze database uit blijft, of None. SQLite: altijd None (zoals

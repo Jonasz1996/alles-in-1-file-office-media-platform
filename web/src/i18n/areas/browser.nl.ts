@@ -67,6 +67,8 @@ export default {
     folderMenu: "Meer acties",
   },
   actions: {
+    // Sport: GPX, TCX of een zip met een export als activiteit importeren
+    sport: "Importeren in Sport",
     open: "Openen",
     download: "Downloaden",
     downloadZip: "Downloaden als zip",

@@ -481,6 +481,51 @@ async def test_onleesbaar_wordt_overgeslagen(world, monkeypatch):
     assert set(await tree(w["settings"], w["target"])) == {"goed.mkv"}
 
 
+async def test_mount_weg_probeert_later_opnieuw(world, monkeypatch):
+    """Fixlijst 26-11, punt 5: valt de mount (FUSE) halverwege weg, dan wordt niets "niet
+    leesbaar"; de import staat opnieuw in de rij (Defer, de poging telt niet) en de volgende
+    ronde haalt alles binnen."""
+    w = world
+    put(w["src"], "Bron/a.mkv", b"a" * 10)
+    put(w["src"], "Bron/b.mkv", b"b" * 10)
+    real = importer._open_file
+    gone = {"on": True}
+
+    def dead(name, dir_fd):
+        if gone["on"] and name == "b.mkv":
+            raise OSError(errno.ENOTCONN, "Transport endpoint is not connected")
+        return real(name, dir_fd)
+
+    monkeypatch.setattr(importer, "_open_file", dead)
+    job_id = await importer.start("Bron", w["target"], w["owner"])
+    await jobs.run_pending(w["settings"], lane="import")
+    async with maker(w["settings"])() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.attempts, job.payload["skipped"]) == ("queued", 0, 0), job.error
+        assert job.payload["reason"] == "mount"
+    gone["on"] = False
+    later = datetime.now(UTC) + timedelta(seconds=importer.MOUNT_RETRY_S + 1)
+    await jobs.run_pending(w["settings"], at=later, lane="import")
+    async with maker(w["settings"])() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.payload["skipped"]) == ("done", 0), job.error
+    assert set(await tree(w["settings"], w["target"])) == {"a.mkv", "b.mkv"}
+
+
+async def test_een_datamap_die_niet_antwoordt_telt_als_mount_weg(world, monkeypatch):
+    """EIO van één bestand is "niet leesbaar", tenzij de datamap zelf ook niet antwoordt."""
+    w = world
+    eio = OSError(errno.EIO, "Input/output error")
+    assert not importer.mount_gone(w["settings"], eio)
+    assert importer.mount_gone(w["settings"], OSError(errno.ENOTCONN, "weg"))
+
+    def statvfs(path):
+        raise OSError(errno.ENOTCONN, "weg")
+
+    monkeypatch.setattr(importer.os, "statvfs", statvfs)
+    assert importer.mount_gone(w["settings"], eio)
+
+
 async def test_nog_een_keer_draaien_doet_niets(world):
     w = world
     put(w["src"], "Bron/a.mkv", b"a" * 100)

@@ -49,6 +49,8 @@ NIEUW = {
     # Het logboek van account resetten (0018): de wandeling reset niemand
     "account_reset": 0,
     "reset_request": 0,
+    # Sport (0021): de wandeling importeert geen activiteiten
+    "sport_activity": 0,
 }
 
 # De routes die fase 11 toevoegt (na 0.8.0)
@@ -74,6 +76,8 @@ FASE11 = (
     "/api/v1/office/files/{node_id}/convert-to",
     # YouTube-module (fixlijst 26-11, punt 7)
     "/api/v1/youtube",
+    # Sport (vervangt Endurain): activiteiten uit GPX en TCX
+    "/api/v1/sport/",
 )
 
 
