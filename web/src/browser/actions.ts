@@ -87,6 +87,9 @@ export interface BrowserAction {
 /** Hooguit zoveel items in één keer delen (ShareDialog nodes=): dezelfde grens als de dialoog. */
 export const MAX_SHARE = MAX_MULTI_SHARE;
 
+/** Wat Sport kan lezen: GPX, TCX (ook met gzip) en een zip met een export. */
+const SPORT_FILE = /\.(gpx|tcx)(\.gz)?$|\.zip$/i;
+
 const HIDDEN: Availability = { visible: false, enabled: false };
 const OK: Availability = { visible: true, enabled: true };
 
@@ -291,6 +294,28 @@ const BUILT_IN: BrowserAction[] = [
     run: async (sel) => {
       try {
         await downloadPdf(sel[0]);
+      } catch (e) {
+        toast(errorText(e), { kind: "error" });
+      }
+    },
+  },
+  {
+    // Sport: eigen GPX-, TCX- of zipbestanden als activiteiten importeren (de Strava-vervanger)
+    id: "sport",
+    labelKey: "browser.actions.sport",
+    icon: "upload",
+    group: "convert",
+    when: (sel, _folder, env) =>
+      !env.guest && sel.length > 0 && sel.every((n) => n.kind === "file" && permissionOf(n) === "owner" && SPORT_FILE.test(n.name))
+        ? OK
+        : HIDDEN,
+    run: async (sel) => {
+      try {
+        // Lazy: Sport hoort niet in de route Bestanden (het budget)
+        const [{ importFiles }] = await Promise.all([import("../sport/api"), loadAreas(["sport"])]);
+        const results = await importFiles(sel.map((n) => n.id));
+        const n = (s: string) => results.filter((r) => r.status === s).length;
+        toast(t("sport.import.new", { n: n("new") }), n("error") ? { kind: "error" } : undefined);
       } catch (e) {
         toast(errorText(e), { kind: "error" });
       }

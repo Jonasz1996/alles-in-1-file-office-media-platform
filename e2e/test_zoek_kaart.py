@@ -225,7 +225,7 @@ def test_kaart_met_alleen_het_toetsenbord_en_niets_van_buiten(
     # "Frankrijk, 1 foto" of "1 foto" (zonder plaatsnamen); "11 foto's" past er niet op
     een = kaart.locator('[data-dot][aria-label$="1 foto"]')
     expect(een).to_have_count(1)
-    tab_to(page, een.first, limit=10)
+    tab_to(page, een.first, limit=12)  # de balk: 0.8.2 Dubbel, daarna Sport
     page.keyboard.press("Enter")
     viewer = page.get_by_role("dialog", name="parijs.jpg", exact=True)
     expect(viewer).to_be_visible()
@@ -290,7 +290,7 @@ def test_de_focus_valt_niet_naar_de_body(server: Server, user_factory, context_a
     # --- F1: een pijl en + op een stip; daarna Home op de kaart ---
     stip = kaart.locator("[data-dot]").first
     for toets in ("ArrowLeft", "+"):
-        tab_to(page, stip, limit=10)
+        tab_to(page, stip, limit=12)
         page.keyboard.press(toets)
         expect(kaart).to_be_focused()
         klaar(kaart)

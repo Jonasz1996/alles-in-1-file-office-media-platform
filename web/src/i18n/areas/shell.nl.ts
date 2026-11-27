@@ -16,6 +16,8 @@ export default {
     music: "Muziek",
     // Fase 6 (0.8.2): /dubbel, niet voor een gast
     dupes: "Dubbel",
+    // Sport (de Strava-vervanger), niet voor een gast
+    sport: "Sport",
   },
   // Fase 6 (Z0): het zoekveld in de balk bovenaan, met Ctrl/Cmd+K (Keuze 45). De suggesties en de
   // pagina /zoeken zijn van Z4

@@ -103,6 +103,9 @@ export const routes: readonly RouteDef[] = [
   route("/muziek/album/:id", () => import("./music/AlbumPage"), music, "music.album", "music"),
   route("/muziek/artiest/:key", () => import("./music/ArtistPage"), music, "music.artist", "music"),
   route("/muziek/lijst/:id", () => import("./music/PlaylistPage"), music, "music.playlist", "music"),
+  // Sport (de Strava-vervanger, vervangt Endurain): eigen activiteiten, dus niet voor gasten
+  // (één route met één chunk: het budget van de eerste lading)
+  route("/sport/:id?", () => import("./sport/SportPage"), ["sport"], "sport.title", "sport", own),
   // Deze pagina zit in de schil zelf (App gebruikt NoAccess uit hetzelfde bestand): geen chunk
   route("*", () => Promise.resolve({ default: NotFound }), [], "shell.notFound.title", null),
 ];
