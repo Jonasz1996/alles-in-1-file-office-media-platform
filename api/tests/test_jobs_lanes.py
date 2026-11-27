@@ -421,12 +421,18 @@ def test_de_bestaande_soorten_veranderen_niet():
         "default",
         3700.0,
     )
+    # Live tv: de kanaallijst en de gids ophalen gaat naar buiten, in de rij media_net
+    assert (jobs._kinds["iptv.refresh"].lane, jobs._kinds["iptv.refresh"].timeout) == (
+        "media_net",
+        1800.0,
+    )
     eigen = {
         "preview",
         "preview.large",
         "analysis.index",
         "analysis.backfill",
         "youtube.mp3",
+        "iptv.refresh",
         *ocr,
         *faces,
     }

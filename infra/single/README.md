@@ -171,7 +171,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=ae163ac6947
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
-verse kopie (`platform-0021-<tijd>.db`). `db-downgrade` noemt wat er weggaat (alle sportactiviteiten, de keuze voor
+verse kopie (`platform-0022-<tijd>.db`). `db-downgrade` noemt wat er weggaat (live tv, alle sportactiviteiten, de keuze voor
 kopieën per bibliotheek, het logboek van de account-resets en de gevolgde films en series van
 0.8.3; 0013 en 0014 doen op SQLite niets) en vraagt om "ja". Eindigt het met `De WAL is
 niet leeg` (exitcode 3), draai dan `dc run --rm --no-deps platform python -m app.cli db-checkpoint`
@@ -194,7 +194,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=59e0250ba63
 ```
 
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan. `db-backup` maakt eerst een
-verse kopie (`platform-0021-<tijd>.db`). `db-downgrade` noemt wat er weggaat (Sport, wat 0.8.3 bijbracht,
+verse kopie (`platform-0022-<tijd>.db`). `db-downgrade` noemt wat er weggaat (live tv, Sport, wat 0.8.3 bijbracht,
 de beeldindex, de gezichten en wie welk bestand uploadde; stond de analyse nooit aan, dan alleen dat laatste) en
 vraagt om "ja". Eindigt het met `De WAL is niet leeg` (exitcode 3), draai dan
 `dc run --rm --no-deps platform python -m app.cli db-checkpoint` tot het `De WAL is leeg.` zegt.
@@ -227,7 +227,7 @@ PLATFORM_BRANCH=claude/stappenplan-uitwerken-lu4uv3 PLATFORM_SRC_REF=80d5bb8ce9c
 Zeggen de tweede en de derde regel niet allebei "goed", stop dan: de rest pas als de commit en het
 script er zijn. Het script komt van de commit van 0.7.1 zelf, niet van de branch: zo draait het
 oude script met het oude image. `db-backup` maakt eerst een verse kopie van de database zoals hij
-nu is (`platform-0021-<tijd>.db`). `db-downgrade` noemt wat er weggaat (Sport, wat 0.8.3 bijbracht, de beeldindex, de
+nu is (`platform-0022-<tijd>.db`). `db-downgrade` noemt wat er weggaat (live tv, Sport, wat 0.8.3 bijbracht, de beeldindex, de
 gezichten, wie welk bestand uploadde, de zoekindex, de plekken van foto's, de hashes voor
 duplicaten, de personen die je met de hand benoemde en de regels van slimme albums) en vraagt om
 "ja"; bestanden, delingen en albums blijven. Lukt de downgrade niet,
