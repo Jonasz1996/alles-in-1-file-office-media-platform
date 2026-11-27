@@ -2,6 +2,9 @@
 
 Een bestaande verzameling komt zo de boom in, alsof hij geüpload werd: elk bestand gaat de
 BlobStore in (ontdubbeld, met quotum, versies en prullenbak), en daarna doet de scanner de rest.
+Elke map tot INDEX_DEPTH diep zet na afloop zelf zijn scan klaar, en op het eind nog eens alles
+wat direct in de doelmap kwam (fixlijst 26-11, punt 9): wat binnen is, staat al tijdens de
+import in de bibliotheek.
 
 - **Kopiëren** (standaard): de bytes gaan via een tijdelijk bestand de BlobStore in; de bron blijft
   staan.
@@ -85,6 +88,10 @@ KEY = "media.import"  # één tegelijk
 LANE = "import"
 TIMEOUT = 86_400
 MIN_AGE_S = 60  # jonger: misschien wordt hij nog geschreven
+# Een map op deze diepte of hoger (0 = direct in de bron) laat na afloop meteen scannen: een
+# film, een serie of een seizoen, een artiest of een album (fixlijst 26-11, punt 9)
+INDEX_DEPTH = 2
+MAX_FRESH = 5000  # meer nieuwe dingen direct in de doelmap: op het eind de hele doelmap scannen
 CHUNK = 1024 * 1024
 MAX_LISTED = 1000  # zoveel overgeslagen bestanden staan met naam in de payload
 MAX_DEPTH = 64
@@ -578,6 +585,11 @@ class Run:
     admins: list[uuid.UUID]
     progress: Progress = field(default_factory=Progress)
     saved_at: float = 0.0
+    # De doelmap, en wat de import er direct in zette (mappen en losse bestanden): die scannen
+    # op het eind nog eens, zodat zeker alles in de bibliotheek staat (punt 9)
+    top: uuid.UUID | None = None
+    fresh: list[uuid.UUID] = field(default_factory=list)
+    fresh_all: bool = False  # meer dan MAX_FRESH: op het eind de hele doelmap
 
     def check_mount(self, exc: OSError) -> None:
         """Viel de mount weg? Dan MountGone (opnieuw proberen), niet overslaan."""
@@ -605,6 +617,38 @@ class Run:
             bytes=p.bytes,
         )
         events.publish(self.admins, EVENT_IMPORT, event.model_dump(mode="json"))
+
+    async def index(self, *node_ids: uuid.UUID) -> None:
+        """De scan van deze nodes (een map met alles eronder) nu klaarzetten, in de database
+        (fixlijst 26-11, punt 9). files.notify meldt elk bestand ook aan de scanner, maar alleen
+        in het geheugen van dit proces; zo staat wat binnen is al tijdens de import in de
+        bibliotheek, ook als dat geheugen verloren ging. Faalt nooit: de import gaat voor."""
+        from app.media import scanner
+
+        try:
+            async with _maker(self.settings)() as session:
+                if await scanner.queue_touched(session, node_ids):
+                    await session.commit()
+        except Exception:  # noqa: BLE001 - de scan komt dan bij de volgende map of op het eind
+            log.exception("import %s: de scan klaarzetten", self.job_id)
+
+    def placed(self, parent_id: uuid.UUID, node_id: uuid.UUID) -> None:
+        """Iets direct in de doelmap: onthouden voor de scan op het eind. Te veel: dan de hele
+        doelmap."""
+        if parent_id != self.top or self.fresh_all:
+            return
+        if len(self.fresh) >= MAX_FRESH:
+            self.fresh_all = True
+            self.fresh.clear()
+        else:
+            self.fresh.append(node_id)
+
+    async def index_fresh(self) -> None:
+        """Op het eind (ook gestopt): wat direct in de doelmap kwam, nog eens laten scannen."""
+        if self.fresh_all and self.top is not None:
+            await self.index(self.top)
+        for start in range(0, len(self.fresh), 500):
+            await self.index(*self.fresh[start : start + 500])
 
     async def folder(self, parent_id: uuid.UUID, name: str) -> uuid.UUID | None:
         """De map `name` in de doelmap: hergebruikt als hij er al is, anders nieuw. None als de
@@ -651,7 +695,7 @@ class Run:
             if parent is None or owner is None:
                 raise jobs.JobError("de doelmap of de eigenaar is weg")
             try:
-                await place_file(
+                node = await place_file(
                     session,
                     self.blobs,
                     owner,
@@ -665,6 +709,7 @@ class Run:
                     client_mtime=datetime.fromtimestamp(mtime, UTC),
                     tz=self.settings.timezone,
                 )
+                self.placed(parent_id, node.id)
             except HTTPException as exc:
                 code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
                 if code in ("no_room", "no_room_owner"):
@@ -871,7 +916,11 @@ class Run:
             if folder is None:
                 p.skip(path, NAME_TAKEN)
             else:
+                self.placed(parent_id, folder)
                 await self.walk(sub, folder, path, depth + 1)
+                if depth <= INDEX_DEPTH:
+                    # Een film-, serie- of albummap is binnen: nu al in de bibliotheek
+                    await self.index(folder)
         finally:
             os.close(sub)
 
@@ -928,6 +977,7 @@ async def _run(settings: Settings, payload: dict[str, Any]) -> None:
                 tmp_fd=tmp_fd,
                 root_dev=os.fstat(source_fd).st_dev,
                 admins=admins,
+                top=target.id,
             )
             counted = await anyio.to_thread.run_sync(_survey, source_fd, job.move)
             job.progress.total = counted.files
@@ -944,6 +994,8 @@ async def _run(settings: Settings, payload: dict[str, Any]) -> None:
                 with contextlib.suppress(Exception):
                     await job.save(force=True)
                 raise
+            # Op het eind (ook gestopt): wat in de doelmap kwam nog eens, zeker geïndexeerd
+            await job.index_fresh()
             await job.save(force=True)
             p = job.progress
             log.info(

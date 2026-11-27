@@ -423,6 +423,15 @@ export default {
     tab: "Office",
     notReady: "Het overzicht van office komt later in fase 4.",
   },
+  // Fase 11 (fixlijst 26-11): het tabblad "Film/serie downloaden" (Alt+0, admin/DownloadsTab.tsx).
+  downloads: {
+    tab: "Film/serie downloaden",
+    title: "Film/serie downloaden",
+    intro:
+      "Volg hier films en series: de app zoekt ze bij Prowlarr, laat qBittorrent ze downloaden en zet ze in de bibliotheek. Bibliotheken, import en de rest van media staan bij",
+    toMedia: "Media",
+    fromMedia: "Films en series volgen en downloaden doe je nu op het tabblad",
+  },
   // Fase 5, media (M0, frozen; bouwontwerp §2.0): het tabblad Media (Alt+8). Wat erin staat, is
   // van M10 (admin/MediaTab.tsx, met eigen teksten in dit blok na deze twee).
   media: {

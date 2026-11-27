@@ -417,6 +417,14 @@ const en: Translation<typeof nl> = {
     tab: "Office",
     notReady: "The office overview comes later in phase 4.",
   },
+  downloads: {
+    tab: "Download films/series",
+    title: "Download films/series",
+    intro:
+      "Follow films and series here: the app searches Prowlarr for them, has qBittorrent download them and puts them in the library. Libraries, import and the rest of media are under",
+    toMedia: "Media",
+    fromMedia: "Following and downloading films and series is now on the tab",
+  },
   media: {
     tab: "Media",
     notReady: "The media overview comes later in phase 5.",

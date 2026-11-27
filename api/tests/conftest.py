@@ -106,6 +106,26 @@ async def _pg_exec(sql: str) -> None:
         await conn.close()
 
 
+async def _pg_drop(name: str) -> None:
+    """DROP DATABASE ... WITH (FORCE), ook als eigenaar zonder superuser (CI-job "eigenaar, geen
+    superuser"). FORCE beëindigt de verbindingen op de database; is er net een autovacuum-worker
+    bezig, dan mag een gewone rol die niet stoppen (InsufficientPrivilegeError: must be a member
+    of the role whose process is being terminated). Die worker is na een tel klaar: dan opnieuw,
+    begrensd."""
+    import asyncio
+
+    import asyncpg
+
+    for attempt in range(50):
+        try:
+            await _pg_exec(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            return
+        except (asyncpg.InsufficientPrivilegeError, asyncpg.ObjectInUseError):
+            if attempt == 49:
+                raise
+            await asyncio.sleep(0.2)
+
+
 async def _pg_make_template(name: str) -> None:
     """Het sjabloon: een eigen database, gemigreerd tot de nieuwste revisie, zonder verbinding
     erop (CREATE DATABASE ... TEMPLATE weigert een sjabloon met een open verbinding). Mislukt
@@ -124,7 +144,7 @@ async def _pg_make_template(name: str) -> None:
         finally:
             await db.get_engine(s).dispose()
     except BaseException:
-        await _pg_exec(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await _pg_drop(name)
         raise
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -148,14 +168,14 @@ def pytest_sessionfinish(session, exitstatus):
     if _PG_TEMPLATE:
         import asyncio
 
-        asyncio.run(_pg_exec(f'DROP DATABASE IF EXISTS "{_PG_TEMPLATE.pop()}" WITH (FORCE)'))
+        asyncio.run(_pg_drop(_PG_TEMPLATE.pop()))
 
 
 async def _pg_database(name: str, drop: bool = False, migrated: bool = False) -> str:
     """Maak (of met drop: wis) de database name. migrated: als kopie van het sjabloon, dus al
     op de nieuwste revisie (zonder sjabloon gewoon leeg; de fixture settings migreert dan)."""
     if drop:
-        await _pg_exec(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await _pg_drop(name)
     elif migrated and PG_TEMPLATE_ON:
         await _pg_exec(f'CREATE DATABASE "{name}" TEMPLATE "{await _pg_template()}"')
     else:
