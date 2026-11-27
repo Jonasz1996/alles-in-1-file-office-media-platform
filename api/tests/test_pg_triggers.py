@@ -117,6 +117,8 @@ async def test_de_triggers_functies_en_kolommen_staan_er(settings):
                                  "WHERE NOT tgisinternal")  # fmt: skip
     # Met de triggers van de zoekindex (0014)
     zoek = {(name, table) for name, table, _when, _func in _migration_0014().TRIGGERS}
+    # En de rangvector van zoeken (0020)
+    zoek.add(("fts_node_rank", "fts_node"))
     assert set(found) == set(m.TRIGGERS) | zoek
     for signature in m.FUNCTIONS:
         [(ok,)] = await rows(settings, "SELECT to_regprocedure(:s) IS NOT NULL", s=signature)
