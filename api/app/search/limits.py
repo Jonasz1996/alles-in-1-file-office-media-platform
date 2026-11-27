@@ -4,8 +4,9 @@ bouwt hem.
     async with admit(user):                       # of admit(user, "suggest", settings)
         ...
 
-- **Voor de hele app**: hooguit settings.search_inflight vragen tegelijk (2), met hooguit
-  settings.search_queue wachtenden (20); daarboven meteen 429 search_busy met Retry-After: 1.
+- **Voor de hele app**: hooguit settings.search_slots vragen tegelijk (2, op PostgreSQL 4),
+  met hooguit settings.search_queue wachtenden (20); daarboven meteen 429 search_busy met
+  Retry-After: 1.
   Zoeken en suggesties delen die grens: het zijn allebei vragen aan FTS. De app is één proces
   met één event loop; drie gebruikers die elk 10 vragen per seconde doen, legden anders alles
   stil (S12).
@@ -132,7 +133,7 @@ async def _enter(
     """Een plek in de app: meteen, in de rij (of op de plek die deze vraag overnam: turn), of
     429 search_busy als de rij vol is. Replaced als een nieuwere vraag de plek overnam."""
     if turn is None:
-        if state.running < settings.search_inflight and not state.waiting:
+        if state.running < settings.search_slots and not state.waiting:
             state.running += 1
             return
         if len(state.waiting) >= settings.search_queue:

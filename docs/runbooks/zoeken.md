@@ -466,7 +466,7 @@ Per stap (zoals bij 0.7.1 hieronder):
    `De reservekopie staat in /data/backup/platform-0022-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
 4. **Het schema terug naar `0012`** met het image van nu, want alleen dat kent 0013 tot en met
-   0019. Op SQLite doen 0013 en 0014 niets; wat sinds 0.8.3 (0016, 0018 en 0019) en met live tv (0022) bijkwam, gaat
+   0022. Op SQLite doen 0013, 0014 en 0020 niets; wat sinds 0.8.3 (0016, 0018 en 0019) en met live tv (0022) bijkwam, gaat
    weg. `db-downgrade` zegt:
 
    > Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids)
@@ -525,7 +525,7 @@ Per stap (zoals bij 0.7.1 hieronder):
 3. **Een verse kopie** met het image van nu. Hij zegt
    `De reservekopie staat in /data/backup/platform-0022-<tijd>.db (… MB).` Zegt hij iets anders,
    stop dan: zonder deze kopie geen downgrade.
-4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 tot en met 0019.
+4. **Het schema terug naar `0010`** met het image van nu, want alleen dat kent 0011 tot en met 0022.
    `db-downgrade` zegt wat er weggaat:
 
    > Live tv gaat weg: de kanalen, de gids en de favorieten. De instellingen (m3u en gids)
@@ -597,7 +597,7 @@ Per stap:
    `$DATA_ROOT/backup/…`). Zegt hij iets anders, stop dan: zonder deze kopie geen downgrade. Hij
    vervangt de vorige kopie van `0014`; die van `0009`, `0010`, `0012` en `0013` (als die er is)
    blijven.
-4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0019.
+4. **Het schema terug** met het image van nu, want alleen dat kent 0010 tot en met 0022.
    `db-downgrade` vraagt eerst, als die er zijn, naar album-items die uit een regel van een slim
    album komen en niet gedeeld worden: in 0.7.1 deelt een album elk item, dus die items zouden
    ineens gedeeld zijn. Enter of "ja" haalt ze eerst uit het album (de standaard). Dan zegt het
