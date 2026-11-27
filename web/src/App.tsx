@@ -594,6 +594,7 @@ function TopBar({
           {!guest && link("/fotos", t("shell.nav.photos"), "photos")}
           {media && link(MEDIA_HOME, t("shell.nav.media"), "media")}
           {media && link(MUSIC_HOME, t("shell.nav.music"), "music")}
+          {!guest && link("/sport", t("shell.nav.sport"), "sport")}
           {link("/gedeeld", t("shell.nav.shared"), "shared")}
           {!guest && link("/prullenbak", t("shell.nav.trash"), "trash")}
           {!guest && link("/dubbel", t("shell.nav.dupes"), "dupes")}

@@ -330,8 +330,13 @@ def _fts_match(element: FtsMatch, compiler: Any, **kw: Any) -> str:
     if element.owner is None:
         return f"({found})"
     owner = compiler.process(element.owner, **kw)
-    own = f"(fts_node.otsv @@ to_tsquery('simple', {q}) AND n.owner_id = {owner})"
-    return f"({found} OR {own})"
+    # Hetzelfde als tsv @@ q OR (otsv @@ q AND eigen node), maar zo dat het deel met node (de
+    # join) tsv niet leest: het eerste deel gaat helemaal naar de GIN-index van fts_node, en
+    # het tweede is voor bijna elke rij al waar bij otsv IS NULL. Anders las de join de tsv van
+    # elke treffer nog eens helemaal (W4R-2).
+    either = f"({found} OR fts_node.otsv @@ to_tsquery('simple', {q}))"
+    own = f"(fts_node.otsv IS NULL OR n.owner_id = {owner} OR {found})"
+    return f"({either} AND {own})"
 
 
 def _like_escape(word: str) -> str:
@@ -354,9 +359,23 @@ def _fts_rank(element: FtsRank, compiler: Any, **kw: Any) -> str:
     if compiler.dialect.name == "sqlite":
         return RANK_OWN if element.own else RANK_OTHER
     q = compiler.process(element.q, **kw)
-    vec = "coalesce(fts_node.otsv, fts_node.tsv)" if element.own else "fts_node.tsv"
-    # normalisatie 1: gedeeld door 1 + log(lengte), zodat een korte naam voorgaat (zoals bm25)
-    return f"(-ts_rank({TS_WEIGHTS}, {vec}, to_tsquery('simple', {q}), 1))"
+    tsq = f"to_tsquery('simple', {q})"
+    # normalisatie 1: gedeeld door log2(1 + lengte), zodat een korte naam voorgaat (zoals bm25).
+    # Een grote rij heeft een rangvector (migratie 0020): de plekken van het begin (rvec) en de
+    # lengte van de hele tsv (rlen), met dezelfde normalisatie met de hand. Zo leest ts_rank niet
+    # meer de hele vector van elk groot document (W4R-2).
+    rank = (
+        f"CASE WHEN fts_node.rvec IS NULL THEN ts_rank({TS_WEIGHTS}, fts_node.tsv, {tsq}, 1) "
+        f"ELSE (ts_rank({TS_WEIGHTS}, fts_node.rvec, {tsq}, 0) "
+        "/ (ln(fts_node.rlen + 1) / ln(2)))::real END"
+    )
+    if element.own:
+        # otsv (met de OCR van een eigen foto) heeft geen rangvector: die rijen zijn klein
+        rank = (
+            f"CASE WHEN fts_node.otsv IS NOT NULL "
+            f"THEN ts_rank({TS_WEIGHTS}, fts_node.otsv, {tsq}, 1) ELSE {rank} END"
+        )
+    return f"(-{rank})"
 
 
 class NotFromPocr(ColumnElement):

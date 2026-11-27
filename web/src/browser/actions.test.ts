@@ -113,7 +113,7 @@ describe("het register", () => {
     const groups = browserActions().map((a) => GROUPS.indexOf(a.group));
     expect(groups).toEqual([...groups].sort((a, b) => a - b));
     // Omzetten heeft in fase 4 alleen "Downloaden als PDF" (de haak van office)
-    expect(browserActions().filter((a) => a.group === "convert").map((a) => a.id)).toEqual(["pdf"]);
+    expect(browserActions().filter((a) => a.group === "convert").map((a) => a.id)).toEqual(["pdf", "sport"]);
   });
 
   it("labels: per selectie en pas bij het tonen vertaald", () => {

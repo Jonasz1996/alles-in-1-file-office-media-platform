@@ -69,6 +69,8 @@ const en: Translation<typeof nl> = {
     folderMenu: "More actions",
   },
   actions: {
+    // Sport: GPX, TCX of een zip met een export als activiteit importeren
+    sport: "Import into Sport",
     open: "Open",
     download: "Download",
     downloadZip: "Download as zip",

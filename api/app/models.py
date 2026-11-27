@@ -1510,3 +1510,56 @@ Index("ux_fp_ja", FacePerson.face_id, unique=True, sqlite_where=text("verdict = 
 Index("ix_fp_person", FacePerson.owner_id, FacePerson.person_id, FacePerson.verdict)
 Index("ix_face_scan_todo", FaceScan.state, FaceScan.owner_id, FaceScan.prio.desc())
 Index("ux_blob_embed_sha", BlobEmbed.blob_sha, unique=True)
+
+
+class SportActivity(Base):
+    """Sport (vervangt Endurain): één activiteit uit een GPX- of TCX-bestand, alleen voor de
+    eigenaar. De cijfers rekent app/sport/track.analyse uit de ruwe punten (track: pack.py, met
+    zlib); het originele bestand staat erbij (source, met zlib), zodat je het terug kunt halen en
+    een nieuwe versie van het filter alles opnieuw kan uitrekenen. source_sha: hetzelfde bestand
+    twee keer importeren geeft geen tweede activiteit. day: de startdag in PLATFORM_TIMEZONE.
+    preview: het spoor in hooguit 120 punten op 0–1000 ("x,y x,y ..."), voor de lijst.
+    efforts: de beste tijden per afstand ({"5000": 1520.4}). ele_filter: het hoogtefilter aan
+    (standaard) of uit voor deze activiteit."""
+
+    __tablename__ = "sport_activity"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "source_sha", name="uq_sport_activity_source"),
+        Index("ix_sport_activity_owner_start", "owner_id", "start_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    sport: Mapped[str] = mapped_column(String(8))
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    distance: Mapped[float] = mapped_column(Float, default=0.0)
+    elapsed: Mapped[float] = mapped_column(Float, default=0.0)
+    moving: Mapped[float] = mapped_column(Float, default=0.0)
+    gain: Mapped[float] = mapped_column(Float, default=0.0)
+    loss: Mapped[float] = mapped_column(Float, default=0.0)
+    ele_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ele_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_speed: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_hr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_hr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_cad: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_power: Mapped[float | None] = mapped_column(Float, nullable=True)
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    fixed: Mapped[int] = mapped_column(Integer, default=0)
+    lat_min: Mapped[float] = mapped_column(Float, default=0.0)
+    lon_min: Mapped[float] = mapped_column(Float, default=0.0)
+    lat_max: Mapped[float] = mapped_column(Float, default=0.0)
+    lon_max: Mapped[float] = mapped_column(Float, default=0.0)
+    efforts: Mapped[dict] = mapped_column(JSON, default=dict)
+    preview: Mapped[str] = mapped_column(Text, default="")
+    ele_filter: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    track: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    source: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    source_name: Mapped[str] = mapped_column(String(255))
+    source_fmt: Mapped[str] = mapped_column(String(8))
+    source_sha: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
