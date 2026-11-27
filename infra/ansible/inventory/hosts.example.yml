@@ -1,0 +1,18 @@
+# Kopieer naar inventory/hosts.yml en vul de echte adressen in.
+# Elke node is een unprivileged LXC-container op een eigen Proxmox-host.
+all:
+  vars:
+    ansible_user: beheer
+    ansible_become: true
+  children:
+    nodes:
+      hosts:
+        node1:
+          ansible_host: 192.168.50.11
+          vrrp_priority: 150
+        node2:
+          ansible_host: 192.168.50.12
+          vrrp_priority: 140
+        node3:
+          ansible_host: 192.168.50.13
+          vrrp_priority: 130

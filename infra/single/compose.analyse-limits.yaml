@@ -1,0 +1,16 @@
+# Fase 6, Keuze 56 (K2-06, K2-07). 3g: alles tegelijk is ±1,9 GB (§3.11, het geheugen).
+# Met media (3g) en office (2g) is dat 8 van de 16 GB van de LXC.
+# cpu_shares 256 en niet 64: de container rekent ook de interactieve beeldvraag. Het kind werk
+# heeft daarbinnen nice 19, dus de rest van de LXC gaat voor.
+# install.sh neemt dit bestand alleen mee als `docker info --format '{{.MemoryLimit}}
+# {{.CPUCfsQuota}}'` "true true" zegt, zoals bij office en media.
+services:
+  analyse:
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 1.0
+    cpu_shares: 256
+  analyse-omzetten:
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 1.0

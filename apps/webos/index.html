@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Platform</title>
+<!--
+  De app voor de LG webOS-tv (fase 11, stap 9). Klein met opzet: ze opent de tv-stand van het
+  platform zelf (/tv), met de speler van het platform (upscaling in de speler, ondertitels) en
+  bediening met de afstandsbediening. Zo krijgt de tv elke update van het platform meteen, zonder
+  de app opnieuw te installeren. Hier alleen: het adres onthouden en kiezen.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #101418; color: #f2f4f6;
+    font: 32px/1.4 system-ui, "LG Smart UI", sans-serif; }
+  main { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 32px; }
+  h1 { font-size: 64px; margin: 0; }
+  p { margin: 0; color: #b8c0c8; max-width: 1200px; text-align: center; }
+  input { font: inherit; width: 1100px; padding: 18px 24px; border-radius: 12px;
+    border: 3px solid #44505c; background: #1c232a; color: inherit; }
+  button { font: inherit; padding: 18px 48px; border-radius: 12px; border: 3px solid transparent;
+    background: #2f6fde; color: #fff; }
+  input:focus, button:focus { outline: none; border-color: #ffd24a; }
+  .error { color: #ff8a80; min-height: 1.4em; }
+</style>
+<script src="config.js"></script>
+</head>
+<body>
+<main id="setup" hidden>
+  <h1>Platform</h1>
+  <p>Vul het adres van je platform in, bijvoorbeeld https://media.voorbeeld.be of http://192.168.10.146.</p>
+  <input id="url" type="url" autocomplete="off" spellcheck="false" placeholder="https://">
+  <button id="go" type="button">Verbinden</button>
+  <p class="error" id="error" role="alert"></p>
+</main>
+<script>
+(function () {
+  var KEY = "platform.url";
+  var setup = document.getElementById("setup");
+  var input = document.getElementById("url");
+  var error = document.getElementById("error");
+
+  function clean(value) {
+    value = (value || "").trim().replace(/\/+$/, "");
+    if (value && !/^https?:\/\//i.test(value)) value = "http://" + value;
+    return value;
+  }
+
+  function open(base) {
+    // De tv-stand van het platform; ?app=webos laat de web-app weten dat ze in de tv-app draait
+    window.location.replace(base + "/tv?app=webos");
+  }
+
+  function check(base, done) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", base + "/api/v1/info");
+    xhr.timeout = 8000;
+    xhr.onload = function () { done(xhr.status === 200); };
+    xhr.onerror = xhr.ontimeout = function () { done(false); };
+    xhr.send();
+  }
+
+  function connect() {
+    var base = clean(input.value);
+    if (!base) return;
+    error.textContent = "Verbinden…";
+    check(base, function (ok) {
+      if (!ok) {
+        error.textContent = "Geen platform gevonden op dit adres. Klopt het adres, en staat de tv in hetzelfde netwerk?";
+        input.focus();
+        return;
+      }
+      try { localStorage.setItem(KEY, base); } catch (e) {}
+      open(base);
+    });
+  }
+
+  function showSetup(value) {
+    setup.hidden = false;
+    input.value = value || "";
+    input.focus();
+  }
+
+  document.getElementById("go").addEventListener("click", connect);
+  input.addEventListener("keydown", function (e) {
+    if (e.keyCode === 13) connect();
+    if (e.keyCode === 40) document.getElementById("go").focus();
+  });
+  document.getElementById("go").addEventListener("keydown", function (e) {
+    if (e.keyCode === 38) input.focus();
+  });
+  // Terug (461) op het instelscherm: de app sluiten
+  document.addEventListener("keydown", function (e) {
+    if (e.keyCode === 461 && window.webOS && window.webOS.platformBack) window.webOS.platformBack();
+  });
+
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  var base = clean(saved || window.PLATFORM_URL);
+  // De rode knop (403) bij het opstarten: niet verbinden, maar het adres opnieuw kiezen
+  var cancelled = false;
+  document.addEventListener("keydown", function (e) {
+    if (e.keyCode === 403 && setup.hidden) { cancelled = true; showSetup(base); }
+  });
+  if (base) {
+    error.textContent = "";
+    setTimeout(function () {
+      if (cancelled) return;
+      check(base, function (ok) {
+        if (cancelled) return;
+        ok ? open(base) : showSetup(base);
+      });
+    }, 1200);
+  } else {
+    showSetup("");
+  }
+})();
+</script>
+</body>
+</html>

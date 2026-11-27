@@ -1,0 +1,428 @@
+import hashlib
+import hmac
+import secrets
+from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# De databases (db_url) waarop app/analyse/pgcheck.py alle triggers van 0013 aan zag. Per URL,
+# want tests en de cli maken eigen Settings (en kopieën) voor dezelfde database
+_PG_TRIGGERS_SEEN: set[str] = set()
+
+
+def pg_triggers_seen(url: str, ok: bool) -> None:
+    """De uitkomst van pgcheck voor deze database (zie Settings.analyse_pg_block)."""
+    if ok:
+        _PG_TRIGGERS_SEEN.add(url)
+    else:
+        _PG_TRIGGERS_SEEN.discard(url)
+
+
+class Settings(BaseSettings):
+    """Instellingen uit omgevingsvariabelen met prefix PLATFORM_."""
+
+    model_config = SettingsConfigDict(env_prefix="PLATFORM_", env_file=".env", extra="ignore")
+
+    app_name: str = "platform-api"
+    environment: str = "development"
+    node_name: str = "local"
+    log_level: str = "info"
+
+    # standalone = één container met alles erin; cluster = 3 nodes (later)
+    mode: Literal["standalone", "cluster"] = "standalone"
+    # Map voor database (standalone), bestanden en geheimen
+    data_dir: Path = Path("data")
+    # Leeg = SQLite in data_dir; anders bijv. postgresql+asyncpg://user:pw@host/db
+    database_url: str = ""
+    # Gebouwde web-app die de API zelf serveert (leeg of niet aanwezig = alleen API)
+    web_dist: Path = Path("web")
+    # De client-apps die de downloadpagina aanbiedt (fase 11, stap 9): de bron van de webOS-app
+    # (apps/webos in het repo); een gebouwde app (bijv. android.apk) in data_dir/apps
+    clients_dir: Path = Path("clients")
+    # Waar GitHub de gebouwde apps zet (release "clients"); leeg: niet ophalen (app.client_fetch)
+    clients_repo: str = "Jonasz1996/alles-in-1-file-office-media-platform"
+    # De YouTube-module (fixlijst 26-11, punt 7): het adres van de helper (container youtube, met
+    # yt-dlp en ffmpeg, zonder /data; app/youtube/helper.py) en zijn gedeelde sleutel. Leeg: uit
+    youtube_url: str = ""
+    youtube_key: str = ""
+    # Replicatie per bibliotheek (app/blobsplit.py, docs/runbooks/replicatie.md): inhoud met een
+    # ander aantal kopieën dan de standaard naar blobs-r1/, blobs-r2/ of blobs-r3/. Alleen voor
+    # het cluster, waar SeaweedFS per map een eigen replicatie heeft
+    blob_split: bool = False
+    # Hoeveel kopieën het cluster zelf geeft voor blobs/ (de replicatie van master en filer);
+    # een bibliotheek zonder eigen keuze krijgt dit aantal
+    blob_default_copies: int = Field(default=3, ge=1, le=3)
+
+    # Poorten in de container. https start pas zodra er een certificaat is; het domein
+    # stel je in op /beheer.
+    host: str = "0.0.0.0"
+    http_port: int = 8080
+    https_port: int = 8443
+    # Leeg = Let's Encrypt (of de staging-omgeving als testmodus aan staat). Voor tests
+    # met Pebble: eigen directory-URL en het CA-bestand om die te vertrouwen.
+    acme_directory: str = ""
+    acme_ca_file: str = ""
+    # Een reverse proxy ervoor (bijv. Nginx Proxy Manager die het certificaat doet): de adressen
+    # of netwerken waarvan de app X-Forwarded-For en -Proto gelooft, komma-gescheiden
+    # (192.168.102.244,192.168.102.0/24). Leeg = geen proxy: die koppen nooit geloven. Geen "*"
+    # (dat zou elk adres vertrouwen). Geldt ook voor de tunnel van office (app/office/tunnel.py).
+    trusted_proxies: str = ""
+
+    # Tokens
+    jwt_secret: str = ""
+    access_token_minutes: int = 15
+    refresh_token_days: int = 30
+    download_token_minutes: int = 10
+    # Cookies altijd met Secure sturen; over https gebeurt dat sowieso
+    secure_cookies: bool = False
+
+    # Standaardquotum voor nieuwe gebruikers (0 = onbeperkt)
+    default_quota_bytes: int = 0
+    max_upload_bytes: int = 50 * 1024**3
+    # Onafgemaakte hervatbare uploads worden na zoveel uur zonder activiteit opgeruimd
+    upload_expiry_hours: int = 24
+
+    # Achtergrondtaken: zoveel tegelijk, en zo lang (seconden) mag één taak duren voordat hij
+    # als mislukt telt en later opnieuw gaat
+    job_workers: int = 2
+    job_timeout: float = 300
+    # Previews hebben een eigen rij (jobs.LANES) met zoveel workers; 0 = een minder dan het
+    # aantal kernen (minstens 1). Het renderproces draait op nice 10: uploads, de API en
+    # afspelen gaan voor
+    preview_workers: int = 0
+    # Een preview wordt in een eigen proces gemaakt, met hooguit zoveel geheugen (MB, 0 = geen
+    # grens); afbeeldingen met meer pixels krijgen geen preview (bescherming tegen "bommen").
+    # Een JPEG mag 4 keer zo groot zijn: die wordt verkleind gedecodeerd (render.JPEG_PIXELS)
+    preview_memory_mb: int = 1536
+    preview_max_pixels: int = 100_000_000
+    # Zo lang (uren) blijft een previewadres in de app hetzelfde; het werkt daarna nog zo lang.
+    # Langer = de browser haalt thumbnails minder vaak opnieuw, maar na een ingetrokken deling
+    # werkt een uitgegeven adres ook langer (twee keer dit). Nooit korter dan 6; achter een
+    # publieke link altijd 6 (previews.url_period, docs/fotos-indexeren.md)
+    preview_url_hours: int = 6
+    # PDF-pagina's voor de viewer: zoveel renderprocessen tegelijk, en hooguit zoveel MB aan
+    # gerenderde pagina's op schijf (de oudste gaan eerst)
+    page_render_workers: int = 2
+    page_cache_mb: int = 2048
+
+    # Tijdzone van de server, voor tijden die echt UTC zijn (zoals de opnametijd van een
+    # video) en voor de terugvaldatum van een foto zonder EXIF
+    timezone: str = "Europe/Amsterdam"
+
+    # Limieten op inloggen, links openen en dergelijke. Alleen uitzetten voor een testserver
+    # (PLATFORM_RATE_LIMITS=false); bij het starten staat dan een waarschuwing in het log.
+    rate_limits: bool = True
+
+    # Cluster (later): "node1=192.168.50.11,node2=..."
+    cluster_nodes: str = ""
+
+    # Office (fase 4): de document server van OnlyOffice in een eigen container op het
+    # interne netwerk. Leeg = geen office; de app is dan precies fase 3.
+    office_url: str = ""  # PLATFORM_OFFICE_URL, bijv. http://office
+    # PLATFORM_OFFICE_SECRET = JWT_SECRET van DS: minstens 32 tekens en nooit het app-geheim
+    office_secret: str = ""
+    # Hoe DS de app bereikt (de interne luisteraar), bijv. http://platform:8081
+    office_app_url: str = ""
+    office_internal_host: str = ""  # leeg = host
+    office_internal_port: int = 8081
+    office_convert_timeout: float = 120
+    office_max_pdf_bytes: int = 512 * 1024**2
+    # Grens op een download in de callback (Keuze 16)
+    office_max_save_bytes: int = 512 * 1024**2
+    # Groter: alleen omzetten op verzoek (Keuze 25)
+    office_auto_convert_bytes: int = 20 * 1024**2
+    # doc, xls, ppt en rtf (Keuze 23)
+    office_ole_max_bytes: int = 20 * 1024**2
+    office_max_tunnels: int = 1000
+    office_max_tunnels_user: int = 8
+    office_gate_cache_seconds: float = 15
+    office_health_seconds: float = 30
+    office_sweep_seconds: float = 30  # de e2e zet 1
+    office_recovery_seconds: float = 600  # de e2e zet 2
+
+    # Media (fase 5, bouwontwerp §3.2). Uit tenzij PLATFORM_MEDIA_ENABLED=true: zonder die
+    # vlag start er geen worker, geeft elk media-eindpunt 503 media_off, en is de app precies
+    # 0.6.0 (plus F1–F4). Aan, dan nog uit te zetten op /beheer (MediaConfig.enabled).
+    media_enabled: bool = False
+    # De socket van de worker-container; leeg = de app start zelf een lokale worker (Keuze 13)
+    media_worker: str = ""
+    # De sleutel waarmee de worker zich bewijst vóór de app hem fd's stuurt (hello, review S1).
+    # Verplicht met PLATFORM_MEDIA_WORKER: dezelfde waarde in de worker-container, minstens 32
+    # tekens en nooit het geheim van de app. Leeg bij de lokale worker: dan media_key().
+    media_worker_key: str = ""
+    media_max_transcodes: int = 3  # plafond; /beheer kan alleen lager (Keuze 26)
+    media_job_memory_mb: int = 1200  # RLIMIT_DATA per ffmpeg voor live en sprites (Keuze 12)
+    media_job_workers: int = 1  # workers van de rij media (Keuze 14)
+    # ffmpeg en ffprobe samen in de worker; het harnas en de belastingtest zetten 3 (Keuze 12)
+    media_max_procs: int = 10
+    media_loadtest: bool = False  # Op.SYNTH en LoadtestFile toestaan (§4.6)
+    media_scan_tick: float = 30  # de lus van de scanner (tests: 0.5)
+    media_access_cache: float = 15  # seconden dat een toegangscontrole meegaat (Keuze 21)
+    media_segment_wait: float = 20  # seconden wachten op een segment (Keuze 25)
+    media_bench_fixed: bool = False  # tests: de kostentabel van de proef, geen meting
+    media_tmdb_url: str = "https://api.themoviedb.org"
+    media_tmdb_image_url: str = "https://image.tmdb.org"
+    media_musicbrainz_url: str = "https://musicbrainz.org"
+    media_caa_url: str = "https://coverartarchive.org"
+    # Alleen tests: de nep-providers op 127.0.0.1 (Keuze 39)
+    media_provider_private_ok: bool = False
+
+    # Zoeken en foto's (fase 6, bouwontwerp §3.2). "uit" zet LikeFallback terug (Keuze 10)
+    search_index: Literal["aan", "uit"] = "aan"
+    search_deadline_ms: int = 120  # grens van ronde A; ronde B heeft 40 ms (Keuze 9)
+    # FTS-vragen tegelijk voor de hele app (Keuze 13); leeg: search_slots kiest (2 of 4)
+    search_inflight: int | None = None
+    search_queue: int = 20  # wachtenden; daarboven 429 search_busy
+    search_max_text: int = 1_048_576  # tekens per blob
+    search_timing: bool = False  # Server-Timing op /search (alleen tests en metingen)
+    text_batch: int = 16  # blobs per kind in de worker (Keuze 17)
+    # Waar install.sh de bronnen neerzet; leeg = data_dir/geo (review Z0, veilig F5)
+    geo_src: Path | None = None
+    # Gemaakt door geo-load; ontbreekt hij, dan geen plaatsnamen. Leeg = geo_src/places.sqlite
+    places_db: Path | None = None
+    # PLAATSEN in .env (Keuze 29): "uit" slaat het bouwen van places.sqlite over, en dan zijn er
+    # geen plaatsnamen (Z3)
+    places: Literal["aan", "uit"] = "aan"
+    index_defer_transcodes: int = 2  # index en ocr wachten bij zoveel transcodes
+    # OCR (X1): Jonas koos ja (Vraag 1 en 15: de herkenning zit in het image). Aan; de rij ocr
+    # draait alleen met media aan (jobs.active_lanes), en zonder OCR in de worker (caps) blijven
+    # de rijen none met ocr_missing (Keuze 24)
+    ocr_enabled: bool = True
+    ocr_max_pages: int = 200  # per document
+    ocr_per_hour: int = 20  # verzoeken per gebruiker per uur
+    ocr_pages_per_day: int = 200  # pagina's per gebruiker per dag
+    # De container analyse (Keuze 59: gezichten X2 en zoeken op beeld X3). compose.analyse.yaml
+    # zet hem aan; tot dan draait de rij analyse niet (jobs.active_lanes), en kijkt de app nooit
+    # naar de socket (app/analyse/monitor.py: de stand is off)
+    analyse_enabled: bool = False
+    # Op PostgreSQL (het cluster, 0.8.2) alleen met PLATFORM_ANALYSE_POSTGRES=true
+    # (compose.analyse.yaml: ANALYSE_POSTGRES): de beheerder zegt daarmee dat de sleutels van
+    # gezichten op elke node dezelfde zijn en met de eigenaar weggaan. Standaard uit, zodat een
+    # cluster met een oude template nooit gezichten start. Ook dan alleen met de triggers van
+    # 0013 (app/analyse/pgcheck.py, bij de start); ontbreekt er een, dan blijft het uit
+    analyse_postgres: bool = False
+    # De socket in analyse-run, en de sleutel waarmee de worker zich bewijst (§3.11): 64 hex uit
+    # .env (ANALYSE_WORKER_KEY). Leeg of korter dan 32 tekens is down: key_missing; gelijk aan
+    # het geheim van de app of aan de sleutel van de mediaworker is down: key_reused
+    analyse_worker: Path = Path("/run/analyse/worker.sock")
+    analyse_worker_key: str = Field(default="", repr=False)
+    # Gezichten (X2, §3.11): de map met de sleutels per eigenaar (/keys, Keuze 68; leeg is 409
+    # faces_unavailable), foto's per job, het kleinste gezicht (korte kant in de preview, px),
+    # het maximum per foto, en open gezichten per groepsronde (daarboven de nieuwste; K2-06)
+    faces_keys: str = ""
+    faces_batch: int = 16
+    faces_min_px: int = 40
+    faces_max_per_photo: int = 40
+    faces_group_max: int = 60000
+    # Zoeken op beeld (X3, Keuze 77, 78): de klok op de tocht naar de container (ms), vragen
+    # tegelijk en wachtenden voor de hele app, kandidaten uit rank, previews per embed_image, het
+    # bestand per eigenaar hooguit eens per zoveel seconden opnieuw, en de map met die bestanden
+    # (leeg: data_dir/cache/beeld). Alleen met analyse_on doet iets hiervan mee.
+    beeld_deadline_ms: int = Field(default=800, ge=50, le=30_000)
+    beeld_inflight: int = Field(default=1, ge=1, le=16)
+    beeld_queue: int = Field(default=10, ge=0, le=1000)
+    beeld_top_k: int = Field(default=1000, ge=1, le=1000)
+    beeld_batch: int = Field(default=16, ge=1, le=16)
+    beeld_rebuild_s: float = Field(default=300.0, ge=0)
+    beeld_cache: Path | None = None
+
+    @model_validator(mode="after")
+    def _no_star_proxy(self) -> "Settings":
+        """'*' in PLATFORM_TRUSTED_PROXIES gelooft de koppen van elke peer: dan kiest elke
+        browser zelf zijn IP en https (review van PR #6, F8). Alleen de adressen van de proxy."""
+        if "*" in self.trusted_proxy_list():
+            raise ValueError(
+                "PLATFORM_TRUSTED_PROXIES: '*' vertrouwt elk adres; noem de adressen of netwerken "
+                "van de proxy (bijv. 192.168.102.244 of 192.168.102.0/24)"
+            )
+        return self
+
+    def trusted_proxy_list(self) -> list[str]:
+        """De adressen en netwerken uit PLATFORM_TRUSTED_PROXIES; leeg: geen proxy."""
+        return [p.strip() for p in self.trusted_proxies.split(",") if p.strip()]
+
+    @model_validator(mode="after")
+    def _geo_paths(self) -> "Settings":
+        """geo_src en places_db volgen data_dir, zoals blob_dir, tenzij de omgeving ze zet."""
+        if self.geo_src is None:
+            self.geo_src = self.data_dir / "geo"
+        if self.places_db is None:
+            self.places_db = self.geo_src / "places.sqlite"
+        return self
+
+    def nodes(self) -> list[tuple[str, str]]:
+        if not self.cluster_nodes:
+            return [(self.node_name, "127.0.0.1")]
+        pairs = (item.split("=", 1) for item in self.cluster_nodes.split(",") if item.strip())
+        return [(name.strip(), ip.strip()) for name, ip in pairs]
+
+    @property
+    def db_url(self) -> str:
+        return self.database_url or f"sqlite+aiosqlite:///{self.data_dir / 'platform.db'}"
+
+    @property
+    def search_slots(self) -> int:
+        """Hoeveel zoekvragen tegelijk (Keuze 13): search_inflight, of anders 2 op SQLite en 4 op
+        PostgreSQL. Op SQLite deelt alles één bestand en de app één event loop (S12); PostgreSQL
+        is een eigen proces met eigen cores, en daar hield de grens van 2 vragen vooral in de rij:
+        bij 100.000 bestanden 4 tegelijk p95 364 ms, met 4 plekken 207 ms (W4R-2, 0.8.3)."""
+        if self.search_inflight is not None:
+            return self.search_inflight
+        return 4 if self.db_url.startswith("postgresql") else 2
+
+    def analyse_pg_block(self) -> str | None:
+        """Waarom de analyse op deze database uit blijft, of None. SQLite: altijd None (zoals
+        vóór 0.8.2, zonder vraag aan de database). PostgreSQL: pg_not_enabled zonder
+        PLATFORM_ANALYSE_POSTGRES, no_pg_triggers zolang app/analyse/pgcheck.py de triggers van
+        0013 (die gezichten en beeld wissen) niet allemaal aan zag."""
+        if self.db_url.startswith("sqlite"):
+            return None
+        if not self.analyse_postgres:
+            return "pg_not_enabled"
+        if self.db_url not in _PG_TRIGGERS_SEEN:
+            return "no_pg_triggers"
+        return None
+
+    @property
+    def analyse_on(self) -> bool:
+        """PLATFORM_ANALYSE_ENABLED, en de database kan het (analyse_pg_block): op SQLite
+        altijd, op PostgreSQL alleen met PLATFORM_ANALYSE_POSTGRES en de triggers van 0013.
+        Anders zegt de monitor down met die reden, draait de rij analyse niet en gaan de
+        schakelaars niet aan (review A0, veilig F5)."""
+        return self.analyse_enabled and self.analyse_pg_block() is None
+
+    @property
+    def beeld_dir(self) -> Path:
+        """De bestanden per eigenaar van zoeken op beeld (Keuze 76): PLATFORM_BEELD_CACHE, of
+        data_dir/cache/beeld. Een cache: niet in de reservekopie."""
+        return (
+            self.beeld_cache if self.beeld_cache is not None else self.data_dir / "cache" / "beeld"
+        )
+
+    @property
+    def blob_dir(self) -> Path:
+        return self.data_dir / "blobs"
+
+    @property
+    def upload_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
+    def tls_dir(self) -> Path:
+        return self.data_dir / "tls"
+
+    @property
+    def media_dir(self) -> Path:
+        """De cache van media (sessies, audio, sprites, art) en de socket van de lokale
+        worker (Keuze 13, 31). Systeemruimte, geen quotum van een gebruiker."""
+        return self.data_dir / "media"
+
+    @property
+    def media_socket(self) -> Path:
+        """Waar de app de worker bereikt: de socket van de container, of die van de lokale
+        worker in data_dir/media/run."""
+        if self.media_worker:
+            return Path(self.media_worker)
+        return self.media_dir / "run" / "worker.sock"
+
+    def media_key(self) -> str:
+        """De sleutel van hello: PLATFORM_MEDIA_WORKER_KEY, of voor de lokale worker een
+        afgeleide van het geheim van de app (zo kent de cli hem ook, en verraadt hij het geheim
+        niet). Een container zonder sleutel: leeg (media_problem)."""
+        if self.media_worker_key:
+            return self.media_worker_key
+        if self.media_worker:
+            return ""
+        digest = hmac.new(self.secret().encode(), b"platform-media-worker-local", hashlib.sha256)
+        return digest.hexdigest()
+
+    def media_problem(self) -> str | None:
+        """Waarom de sleutel van de worker niet goed is, of None."""
+        key = self.media_worker_key
+        if not (self.media_worker or key):
+            return None
+        if len(key) < 32:
+            return "PLATFORM_MEDIA_WORKER_KEY ontbreekt of is korter dan 32 tekens"
+        if key == self.secret():
+            return "PLATFORM_MEDIA_WORKER_KEY mag niet gelijk zijn aan het geheim van de app"
+        return None
+
+    def analyse_key_problem(self) -> Literal["key_missing", "key_reused"] | None:
+        """Waarom de sleutel van de analyse niet goed is (de reden van down), of None. Alleen
+        met analyse_enabled: secret() maakt het geheim aan als het er nog niet is."""
+        key = self.analyse_worker_key
+        if len(key) < 32:
+            return "key_missing"
+        if key == self.secret() or key in (self.media_worker_key, self.media_key()):
+            return "key_reused"
+        return None
+
+    def office_problem(self) -> str | None:
+        """Waarom office niet ingesteld is, of None. Zonder office_url is er geen probleem:
+        dan staat office gewoon uit."""
+        if not self.office_url:
+            return None
+        if not self.office_url.startswith(("http://", "https://")):
+            return "PLATFORM_OFFICE_URL moet met http:// of https:// beginnen"
+        if not self.office_app_url.startswith(("http://", "https://")):
+            return "PLATFORM_OFFICE_APP_URL ontbreekt of begint niet met http:// of https://"
+        if len(self.office_secret) < 32:
+            return "PLATFORM_OFFICE_SECRET ontbreekt of is korter dan 32 tekens"
+        if self.office_secret == self.secret():
+            return "PLATFORM_OFFICE_SECRET mag niet gelijk zijn aan het geheim van de app"
+        return None
+
+    @property
+    def office_configured(self) -> bool:
+        """Office staat aan: een adres voor DS, een adres waarop DS de app bereikt en een
+        eigen, geldig geheim."""
+        return bool(self.office_url) and self.office_problem() is None
+
+    def secret(self) -> str:
+        """JWT-geheim: uit de omgeving, of eenmalig gegenereerd en bewaard in data_dir."""
+        if self.jwt_secret:
+            return self.jwt_secret
+        path = self.data_dir / "jwt.secret"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_hex(32))
+            path.chmod(0o600)
+        return path.read_text().strip()
+
+
+class BenchResult(BaseModel):
+    """De uitkomst van de meting (Keuze 26): f = cores voor 1,0× hier / de referentie, en
+    f_dec voor het decoderen van de bron. Alleen de worker meet; /beheer leest."""
+
+    f: float = Field(gt=0, le=20)
+    f_dec: float = Field(gt=0, le=20)
+    at: datetime
+
+
+class MediaConfig(BaseModel):
+    """De instellingen van media op /beheer (Keuze 45), in de tabel setting onder de sleutel
+    "media" en in het geheugen (media.state.MediaPolicy), zoals SecurityPolicy en
+    OfficeConfig. max_transcodes kan niet hoger dan PLATFORM_MEDIA_MAX_TRANSCODES
+    (MediaPolicy.effective houdt dat aan)."""
+
+    enabled: bool = True
+    cpu_budget: float = Field(default=3.0, ge=0.5, le=16)
+    max_transcodes: int = Field(default=3, ge=0, le=16)
+    max_user_transcodes: int = Field(default=2, ge=1, le=16)
+    # Mag een publieke link transcoderen (Vraag 5); standaard nee
+    public_transcode: bool = False
+    # HDR live op 1080 als iemand het kiest; anders alleen 720 (Keuze 27)
+    hdr_1080: bool = False
+    cache_gb: int = Field(default=20, ge=1, le=10_000)
+    musicbrainz: bool = False
+    # Alleen lezen: de laatste meting (Keuze 26); None = nog niet gemeten (f = 1,0)
+    bench: BenchResult | None = None
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

@@ -1,0 +1,401 @@
+/* Sport (de Strava-vervanger): de lijst, de grafieken, de kaart en het hoogteprofiel. Kleuren
+   alleen uit de tokens, zodat licht en donker vanzelf meegaan. */
+
+.sport-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+
+.sport-dragging {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+}
+
+.sport-drop {
+  position: fixed;
+  inset: auto 0 var(--space-6) 0;
+  margin: 0 auto;
+  width: max-content;
+  padding: var(--space-3) var(--space-5);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2);
+  z-index: var(--z-toast);
+}
+
+.sport-intro {
+  margin: 0;
+  max-width: 48rem;
+}
+
+.sport-busy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.sport-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.sport-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-s);
+}
+
+.sport-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-4);
+}
+
+.sport-stats h2,
+.sport-section h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-m);
+}
+
+.sport-bars,
+.sport-totals {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.sport-bars-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 8rem;
+}
+
+.sport-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+}
+
+.sport-bar-fill {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent);
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+}
+
+.sport-bar-label {
+  margin-top: var(--space-1);
+  font-size: var(--text-s);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.sport-totals ul,
+.sport-efforts,
+.sport-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sport-totals li,
+.sport-efforts li,
+.sport-results li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sport-result-error {
+  color: var(--bad);
+}
+
+.sport-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: var(--space-3);
+}
+
+.sport-card {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.sport-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sport-card-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sport-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.sport-card-stats dt,
+.sport-stat dt {
+  font-size: var(--text-s);
+  color: var(--muted);
+}
+
+.sport-card-stats dd,
+.sport-stat dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sport-preview {
+  flex: none;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.sport-preview polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 40;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.sport-more {
+  display: flex;
+  justify-content: center;
+}
+
+.sport-back {
+  margin: 0;
+}
+
+.sport-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+}
+
+.sport-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.sport-stat dd {
+  font-size: var(--text-l);
+}
+
+.sport-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sport-map {
+  position: relative;
+  height: min(60vh, 28rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  background: var(--surface-2);
+  touch-action: none;
+  cursor: grab;
+}
+
+.sport-map svg {
+  display: block;
+}
+
+.sport-grid-line {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.sport-route-casing {
+  fill: none;
+  stroke: var(--bg);
+  stroke-width: 7;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.sport-route {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.sport-start {
+  fill: var(--ok);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+.sport-finish {
+  fill: var(--bad);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+.sport-hover {
+  fill: var(--bg);
+  stroke: var(--fg);
+  stroke-width: 3;
+}
+
+.sport-map-tools {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--surface);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-1);
+}
+
+.sport-map-attribution {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 2px var(--space-2);
+  font-size: var(--text-s);
+  background: var(--surface);
+  opacity: 0.85;
+}
+
+.sport-profile {
+  margin: 0;
+}
+
+.sport-profile svg {
+  display: block;
+  width: 100%;
+  height: 10rem;
+  touch-action: none;
+}
+
+.sport-profile-area {
+  fill: var(--accent);
+  opacity: 0.25;
+}
+
+.sport-profile-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.sport-profile-raw {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.sport-profile-cursor {
+  stroke: var(--fg);
+  stroke-width: 1;
+}
+
+.sport-profile-legend {
+  display: flex;
+  gap: var(--space-3);
+  min-height: 1.5em;
+  font-size: var(--text-s);
+}
+
+.sport-readout {
+  font-variant-numeric: tabular-nums;
+}
+
+.sport-key::before {
+  content: "";
+  display: inline-block;
+  width: 1.5em;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  border-top: 2px solid var(--accent);
+}
+
+.sport-key-raw::before {
+  border-top: 1px dashed var(--muted);
+}
+
+.sport-filter p {
+  margin: var(--space-1) 0 0;
+  max-width: 48rem;
+}
+
+.sport-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.sport-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.sport-table th,
+.sport-table td {
+  padding: var(--space-1) var(--space-3);
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+}
+
+.sport-table th:first-child,
+.sport-table td:first-child {
+  text-align: left;
+}
+
+.sport-efforts {
+  max-width: 24rem;
+}
+
+.sport-notes {
+  width: 100%;
+  max-width: 48rem;
+  font: inherit;
+}

@@ -1,0 +1,43 @@
+# De YouTube-module (fixlijst 26-11-2026, punt 7): zoeken, kijken (ook live) en een video als mp3
+# in een muziekmap bewaren. install.sh neemt dit bestand mee met YOUTUBE=aan in /opt/platform/.env
+# (standaard aan als media aan staat).
+#
+# - De helper draait uit hetzelfde image als de app (python -m app.youtube.helper), maar zonder
+#   /data, zonder de geheimen van de app en met een alleen-lezen bestandssysteem. Alleen hij start
+#   yt-dlp en ffmpeg op iets van het internet. Hij schrijft alleen in DATA_ROOT/import/youtube
+#   (/out); de app zet het mp3-bestand daarna als een upload in de gekozen map.
+# - De app praat met hem in het netwerk youtube, met de sleutel YOUTUBE_KEY (install.sh maakt hem).
+# - yt-dlp moet af en toe nieuwer om YouTube te blijven volgen: dat gaat met de versie van het
+#   image mee (api/pyproject.toml).
+
+services:
+  platform:
+    environment:
+      PLATFORM_YOUTUBE_URL: http://youtube:8090
+      PLATFORM_YOUTUBE_KEY: ${YOUTUBE_KEY:?}
+    networks: [default, youtube]
+
+  youtube:
+    image: platform:local
+    restart: unless-stopped
+    command: ["python", "-m", "app.youtube.helper"]
+    environment:
+      YOUTUBE_KEY: ${YOUTUBE_KEY:?}
+      YOUTUBE_OUT: /out
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/cache
+    volumes:
+      - ${DATA_ROOT:?}/import/youtube:/out
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+    networks: [default, youtube]
+
+networks:
+  youtube: {}

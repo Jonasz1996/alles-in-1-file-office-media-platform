@@ -1,0 +1,316 @@
+{
+ "_nep": "nepdata, niet echt",
+ "releases": [
+  {
+   "id": "542c4db2-00eb-52f8-a9ca-5a3733f17871",
+   "title": "Zeegezichten",
+   "artist": "Nep Orkest",
+   "artist_id": "f741d891-1c5f-5737-9f8f-3e29f19dbf7f",
+   "artist_sort": "Nep Orkest",
+   "date": "2001-03-01",
+   "country": "NL",
+   "barcode": "",
+   "release_group": {
+    "id": "27d0f12a-77be-531d-b3ed-98a60a35d038",
+    "title": "Zeegezichten",
+    "primary_type": "Album"
+   },
+   "tracks": [
+    {
+     "title": "Zee 1",
+     "length_ms": 180000
+    },
+    {
+     "title": "Zee 2",
+     "length_ms": 181000
+    },
+    {
+     "title": "Zee 3",
+     "length_ms": 182000
+    },
+    {
+     "title": "Zee 4",
+     "length_ms": 183000
+    },
+    {
+     "title": "Zee 5",
+     "length_ms": 184000
+    },
+    {
+     "title": "Zee 6",
+     "length_ms": 185000
+    },
+    {
+     "title": "Zee 7",
+     "length_ms": 186000
+    },
+    {
+     "title": "Zee 8",
+     "length_ms": 187000
+    },
+    {
+     "title": "Zee 9",
+     "length_ms": 188000
+    },
+    {
+     "title": "Zee 10",
+     "length_ms": 189000
+    }
+   ],
+   "cover": true
+  },
+  {
+   "id": "8f74aeed-5919-5ee1-9491-0a879bf7704d",
+   "title": "Lanterns",
+   "artist": "The Paper Birds",
+   "artist_id": "ac271571-d5ad-5189-89fd-88eb826aa4a3",
+   "artist_sort": "The Paper Birds",
+   "date": "1999-05-17",
+   "country": "GB",
+   "barcode": "",
+   "release_group": {
+    "id": "0fe2efd4-8828-588c-ac7c-578cc6e6997f",
+    "title": "Lanterns",
+    "primary_type": "Album"
+   },
+   "tracks": [
+    {
+     "title": "Lantern 1",
+     "length_ms": 180000
+    },
+    {
+     "title": "Lantern 2",
+     "length_ms": 181000
+    },
+    {
+     "title": "Lantern 3",
+     "length_ms": 182000
+    },
+    {
+     "title": "Lantern 4",
+     "length_ms": 183000
+    },
+    {
+     "title": "Lantern 5",
+     "length_ms": 184000
+    },
+    {
+     "title": "Lantern 6",
+     "length_ms": 185000
+    },
+    {
+     "title": "Lantern 7",
+     "length_ms": 186000
+    },
+    {
+     "title": "Lantern 8",
+     "length_ms": 187000
+    },
+    {
+     "title": "Lantern 9",
+     "length_ms": 188000
+    },
+    {
+     "title": "Lantern 10",
+     "length_ms": 189000
+    },
+    {
+     "title": "Lantern 11",
+     "length_ms": 190000
+    },
+    {
+     "title": "Lantern 12",
+     "length_ms": 191000
+    }
+   ],
+   "cover": true
+  },
+  {
+   "id": "f0a16aad-6d2a-5dd7-aeac-386370e50caf",
+   "title": "Nepcompilatie",
+   "artist": "Various Artists",
+   "artist_id": "3344797c-23f4-5f71-b356-728ab97a4118",
+   "artist_sort": "Various Artists",
+   "date": "2005",
+   "country": "NL",
+   "barcode": "",
+   "release_group": {
+    "id": "d92ffba8-6bdb-5471-95f3-c124ab52f648",
+    "title": "Nepcompilatie",
+    "primary_type": "Compilation"
+   },
+   "track_count": 18,
+   "cover": false
+  },
+  {
+   "id": "cbe1a995-1c97-5ebf-a397-d06831d9d53b",
+   "title": "Tweede Plaat",
+   "artist": "De Valse Noten",
+   "artist_id": "61dfcc56-a11e-5720-83a2-abd3ba09320c",
+   "artist_sort": "De Valse Noten",
+   "date": "2010-10-10",
+   "country": "NL",
+   "barcode": "",
+   "release_group": {
+    "id": "c810190f-efbc-55c8-96cb-a7bd41da6204",
+    "title": "Tweede Plaat",
+    "primary_type": "Album"
+   },
+   "tracks": [
+    {
+     "title": "Noot 1",
+     "length_ms": 180000
+    },
+    {
+     "title": "Noot 2",
+     "length_ms": 181000
+    },
+    {
+     "title": "Noot 3",
+     "length_ms": 182000
+    },
+    {
+     "title": "Noot 4",
+     "length_ms": 183000
+    },
+    {
+     "title": "Noot 5",
+     "length_ms": 184000
+    },
+    {
+     "title": "Noot 6",
+     "length_ms": 185000
+    },
+    {
+     "title": "Noot 7",
+     "length_ms": 186000
+    },
+    {
+     "title": "Noot 8",
+     "length_ms": 187000
+    }
+   ],
+   "cover": true
+  },
+  {
+   "id": "15687b24-8e2c-591f-a519-4d759df74c8c",
+   "title": "Tweede Plaat",
+   "artist": "De Valse Noten",
+   "artist_id": "61dfcc56-a11e-5720-83a2-abd3ba09320c",
+   "artist_sort": "De Valse Noten",
+   "date": "2011-11-11",
+   "country": "NL",
+   "barcode": "",
+   "release_group": {
+    "id": "c810190f-efbc-55c8-96cb-a7bd41da6204",
+    "title": "Tweede Plaat",
+    "primary_type": "Album"
+   },
+   "tracks": [
+    {
+     "title": "Noot 1",
+     "length_ms": 180000
+    },
+    {
+     "title": "Noot 2",
+     "length_ms": 181000
+    },
+    {
+     "title": "Noot 3",
+     "length_ms": 182000
+    },
+    {
+     "title": "Noot 4",
+     "length_ms": 183000
+    },
+    {
+     "title": "Noot 5",
+     "length_ms": 184000
+    },
+    {
+     "title": "Noot 6",
+     "length_ms": 185000
+    },
+    {
+     "title": "Noot 7",
+     "length_ms": 186000
+    },
+    {
+     "title": "Noot 8",
+     "length_ms": 187000
+    },
+    {
+     "title": "Noot 9",
+     "length_ms": 188000
+    },
+    {
+     "title": "Noot 10",
+     "length_ms": 189000
+    },
+    {
+     "title": "Noot 11",
+     "length_ms": 190000
+    },
+    {
+     "title": "Noot 12",
+     "length_ms": 191000
+    }
+   ],
+   "cover": true
+  },
+  {
+   "id": "0c242e53-4fce-5f1f-a2f6-1a6a2e8bb8d5",
+   "title": "Static",
+   "artist": "Quiet Engines",
+   "artist_id": "fafcc3db-a094-57bb-96a5-a8dc850957bd",
+   "artist_sort": "Quiet Engines",
+   "date": "2017-02-03",
+   "country": "US",
+   "barcode": "",
+   "release_group": {
+    "id": "5f10d4bd-86cc-5631-8037-7a045a67a540",
+    "title": "Static",
+    "primary_type": "Album"
+   },
+   "tracks": [
+    {
+     "title": "Static 1",
+     "length_ms": 180000
+    },
+    {
+     "title": "Static 2",
+     "length_ms": 181000
+    },
+    {
+     "title": "Static 3",
+     "length_ms": 182000
+    },
+    {
+     "title": "Static 4",
+     "length_ms": 183000
+    },
+    {
+     "title": "Static 5",
+     "length_ms": 184000
+    },
+    {
+     "title": "Static 6",
+     "length_ms": 185000
+    },
+    {
+     "title": "Static 7",
+     "length_ms": 186000
+    },
+    {
+     "title": "Static 8",
+     "length_ms": 187000
+    },
+    {
+     "title": "Static 9",
+     "length_ms": 188000
+    }
+   ],
+   "cover": true
+  }
+ ]
+}

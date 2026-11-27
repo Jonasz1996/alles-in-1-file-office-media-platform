@@ -1,0 +1,56 @@
+{
+ "data": {
+  "bit_rate": 196244,
+  "chapters": [],
+  "container": "m4a",
+  "duration_ms": 4000,
+  "error": null,
+  "start_ms": 0,
+  "state": "ready",
+  "streams": [
+   {
+    "attached_pic": false,
+    "bit_depth": null,
+    "bitrate": 191804,
+    "channels": 2,
+    "codec": "aac",
+    "codec_string": "mp4a.40.2",
+    "color": null,
+    "default": true,
+    "duration_ms": 4000,
+    "dv_profile": null,
+    "forced": false,
+    "fps": null,
+    "hdr": "none",
+    "hdr_meta": null,
+    "hearing_impaired": false,
+    "height": null,
+    "index": 0,
+    "interlaced": false,
+    "lang": "und",
+    "last_frame_ms": null,
+    "layout": "stereo",
+    "level": null,
+    "pix_fmt": null,
+    "profile": "LC",
+    "sample_rate": 44100,
+    "start_ms": 0,
+    "title": null,
+    "type": "audio",
+    "width": null
+   }
+  ],
+  "tags": {
+   "album": "Sinus (aac)",
+   "artist": "Fase Vijf",
+   "compatible_brands": "M4A isomiso2",
+   "date": "2025",
+   "encoder": "Lavf60.16.100",
+   "major_brand": "M4A",
+   "minor_version": "512",
+   "title": "Nummer 3",
+   "track": "3/3"
+  },
+  "truncated": {}
+ }
+}

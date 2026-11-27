@@ -1,0 +1,253 @@
+"""Mediabeheer op /beheer: de koppelingen met Prowlarr en qBittorrent (fase 11, stap 2).
+
+GET    /api/v1/admin/arr                      → ArrView (nooit een geheim)
+PUT    /api/v1/admin/arr/prowlarr             ProwlarrIn → ProwlarrTest | 422 arr_link_auth
+                                              | 503 arr_link_unreachable
+POST   /api/v1/admin/arr/prowlarr/test        → ProwlarrTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/prowlarr             → 204
+PUT    /api/v1/admin/arr/qbittorrent          QBitIn → QBitTest | 422 arr_link_auth | 503
+POST   /api/v1/admin/arr/qbittorrent/test     → QBitTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/qbittorrent          → 204
+PUT    /api/v1/admin/arr/opensubtitles        OpenSubsIn → OpenSubsTest | 422 arr_link_auth | 503
+POST   /api/v1/admin/arr/opensubtitles/test   → OpenSubsTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/opensubtitles        → 204
+PUT    /api/v1/admin/arr/lidarr               LidarrIn → LidarrTest | 422 arr_link_auth | 503
+POST   /api/v1/admin/arr/lidarr/test          → LidarrTest | 404 not_found | 422 | 503
+DELETE /api/v1/admin/arr/lidarr               → 204
+
+Alleen beheerders. Opslaan test eerst de verbinding; lukt dat niet, dan wordt er niets bewaard.
+Een fout zegt nooit een sleutel of wachtwoord, alleen een vaste reden.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel, Field
+
+from app.arr import lidarr, opensubs, prowlarr, qbit
+from app.arr import settings as arr_settings
+from app.config import Settings, get_settings
+from app.db import Session
+from app.errors import fail
+from app.models import MediaLibrary
+from app.security import AdminUser
+
+router = APIRouter(prefix="/api/v1/admin/arr", tags=["beheer"])
+Config = Annotated[Settings, Depends(get_settings)]
+
+_AUTH_WORDS = ("weigert", "ontbreekt", "ongeldig")
+
+
+class ProwlarrIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    key: str | None = Field(default=None, max_length=200)
+
+
+class QBitIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    username: str = Field(min_length=1, max_length=200)
+    password: str | None = Field(default=None, max_length=500)
+    category: str = Field(default="platform", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    save_path: str = Field(default="/downloads", pattern=r"^/[^\x00]{0,499}$")
+
+
+class IndexerOut(BaseModel):
+    id: int
+    name: str
+    privacy: str
+
+
+class ProwlarrTest(BaseModel):
+    indexers: list[IndexerOut]
+
+
+class QBitTest(BaseModel):
+    version: str
+
+
+class OpenSubsIn(BaseModel):
+    key: str | None = Field(default=None, max_length=200)
+    username: str | None = Field(default=None, max_length=200)
+    password: str | None = Field(default=None, max_length=500)
+    languages: list[str] = Field(
+        default_factory=lambda: ["nl", "en"],
+        min_length=1,
+        max_length=8,
+    )
+
+
+class LidarrIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    key: str | None = Field(default=None, max_length=200)
+    # De muziekbibliotheek waar een klaar album heen gaat (None: de oudste)
+    library: uuid.UUID | None = None
+
+
+class LidarrTest(BaseModel):
+    version: str
+
+
+class OpenSubsTest(BaseModel):
+    remaining: int | None
+
+
+LANG_RE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$")
+
+
+def _subs_error(exc: opensubs.OpenSubsError):
+    if isinstance(exc, opensubs.OpenSubsAuth):
+        return fail(422, "arr_link_auth", str(exc))
+    return fail(503, "arr_link_unreachable", str(exc))
+
+
+def _link_error(exc: Exception):
+    """Een vaste reden uit prowlarr.py of qbit.py naar een fout van de API."""
+    reason = str(exc)
+    if any(word in reason for word in _AUTH_WORDS):
+        return fail(422, "arr_link_auth", reason)
+    return fail(503, "arr_link_unreachable", reason)
+
+
+def _indexers(found: list[prowlarr.Indexer]) -> ProwlarrTest:
+    return ProwlarrTest(
+        indexers=[IndexerOut(id=i.id, name=i.name, privacy=i.privacy) for i in found]
+    )
+
+
+@router.get("")
+async def overview(admin: AdminUser, session: Session, settings: Config) -> dict:
+    return await arr_settings.view(session, settings)
+
+
+@router.put("/prowlarr", response_model=ProwlarrTest)
+async def save_prowlarr(body: ProwlarrIn, admin: AdminUser, session: Session, settings: Config):
+    try:
+        found = await arr_settings.save_prowlarr(session, settings, body.url, body.key)
+    except prowlarr.ProwlarrError as exc:
+        raise _link_error(exc) from None
+    return _indexers(found)
+
+
+@router.post("/prowlarr/test", response_model=ProwlarrTest)
+async def test_prowlarr(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_prowlarr(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "Prowlarr is nog niet ingesteld")
+    try:
+        return _indexers(await arr_settings.check_prowlarr(conf))
+    except prowlarr.ProwlarrError as exc:
+        raise _link_error(exc) from None
+
+
+@router.delete("/prowlarr", status_code=204)
+async def forget_prowlarr(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "prowlarr")
+    return Response(status_code=204)
+
+
+@router.put("/qbittorrent", response_model=QBitTest)
+async def save_qbit(body: QBitIn, admin: AdminUser, session: Session, settings: Config):
+    try:
+        version = await arr_settings.save_qbit(
+            session,
+            settings,
+            url=body.url,
+            username=body.username,
+            password=body.password,
+            category=body.category,
+            save_path=body.save_path,
+        )
+    except qbit.QBitError as exc:
+        raise _link_error(exc) from None
+    return QBitTest(version=version)
+
+
+@router.post("/qbittorrent/test", response_model=QBitTest)
+async def test_qbit(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_qbit(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "qBittorrent is nog niet ingesteld")
+    try:
+        return QBitTest(version=await arr_settings.check_qbit(conf))
+    except qbit.QBitError as exc:
+        raise _link_error(exc) from None
+
+
+@router.delete("/qbittorrent", status_code=204)
+async def forget_qbit(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "qbittorrent")
+    return Response(status_code=204)
+
+
+@router.put("/opensubtitles", response_model=OpenSubsTest)
+async def save_opensubs(body: OpenSubsIn, admin: AdminUser, session: Session, settings: Config):
+    languages = [x.strip().lower() for x in body.languages]
+    if not all(LANG_RE.fullmatch(x) for x in languages):
+        raise fail(
+            422, "invalid_input", "Een taal is een code zoals nl of pt-br", field="languages"
+        )
+    try:
+        remaining = await arr_settings.save_opensubs(
+            session,
+            settings,
+            key=body.key,
+            username=body.username,
+            password=body.password,
+            languages=languages,
+        )
+    except opensubs.OpenSubsError as exc:
+        raise _subs_error(exc) from None
+    return OpenSubsTest(remaining=remaining)
+
+
+@router.post("/opensubtitles/test", response_model=OpenSubsTest)
+async def test_opensubs(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_opensubs(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "OpenSubtitles is nog niet ingesteld")
+    try:
+        return OpenSubsTest(remaining=await arr_settings.check_opensubs(conf))
+    except opensubs.OpenSubsError as exc:
+        raise _subs_error(exc) from None
+
+
+@router.delete("/opensubtitles", status_code=204)
+async def forget_opensubs(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "opensubtitles")
+    return Response(status_code=204)
+
+
+@router.put("/lidarr", response_model=LidarrTest)
+async def save_lidarr(body: LidarrIn, admin: AdminUser, session: Session, settings: Config):
+    if body.library is not None:
+        lib = await session.get(MediaLibrary, body.library)
+        if lib is None or lib.kind != "music":
+            raise fail(422, "invalid_input", "Kies een muziekbibliotheek", field="library")
+    try:
+        version = await arr_settings.save_lidarr(
+            session, settings, body.url, body.key, str(body.library) if body.library else None
+        )
+    except lidarr.LidarrError as exc:
+        raise _link_error(exc) from None
+    return LidarrTest(version=version)
+
+
+@router.post("/lidarr/test", response_model=LidarrTest)
+async def test_lidarr(admin: AdminUser, session: Session, settings: Config):
+    conf = await arr_settings.load_lidarr(session, settings)
+    if conf is None:
+        raise fail(404, "not_found", "Lidarr is nog niet ingesteld")
+    try:
+        return LidarrTest(version=await arr_settings.check_lidarr(conf))
+    except lidarr.LidarrError as exc:
+        raise _link_error(exc) from None
+
+
+@router.delete("/lidarr", status_code=204)
+async def forget_lidarr(admin: AdminUser, session: Session):
+    await arr_settings.forget(session, "lidarr")
+    return Response(status_code=204)

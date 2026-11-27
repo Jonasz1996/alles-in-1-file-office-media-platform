@@ -1,0 +1,67 @@
+/* Het inlogscherm (Login.tsx, P1). Alleen tokens. */
+
+.login-card {
+  gap: var(--space-2);
+}
+
+.login-card .page-title h1 {
+  margin: 0;
+}
+
+.login-card .field {
+  margin: 0;
+}
+
+.login-logo {
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
+.login-toggle {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-s);
+}
+
+.login-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.login-error {
+  margin: 0;
+  color: var(--bad);
+}
+
+.login-forgot {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-s);
+}
+
+.login-reset p {
+  margin: var(--space-2) 0;
+}
+
+/* Het commando voor de beheerder: op één regel te kopiëren, en scrollen als het niet past */
+.login-command {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  white-space: pre;
+  font-size: var(--text-s);
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  border-radius: var(--radius-s, 6px);
+  user-select: all;
+}
+
+/* De code voor de systeembeheerder: groot, in één stuk te selecteren */
+.login-code {
+  margin: var(--space-2) 0;
+  font-size: var(--text-l, 1.25rem);
+  letter-spacing: 0.05em;
+  user-select: all;
+}
