@@ -297,6 +297,9 @@ async def test_tags_beheren(client, admin):
 async def test_tags_op_bestanden(client, admin, monkeypatch, settings, motor):
     headers, tokens = admin
     monkeypatch.setattr(events, "hub", Hub())
+    # De volgorde hieronder is die zonder deadline: op een trage runner raakte het stuk van de
+    # namen ("Map" bij q="a") anders de grens van 160 ms, en kwam alleen a.txt terug (partial)
+    monkeypatch.setattr(settings, "search_deadline_ms", 10_000)
     root_id = (await root(client, headers))["folder"]["id"]
     folder = await mkdir(client, headers, root_id, "Map")
     a = (await put(client, headers, folder, "a.txt", b"a")).json()["id"]
