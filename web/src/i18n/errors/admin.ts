@@ -22,6 +22,10 @@ export default {
   // De YouTube-module (fixlijst 26-11, punt 7)
   youtube_off: { en: "The YouTube module is not enabled on this server" },
   youtube_failed: { en: "YouTube could not be reached; try again later" },
+  youtube_channel: { en: "Give a channel: a link, @name or UC…" },
+  youtube_sub_not_found: { en: "That subscription does not exist" },
+  youtube_subs_full: { en: "You have the maximum number of subscriptions" },
+  youtube_no_folder: { en: "Pick a folder for automatic saving" },
   arr_link_unreachable: { en: "Prowlarr or qBittorrent cannot be reached" },
   arr_tmdb_needed: { en: "This needs a working TMDB key" },
   arr_library_kind: { en: "A film belongs in a film library, a series in a series library" },

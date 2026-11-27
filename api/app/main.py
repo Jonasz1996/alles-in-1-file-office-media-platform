@@ -559,6 +559,16 @@ async def lifespan(app: FastAPI):
         if settings.media_enabled
         else None
     )
+    # YouTube-abonnementen (app/youtube/subs.py): elk uur de nieuwe video's van kanalen met
+    # automatisch bewaren; alleen met de YouTube-module aan
+    from app.youtube import service as youtube_service
+    from app.youtube import subs as youtube_subs
+
+    youtube_task = (
+        asyncio.create_task(youtube_subs.loop(settings), name="youtube-abonnementen")
+        if youtube_service.enabled(settings)
+        else None
+    )
     # De client-apps van GitHub naar data/apps (fase 11, stap 9-11); alleen in productie
     clients_task = (
         asyncio.create_task(client_fetch.loop(settings), name="client-apps")
@@ -589,6 +599,8 @@ async def lifespan(app: FastAPI):
         arr_task.cancel()
     if clients_task is not None:
         clients_task.cancel()
+    if youtube_task is not None:
+        youtube_task.cancel()
     if split_task is not None:
         split_task.cancel()
     await certs.stop()

@@ -496,3 +496,17 @@ a.music-card:hover .music-card-title {
     width: 112px;
   }
 }
+
+.youtube-subs {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.youtube-subs li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
