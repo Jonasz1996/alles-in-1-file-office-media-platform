@@ -98,6 +98,8 @@ export const routes: readonly RouteDef[] = [
   route("/media/verzoeken", () => import("./media/RequestsPage"), media, "media.requests.title", "media"),
   // Fase 11, stap 9: het begin van de app voor de LG webOS-tv (tv/TvStart.tsx, tv/tv.ts)
   route("/tv", () => import("./tv/TvStart"), media, "media.title", "media"),
+  // Live tv (IPTV): de kanalen, de speler en de gids (live/LivePage.tsx)
+  route("/live/:id?", () => import("./live/LivePage"), ["live", "media"], "live.title", "media"),
   route("/kijken/:node", () => import("./player/WatchPage"), watch, "player.title", "media"),
   route("/muziek", () => import("./music/MusicHome"), music, "music.title", "music"),
   route("/muziek/album/:id", () => import("./music/AlbumPage"), music, "music.album", "music"),

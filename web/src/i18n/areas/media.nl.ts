@@ -19,6 +19,7 @@ export default {
     videos: "Eigen video's, zonder gegevens van internet.",
   },
   count: { one: "{n} item", other: "{n} items" },
+  live: "Live tv",
   shared: "Gedeeld met jou",
   scan: {
     queued: "Scan staat klaar",

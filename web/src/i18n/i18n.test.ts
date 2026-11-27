@@ -58,6 +58,8 @@ const AREAS: Area[] = [
   "about",
   // Kan niet inloggen? (reset-account)
   "reset",
+  // Live tv (IPTV)
+  "live",
   // Sport (de Strava-vervanger)
   "sport",
 ];

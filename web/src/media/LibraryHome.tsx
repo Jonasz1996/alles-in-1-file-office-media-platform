@@ -114,6 +114,9 @@ function Home(): JSX.Element {
       />
       {!guest && (
         <>
+          <Link to="/live" className="btn" data-live-link="">
+            {t("media.live")}
+          </Link>
           <Link to="/media/verzoeken" className="btn" data-requests="">
             {t("media.requests.title")}
           </Link>

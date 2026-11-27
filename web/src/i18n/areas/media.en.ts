@@ -20,6 +20,7 @@ const en: Translation<typeof nl> = {
     videos: "Your own videos, without data from the internet.",
   },
   count: { one: "{n} item", other: "{n} items" },
+  live: "Live TV",
   shared: "Shared with you",
   scan: {
     queued: "Scan queued",

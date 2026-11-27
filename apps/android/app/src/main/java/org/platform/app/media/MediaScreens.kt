@@ -133,6 +133,7 @@ fun MediaHomeScreen(app: PlatformApp, open: (String) -> Unit, onLoggedOut: () ->
                 Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.media), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                     ProfileButton(app) { reloadHome() }
+                    TextButton(onClick = { open("live") }) { Text(stringResource(R.string.live)) }
                     TextButton(onClick = { open("media/offline") }) { Text(stringResource(R.string.offline)) }
                     TextButton(onClick = { scope.launch { app.api.logout(); onLoggedOut() } }) {
                         Text(stringResource(R.string.logout))

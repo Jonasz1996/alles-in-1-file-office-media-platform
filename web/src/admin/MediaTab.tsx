@@ -49,6 +49,7 @@ import { toast } from "../ui/toast";
 import { type AdminUser, adminApi, type Notice } from "./api";
 import { noticeText } from "./format";
 import CleanupBlock from "./CleanupBlock";
+import IptvBlock from "./IptvBlock";
 import KidsLockBlock from "./KidsLockBlock";
 import { CopiesNote, CopiesSelect, copiesSaved, setLibraryCopies } from "./LibraryCopies";
 import StatsBlock from "./StatsBlock";
@@ -261,6 +262,7 @@ function Body({ data, imported, reload }: { data: Data; imported: ImportView | n
       <KidsLockBlock />
       <StatsBlock />
       <CleanupBlock />
+      <IptvBlock />
       <Import imported={imported} reload={reload} />
       <Settings config={a.config} reload={reload} />
       <Loadtest view={data.loadtest} reload={reload} />
