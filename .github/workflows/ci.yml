@@ -1149,6 +1149,9 @@ jobs:
           "${single[@]}" "${analyse[@]}" --profile omzetten config -q
           # Mediabeheer (fase 11): qBittorrent en Prowlarr
           "${single[@]}" -f infra/single/compose.arr.yaml config -q
+          # De YouTube-module (fixlijst 26-11, punt 7): de sleutel maakt install.sh
+          echo "YOUTUBE_KEY=$(openssl rand -hex 32)" >> "$env_file"
+          "${single[@]}" -f infra/single/compose.arr.yaml -f infra/single/compose.youtube.yaml config -q
           # AI-upscaling (fase 11, stap 5c): de container voor de node met de RTX 3060 Ti
           cp infra/upscaler/.env.example infra/upscaler/.env
           docker compose -f infra/upscaler/compose.yaml config -q
@@ -1379,9 +1382,9 @@ jobs:
     env:
       # Exact de CSP van api/app/main.py (WEB_CSP) en web/nginx.conf
       WEB_CSP: >-
-        default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self';
-        object-src 'none'; base-uri 'self'; frame-ancestors 'none'; manifest-src 'self';
-        worker-src 'self'
+        default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:;
+        style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
+        frame-src 'self' https://www.youtube-nocookie.com; manifest-src 'self'; worker-src 'self'
       # import- of export-syntaxis (een service worker als klassiek script heeft die niet)
       MODULE_SYNTAX: >-
         (^|[;}])[[:space:]]*(import[[:space:]]*[{*"]|import[[:space:]]+[a-zA-Z_$]|export[[:space:]]*[{*]|export[[:space:]]+[a-z])

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     clients_dir: Path = Path("clients")
     # Waar GitHub de gebouwde apps zet (release "clients"); leeg: niet ophalen (app.client_fetch)
     clients_repo: str = "Jonasz1996/alles-in-1-file-office-media-platform"
+    # De YouTube-module (fixlijst 26-11, punt 7): het adres van de helper (container youtube, met
+    # yt-dlp en ffmpeg, zonder /data; app/youtube/helper.py) en zijn gedeelde sleutel. Leeg: uit
+    youtube_url: str = ""
+    youtube_key: str = ""
     # Replicatie per bibliotheek (app/blobsplit.py, docs/runbooks/replicatie.md): inhoud met een
     # ander aantal kopieën dan de standaard naar blobs-r1/, blobs-r2/ of blobs-r3/. Alleen voor
     # het cluster, waar SeaweedFS per map een eigen replicatie heeft

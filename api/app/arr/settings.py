@@ -7,12 +7,13 @@ Opslag in de tabel setting (geen migratie nodig), rij `arr_settings`:
      "qbittorrent": {"url": "...", "username": "...", "password": <geheim>,
                      "category": "platform", "save_path": "/downloads"},
      "opensubtitles": {"key": <geheim>, "username": "..." | null, "password": <geheim> | null,
-                       "languages": ["nl", "en"]}}
+                       "languages": ["nl", "en"]},
+     "lidarr": {"url": "...", "key": <geheim>, "library": "<id muziekbibliotheek>" | null}}
 
 Een geheim is versleuteld zoals de sleutel van TMDB (`media.providers.secrets.seal`, AES-GCM met
 een sleutel uit het app-geheim), met als naam `arr.prowlarr`, `arr.qbittorrent`,
-`arr.opensubtitles` of `arr.opensubtitles.pw`. Een geheim staat nooit in een antwoord: `view()`
-zegt alleen of het er is. Wie opslaat zonder nieuw geheim, houdt het oude.
+`arr.opensubtitles`, `arr.opensubtitles.pw` of `arr.lidarr`. Een geheim staat nooit in een
+antwoord: `view()` zegt alleen of het er is. Wie opslaat zonder nieuw geheim, houdt het oude.
 
 Opslaan test eerst de verbinding (wie niet kan testen, bewaart niet), net als bij TMDB.
 """
@@ -25,7 +26,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.arr import opensubs, prowlarr, qbit
+from app.arr import lidarr, opensubs, prowlarr, qbit
 from app.config import Settings
 from app.media.providers.secrets import seal, unseal
 from app.models import Setting
@@ -57,6 +58,16 @@ class OpenSubsConf:
     username: str | None = None
     password: str | None = None
     languages: tuple[str, ...] = DEFAULT_LANGUAGES
+
+
+@dataclass(frozen=True)
+class LidarrConf:
+    """Lidarr (muziek en albums): adres, API-sleutel en de muziekbibliotheek waar een klaar album
+    heen gaat (None: de oudste muziekbibliotheek)."""
+
+    url: str
+    key: str
+    library: str | None = None
 
 
 def http_client() -> httpx.AsyncClient:
@@ -119,6 +130,47 @@ async def load_opensubs(session: AsyncSession, settings: Settings) -> OpenSubsCo
     )
 
 
+async def load_lidarr(session: AsyncSession, settings: Settings) -> LidarrConf | None:
+    entry = (await _raw(session)).get("lidarr")
+    if not isinstance(entry, dict) or not entry.get("url"):
+        return None
+    key = unseal(settings, "arr.lidarr", entry.get("key"))
+    if not key:
+        return None
+    return LidarrConf(entry["url"], key, str(entry["library"]) if entry.get("library") else None)
+
+
+async def store_lidarr(session: AsyncSession, settings: Settings, conf: LidarrConf) -> None:
+    """Bewaren zonder test (arr-koppel, vóór de container draait)."""
+    raw = await _raw(session)
+    raw["lidarr"] = {
+        "url": lidarr.check_base(conf.url),
+        "key": seal(settings, "arr.lidarr", conf.key),
+        "library": conf.library,
+    }
+    await _write(session, raw)
+
+
+async def check_lidarr(conf: LidarrConf) -> str:
+    async with http_client() as client:
+        return await lidarr.Lidarr(client, conf.url, conf.key).version()
+
+
+async def save_lidarr(
+    session: AsyncSession, settings: Settings, url: str, key: str | None, library: str | None
+) -> str:
+    url = lidarr.check_base(url)
+    if not key:
+        old = await load_lidarr(session, settings)
+        if old is None:
+            raise lidarr.LidarrError("de API-sleutel ontbreekt")
+        key = old.key
+    conf = LidarrConf(url, key, library)
+    version = await check_lidarr(conf)
+    await store_lidarr(session, settings, conf)
+    return version
+
+
 def _languages(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return DEFAULT_LANGUAGES
@@ -132,6 +184,7 @@ async def view(session: AsyncSession, settings: Settings) -> dict[str, Any]:
     p = raw.get("prowlarr") if isinstance(raw.get("prowlarr"), dict) else {}
     q = raw.get("qbittorrent") if isinstance(raw.get("qbittorrent"), dict) else {}
     o = raw.get("opensubtitles") if isinstance(raw.get("opensubtitles"), dict) else {}
+    lid = raw.get("lidarr") if isinstance(raw.get("lidarr"), dict) else {}
     return {
         "prowlarr": {
             "url": p.get("url"),
@@ -149,6 +202,11 @@ async def view(session: AsyncSession, settings: Settings) -> dict[str, Any]:
             "username": o.get("username"),
             "password_set": unseal(settings, "arr.opensubtitles.pw", o.get("password")) is not None,
             "languages": list(_languages(o.get("languages"))),
+        },
+        "lidarr": {
+            "url": lid.get("url"),
+            "key_set": unseal(settings, "arr.lidarr", lid.get("key")) is not None,
+            "library": lid.get("library"),
         },
     }
 

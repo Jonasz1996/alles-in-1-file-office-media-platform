@@ -778,6 +778,17 @@ const en: Translation<typeof nl> = {
       languagesHelp: "Codes separated by commas, in order: nl, en.",
       remaining: "Saved: the connection works. {n} downloads left today.",
     },
+    lidarr: {
+      title: "Lidarr (music and albums)",
+      intro:
+        "Follow artists and albums in Lidarr itself (port 8686). Lidarr searches through Prowlarr and downloads with qBittorrent; the platform links that up itself. A finished album goes into the music library below and is indexed right away.",
+      keyHelp: "Found in Lidarr under Settings → General. Leave empty to keep the stored key.",
+      library: "Music library",
+      libraryHelp: "Where a finished album goes.",
+      oldest: "The oldest music library",
+      noLibrary: "There is no music library yet: Lidarr keeps the albums until you create one.",
+      version: "Lidarr {version}",
+    },
     arr: {
       title: "Media management: Prowlarr and qBittorrent",
       intro:

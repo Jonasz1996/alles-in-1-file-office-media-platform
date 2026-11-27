@@ -128,7 +128,7 @@ want_places() {
   esac
 }
 
-# Mediabeheer (fase 11): qBittorrent en Prowlarr in compose.arr.yaml. ARR uit de omgeving wint
+# Mediabeheer (fase 11): qBittorrent, Prowlarr en Lidarr in compose.arr.yaml. ARR uit de omgeving wint
 # van .env en wordt bewaard; zonder ARR staat het uit (zoals tot en met 0.8.x).
 decide_arr() {
   ARR_ON=0
@@ -144,18 +144,19 @@ decide_arr() {
   if [ "$(sed -n 's/^ARR=//p' "$ENV_FILE" | tail -n 1)" = aan ]; then ARR_ON=1; fi
 }
 
-# Na de app: qBittorrent en Prowlarr vooraf instellen en koppelen (app.cli arr-koppel), dan
+# Na de app: qBittorrent, Prowlarr en Lidarr vooraf instellen en koppelen (app.cli arr-koppel), dan
 # starten. Breekt nooit af: de app draait al.
 arr_start() {
   if ! "${compose[@]}" exec -T platform python -m app.cli arr-koppel </dev/null; then
-    echo "Let op: qBittorrent en Prowlarr koppelen lukte niet; het platform werkt verder."
+    echo "Let op: qBittorrent, Prowlarr en Lidarr koppelen lukte niet; het platform werkt verder."
     return 0
   fi
-  if ! "${compose[@]}" up -d --no-deps qbittorrent prowlarr </dev/null; then
-    echo "Let op: qBittorrent of Prowlarr kon niet starten (de melding van Docker staat hierboven)."
+  if ! "${compose[@]}" up -d --no-deps qbittorrent prowlarr lidarr </dev/null; then
+    echo "Let op: qBittorrent, Prowlarr of Lidarr kon niet starten (de melding van Docker staat hierboven)."
     return 0
   fi
   echo "Prowlarr: voeg je torrentsites toe op http://<ip-van-deze-container>:9696"
+  echo "Lidarr: volg artiesten en albums op http://<ip-van-deze-container>:8686"
 }
 
 # En voor de analyse (fase 6, Keuze 56): ANALYSE uit de omgeving wint van .env. Alleen aan of uit.
@@ -1055,12 +1056,44 @@ decide_office() {
     OFFICE_REASON="het image van DS was niet op te halen (Docker Hub en mirror.gcr.io); het platform werkt zonder editor, draai het script later opnieuw"
   fi
 }
+# De YouTube-module (fixlijst 26-11, punt 7): de helper in compose.youtube.yaml. YOUTUBE uit de
+# omgeving wint van .env en wordt bewaard; zonder YOUTUBE staat hij aan als media aan staat. De
+# sleutel tussen app en helper (YOUTUBE_KEY) komt één keer in .env.
+decide_youtube() {
+  YOUTUBE_ON=0
+  [ -f "$SRC/infra/single/compose.youtube.yaml" ] || return 0
+  case "${YOUTUBE-}" in
+    aan | uit) add_key YOUTUBE "$YOUTUBE" && set_key YOUTUBE "$YOUTUBE" ;;
+    "") ;;
+    *)
+      echo "YOUTUBE moet aan of uit zijn (nu: $YOUTUBE)." >&2
+      exit 1
+      ;;
+  esac
+  local saved
+  saved=$(sed -n 's/^YOUTUBE=//p' "$ENV_FILE" | tail -n 1)
+  if [ "$saved" = aan ] || { [ -z "$saved" ] && { [ "$MEDIA_ON" = 1 ] || [ "$MEDIA_LOCAL" = 1 ]; }; }; then
+    YOUTUBE_ON=1
+    add_key YOUTUBE_KEY "$(hex)"
+  fi
+}
+
+# Na de app: de map voor de helper (als 10001, via de app) en de helper starten. Breekt nooit af.
+youtube_start() {
+  if ! "${compose[@]}" exec -T platform mkdir -p /data/import/youtube </dev/null; then
+    echo "Let op: de map voor YouTube maken lukte niet; het platform werkt verder."
+    return 0
+  fi
+  if ! "${compose[@]}" up -d --no-deps youtube </dev/null; then
+    echo "Let op: de YouTube-helper kon niet starten (de melding van Docker staat hierboven)."
+  fi
+}
 
 # De compose-bestanden voor deze run (zet de array compose). $1 = office, $2 = media in zijn
 # eigen container, $3 = media zonder afscherming (MEDIA_SANDBOX=uit: de app krijgt media, maar
 # geen PLATFORM_MEDIA_WORKER, en start de worker zelf). Zonder $2 en $3: geen media (0.6.0).
 # $4 = de analyse (fase 6): compose.analyse.yaml, en met grenzen compose.analyse-limits.yaml.
-# $5 = mediabeheer (fase 11): compose.arr.yaml.
+# $5 = mediabeheer (fase 11): compose.arr.yaml. $6 = de YouTube-module: compose.youtube.yaml.
 compose_files() {
   local dir=$SRC/infra/single
   compose=(docker compose --project-directory "$dir" --env-file "$ENV_FILE" -f "$dir/compose.yaml")
@@ -1079,6 +1112,7 @@ compose_files() {
     if limits_supported; then compose+=(-f "$dir/compose.analyse-limits.yaml"); fi
   fi
   if [ "${5:-0}" = 1 ]; then compose+=(-f "$dir/compose.arr.yaml"); fi
+  if [ "${6:-0}" = 1 ]; then compose+=(-f "$dir/compose.youtube.yaml"); fi
 }
 
 # Na de app (en vóór office): de worker in zijn container, en daarna de staat van media. Lukt
@@ -1411,7 +1445,8 @@ main() {
     echo "Analyse: uit ($ANALYSE_REASON)"
   fi
   decide_arr
-  compose_files "$OFFICE_ON" "$MEDIA_ON" "$MEDIA_LOCAL" "$ANALYSE_ON" "$ARR_ON"
+  decide_youtube
+  compose_files "$OFFICE_ON" "$MEDIA_ON" "$MEDIA_LOCAL" "$ANALYSE_ON" "$ARR_ON" "$YOUTUBE_ON"
   container=$(office_container)
   if [ -n "$container" ]; then previous=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true); fi
   [ -z "${OFFICE_IMAGE:-}" ] || pin=$(image_id "$OFFICE_IMAGE")
@@ -1459,8 +1494,13 @@ main() {
   fi
 
   if [ "$ARR_ON" = 1 ]; then
-    stap "Mediabeheer (qBittorrent en Prowlarr)"
+    stap "Mediabeheer (qBittorrent, Prowlarr en Lidarr)"
     arr_start
+  fi
+
+  if [ "$YOUTUBE_ON" = 1 ]; then
+    stap "YouTube-module"
+    youtube_start
   fi
 
   if [ "$OFFICE_ON" = 1 ]; then

@@ -4,7 +4,7 @@
 // GET /api/v1/admin/media/profiles en PUT /api/v1/admin/media/profiles/{user_id}.
 import { type JSX, useEffect, useState } from "react";
 import { api } from "../api";
-import { errorText, t } from "../i18n";
+import { errorText, loadAreas, t } from "../i18n";
 import { AGES, ageLabel } from "../media/ProfilePicker";
 import { toast } from "../ui/toast";
 import { type AdminUser, adminApi } from "./api";
@@ -17,25 +17,43 @@ export default function KidsLockBlock(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      adminApi.users().then((u) => setUsers(u.filter((x) => x.role !== "guest" && !x.disabled))),
-      api
-        .request<{ user_id: string; max_age: number }[]>("GET", URL)
-        .then((rows) => setLimits(Object.fromEntries(rows.map((r) => [r.user_id, r.max_age])))),
-    ]).catch((e) => setError(errorText(e)));
+    // De namen van de leeftijden (ageLabel) staan in het gebied "media"; /beheer laadt alleen
+    // "admin", dus dat gebied eerst, anders tonen de keuzes even sleutels in plaats van woorden
+    loadAreas(["media"])
+      .then(() =>
+        Promise.all([
+          adminApi
+            .users()
+            .then((u) =>
+              setUsers(u.filter((x) => x.role !== "guest" && !x.disabled)),
+            ),
+          api
+            .request<{ user_id: string; max_age: number }[]>("GET", URL)
+            .then((rows) =>
+              setLimits(
+                Object.fromEntries(rows.map((r) => [r.user_id, r.max_age])),
+              ),
+            ),
+        ]),
+      )
+      .catch((e) => setError(errorText(e)));
   }, []);
 
   async function change(user: AdminUser, value: string) {
     const max_age = value === "" ? null : Number(value);
     try {
-      await api.request<void>("PUT", `${URL}/${encodeURIComponent(user.id)}`, { max_age });
+      await api.request<void>("PUT", `${URL}/${encodeURIComponent(user.id)}`, {
+        max_age,
+      });
       setLimits((old) => {
         const next = { ...old };
         if (max_age === null) delete next[user.id];
         else next[user.id] = max_age;
         return next;
       });
-      toast(t("admin.media.kidsLock.saved", { name: user.display_name }), { kind: "ok" });
+      toast(t("admin.media.kidsLock.saved", { name: user.display_name }), {
+        kind: "ok",
+      });
     } catch (e) {
       toast(errorText(e), { kind: "error" });
     }
@@ -55,7 +73,9 @@ export default function KidsLockBlock(): JSX.Element {
               <th scope="row">{u.display_name}</th>
               <td>
                 <select
-                  aria-label={t("admin.media.kidsLock.for", { name: u.display_name })}
+                  aria-label={t("admin.media.kidsLock.for", {
+                    name: u.display_name,
+                  })}
                   value={limits[u.id] === undefined ? "" : String(limits[u.id])}
                   onChange={(e) => void change(u, e.target.value)}
                 >

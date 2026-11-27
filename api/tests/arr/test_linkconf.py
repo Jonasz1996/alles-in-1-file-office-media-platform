@@ -72,11 +72,14 @@ async def test_koppel_is_idempotent_and_never_prints_secrets(client, settings, c
         "qBittorrent: gekoppeld als gebruiker platform",
         "Prowlarr: nieuwe API-sleutel gezet",
         "Prowlarr: gekoppeld",
+        "Lidarr: nieuwe API-sleutel gezet",
+        "Lidarr: gekoppeld",
     ]
     data = settings.data_dir
     conf = (data / "arr/qbittorrent/qBittorrent/qBittorrent.conf").read_text()
     xml = (data / "arr/prowlarr/config.xml").read_text()
     assert (data / "import" / "torrents").is_dir()
+    assert (data / "import" / "lidarr").is_dir()
 
     async with async_sessionmaker(get_engine(settings))() as session:
         q = await arr_settings.load_qbit(session, settings)
@@ -93,5 +96,6 @@ async def test_koppel_is_idempotent_and_never_prints_secrets(client, settings, c
     assert again == [
         "qBittorrent: al gekoppeld, niets veranderd",
         "Prowlarr: al gekoppeld, niets veranderd",
+        "Lidarr: al gekoppeld, niets veranderd",
     ]
     assert (data / "arr/qbittorrent/qBittorrent/qBittorrent.conf").read_text() == conf

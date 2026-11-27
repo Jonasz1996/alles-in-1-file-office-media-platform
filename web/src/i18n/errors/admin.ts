@@ -19,6 +19,9 @@ export default {
   user_being_deleted: { en: "This account is already being deleted" },
   web_app_missing: { en: "The web app has not been built" },
   arr_link_auth: { en: "Prowlarr or qBittorrent refuses the key or password" },
+  // De YouTube-module (fixlijst 26-11, punt 7)
+  youtube_off: { en: "The YouTube module is not enabled on this server" },
+  youtube_failed: { en: "YouTube could not be reached; try again later" },
   arr_link_unreachable: { en: "Prowlarr or qBittorrent cannot be reached" },
   arr_tmdb_needed: { en: "This needs a working TMDB key" },
   arr_library_kind: { en: "A film belongs in a film library, a series in a series library" },

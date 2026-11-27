@@ -788,6 +788,17 @@ export default {
       languagesHelp: "Codes met een komma ertussen, in volgorde: nl, en.",
       remaining: "Bewaard: de verbinding werkt. Nog {n} downloads vandaag.",
     },
+    lidarr: {
+      title: "Lidarr (muziek en albums)",
+      intro:
+        "Volg artiesten en albums in Lidarr zelf (poort 8686). Lidarr zoekt via Prowlarr en downloadt met qBittorrent; het platform koppelt dat zelf. Een klaar album komt in de muziekbibliotheek hieronder en wordt meteen geïndexeerd.",
+      keyHelp: "Staat in Lidarr onder Settings → General. Leeg laten houdt de bewaarde sleutel.",
+      library: "Muziekbibliotheek",
+      libraryHelp: "Waar een klaar album heen gaat.",
+      oldest: "De oudste muziekbibliotheek",
+      noLibrary: "Er is nog geen muziekbibliotheek: Lidarr houdt de albums tot je er een maakt.",
+      version: "Lidarr {version}",
+    },
     arr: {
       title: "Mediabeheer: Prowlarr en qBittorrent",
       intro:

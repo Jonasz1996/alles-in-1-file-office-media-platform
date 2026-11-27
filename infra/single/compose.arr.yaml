@@ -12,7 +12,14 @@
 # - Prowlarr: de beheerder voegt er de torrentsites toe op http://<ip-van-de-lxc>:9696 (alleen
 #   in het eigen netwerk: de router stuurt alleen 80 en 443 door). arr-koppel zet zijn API-sleutel
 #   vooraf in zijn config.xml en in de app.
-# - De images: linuxserver.io. Een vaste versie kies je met QBIT_IMAGE en PROWLARR_IMAGE in .env.
+# - Lidarr (muziek en albums, fixlijst 26-11 punt 8): de beheerder volgt artiesten op
+#   http://<ip-van-de-lxc>:8686. Lidarr zoekt via Prowlarr en downloadt met qBittorrent
+#   (categorie lidarr, in /downloads/lidarr: hetzelfde pad als in qBittorrent). Een klaar album
+#   zet hij in zijn hoofdmap /music (DATA_ROOT/import/lidarr); de app neemt het daar over naar de
+#   gekozen muziekbibliotheek (app/arr/lidarr.py). arr-koppel zet zijn API-sleutel vooraf; de app
+#   koppelt hem zelf aan Prowlarr en qBittorrent zodra hij draait.
+# - De images: linuxserver.io. Een vaste versie kies je met QBIT_IMAGE, PROWLARR_IMAGE en
+#   LIDARR_IMAGE in .env.
 
 x-arr-env: &arr-env
   PUID: "10001"
@@ -49,6 +56,19 @@ services:
       - ${DATA_ROOT:?}/arr/prowlarr:/config
     ports:
       - "9696:9696"
+    networks: [default, arr]
+
+  lidarr:
+    image: ${LIDARR_IMAGE:-lscr.io/linuxserver/lidarr:latest}
+    restart: unless-stopped
+    environment:
+      <<: *arr-env
+    volumes:
+      - ${DATA_ROOT:?}/arr/lidarr:/config
+      - ${DATA_ROOT:?}/import/torrents:/downloads
+      - ${DATA_ROOT:?}/import/lidarr:/music
+    ports:
+      - "8686:8686"
     networks: [default, arr]
 
 networks:

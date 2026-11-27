@@ -9,6 +9,7 @@ import { Link } from "../links";
 import { getAdmin } from "../media/api";
 import type { Library } from "../media/types";
 import ArrBlock from "./ArrBlock";
+import LidarrBlock from "./LidarrBlock";
 import RequestsSettings from "./RequestsSettings";
 import WantedBlock from "./WantedBlock";
 
@@ -37,6 +38,7 @@ export default function DownloadsTab(): JSX.Element {
         <>
           <WantedBlock libraries={libraries} />
           <ArrBlock />
+          <LidarrBlock libraries={libraries} />
           <RequestsSettings libraries={libraries} />
         </>
       )}
