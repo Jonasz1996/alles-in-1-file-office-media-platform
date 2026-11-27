@@ -103,9 +103,27 @@ async def helper_version(settings: Settings) -> str | None:
     return str(raw.get("yt_dlp")) if isinstance(raw, dict) else None
 
 
+async def channel(settings: Settings, ref: str, n: int = 15) -> dict[str, Any]:
+    """{id, title, videos: [{id, title, published}]} van een kanaal (UC… of @naam)."""
+    raw = await _call(settings, "GET", "/kanaal", SEARCH_TIMEOUT, params={"c": ref, "n": n})
+    if not isinstance(raw, dict) or not isinstance(raw.get("videos"), list):
+        raise YoutubeError("de YouTube-helper geeft geen geldig antwoord")
+    return raw
+
+
 async def enqueue(
-    session: AsyncSession, user: User, video: str, folder: uuid.UUID, title: str
+    session: AsyncSession,
+    user: User,
+    video: str,
+    folder: uuid.UUID,
+    title: str,
+    kind: str = "mp3",
+    sponsor: bool = False,
+    commit: bool = True,
 ) -> uuid.UUID:
+    """Eén taak: video als mp3 of als mp4 (kind) naar folder; sponsor knipt SponsorBlock-stukken
+    eruit. Het type blijft youtube.mp3 (ook voor mp4), zodat lopende taken van vóór mp4 blijven
+    werken."""
     job = uuid.uuid4()
     payload = {
         "job": str(job),
@@ -113,9 +131,12 @@ async def enqueue(
         "video": video,
         "folder": str(folder),
         "title": title[:300],
+        "kind": kind,
+        "sponsor": sponsor,
     }
-    await jobs.enqueue(session, TYPE, payload, key=f"{TYPE}:{user.id}:{video}:{folder}")
-    await session.commit()
+    await jobs.enqueue(session, TYPE, payload, key=f"{TYPE}:{user.id}:{video}:{folder}:{kind}")
+    if commit:
+        await session.commit()
     return job
 
 
@@ -154,17 +175,23 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
             except HTTPException as exc:
                 raise jobs.JobError("de map is er niet meer of je mag er niet schrijven") from exc
             await session.commit()  # geen open transactie tijdens het downloaden
-            body = {"id": payload["video"], "job": job}
+            kind = "mp4" if payload.get("kind") == "mp4" else "mp3"
+            body = {
+                "id": payload["video"],
+                "job": job,
+                "kind": kind,
+                "sponsor": bool(payload.get("sponsor")),
+            }
             try:
                 made = await _call(settings, "POST", "/mp3", FETCH_TIMEOUT, json=body)
             except YoutubeError as exc:
                 raise jobs.JobError(str(exc)) from exc
             name = str(made.get("name", "")) if isinstance(made, dict) else ""
-            if not name or "/" in name or name.startswith(".") or not name.endswith(".mp3"):
+            if not name or "/" in name or name.startswith(".") or not name.endswith(f".{kind}"):
                 raise jobs.JobError("de YouTube-helper gaf geen geldig bestand")
             source = folder_dir / name
             if not source.is_file() or source.is_symlink():
-                raise jobs.JobError("het mp3-bestand is niet gevonden")
+                raise jobs.JobError(f"het {kind}-bestand is niet gevonden")
             blobs = BlobStore(settings.blob_dir)
             tmp, sha, size = await blobs.receive(_chunks(source), 0)
             try:
@@ -189,8 +216,8 @@ async def run(settings: Settings, payload: dict[str, Any]) -> None:
                 ) from exc
             finally:
                 await anyio.Path(tmp).unlink(missing_ok=True)
-            _publish(payload, "done", node=str(node.id), name=node.name)
-            log.info("youtube: %s als mp3 bewaard", payload["video"])
+            _publish(payload, "done", node=str(node.id), name=node.name, kind=kind)
+            log.info("youtube: %s als %s bewaard", payload["video"], kind)
     finally:
         await anyio.to_thread.run_sync(lambda: shutil.rmtree(folder_dir, ignore_errors=True))
 
