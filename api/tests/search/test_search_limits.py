@@ -42,6 +42,13 @@ EINDELOOS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def twee_plekken(settings, monkeypatch):
+    """Deze tests gaan over 2 plekken tegelijk (Keuze 13), ook op PostgreSQL (daar is de
+    standaard 4: Settings.search_slots, test_plekken_tegelijk_per_database)."""
+    monkeypatch.setattr(settings, "search_inflight", 2)
+
+
 def iemand() -> User:
     return User(id=uuid.uuid4())
 
